@@ -1,0 +1,12 @@
+{
+    "vscoq.path": ".vscode/vscoq_wrapper.sh",
+    "vscoq.args": [
+        "-R",
+        "_build/default/coq/",
+        "Trustformer",
+    ],
+    "files.associations": {
+        "*.v": "coq",
+        "**/build/**/*.v": "verilog"
+    }
+}

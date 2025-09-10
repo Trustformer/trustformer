@@ -1,0 +1,8 @@
+(include_subdirs qualified)
+(coq.theory
+  (package trustformer)
+  (name Trustformer)
+  (modules :standard)
+  (mode vo)
+  (theories RecordUpdate Ltac2 Koika Hammer Hammer.Tactics)
+)

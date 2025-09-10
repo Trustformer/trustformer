@@ -1,0 +1,11 @@
+_build/
+build/
+
+# Dune generated files
+*.install
+*.opam
+
+# Other
+.local/
+.nia.cache
+.lia.cache
