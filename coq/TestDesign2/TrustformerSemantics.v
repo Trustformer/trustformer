@@ -7,8 +7,10 @@ Require Import Trustformer.TestDesign2.TrustformerSyntax.
 
 Section Semantics.
 
-   Context (states_var: Type) (states_var_fin : FiniteType states_var) (states_type : states_var -> type).
+    (* Given some (finite) variables, each with some HW register type, we define our semantics  *)
+    Context (states_var: Type) (states_var_fin : FiniteType states_var) (states_type : states_var -> type).
     
+    (* Semantics of a single operation step *)
     Definition tf_op_step
       (state: ContextEnv.(env_t) states_type)
       (state_op: TrustformerSyntax.tf_ops)
@@ -17,5 +19,7 @@ Section Semantics.
         match state_op with
         | tf_nop => state
         end.
+
+    (* TODO: Semantics of a chain of operation steps *)
 
 End Semantics.

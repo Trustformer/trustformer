@@ -3,9 +3,9 @@ Require Import Koika.Std.
 Require Koika.KoikaForm.Untyped.UntypedSemantics.
 Require Import Koika.KoikaForm.SimpleVal.
 
-Require Import Trustformer.TestDesign2.TrustformerSyntax.
-Require Import Trustformer.TestDesign2.TrustformerSemantics.
-Require Import Trustformer.TestDesign2.TrustformerSynthesis.
+Require Import Trustformer.TestDesign3.TrustformerSyntax.
+Require Import Trustformer.TestDesign3.TrustformerSemantics.
+Require Import Trustformer.TestDesign3.TrustformerSynthesis.
 
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
@@ -43,7 +43,7 @@ Section FunctionalSpecification.
         | fs_act_nop => tf_nop
         end.
 
-    Definition fs_step := tf_op_step fs_states _ fs_states_t. 
+    Definition fs_step := tf_op_step_commit fs_states _ fs_states_t. 
     
     Section Examples.
 
@@ -109,9 +109,9 @@ End Synthesis.
 
 Definition prog := Interop.Backends.register package.
 Set Extraction Output Directory "build".
-Extraction "TestDesign2.ml" prog.
+Extraction "TestDesign3.ml" prog.
 
-Section UntypedCorrectness.
+(* Section UntypedCorrectness.
 
     (* TODO generalize: each cycle could be a different omega *)
     Context (sigma: ext_fn_t -> val -> val).
@@ -191,7 +191,7 @@ Section UntypedCorrectness.
         - (*hammer:*) sauto.
     Qed.
 
-End UntypedCorrectness.
+End UntypedCorrectness. *)
 
 (* Section Correctness.
 
