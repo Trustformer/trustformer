@@ -180,7 +180,7 @@ Ltac _tc_rules R Sigma uactions :=
 
 Notation tc_rules R Sigma actions :=
   (ltac:(_tc_rules R Sigma actions)) (only parsing).
-
+(* 
 Section CompositionalCorrectness.
 
     (* TODO generalize: each cycle could be a different omega *)
@@ -598,7 +598,7 @@ Section UntypedCorrectness.
           * apply IHall_schedules. clear IHall_schedules. timeout 10 sauto.
         + timeout 10 sauto.
     Admitted.
-End UntypedCorrectness.
+End UntypedCorrectness. *)
 
 (* 
 Section UntypedCorrectness.

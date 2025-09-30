@@ -1,0 +1,694 @@
+Require Import Koika.Frontend.
+Require Import Koika.Std.
+Require Import Koika.Utils.Common.
+Require Import Koika.Utils.Environments.
+Require Koika.Properties.SemanticProperties.
+Require Koika.KoikaForm.Untyped.UntypedSemantics.
+Require Import Koika.KoikaForm.SimpleVal.
+
+Require Import Trustformer.v1.TrustformerSyntax.
+Require Import Trustformer.v1.TrustformerSemantics.
+Require Trustformer.v1.UntypedProperties.CommonProperties.
+From Koika.Utils Require Import Tactics.
+
+Require Import Streams.
+Require Import Coq.Lists.List.
+Require Import Coq.Logic.Eqdep_dec.
+Require Import Coq.Init.Tactics.
+
+Require Import Hammer.Plugin.Hammer.
+Set Hammer GSMode 63.
+
+Record TFSynthContext := {
+  tf_spec_states : Type;
+  tf_spec_states_fin : FiniteType tf_spec_states;
+  tf_spec_states_names : Show tf_spec_states;
+  tf_spec_states_size : tf_spec_states -> nat;
+  tf_spec_states_init : forall x: tf_spec_states, tf_states_type tf_spec_states tf_spec_states_size x;
+  tf_spec_action : Type;
+  tf_spec_action_fin : FiniteType tf_spec_action;
+  tf_spec_action_names : Show tf_spec_action;
+  tf_spec_action_ops : tf_spec_action -> tf_ops tf_spec_states (* TODO: more than just a single op *)
+}.
+
+Section TrustformerSynthesis.
+
+    Context (tf_synth_ctx: TFSynthContext).
+
+    Definition spec_states := tf_spec_states tf_synth_ctx.
+    Definition spec_states_fin : FiniteType spec_states := tf_spec_states_fin tf_synth_ctx.
+    Definition spec_states_size := tf_spec_states_size tf_synth_ctx.
+    Definition spec_states_t := tf_states_type spec_states spec_states_size.
+    Definition spec_states_init := tf_spec_states_init tf_synth_ctx.
+    Definition spec_action := tf_spec_action tf_synth_ctx.
+    Definition spec_action_fin := tf_spec_action_fin tf_synth_ctx.
+    Definition spec_action_ops := tf_spec_action_ops tf_synth_ctx.
+
+    Definition all_spec_states := @finite_elements spec_states spec_states_fin.
+    Definition all_spec_actions := @finite_elements spec_action spec_action_fin.
+
+    Definition state_index := @finite_index spec_states spec_states_fin.
+    Definition action_index := @finite_index spec_action spec_action_fin.
+
+    Instance show_spec_states : Show spec_states := tf_spec_states_names tf_synth_ctx.
+    Instance show_spec_action : Show spec_action := tf_spec_action_names tf_synth_ctx.
+
+    (* ====== ====== *)
+
+    Inductive reg_t := 
+    | tf_reg (x : spec_states).
+
+    Instance reg_t_finite : FiniteType reg_t.
+    Proof.
+      econstructor.
+      instantiate (1 := fun x => match x with tf_reg y => state_index y end).
+      instantiate (1 := map (fun x => tf_reg x) all_spec_states).
+      - intros [x]. rewrite nth_error_map. unfold all_spec_states. rewrite (@finite_surjective spec_states spec_states_fin _). ssimpl.
+      - rewrite map_map. unfold all_spec_states. 
+        assert ((fun x : spec_states => state_index x) = state_index).
+        + ssimpl.
+        + rewrite H. unfold state_index. exact finite_injective.
+    Qed.
+
+    Instance eq_dec_states : EqDec spec_states.
+    Proof.
+      pose spec_states_fin.  
+      apply EqDec_FiniteType.
+    Qed.
+
+    Definition _reg_name (x: spec_states) : string :=
+      "tf_st_" ++ show (state_index x).
+
+    Instance reg_names : Show reg_t :=
+      { show := fun r => match r with
+          | tf_reg x => String.append "reg_" (show x)
+          end
+      }.
+
+    Definition R (r: reg_t) :=
+    match r with
+    | tf_reg x => spec_states_t x
+    end.
+
+    Definition r (reg: reg_t) : R reg :=
+      match reg with
+      | tf_reg x => spec_states_init x
+      end.
+
+    Inductive ext_fn_t := 
+    | ext_in_cmd.
+
+    Definition cmd_reg_size := @CommonProperties.finite_bits_needed spec_action spec_action_fin. (* TODO: determine size depending on length of list *)
+
+    Definition Sigma (fn: ext_fn_t) :=
+      match fn with
+      | ext_in_cmd => {$ bits_t 1 ~> maybe (bits_t cmd_reg_size) $}
+      end.
+
+    Definition ext_fn_specs (fn : ext_fn_t) := 
+      match fn with
+      | ext_in_cmd => {| efr_name := "in_cmd"; 
+                        efr_internal := false |}
+      end.
+    
+    Inductive rule_name_t :=
+    | rule_cmd (cmd: spec_action)
+    .
+
+    Instance rule_names : Show rule_name_t :=
+      { show := fun r => match r with
+          | rule_cmd cmd => String.append "rule_cmd_" (show cmd)
+          end
+      }.
+
+    Definition system_schedule_actions : scheduler  :=
+      List.fold_right (fun t acc => rule_cmd t |> acc) Done all_spec_actions.
+
+    Definition system_schedule := system_schedule_actions.
+    Eval compute in system_schedule.
+    
+    Definition op_to_uaction (x: spec_states) (op: tf_ops spec_states) (code: uaction reg_t ext_fn_t) : uaction reg_t ext_fn_t :=
+      match op with
+      | tf_nop _ => code 
+      | tf_neg _ y => if eq_dec x y then
+                        UBind (_reg_name x) (UUnop (UBits1 UNot) (UVar (_reg_name x))) code
+                      else code
+      end.
+
+    Definition _rule_aux
+      (state_op: tf_ops spec_states)
+      (code: uaction reg_t ext_fn_t)
+      : uaction reg_t ext_fn_t :=
+        let state_code := List.fold_right (fun x acc => op_to_uaction x state_op acc) code all_spec_states in
+        state_code.
+
+    (* Helper function that reads all state registers into variables *)
+    (* TODO: a final version should only read the needed variables, to minimize dependencies *)
+    Definition _rule_read_state_vars (code: uaction reg_t ext_fn_t) : uaction reg_t ext_fn_t  := 
+      (* code. *)
+      List.fold_right (fun x acc => 
+        UBind (_reg_name x) {{ read1(tf_reg x) }} acc
+      ) code all_spec_states.
+
+    (* Helper function that writes back all modified state variables *)
+    Definition _rule_write_state_vars (op: tf_ops spec_states) (code: uaction reg_t ext_fn_t) : uaction reg_t ext_fn_t  := 
+      (* code. *)
+      List.fold_right (fun x acc => 
+        if tf_op_var_not_written_dec spec_states spec_states_fin spec_states_size x op then
+          acc
+        else
+          USeq {{ write0(tf_reg x, `UVar (_reg_name x)`) }} acc
+      ) code all_spec_states.
+
+    Definition _rule_cmd cmd : uaction reg_t ext_fn_t :=
+      let state_ops := spec_action_ops cmd in
+      _rule_read_state_vars (
+        _rule_aux state_ops (
+          _rule_write_state_vars state_ops {{ pass }})).
+
+    Definition rules :=
+        (fun rl =>  match rl with
+          | rule_cmd cmd => 
+            let cmd_enc := Bits.of_nat cmd_reg_size (action_index cmd) in
+            {{
+                  let in_cmd := extcall ext_in_cmd(Ob~1) in
+                  guard(get(in_cmd, valid));
+                  guard(get(in_cmd, data) == #cmd_enc);
+                  `_rule_cmd cmd`
+            }}
+          end).
+    
+    Section Properties.
+
+
+    End Properties.
+
+End TrustformerSynthesis.
+
+
+(* This allows us to override the type checking tactic, for more fine grained control *)
+
+Ltac _tc_rules R Sigma uactions :=
+  let rule_name_t := _arg_type uactions in
+  let res := constr:(fun r: rule_name_t =>
+                      ltac:(destruct r eqn:? ;
+                            lazymatch goal with
+                            | [ H: _ = ?rr |- _ ] =>
+                              let ua := constr:(uactions rr) in
+                              let ua := (eval hnf in ua) in
+                              _tc_action R Sigma (@List.nil (var_t * type)) constr:(unit_t) ua
+                            end)) in
+  exact res.
+
+Notation tc_rules R Sigma actions :=
+  (ltac:(_tc_rules R Sigma actions)) (only parsing).
+
+
+Section CompositionalCorrectness.
+
+    (* Generalize over any input to the synthesis *)
+    Context (some_fs_states: Type).
+    Context (some_fs_states_fin : FiniteType some_fs_states).
+    Context (some_fs_states_names : Show some_fs_states).
+    Context (some_fs_states_size : some_fs_states -> nat).
+    Context (some_fs_states_init : forall x: some_fs_states, tf_states_type some_fs_states some_fs_states_size x).
+    Context (some_fs_action : Type).
+    Context (some_fs_action_fin : FiniteType some_fs_action).
+    Context (some_fs_action_names : Show some_fs_action).
+    Context (some_fs_action_ops : some_fs_action -> tf_ops some_fs_states).
+
+    (* We craft the tx_context here as it leads to cleaner proofs than generalizing over it*)
+    Definition tf_ctx := {|
+      tf_spec_states := some_fs_states;
+      tf_spec_states_fin := some_fs_states_fin;
+      tf_spec_states_names := some_fs_states_names;
+      tf_spec_states_size := some_fs_states_size;
+      tf_spec_states_init := some_fs_states_init;
+      tf_spec_action := some_fs_action;
+      tf_spec_action_fin := some_fs_action_fin;
+      tf_spec_action_names := some_fs_action_names;
+      tf_spec_action_ops := some_fs_action_ops
+    |}.
+    Definition some_fs_states_t := tf_states_type some_fs_states some_fs_states_size.
+
+    Context (sigma: ext_fn_t -> val -> val).
+    Context (sigma_valid: 
+     forall f x, 
+     exists (f_t : retSig (Sigma tf_ctx f)),
+     sigma f x = val_of_value f_t
+    ).
+
+    (* Obtain the various outputs of the synthesis *)
+    Definition some_R := R tf_ctx.
+    Definition some_r := r tf_ctx.
+    Definition some_rules := rules tf_ctx.
+    Definition some_system_schedule := system_schedule tf_ctx.
+    Definition some_reg_t := reg_t tf_ctx.
+    Definition some_cmd_reg_size := cmd_reg_size tf_ctx.
+
+    Instance some_reg_t_finite : FiniteType (some_reg_t) := reg_t_finite tf_ctx.
+
+
+    (* Encoding of commands as bitvectors *)
+    Definition _fs_cmd_encoding (a: some_fs_action) :=
+      Bits.of_nat some_cmd_reg_size (@finite_index some_fs_action _ a).
+    Definition _encoded_cmd (a: some_fs_action) : type_denote (maybe (bits_t some_cmd_reg_size)) :=
+        (Ob~1, (_fs_cmd_encoding a, tt)).
+    Definition encoded_cmd (a: some_fs_action) := val_of_value (_encoded_cmd a).
+
+    Definition val_true := Bits ( [true] ).
+    Eval compute in val_true.
+
+  (* Properties about the encoding of commands *)
+  Section Encoding.
+
+    Example val_of_value_for_cmd_is_struct :
+    forall (a : some_fs_action),
+      let sig := Maybe (bits_t some_cmd_reg_size) in
+      encoded_cmd a
+      =
+      Struct sig [val_true; Bits (vect_to_list (_fs_cmd_encoding a))].
+    Proof.
+      intros. unfold encoded_cmd, _encoded_cmd. reflexivity.
+    Qed.
+
+    Lemma encoded_cmd_inj :
+      forall (a1 a2 : some_fs_action),
+      encoded_cmd a1 = encoded_cmd a2 -> a1 = a2.
+    Proof.
+      intros a1 a2 H_eq.
+      unfold encoded_cmd, _encoded_cmd in H_eq.
+      unfold _fs_cmd_encoding in H_eq.
+      timeout 10 simpl in H_eq.
+      apply f_equal with (f:=ubits_of_value) in H_eq.
+      timeout 10 cbn -[vect_to_list] in H_eq.
+      apply app_inj_tail in H_eq.
+      destruct H_eq as [H_bits_eq H_ob_eq]. clear H_ob_eq.
+      apply vect_to_list_inj in H_bits_eq.
+      apply f_equal with (f:=Bits.to_nat) in H_bits_eq.
+      rewrite Bits.to_nat_of_nat in H_bits_eq.
+      rewrite Bits.to_nat_of_nat in H_bits_eq.
+      - apply finite_index_injective. exact H_bits_eq.
+      - rewrite pow2_correct. unfold some_cmd_reg_size, cmd_reg_size. apply CommonProperties.finite_bits_needed_correct.
+      - rewrite pow2_correct. unfold some_cmd_reg_size, cmd_reg_size. apply CommonProperties.finite_bits_needed_correct.
+    Qed.
+
+    Lemma encoded_cmd_inj' :
+      forall (a1 a2 : some_fs_action),
+      a1 <> a2 ->
+      encoded_cmd a1 <> encoded_cmd a2.
+    Proof.
+      intros a1 a2 H_neq. intros H_eq.
+      apply encoded_cmd_inj in H_eq.
+      contradiction.
+    Qed.    
+
+    Lemma sigma_ext_in_cmd_is_struct :
+      forall (cmd : some_fs_action) vars,
+      exists valid' cmd_encoding,
+      sigma ext_in_cmd vars = Struct (Maybe (bits_t some_cmd_reg_size)) [Bits [valid']; Bits cmd_encoding].
+    Proof.
+      intros.
+      specialize (sigma_valid ext_in_cmd vars).
+      unfold retSig, Sigma, val_of_value, some_cmd_reg_size in *.
+      destruct sigma_valid as [f_t Heq].
+      destruct f_t as [b v_and_unit].
+      destruct v_and_unit as [v H_unit].
+      rewrite Heq.
+      eexists _,_.
+      simpl.
+      reflexivity.
+    Qed.   
+
+  End Encoding. 
+
+    (* Other helpful definitions *)
+    Definition hw_env_t := env_t ContextEnv (fun _ : some_reg_t => val).
+
+  Section CmdGuard.
+    
+    Lemma interp_rule_wrong_cmd:
+      forall (hw_reg_state: hw_env_t) log cmd,
+      sigma ext_in_cmd val_true <> encoded_cmd cmd ->
+      UntypedSemantics.interp_rule hw_reg_state sigma log (some_rules (rule_cmd tf_ctx cmd)) = None.
+    Proof.
+      intros.
+      unfold some_rules, rules, _rule_cmd.
+      unfold UntypedSemantics.interp_rule, UntypedSemantics.interp_action.
+
+      cbn. unfold val_true.
+
+      (* We know what in_cmd will give as a result so lets substitute it in our code *)
+      set (sigma_val := sigma ext_in_cmd (Bits [true])) in *.
+      assert (HSigmaValCmd: sigma_val <> encoded_cmd cmd).
+      { unfold sigma_val. exact H. }
+      destruct sigma_val eqn:H_sigma_val.
+      cbn. timeout 10 sauto. cbn. timeout 10 sauto.
+      { remember (BitsToLists.get_field (Struct sig v) "valid") as valid_field_opt.
+        destruct valid_field_opt eqn:H_cmd_valid.
+        { cbn. destruct v0.
+          { cbn. destruct v0.
+            cbn. timeout 10 sauto. cbn. destruct v0.
+            { cbn. destruct b.
+              {
+                cbn. remember (BitsToLists.get_field_struct (struct_fields sig) v "data") as data_field_opt.
+                destruct data_field_opt.
+                { cbn. destruct v0.
+                  { cbn. 
+                    assert (BitsToLists.list_eqb Bool.eqb v0 (vect_to_list (Bits.of_nat (cmd_reg_size tf_ctx) (action_index tf_ctx cmd))) = false).
+                    { 
+                      rewrite <- Bool.not_true_iff_false.
+                      rewrite BitsToLists.list_eqb_correct.
+                      {
+                        intro H_eq. subst v0. subst sigma_val. clear valid_field_opt H_cmd_valid.
+                        timeout 10 cbn in *. unfold not in *.
+                        unfold _fs_cmd_encoding, some_cmd_reg_size, action_index, spec_action, spec_action_fin in *.
+                        unfold tf_ctx, tf_spec_action, tf_spec_action_fin in *. fold tf_ctx in *.
+                        apply HSigmaValCmd.
+                        generalize (sigma_ext_in_cmd_is_struct cmd (Bits [true])); intros.
+                        rewrite H_sigma_val in *. 
+
+                        destruct H0 as [valid' [cmd_encoding H_sigma_struct]].
+                        f_equal. timeout 10 sauto.
+                        injection H_sigma_struct as Heqv.
+                        rewrite Heqv in *. clear Heqv. rewrite H0 in *. clear H0.
+
+                        unfold BitsToLists.get_field_struct in *.
+                        f_equal. f_equal.
+                        { timeout 10 sauto. }
+                        { timeout 10 sauto. }
+                    
+                      } intros. split. intros. destruct a, b. timeout 10 sauto. timeout 10 sauto. timeout 10 sauto. timeout 10 sauto. 
+                        intros. rewrite H0. destruct b. timeout 10 sauto. timeout 10 sauto.
+                    } rewrite H0. cbn. timeout 10 sauto.
+                  } cbn. timeout 10 sauto. cbn. timeout 10 sauto. cbn. timeout 10 sauto.
+                } cbn. timeout 10 sauto.
+              } cbn. timeout 10 sauto.                         
+            } cbn. timeout 10 sauto.
+          } cbn. timeout 10 sauto. cbn. timeout 10 sauto. cbn. timeout 10 sauto.            
+        } cbn. timeout 10 sauto.  
+       } cbn. timeout 10 sauto.
+    Qed.
+    
+
+  End CmdGuard.
+
+  (* Prove next HW cycle = next Spec cycle *)
+    Definition _ur (x: some_reg_t) := val_of_value (some_r x).
+    Definition initial_hw_state := 
+        ContextEnv.(create) _ur.
+    Check initial_hw_state.
+
+    Definition next_hw_cycle (hw_reg_state: env_t ContextEnv (fun _ : some_reg_t => val)) := 
+    UntypedSemantics.interp_cycle some_rules hw_reg_state sigma some_system_schedule.
+
+    (* TODO: Update once we have operation lists as input *)
+    Definition some_fs_step :=  tf_op_step_commit some_fs_states _ some_fs_states_size.
+    Definition some_fs_op_step_writes :=  tf_op_step_writes some_fs_states _ some_fs_states_size.
+
+    Definition StateR (hw_reg_state: env_t ContextEnv (fun _ : some_reg_t => val)) (fs_state: ContextEnv.(env_t) some_fs_states_t) :=
+        forall x, hw_reg_state.[tf_reg tf_ctx x] = val_of_value (fs_state.[x]).
+    
+    Theorem InitState_correct :
+        StateR initial_hw_state (ContextEnv.(create) some_fs_states_init).
+    Proof.
+        unfold initial_hw_state. intros x.
+        rewrite getenv_create. rewrite getenv_create. (* hammer. *)  hauto lq: on.
+    Qed.
+
+    (* Lemma tf_op_var_unchanged_nop :
+      forall (x : spec_states tf_ctx),
+        tf_op_var_unchanged (spec_states tf_ctx) (spec_states_fin tf_ctx) (spec_states_t tf_ctx) x tf_nop.
+    Admitted.
+
+    Lemma fold_right_write_state_nop_is_id :
+    forall tf_ctx (initial_code : uaction (reg_t tf_ctx) ext_fn_t),
+      fold_right
+        (fun (x : spec_states tf_ctx) (acc : uaction (reg_t tf_ctx) ext_fn_t) =>
+          if tf_op_var_unchanged_dec (spec_states tf_ctx) (spec_states_fin tf_ctx) (spec_states_t tf_ctx) x tf_nop
+          then acc
+          else USeq {{ write0(tf_reg tf_ctx x, `UVar (_reg_name tf_ctx x)`) }} acc)
+        initial_code
+        (all_spec_states tf_ctx)
+      =
+      initial_code.
+    Admitted. *)
+
+    (* Lemma fold_right_aux_nop_is_id :
+    forall tf_ctx (initial_code : uaction (reg_t tf_ctx) ext_fn_t),
+      fold_right (fun x acc => op_to_uaction tf_ctx x tf_nop acc) initial_code (all_spec_states tf_ctx)
+      =
+      initial_code.
+    Proof.
+      unfold op_to_uaction. intros. 
+      induction (all_spec_states tf_ctx0) as [| head tail IH].
+      - simpl. reflexivity.
+      - simpl. rewrite IH. reflexivity.
+    Qed.
+
+    Lemma finite_index_spec_eq_any :
+    forall (a : some_fs_action),
+      @finite_index some_fs_action some_fs_action_fin a
+      =
+      @finite_index (spec_action tf_ctx) (spec_action_fin tf_ctx) a.
+    Proof.
+      intros. reflexivity.
+    Qed. *)
+
+    Theorem NextState_correct:
+        forall cmd fs_state hw_reg_state,
+        some_system_schedule <> (done: scheduler) -> (* This is somewhat redundant, we should be able to proof this is always the case but for now it helps *)
+        sigma ext_in_cmd val_true = encoded_cmd cmd ->
+        StateR hw_reg_state fs_state ->
+        StateR (next_hw_cycle hw_reg_state) (some_fs_step fs_state (some_fs_action_ops cmd)).
+    Proof.
+        intros cmd fs_state hw_reg_state H_sched_some H_sigma_eq_cmd H_state.
+
+        (* We consider each state var individually *)
+        intros state_var.
+
+        (* Create next state definitions & specialize state equivalence to the vars we consider *)
+        set (some_fs_step fs_state (some_fs_action_ops cmd)) as fs_state'.
+        unfold next_hw_cycle, StateR in *.
+        pose (H_state state_var) as H_state_spec.
+        unfold some_reg_t in *.
+
+        (* Compute what the next functional state will be, then use the hypothesis to relate it to the previous hardware state *)
+        unfold some_fs_step, tf_op_step_commit, tf_op_step_writes in fs_state'.
+        destruct some_fs_action_ops eqn:H_ops.
+        subst fs_state'; rewrite getenv_create. rewrite <- H_state_spec.
+
+        unfold UntypedSemantics.interp_cycle, UntypedLogs.commit_update.
+        rewrite getenv_create.
+
+        assert (
+          UntypedLogs.latest_write (UntypedSemantics.interp_scheduler some_rules hw_reg_state sigma some_system_schedule) (tf_reg tf_ctx state_var) 
+          = match (some_fs_op_step_writes fs_state state_var (some_fs_action_ops cmd)) with
+            | Some k => Some (val_of_value k)
+            | None => None
+          end).
+        { 
+          unfold some_fs_op_step_writes, tf_op_step_writes in *.
+          rewrite H_ops in *.
+
+          unfold UntypedLogs.latest_write in *.
+
+          assert (
+            UntypedSemantics.interp_scheduler some_rules hw_reg_state sigma ( rule_cmd tf_ctx cmd |> done )
+            = 
+            UntypedLogs.log_empty
+          ) as H_nop_interp.
+          { 
+            unfold UntypedSemantics.interp_scheduler, UntypedSemantics.interp_scheduler'.
+          
+            (* Make Rules Explicit *)
+            unfold some_rules, rules, _rule_cmd.
+            set (actions := spec_action_ops tf_ctx cmd) in *.
+            assert (actions = tf_nop).
+            { timeout 10 sauto. } rewrite H in *; clear H. clear actions.
+            unfold _rule_read_state_vars, _rule_write_state_vars, _rule_aux.
+
+            (* Make AST simpler, since we do nothing *)
+            rewrite fold_right_aux_nop_is_id. timeout 10 simpl.
+
+            (* Start Abstract Interpretation *)
+            unfold UntypedSemantics.interp_rule, UntypedSemantics.interp_action. timeout 10 simpl.
+
+            (* We know what in_cmd will give as a result so lets substitute it in our code *)
+            set (sigma_val := sigma ext_in_cmd (Bits (vect_to_list Ob~1))) in *.
+            assert (HSigmaValCmd: sigma_val = encoded_cmd cmd).
+            { unfold sigma_val. exact H_sigma_eq_cmd. }
+            rewrite HSigmaValCmd in *. clear sigma_val HSigmaValCmd. clear H_sigma_eq_cmd.
+
+            (* We need to help out with the embedding of cmds in maybe types*)
+            rewrite val_of_value_for_cmd_is_struct.
+            unfold action_index, _fs_cmd_encoding in *.
+            timeout 10 cbn [BitsToLists.get_field].
+            
+            (* Help out with getting valid of the cmd struct *)
+            set (valid_field := 
+              BitsToLists.get_field_struct (struct_fields (Maybe (bits_t cmd_reg_size))) 
+                [val_true; Bits (vect_to_list (Bits.of_nat cmd_reg_size (finite_index cmd)))]
+                "valid") in *.
+            simpl in valid_field. subst valid_field.
+            cbn [opt_bind BitsToLists.list_assoc BitsToLists.get_field BitsToLists.get_field_struct struct_fields].
+            rewrite eq_dec_refl; cbn [opt_bind].
+
+            (* Help out with getting data of the cmd struct *)
+            set (data_field := 
+              BitsToLists.get_field (Struct (Maybe (bits_t cmd_reg_size)) 
+                [val_true; Bits (vect_to_list (Bits.of_nat cmd_reg_size (finite_index cmd)))]) 
+                "data") in *.
+            simpl in data_field. subst data_field.
+            cbn [opt_bind val_true].
+
+            (* Help out unpacking the relevant action_index info from tf_ctx *)
+            rewrite finite_index_spec_eq_any.
+
+            (* Help out with the comparison *)
+            set (eq_true := BitsToLists.val_beq _ _) in *.
+            assert (eq_true = true).
+            { unfold eq_true. rewrite BitsToLists.val_beq_correct. reflexivity. } rewrite H in *; clear H. clear eq_true.
+          
+            (* Finally perform the abstract interpretation *)
+            timeout 10 cbn. 
+
+            (* Help figuring out that empty_log ++ empty_log is empty *)
+            unfold getenv. timeout 10 simpl. apply ccreate_funext.
+            intros k m. rewrite cassoc_ccreate. 
+            timeout 10 sauto.
+          }
+
+
+          assert (
+            (* if sigma cmd value matches *)
+            UntypedSemantics.interp_scheduler some_rules hw_reg_state sigma some_system_schedule = 
+            UntypedSemantics.interp_scheduler some_rules hw_reg_state sigma ( rule_cmd tf_ctx cmd |> done )
+          ).
+          { 
+            assert (
+              forall r0,
+                UntypedSemantics.interp_rule hw_reg_state sigma UntypedLogs.log_empty (some_rules r0) = None
+                \/
+                UntypedSemantics.interp_rule hw_reg_state sigma UntypedLogs.log_empty (some_rules r0) = Some UntypedLogs.log_empty
+            ) as H_interp_rule_result. {
+              unfold UntypedSemantics.interp_scheduler, UntypedSemantics.interp_scheduler'.
+                        
+              (* Make Rules Explicit *)
+              unfold some_rules, rules, _rule_cmd.
+              destruct r0.
+              set (actions := spec_action_ops tf_ctx cmd0) in *.
+              assert (actions = tf_nop).
+              { destruct actions. timeout 10 sauto. } rewrite H in *; clear H. clear actions.
+              unfold _rule_read_state_vars, _rule_write_state_vars, _rule_aux.
+
+              (* Make AST simpler, since we do nothing *)
+              rewrite fold_right_aux_nop_is_id. timeout 10 simpl.
+
+              (* Start Abstract Interpretation *)
+              unfold UntypedSemantics.interp_rule, UntypedSemantics.interp_action. timeout 10 simpl.
+
+              (* We know what in_cmd will give as a result so lets substitute it in our code *)
+              set (sigma_val := sigma ext_in_cmd (Bits (vect_to_list Ob~1))) in *.
+              assert (HSigmaValCmd: sigma_val = encoded_cmd cmd).
+              { unfold sigma_val. exact H_sigma_eq_cmd. }
+              rewrite HSigmaValCmd in *. clear sigma_val HSigmaValCmd. clear H_sigma_eq_cmd.
+
+              (* We need to help out with the embedding of cmds in maybe types*)
+              rewrite val_of_value_for_cmd_is_struct.
+              unfold action_index, _fs_cmd_encoding in *.
+              timeout 10 cbn [BitsToLists.get_field].
+              
+              (* Help out with getting valid of the cmd struct *)
+              set (valid_field := 
+                BitsToLists.get_field_struct (struct_fields (Maybe (bits_t cmd_reg_size))) 
+                  [val_true; Bits (vect_to_list (Bits.of_nat cmd_reg_size (finite_index cmd)))]
+                  "valid") in *.
+              simpl in valid_field. subst valid_field.
+              cbn [opt_bind BitsToLists.list_assoc BitsToLists.get_field BitsToLists.get_field_struct struct_fields].
+              rewrite eq_dec_refl; cbn [opt_bind].
+
+              (* Help out with getting data of the cmd struct *)
+              set (data_field := 
+                BitsToLists.get_field (Struct (Maybe (bits_t cmd_reg_size)) 
+                  [val_true; Bits (vect_to_list (Bits.of_nat cmd_reg_size (finite_index cmd)))]) 
+                  "data") in *.
+              simpl in data_field. subst data_field.
+              cbn [opt_bind val_true].
+
+              (* Help out unpacking the relevant action_index info from tf_ctx *)
+              rewrite finite_index_spec_eq_any.
+
+              (* Help out with the comparison *)
+              set (eq_true := BitsToLists.val_beq _ _) in *.
+              destruct eq_true.
+              - right.
+                (* Finally perform the abstract interpretation *)
+                timeout 10 cbn. 
+                congruence.
+              - left.
+                (* Finally perform the abstract interpretation *)
+                timeout 10 cbn.
+                reflexivity. 
+            }
+
+            rewrite H_nop_interp in *.
+            induction some_system_schedule.
+            - timeout 10 sauto.
+            - destruct (eq_dec s (done)) as [H_s_is_done | H_s_is_not_done].
+              + rewrite H_s_is_done in *.
+                unfold UntypedSemantics.interp_scheduler, UntypedSemantics.interp_scheduler'.
+                specialize (H_interp_rule_result r0).
+                destruct H_interp_rule_result as [H_is_none | H_is_some].
+                * rewrite H_is_none. timeout 10 sauto.
+                * rewrite H_is_some. rewrite CommonProperties.log_app_empty_r. timeout 10 sauto. 
+      
+              + specialize (IHs H_s_is_not_done). 
+                unfold UntypedSemantics.interp_scheduler in *. unfold UntypedSemantics.interp_scheduler'.
+                specialize (H_interp_rule_result r0).
+                destruct H_interp_rule_result as [H_is_none | H_is_some].
+                * rewrite H_is_none. unfold UntypedSemantics.interp_scheduler' in *.
+                  timeout 10 sauto.
+                * rewrite H_is_some. rewrite CommonProperties.log_app_empty_r. 
+                  unfold UntypedSemantics.interp_scheduler' in *.
+                  timeout 10 sauto.
+            - unfold UntypedSemantics.interp_scheduler, UntypedSemantics.interp_scheduler'.
+              specialize (H_interp_rule_result r0).
+              destruct H_interp_rule_result as [H_is_none | H_is_some].
+              * rewrite H_is_none.
+                destruct (eq_dec s2 (done)) as [H_s_is_done | H_s_is_not_done].
+                + rewrite H_s_is_done in *.
+                  timeout 10 sauto.
+                + specialize (IHs2 H_s_is_not_done).
+                  unfold UntypedSemantics.interp_scheduler, UntypedSemantics.interp_scheduler' in *.
+                  timeout 10 sauto.
+              * rewrite H_is_some. rewrite CommonProperties.log_app_empty_r.
+                destruct (eq_dec s1 (done)) as [H_s_is_done | H_s_is_not_done].
+                + rewrite H_s_is_done in *.
+                  timeout 10 sauto.
+                + specialize (IHs1 H_s_is_not_done).
+                  unfold UntypedSemantics.interp_scheduler, UntypedSemantics.interp_scheduler' in *.
+                  timeout 10 sauto.
+            - unfold UntypedSemantics.interp_scheduler, UntypedSemantics.interp_scheduler'.
+              destruct (eq_dec s (done)) as [H_s_is_done | H_s_is_not_done].
+              + rewrite H_s_is_done in *. 
+                timeout 10 sauto.
+              + specialize (IHs H_s_is_not_done).
+                unfold UntypedSemantics.interp_scheduler, UntypedSemantics.interp_scheduler' in *.
+                timeout 10 sauto. 
+          } rewrite H in *; clear H.
+
+          rewrite H_nop_interp in *.
+          rewrite CommonProperties.log_find_empty.
+          timeout 10 sauto.
+
+          
+          
+        } rewrite H in *; clear H.
+        unfold some_fs_op_step_writes, tf_op_step_writes in *.
+        rewrite H_ops in *; clear H_ops. timeout 10 sauto.
+    Qed.
+
+End CompositionalCorrectness.
+           
+
