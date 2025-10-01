@@ -320,6 +320,29 @@ Section CompositionalCorrectness.
       reflexivity.
     Qed.   
 
+    Lemma cmd_rule_eq_dec_equal:
+      forall (cmd1 cmd2: some_fs_action),
+        (rule_cmd tf_ctx cmd1) = (rule_cmd tf_ctx cmd2) <-> cmd1 = cmd2.
+    Proof.
+        intros. split.
+        - intros H_eq. inversion H_eq. reflexivity.
+        - intros H_eq. rewrite H_eq. reflexivity.
+    Qed.
+
+    Lemma cmd_rule_eq_dec_if:
+      forall (cmd1 cmd2: some_fs_action) a b,
+        (if eq_dec (rule_cmd tf_ctx cmd1) (rule_cmd tf_ctx cmd2)
+        then a
+        else b) ->
+        ((cmd1 = cmd2 -> a) /\ (cmd1 <> cmd2 -> b)).
+    Proof.
+        intros. destruct (eq_dec (rule_cmd tf_ctx cmd1) (rule_cmd tf_ctx cmd2)) as [H_eq | H_neq].
+        - assert (cmd1 = cmd2) as H_cmd_eq.
+          { apply cmd_rule_eq_dec_equal. exact H_eq. }
+          timeout 10 sauto.
+        - timeout 10 sauto.
+    Qed.
+
   End Encoding. 
 
     (* Other helpful definitions *)
@@ -389,6 +412,164 @@ Section CompositionalCorrectness.
         } cbn. timeout 10 sauto.  
        } cbn. timeout 10 sauto.
     Qed.
+
+    Lemma interp_scheduler_no_cmd:
+      forall (hw_reg_state: hw_env_t) cmd schedule log,
+      sigma ext_in_cmd val_true = encoded_cmd cmd ->
+      (~ CommonProperties.scheduler_has_rule schedule (rule_cmd tf_ctx cmd)) ->
+      UntypedSemantics.interp_scheduler' some_rules hw_reg_state sigma log schedule = log.
+    Proof.
+      intros. unfold UntypedSemantics.interp_scheduler, UntypedSemantics.interp_scheduler'.
+
+      induction schedule. reflexivity.
+      {
+        rewrite IHschedule. clear IHschedule.
+        {
+          unfold not, CommonProperties.scheduler_has_rule in H0.
+          destruct r0. destruct (eq_dec cmd0 cmd).
+          - subst cmd0. destruct (eq_dec (rule_cmd tf_ctx cmd) (rule_cmd tf_ctx cmd)).
+            + exfalso. apply H0. sauto.
+            + exfalso. unfold not in n. generalize (cmd_rule_eq_dec_equal cmd cmd). intros. inversion H1. timeout 10 sauto.
+          - rewrite interp_rule_wrong_cmd.
+            + timeout 10 sauto.
+            + generalize (encoded_cmd_inj' cmd0 cmd). intros. timeout 10 sauto.
+        }
+        {
+          generalize (CommonProperties.scheduler_has_not_rule_inductive (r0 |> schedule) (rule_cmd tf_ctx cmd) ).
+          intros.
+          pose proof (H1 H0) as H_derived.
+          destruct (eq_dec r0 (rule_cmd tf_ctx cmd)) as [H_eq | H_neq].
+          - exfalso. contradiction.
+          - exact H_derived.
+        }
+      }
+      {
+        rewrite IHschedule2. clear IHschedule2.
+        {
+          unfold not, CommonProperties.scheduler_has_rule in H0.
+          destruct r0. destruct (eq_dec cmd0 cmd).
+          - subst cmd0. destruct (eq_dec (rule_cmd tf_ctx cmd) (rule_cmd tf_ctx cmd)).
+            + exfalso. apply H0. sauto.
+            + exfalso. unfold not in n. generalize (cmd_rule_eq_dec_equal cmd cmd). intros. inversion H1. timeout 10 sauto.
+          - rewrite interp_rule_wrong_cmd.
+            + timeout 10 sauto.
+            + generalize (encoded_cmd_inj' cmd0 cmd). intros. timeout 10 sauto.
+
+        }
+        {
+          generalize (CommonProperties.scheduler_has_not_rule_inductive (Try r0 schedule1 schedule2) (rule_cmd tf_ctx cmd) ).
+          intros.
+          pose proof (H1 H0) as H_derived.
+          destruct (eq_dec r0 (rule_cmd tf_ctx cmd)) as [H_eq | H_neq].
+          - exfalso. contradiction.
+          - timeout 10 sauto.
+        }
+      }
+      {
+        rewrite IHschedule. clear IHschedule.
+        timeout 10 sauto.
+        {
+          generalize (CommonProperties.scheduler_has_not_rule_inductive (SPos p schedule) (rule_cmd tf_ctx cmd) ).
+          intros.
+          pose proof (H1 H0) as H_derived.
+          timeout 10 sauto.
+        }
+      }
+    Qed.
+
+    Lemma interp_scheduler_only_cmd:
+      forall (hw_reg_state: hw_env_t) cmd,
+      sigma ext_in_cmd val_true = encoded_cmd cmd ->
+      UntypedSemantics.interp_scheduler some_rules hw_reg_state sigma some_system_schedule = 
+      UntypedSemantics.interp_scheduler some_rules hw_reg_state sigma ( rule_cmd tf_ctx cmd |> done ).
+    Proof.
+      intros.
+      unfold UntypedSemantics.interp_scheduler.
+      (* unfold UntypedSemantics.interp_scheduler'. *)
+
+      set (schedule := some_system_schedule) in *.
+      unfold some_system_schedule, system_schedule, system_schedule_actions in *.
+      unfold all_spec_actions in *.
+
+      set (action_order := finite_elements) in *.
+
+      assert (NoDup (action_order)).
+      {
+        apply NoDup_map_inv with (f:=finite_index).
+        apply finite_injective.
+      }
+      assert (action_order_some : action_order <> []).
+      { 
+        intros H_empty.
+        subst action_order.
+        generalize (@finite_surjective (spec_action tf_ctx) (spec_action_fin tf_ctx) cmd). intros H1.
+        rewrite H_empty in H1.
+        rewrite nth_error_nil in H1. inversion H1.
+      }
+      assert (action_order_has_cmd : In cmd action_order).
+      { 
+        subst action_order.
+        generalize (@finite_surjective (spec_action tf_ctx) (spec_action_fin tf_ctx) cmd). intros H1.
+        apply nth_error_In with (finite_index cmd). exact H1.
+      }
+
+      induction (action_order).
+      { destruct action_order_some. reflexivity. }
+      {
+        timeout 10 cbn -[some_rules UntypedLogs.log_empty].
+
+        destruct (eq_dec a cmd).
+        {
+          subst a. assert (H_not_in_l: ~ In cmd l). { inversion H0. timeout 10 sauto. }
+          
+          assert ((~ CommonProperties.scheduler_has_rule (fold_right (fun (t : some_fs_action) (acc : scheduler) => rule_cmd tf_ctx t |> acc) (done) l) (rule_cmd tf_ctx cmd))).
+          {
+            unfold not. unfold CommonProperties.scheduler_has_rule. intros H_in.
+            clear IHl. induction l.
+            { timeout 10 sauto. }
+            {
+              destruct (eq_dec a cmd) as [H_eq | H_neq].
+              { timeout 10 sauto. }
+              { 
+                timeout 10 cbn [fold_right CommonProperties.scheduler_has_rule] in H_in. 
+                destruct (eq_dec (rule_cmd tf_ctx a) (rule_cmd tf_ctx cmd)) as [H_eq2 | H_neq2].
+                apply cmd_rule_eq_dec_equal in H_eq2. subst a. contradiction.
+                apply IHl. timeout 10 sauto. timeout 10 sauto. timeout 10 sauto. timeout 10 sauto.
+                exact H_in.                
+              }
+            }
+          }
+          
+          case_eq (@UntypedSemantics.interp_rule pos_t string fn_name_t EqDec_string (reg_t tf_ctx) ext_fn_t (@ContextEnv some_reg_t some_reg_t_finite) hw_reg_state sigma (@UntypedLogs.log_empty val (reg_t tf_ctx) (@ContextEnv some_reg_t some_reg_t_finite)) (some_rules (rule_cmd tf_ctx cmd))).
+          {
+            intros. 
+            rewrite (interp_scheduler_no_cmd hw_reg_state cmd). reflexivity. exact H. exact H1.
+          }
+          {
+            intros.
+            rewrite (interp_scheduler_no_cmd hw_reg_state cmd). reflexivity. exact H. exact H1.
+          }
+        }
+        {
+          rewrite interp_rule_wrong_cmd.
+          {
+            inversion action_order_has_cmd. congruence.
+            inversion H0. subst l0 x.
+            destruct (eq_dec l []).
+            { subst l. contradiction. }
+            {
+              apply IHl.
+              timeout 10 sauto.
+              timeout 10 sauto.
+              timeout 10 sauto.
+            }
+          }
+          {
+            unfold not. intros. assert (encoded_cmd cmd = encoded_cmd a). { timeout 10 sauto. } apply encoded_cmd_inj' in H2. contradiction. timeout 10 sauto.
+          }
+        }
+      }
+    Qed. 
     
 
   End CmdGuard.

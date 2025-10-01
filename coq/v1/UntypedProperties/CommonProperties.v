@@ -91,5 +91,61 @@ Section FiniteType.
         timeout 10 lia.
     Qed.
 
-
 End FiniteType.
+
+Section Schedule.
+
+    Context {pos_t rule_name_t: Type}.
+    Context {rule_name_t_eq_dec: EqDec rule_name_t}.
+    Definition sched := @scheduler pos_t rule_name_t.
+
+    Fixpoint scheduler_has_rule (scheduler : sched) (r_target : rule_name_t) : Prop :=
+        match scheduler with
+        | Done => False
+        | Cons r s => if eq_dec r r_target then True else scheduler_has_rule s r_target
+        | Try r s1 s2 => if eq_dec r r_target then True else (scheduler_has_rule s1 r_target \/ scheduler_has_rule s2 r_target)
+        | SPos p s => scheduler_has_rule s r_target
+        end.
+    
+    Lemma scheduler_has_rule_dec:
+        forall (s: sched) (r: rule_name_t),
+        {scheduler_has_rule s r} + {~ scheduler_has_rule s r}.
+    Proof.
+        induction s; intros; simpl.
+        - right; intros H; inversion H.
+        - destruct (eq_dec r r0).
+            + left; auto.
+            + specialize (IHs r0). auto.
+        - destruct (eq_dec r r0).
+            + left; auto.
+            + specialize (IHs1 r0). specialize (IHs2 r0).
+                destruct IHs1; destruct IHs2.
+                * left; auto.
+                * left; auto.
+                * left; auto.
+                * right. intros [H1 | H2]; auto.
+        - specialize (IHs r). auto.
+    Qed.
+
+    Lemma scheduler_has_not_rule_inductive:
+        forall (s: sched) (r: rule_name_t),
+        ~ scheduler_has_rule s r ->
+            match s with
+            | Done => True
+            | Cons r0 s' => if eq_dec r0 r then False else ~ scheduler_has_rule s' r
+            | Try r0 s1 s2 => if eq_dec r0 r then False else (~ scheduler_has_rule s1 r /\ ~ scheduler_has_rule s2 r)
+            | SPos p s' => ~ scheduler_has_rule s' r
+            end.
+    Proof.
+        induction s; intros; simpl in *.
+        - auto.
+        - destruct (eq_dec r r0).
+            + exfalso; apply H. timeout 10 sauto.
+            + timeout 10 sauto.
+        - destruct (eq_dec r r0).
+            + exfalso; apply H. timeout 10 sauto.
+            + timeout 10 sauto.
+        - timeout 10 sauto.
+    Qed.
+
+End Schedule.
