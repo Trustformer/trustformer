@@ -171,9 +171,9 @@ Section TrustformerSynthesis.
           | rule_cmd cmd => 
             let cmd_enc := Bits.of_nat cmd_reg_size (action_index cmd) in
             {{
-                  let in_cmd := extcall ext_in_cmd(Ob~1) in
-                  guard(get(in_cmd, valid));
-                  guard(get(in_cmd, data) == #cmd_enc);
+                  (* No let is better --> no sideeffects, but requires reproving some stuff  *)
+                  guard(get(extcall ext_in_cmd(Ob~1), valid));
+                  guard(get(extcall ext_in_cmd(Ob~1), data) == #cmd_enc);
                   `_rule_cmd cmd`
             }}
           end).
@@ -539,15 +539,13 @@ Section CompositionalCorrectness.
               }
             }
           }
-          
-          case_eq (@UntypedSemantics.interp_rule pos_t string fn_name_t EqDec_string (reg_t tf_ctx) ext_fn_t (@ContextEnv some_reg_t some_reg_t_finite) hw_reg_state sigma (@UntypedLogs.log_empty val (reg_t tf_ctx) (@ContextEnv some_reg_t some_reg_t_finite)) (some_rules (rule_cmd tf_ctx cmd))).
+
+          case_eq (@UntypedSemantics.interp_rule pos_t var_t fn_name_t EqDec_string (reg_t tf_ctx) ext_fn_t (@ContextEnv some_reg_t some_reg_t_finite) hw_reg_state sigma (@UntypedLogs.log_empty val (reg_t tf_ctx) (@ContextEnv some_reg_t some_reg_t_finite)) (some_rules (rule_cmd tf_ctx cmd))).
           {
-            intros. 
-            rewrite (interp_scheduler_no_cmd hw_reg_state cmd). reflexivity. exact H. exact H1.
+            intros. rewrite (interp_scheduler_no_cmd hw_reg_state cmd). reflexivity. exact H. exact H1.
           }
           {
-            intros.
-            rewrite (interp_scheduler_no_cmd hw_reg_state cmd). reflexivity. exact H. exact H1.
+            intros. rewrite (interp_scheduler_no_cmd hw_reg_state cmd). reflexivity. exact H. exact H1.
           }
         }
         {
@@ -571,6 +569,37 @@ Section CompositionalCorrectness.
       }
     Qed. 
     
+    Lemma interp_rule_right_cmd:
+      forall (hw_reg_state: hw_env_t) log cmd,
+      sigma ext_in_cmd val_true = encoded_cmd cmd ->
+      UntypedSemantics.interp_rule hw_reg_state sigma log (some_rules (rule_cmd tf_ctx cmd)) = 
+      UntypedSemantics.interp_rule hw_reg_state sigma log (_rule_cmd tf_ctx cmd).
+    Proof.
+      intros.
+      unfold some_rules.
+      unfold UntypedSemantics.interp_rule.
+      unfold UntypedSemantics.interp_action.
+      cbn -[_rule_cmd].
+
+      set (sigma_val := sigma ext_in_cmd (Bits [true])) in *.
+      assert (HSigmaValCmd: sigma_val = encoded_cmd cmd).
+      { unfold sigma_val. exact H. } rewrite HSigmaValCmd in *. clear sigma_val HSigmaValCmd. clear H.
+      cbn -[_rule_cmd].
+
+      (* Help out unpacking the relevant action_index info from tf_ctx *)
+      unfold _fs_cmd_encoding, some_cmd_reg_size, action_index, spec_action, spec_action_fin in *.
+      assert (@finite_index some_fs_action some_fs_action_fin cmd = @finite_index (spec_action tf_ctx) (spec_action_fin tf_ctx) cmd).
+      { unfold tf_ctx, tf_spec_action, tf_spec_action_fin in *. fold tf_ctx in *. reflexivity. } rewrite H in *; clear H.
+
+      (* Help out with the comparison *)
+      set (eq_true := BitsToLists.list_eqb _ _ _) in *.
+      assert (eq_true = true).
+      { unfold eq_true. apply BitsToLists.list_eqb_refl. intros. destruct a. timeout 10 sauto. timeout 10 sauto. } rewrite H in *; clear H. clear eq_true.
+
+      unfold opt_bind.
+      cbn.
+      reflexivity.
+  Qed.
 
   End CmdGuard.
 
@@ -597,53 +626,32 @@ Section CompositionalCorrectness.
         rewrite getenv_create. rewrite getenv_create. (* hammer. *)  hauto lq: on.
     Qed.
 
-    (* Lemma tf_op_var_unchanged_nop :
-      forall (x : spec_states tf_ctx),
-        tf_op_var_unchanged (spec_states tf_ctx) (spec_states_fin tf_ctx) (spec_states_t tf_ctx) x tf_nop.
-    Admitted.
-
-    Lemma fold_right_write_state_nop_is_id :
-    forall tf_ctx (initial_code : uaction (reg_t tf_ctx) ext_fn_t),
-      fold_right
-        (fun (x : spec_states tf_ctx) (acc : uaction (reg_t tf_ctx) ext_fn_t) =>
-          if tf_op_var_unchanged_dec (spec_states tf_ctx) (spec_states_fin tf_ctx) (spec_states_t tf_ctx) x tf_nop
-          then acc
-          else USeq {{ write0(tf_reg tf_ctx x, `UVar (_reg_name tf_ctx x)`) }} acc)
-        initial_code
-        (all_spec_states tf_ctx)
-      =
-      initial_code.
-    Admitted. *)
-
-    (* Lemma fold_right_aux_nop_is_id :
-    forall tf_ctx (initial_code : uaction (reg_t tf_ctx) ext_fn_t),
-      fold_right (fun x acc => op_to_uaction tf_ctx x tf_nop acc) initial_code (all_spec_states tf_ctx)
-      =
-      initial_code.
+    Lemma latest_write_eq_some_fs_op_step_writes:
+      forall hw_reg_state fs_state cmd state_var,
+      sigma ext_in_cmd val_true = encoded_cmd cmd ->
+      StateR hw_reg_state fs_state ->
+      UntypedLogs.latest_write (UntypedSemantics.interp_scheduler some_rules hw_reg_state sigma some_system_schedule) (tf_reg tf_ctx state_var) 
+      = match (some_fs_op_step_writes fs_state state_var (some_fs_action_ops cmd)) with
+        | Some k => Some (val_of_value k)
+        | None => None
+      end.
     Proof.
-      unfold op_to_uaction. intros. 
-      induction (all_spec_states tf_ctx0) as [| head tail IH].
-      - simpl. reflexivity.
-      - simpl. rewrite IH. reflexivity.
+        intros hw_reg_state fs_state cmd state_var H_sigma_eq_cmd H_state.
+
+        rewrite (interp_scheduler_only_cmd hw_reg_state cmd).
+        {
+          
+        } exact H_sigma_eq_cmd.
     Qed.
-
-    Lemma finite_index_spec_eq_any :
-    forall (a : some_fs_action),
-      @finite_index some_fs_action some_fs_action_fin a
-      =
-      @finite_index (spec_action tf_ctx) (spec_action_fin tf_ctx) a.
-    Proof.
-      intros. reflexivity.
-    Qed. *)
+    
 
     Theorem NextState_correct:
         forall cmd fs_state hw_reg_state,
-        some_system_schedule <> (done: scheduler) -> (* This is somewhat redundant, we should be able to proof this is always the case but for now it helps *)
         sigma ext_in_cmd val_true = encoded_cmd cmd ->
         StateR hw_reg_state fs_state ->
         StateR (next_hw_cycle hw_reg_state) (some_fs_step fs_state (some_fs_action_ops cmd)).
     Proof.
-        intros cmd fs_state hw_reg_state H_sched_some H_sigma_eq_cmd H_state.
+        intros cmd fs_state hw_reg_state H_sigma_eq_cmd H_state.
 
         (* We consider each state var individually *)
         intros state_var.
@@ -651,13 +659,24 @@ Section CompositionalCorrectness.
         (* Create next state definitions & specialize state equivalence to the vars we consider *)
         set (some_fs_step fs_state (some_fs_action_ops cmd)) as fs_state'.
         unfold next_hw_cycle, StateR in *.
-        pose (H_state state_var) as H_state_spec.
         unfold some_reg_t in *.
 
         (* Compute what the next functional state will be, then use the hypothesis to relate it to the previous hardware state *)
         unfold some_fs_step, tf_op_step_commit, tf_op_step_writes in fs_state'.
         destruct some_fs_action_ops eqn:H_ops.
-        subst fs_state'; rewrite getenv_create. rewrite <- H_state_spec.
+        { (* nop *)
+          subst fs_state'; rewrite getenv_create.
+          rewrite <- H_state.
+
+          unfold UntypedSemantics.interp_cycle, UntypedLogs.commit_update.
+          rewrite getenv_create.
+
+
+        }
+        { (* neg *)
+
+        }
+        subst fs_state'; rewrite getenv_create.
 
         unfold UntypedSemantics.interp_cycle, UntypedLogs.commit_update.
         rewrite getenv_create.
