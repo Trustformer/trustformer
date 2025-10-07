@@ -149,3 +149,18 @@ Section Schedule.
     Qed.
 
 End Schedule.
+
+Section Environments.
+
+    Lemma getenv_ccreate:
+         forall {K : Type} {FT: FiniteType K}
+            {V : esig K}
+            (fn : forall k : K, V k)
+            (k : K),
+            ContextEnv.(getenv) (ccreate finite_elements (fun k _ => fn k)) k = fn k.
+    Proof.
+        intros. unfold getenv. cbn.
+        rewrite cassoc_ccreate. reflexivity.
+    Qed.    
+
+End Environments.

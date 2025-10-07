@@ -43,6 +43,16 @@ Section Semantics.
         | tf_neg _ x =>
             when_vars_match x var (fun _ => Some (Bits.neg state.[var]))
         end.
+    
+    (* Given a current state and an operation, returns the variable that is changed, if any *)
+    Definition tf_op_step_changed
+      (state: ContextEnv.(env_t) tf_states_type)
+      (state_op: TrustformerSyntax.tf_ops states_var)
+      : option (states_var) :=
+        match state_op with
+        | tf_nop _ => None
+        | tf_neg _ x => Some x
+        end.
 
     (* Semantics of a single operation step *)
     Definition tf_op_step_commit
@@ -152,6 +162,14 @@ Section Semantics.
             subst x. rewrite tf_op_step_writes_neg_same_var in H.
             inversion H.
           + left. intros. rewrite tf_op_step_writes_neg_other_var; auto. 
+      Qed.
+
+      Definition tf_op_var_not_written_dec_nop
+        (var: states_var)
+        : tf_op_var_not_written var (tf_nop states_var).
+      Proof.
+        unfold tf_op_var_not_written.
+        intros. rewrite tf_op_step_writes_nop. reflexivity.
       Qed.
 
     End Properties.
