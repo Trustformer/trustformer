@@ -161,6 +161,6 @@ Section Environments.
     Proof.
         intros. unfold getenv. cbn.
         rewrite cassoc_ccreate. reflexivity.
-    Qed.    
+    Qed.
 
 End Environments.

@@ -172,6 +172,80 @@ Section Semantics.
         intros. rewrite tf_op_step_writes_nop. reflexivity.
       Qed.
 
+      Definition filter_written_vars
+        (state_op: TrustformerSyntax.tf_ops states_var)
+        :
+        forall x, In x (filter (fun v => if tf_op_var_not_written_dec v state_op then false else true) finite_elements) <-> ~ tf_op_var_not_written x state_op. 
+      Proof.
+        intros. split; intros H.
+        - unfold tf_op_var_not_written in *. unfold not. intros.
+          apply filter_In in H. destruct H as [H1 H2].
+          destruct (tf_op_var_not_written_dec x state_op).
+          + inversion H2.
+          + auto.
+        - unfold tf_op_var_not_written in *. unfold not in H.
+          apply filter_In. split.
+          + apply nth_error_In with (n := finite_index x). exact (finite_surjective x).
+          + destruct (tf_op_var_not_written_dec x state_op).
+            * exfalso; apply H; auto.
+            * reflexivity.
+      Qed.
+
+      Definition filter_written_vars_nop
+        :
+        (filter (fun v => if tf_op_var_not_written_dec v (tf_nop states_var) then false else true) finite_elements) = [].
+      Proof.
+        set (f_list := filter _ _).
+        destruct (f_list) eqn:E.
+        - reflexivity.
+        - assert (In s f_list) by (timeout 10 sauto). subst f_list.
+          rewrite filter_written_vars in H. contradict H. unfold tf_op_var_not_written. intros. rewrite tf_op_step_writes_nop. reflexivity.
+      Qed.
+
+      Definition filter_written_vars_neg
+        :
+        forall x, (filter (fun v => if tf_op_var_not_written_dec v (tf_neg states_var x) then false else true) finite_elements) = [x].
+      Proof.
+        intros.
+        set (f_list := filter _ _).
+        assert (NoDup f_list).
+        {
+          subst f_list. apply NoDup_filter. apply finite_nodup.
+        }
+        assert (In x f_list).
+        {
+          subst f_list. apply filter_written_vars. unfold not. intros. specialize (H0 (ContextEnv.(create) (fun k => Bits.zero))).
+          rewrite tf_op_step_writes_neg_same_var in H0. inversion H0.
+        }
+        assert (forall y, y <> x -> ~ In y f_list).
+        {
+          subst f_list. intros. rewrite filter_written_vars. unfold not. intros. apply H2. clear H2.
+          unfold tf_op_var_not_written. intros. rewrite tf_op_step_writes_neg_other_var; auto.
+        }
+
+        destruct f_list as [| y l].
+        - exfalso. apply H0.
+        - assert (Heq_y_x : y = x).
+          {
+            destruct (eq_dec y x) as [Heq | Hneq].
+            - exact Heq.
+            - exfalso. specialize (H1 y Hneq). timeout 10 sauto.
+          } subst y.
+          assert (Heq_l_nil : l = []).
+          {
+            destruct l as [| z l'].
+            - reflexivity.
+            - exfalso.
+              assert (H_z_neq_x : z <> x).
+              { inversion H. timeout 10 sauto. }
+              specialize (H1 z H_z_neq_x).
+              exfalso. apply H1.
+              timeout 10 sauto.
+          } subst l.
+          
+          reflexivity.
+      Qed.
+
     End Properties.
 
 End Semantics.

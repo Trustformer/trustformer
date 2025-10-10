@@ -15,6 +15,7 @@ Require Import Coq.Logic.FunctionalExtensionality.
 
 Require Import Streams.
 Require Import Coq.Lists.List.
+Require Import Coq.Strings.String.
 Require Import Coq.Logic.Eqdep_dec.
 Require Import Coq.Init.Tactics.
 
@@ -637,7 +638,7 @@ Section CompositionalCorrectness.
             context and log, then packaging the result. The final Gamma is unchanged
             because UBind cleans up after itself. *)
       match UntypedSemantics.interp_action hw_reg_state sigma (state_values ++ Gamma) sched_log read_logs code with
-      | Some (final_log, v, Gamma') => Some (final_log, v, skipn (length state_list) Gamma')
+      | Some (final_log, v, Gamma') => Some (final_log, v, skipn (List.length state_list) Gamma')
       | None => None
       end.
     Proof.
@@ -744,6 +745,30 @@ Section CompositionalCorrectness.
       }
     Qed. 
 
+    Lemma interp_act_write_state_vars {REnv : Env some_reg_t} : 
+      forall (hw_reg_state: hw_env_t) (Gamma: list (string * val)) sched_log action_log state_op,
+      (* Precondition: Ensure all writes performed by the wrapper will succeed. *)
+      (forall (reg: some_reg_t), UntypedLogs.log_existsb sched_log reg UntypedLogs.is_write0 = false) ->
+
+      let written_vars := List.filter (fun s => if (tf_op_var_not_written_dec some_fs_states some_fs_states_fin some_fs_states_size s state_op) then false else true) some_fs_state_elements in
+      (* Precondition: Ensure all written vars have values in Gamma *)
+      (forall s, In s written_vars -> exists v, BitsToLists.list_assoc Gamma (_reg_name tf_ctx s) = Some v) ->
+
+      let val_for_state := fun s => match BitsToLists.list_assoc Gamma (_reg_name tf_ctx s) with
+      | Some v => v
+      | None => hw_reg_state.[tf_reg tf_ctx s]
+      end
+      in
+
+      let write_logs := List.fold_left (fun (acc_log: UntypedLogs._ULog) s =>
+        UntypedLogs.log_cons (tf_reg tf_ctx s) (UntypedLogs.LE Logs.LogWrite P0 (val_for_state s)) acc_log
+      ) written_vars action_log in 
+
+      UntypedSemantics.interp_action hw_reg_state sigma Gamma sched_log action_log (_rule_write_state_vars tf_ctx state_op {{ pass }}) =
+      Some (write_logs, Bits [], Gamma).
+    Proof.
+    Admitted.
+
   End ActionInterpretation.
 
   (* Prove next HW cycle = next Spec cycle *)
@@ -780,50 +805,182 @@ Section CompositionalCorrectness.
       end.
     Proof.
         intros hw_reg_state fs_state cmd state_var H_sigma_eq_cmd H_state.
+        unfold StateR in H_state.
+
+        (* assert (H_hwstate_is_bits: forall (s: some_fs_states), exists x, hw_reg_state.[tf_reg tf_ctx s] = Bits x).
+        { 
+          unfold StateR in H_state. unfold some_fs_states_t in *. unfold tf_states_type in *.
+          intros. rewrite H_state. unfold val_of_value. timeout 10 eauto.
+        } *)
 
         rewrite (interp_scheduler_only_cmd hw_reg_state cmd).
         { unfold UntypedSemantics.interp_scheduler, UntypedSemantics.interp_scheduler'.
           rewrite (interp_rule_right_cmd hw_reg_state).
           { 
-            unfold _rule_cmd, UntypedSemantics.interp_rule. 
+            unfold _rule_cmd, UntypedSemantics.interp_rule.
+            unfold UntypedLogs.latest_write, UntypedLogs.log_find.
+
             rewrite (@interp_act_read_state_vars ContextEnv).
             {
-              simpl. destruct (some_fs_action_ops cmd).
-              {
-                (* nop *)
-                unfold _rule_aux, _rule_write_state_vars, all_spec_states.
+              simpl. unfold _rule_aux, all_spec_states. cbn -[_reg_name].  
+              destruct (some_fs_action_ops cmd) eqn:H_ops.
+              { (* nop *)
                 cbn -[_reg_name]. 
-                set (reg_list := @finite_elements some_reg_t some_reg_t_finite).
-                set (state_list := @finite_elements some_fs_states some_fs_states_fin).
-
-                induction state_list.
+                
+                rewrite (@interp_act_write_state_vars ContextEnv).
                 {
-                  cbn. subst reg_list. rewrite !CommonProperties.getenv_ccreate.
-                  rewrite app_nil_r. timeout 10 sauto.
-                }
-                {
-                  cbn -[_reg_name]. 
-                  destruct (tf_op_var_not_written_dec some_fs_states some_fs_states_fin some_fs_states_size _ (tf_nop some_fs_states)).
+                  rewrite filter_written_vars_nop.
+                  cbn -[_reg_name]. rewrite !CommonProperties.getenv_ccreate.
+                  rewrite app_nil_r. 
+                  set (RegList := finite_elements).
+                  set (StateList := finite_elements).
+                  
+                  cbn -[_reg_name].
+                  rewrite SemanticProperties.find_none_notb. reflexivity.
+                  intros. unfold UntypedLogs.log_latest_write_fn.
+                  destruct a. destruct kind. reflexivity.
+                  exfalso. contradict H. subst RegList. unfold getenv; cbn -[_reg_name].
+                  
+                  rewrite <- fold_left_rev_right.
+                  induction (rev StateList).
+                  { 
+                    cbn -[_reg_name].  rewrite cassoc_ccreate. timeout 10 sauto.
+                  }
                   {
-                    admit.
-
-                  } {
-                    exfalso. clear IHstate_list.
-                    admit.
+                    cbn -[_reg_name].  destruct ( eq_dec (tf_reg tf_ctx a) (tf_reg tf_ctx state_var) ).
+                    { rewrite e. clear e. rewrite cassoc_creplace_eq. cbn -[_reg_name].  timeout 10 sauto. }
+                    { rewrite cassoc_creplace_neq_k. timeout 10 sauto. timeout 10 sauto. } 
                   }
                 }
+                {
+                  intros. cbn -[_reg_name].  unfold UntypedLogs.log_existsb. rewrite !CommonProperties.getenv_ccreate. timeout 10 sauto.
+                }
+                {
+                  intros. econstructor. rewrite filter_written_vars_nop in *. inversion H.         
+                }
+              }
+              { (* neg *)
+              
+                cbn -[_reg_name]. unfold opt_bind.
+                rewrite app_nil_r.
+              
+                set (read_val := BitsToLists.list_assoc _ _). assert (H_read_val: read_val = Some (hw_reg_state.[tf_reg tf_ctx x])).
+                {
+                  subst read_val. set (RegList := finite_elements).  set (StateList := finite_elements).
+
+                  assert (In x (rev StateList)) as H_in.
+                  { 
+                    subst StateList. generalize (@finite_surjective some_fs_states some_fs_states_fin x). intros H1. rewrite <- in_rev.
+                    apply nth_error_In with (finite_index x). exact H1.
+                  }
+                  assert (NoDup (rev StateList)) as H_nodup.
+                  {
+                    subst StateList. apply NoDup_rev. apply NoDup_map_inv with (f:=finite_index).
+                    apply finite_injective.
+                  }
+
+                  destruct (rev StateList).
+                  { timeout 10 sauto. }
+
+                  (* assert (s = x \/ (s <> x /\ ~ In x l)) as [H_eq | H_neq_and_notin].
+                  {
+                    ...
+                  }
+                  {
+                    apply not_in_split in H_in. destruct H_in as [l1 [l2 H_eq]].
+                    rewrite H_eq. clear H_in. clear H_eq.
+                    rewrite in_app_iff. apply in_or_app. left.
+                    rewrite in_rev. apply in_cons. timeout 10 sauto.
+                  }
+                  
+                  induction l.
+                  {
+                    cbn -[_reg_name]. 
+                    destruct (eq_dec x s).
+                    {
+                      rewrite e. clear e.
+                      destruct string_rec. {
+                        unfold UntypedLogs.latest_write0, UntypedLogs.log_find. unfold getenv; cbn -[_reg_name].
+                        rewrite !cassoc_ccreate. cbn -[_reg_name]. reflexivity. 
+                      } contradict n. timeout 10 sauto.
+                    } contradict H_in. timeout 10 sauto.
+                  } {
+
+                    ??? Figure it out
+
+                  } *)
+
+
+                  cbn -[_reg_name]. rewrite cassoc_ccreate.
                 
-              }
-              {
-                (* neg *)
-                admit.
+                } rewrite H_read_val. clear H_read_val read_val.
 
-              }
+                unfold UntypedSemantics.usigma1. 
+                rewrite H_state. cbn -[_reg_name]. 
 
+                rewrite (@interp_act_write_state_vars ContextEnv).
+                {
+                  rewrite filter_written_vars_neg in *.
+                  rewrite !CommonProperties.getenv_ccreate.
+                  rewrite <- !fold_left_rev_right.
+                  rewrite !app_nil_r.
+
+                  set (RegList := finite_elements).
+                  set (StateList := finite_elements).
+                  
+                  unfold getenv; cbn -[_reg_name].  unfold putenv; cbn -[_reg_name].  
+                  destruct (eq_dec x state_var).
+                  { (* The var we are interested in is the one we just negated, we should get Some new value *)
+                    rewrite e. clear e.
+                    rewrite cassoc_creplace_eq. cbn -[_reg_name].
+                    destruct string_rec. {
+                      unfold when_vars_match.
+                      destruct (@eq_dec some_fs_states (@EqDec_FiniteType some_fs_states some_fs_states_fin) state_var state_var).
+                      { 
+                        rewrite e0. f_equal. f_equal. 
+                        
+                        unfold Bits.neg, Bits.map.
+                        rewrite vect_to_list_map.
+                        reflexivity.
+                      } contradict n. timeout 10 sauto.
+                    } contradict n. timeout 10 sauto.
+                  } { (* The var we are interested in is unchanged, we should get None *)
+                    rewrite cassoc_creplace_neq_k.
+                    {
+                      unfold when_vars_match.
+                      destruct (@eq_dec some_fs_states (@EqDec_FiniteType some_fs_states some_fs_states_fin) x state_var).
+                      { contradict n. timeout 10 sauto. }
+
+                      cbn -[_reg_name].
+                      rewrite SemanticProperties.find_none_notb. reflexivity.
+                      intros. unfold UntypedLogs.log_latest_write_fn.
+                      destruct a. destruct kind. reflexivity.
+                      exfalso. contradict H. subst RegList. unfold getenv; cbn -[_reg_name].
+                      
+                      induction (rev StateList).
+                      { 
+                        cbn -[_reg_name].  rewrite cassoc_ccreate. timeout 10 sauto.
+                      }
+                      {
+                        cbn -[_reg_name].  destruct ( eq_dec (tf_reg tf_ctx a) (tf_reg tf_ctx state_var) ).
+                        { rewrite e. clear e. rewrite cassoc_creplace_eq. cbn -[_reg_name].  timeout 10 sauto. }
+                        { rewrite cassoc_creplace_neq_k. timeout 10 sauto. timeout 10 sauto. } 
+                      }
+                      
+                    } timeout 10 sauto.
+                  }
+                }
+                {
+                  intros. cbn -[_reg_name].  unfold UntypedLogs.log_existsb. rewrite !CommonProperties.getenv_ccreate. timeout 10 sauto.
+                }
+                {
+                  intros. econstructor. rewrite filter_written_vars_neg in *. assert (s = x) by (timeout 10 sauto). subst s. timeout 10 sauto.         
+                }
+              }
             }
             {
               unfold UntypedLogs.log_existsb. intros.
-              unfold existsb, getenv. cbn. 
+              unfold existsb, getenv. cbn -[_reg_name].  
               rewrite cassoc_ccreate.
               timeout 10 sauto.
             }
@@ -831,7 +988,6 @@ Section CompositionalCorrectness.
         } exact H_sigma_eq_cmd.
     Admitted.
     
-
     Theorem NextState_correct:
         forall cmd fs_state hw_reg_state,
         sigma ext_in_cmd val_true = encoded_cmd cmd ->
