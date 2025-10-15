@@ -8,6 +8,7 @@ Require Import Koika.KoikaForm.SimpleVal.
 
 Require Import Trustformer.v1.TrustformerSyntax.
 Require Import Trustformer.v1.TrustformerSemantics.
+Require Import Trustformer.v1.Utils.
 Require Trustformer.v1.UntypedProperties.CommonProperties.
 From Koika.Utils Require Import Tactics.
 
@@ -80,7 +81,8 @@ Section TrustformerSynthesis.
     Qed.
 
     Definition _reg_name (x: spec_states) : string :=
-      "tf_st_" ++ show (state_index x).
+      "tf_st_" ++ string_id_of_nat (state_index x).
+    (* maybe create own string to nat function that just adds something idk *)
 
     Instance reg_names : Show reg_t :=
       { show := fun r => match r with
@@ -349,6 +351,18 @@ Section CompositionalCorrectness.
           { apply cmd_rule_eq_dec_equal. exact H_eq. }
           timeout 10 sauto.
         - timeout 10 sauto.
+    Qed.
+
+    Lemma reg_name_injective :
+      forall r1 r2,
+        (_reg_name tf_ctx r1) = (_reg_name tf_ctx r2) -> r1 = r2.
+    Proof.
+      intros. unfold _reg_name in H.
+      timeout 10 simpl in H. unfold state_index in H.
+      injection H. intros.
+      apply finite_index_injective.
+      apply string_id_of_nat_inj in H0.
+      timeout 10 sauto.
     Qed.
 
   End Encoding. 
@@ -856,7 +870,7 @@ Section CompositionalCorrectness.
                   intros. cbn -[_reg_name].  unfold UntypedLogs.log_existsb. rewrite !CommonProperties.getenv_ccreate. timeout 10 sauto.
                 }
                 {
-                  intros. econstructor. rewrite filter_written_vars_nop in *. inversion H.         
+                  intros. econstructor. rewrite filter_written_vars_nop in *. inversion H. Unshelve. timeout 10 sauto.         
                 }
               }
               { (* neg *)
@@ -879,40 +893,34 @@ Section CompositionalCorrectness.
                     apply finite_injective.
                   }
 
-                  destruct (rev StateList).
+                  unfold UntypedLogs.latest_write0. unfold UntypedLogs.log_find. unfold getenv; cbn -[_reg_name].
+                  (* Set Printing All.                   *)
+                  set (f_nil := (fun _ _ => _)).
+                  assert (f_nil = (fun _ _ => [])).
+                  {
+                    subst f_nil. extensionality k. extensionality m.
+                    rewrite !cassoc_ccreate. timeout 10 sauto.
+                  } rewrite H. clear H f_nil.
+
+                  set (f_access := (fun _ => _)).
+                  assert (f_access = (fun s => (_reg_name tf_ctx s, hw_reg_state.[tf_reg tf_ctx s]))).
+                  {
+                    subst f_access. extensionality s.
+                    rewrite !cassoc_ccreate. timeout 10 sauto.
+                  } rewrite H. clear H f_access.
+
+                  induction (rev StateList).
                   { timeout 10 sauto. }
 
-                  (* assert (s = x \/ (s <> x /\ ~ In x l)) as [H_eq | H_neq_and_notin].
-                  {
-                    ...
+                  destruct (eq_dec a x).
+                  { rewrite e. subst RegList StateList. timeout 10 cbn -[_reg_name]. destruct string_rec. { reflexivity. } contradict n. timeout 10 sauto. }
+
+                  timeout 10 cbn -[_reg_name]. destruct string_rec. {
+                    contradict e. unfold not. intros. apply reg_name_injective in H. timeout 10 sauto.
                   }
-                  {
-                    apply not_in_split in H_in. destruct H_in as [l1 [l2 H_eq]].
-                    rewrite H_eq. clear H_in. clear H_eq.
-                    rewrite in_app_iff. apply in_or_app. left.
-                    rewrite in_rev. apply in_cons. timeout 10 sauto.
-                  }
-                  
-                  induction l.
-                  {
-                    cbn -[_reg_name]. 
-                    destruct (eq_dec x s).
-                    {
-                      rewrite e. clear e.
-                      destruct string_rec. {
-                        unfold UntypedLogs.latest_write0, UntypedLogs.log_find. unfold getenv; cbn -[_reg_name].
-                        rewrite !cassoc_ccreate. cbn -[_reg_name]. reflexivity. 
-                      } contradict n. timeout 10 sauto.
-                    } contradict H_in. timeout 10 sauto.
-                  } {
 
-                    ??? Figure it out
-
-                  } *)
-
-
-                  cbn -[_reg_name]. rewrite cassoc_ccreate.
-                
+                  apply in_inv in H_in. destruct H_in. timeout 10 sauto.
+                  inversion H_nodup. apply IHl. timeout 10 sauto. timeout 10 sauto.
                 } rewrite H_read_val. clear H_read_val read_val.
 
                 unfold UntypedSemantics.usigma1. 
@@ -986,7 +994,7 @@ Section CompositionalCorrectness.
             }
           } exact H_sigma_eq_cmd.
         } exact H_sigma_eq_cmd.
-    Admitted.
+    Qed.
     
     Theorem NextState_correct:
         forall cmd fs_state hw_reg_state,
