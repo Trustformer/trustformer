@@ -105,7 +105,7 @@ Section TrustformerSynthesis.
 
     Definition cmd_reg_size := @CommonProperties.finite_bits_needed spec_action spec_action_fin. (* TODO: determine size depending on length of list *)
 
-    Definition Sigma (fn: ext_fn_t) :=
+    Definition Sigma (fn: ext_fn_t) : ExternalSignature :=
       match fn with
       | ext_in_cmd => {$ bits_t 1 ~> maybe (bits_t cmd_reg_size) $}
       end.
@@ -197,19 +197,27 @@ End TrustformerSynthesis.
 (* This allows us to override the type checking tactic, for more fine grained control *)
 
 Ltac _tc_rules R Sigma uactions :=
-  let rule_name_t := _arg_type uactions in
-  let res := constr:(fun r: rule_name_t =>
-                      ltac:(destruct r eqn:? ;
-                            lazymatch goal with
-                            | [ H: _ = ?rr |- _ ] =>
-                              let ua := constr:(uactions rr) in
-                              let ua := (eval hnf in ua) in
-                              _tc_action R Sigma (@List.nil (var_t * type)) constr:(unit_t) ua
-                            end)) in
-  exact res.
+    let rule_name_t := _arg_type uactions in
+    let res := constr:(fun r: rule_name_t =>
+                        ltac:(destruct r eqn:? ;
+                                lazymatch goal with
+                                | [ H: _ = ?r1 ?r2 ?r3 |- _ ] =>
+                                    destruct r3 eqn:?;
+                                    lazymatch goal with
+                                    | [ H: _ = ?rr2 |- _ ] =>
+                                        let ua := constr:(uactions rr2) in
+                                        let ua := (eval hnf in ua) in
+                                        (_tc_action R Sigma (@List.nil (var_t * type)) constr:(unit_t) ua)
+                                    end
+                                | [ H: _ = ?rr |- _ ] =>
+                                    let ua := constr:(uactions rr) in
+                                    let ua := (eval hnf in ua) in
+                                    _tc_action R Sigma (@List.nil (var_t * type)) constr:(unit_t) ua
+                                end)) in
+    exact res.
 
 Notation tc_rules R Sigma actions :=
-  (ltac:(_tc_rules R Sigma actions)) (only parsing).
+    (ltac:(_tc_rules R Sigma actions)) (only parsing).
 
 
 Section CompositionalCorrectness.

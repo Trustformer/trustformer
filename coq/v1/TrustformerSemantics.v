@@ -162,7 +162,7 @@ Section Semantics.
             subst x. rewrite tf_op_step_writes_neg_same_var in H.
             inversion H.
           + left. intros. rewrite tf_op_step_writes_neg_other_var; auto. 
-      Qed.
+      Defined.
 
       Definition tf_op_var_not_written_dec_nop
         (var: states_var)

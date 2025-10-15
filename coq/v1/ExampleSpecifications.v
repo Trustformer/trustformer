@@ -80,7 +80,7 @@ Section Synthesis.
     Definition tf_ctx : TFSynthContext := {|
         tf_spec_states := fs_states;
         tf_spec_states_fin := _; 
-        tf_spec_states_t := fs_states_t;
+        tf_spec_states_size := fs_states_size;
         tf_spec_states_init := fs_states_init;
         tf_spec_action := fs_action;
         tf_spec_action_fin := _; 
@@ -91,7 +91,7 @@ Section Synthesis.
     Check R.
     Definition r := TrustformerSynthesis.r tf_ctx.
     Check r.
-    Definition Sigma := TrustformerSynthesis.Sigma.
+    Definition Sigma := TrustformerSynthesis.Sigma tf_ctx.
     Check Sigma.
 
     Definition rules := TrustformerSynthesis.rules tf_ctx.
@@ -110,7 +110,7 @@ Section Synthesis.
                         koika_rule_names := TrustformerSynthesis.rule_names tf_ctx;
                         koika_rule_external := (fun _ => false);
                         koika_scheduler := system_schedule;
-                        koika_module_name := "TestDesign2" |};
+                        koika_module_name := "ExampleTrustformerV1" |};
 
       ip_sim := {| sp_ext_fn_specs fn := {| efs_name := show fn; efs_method := false |};
                   sp_prelude := None |};
