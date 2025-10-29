@@ -12,11 +12,22 @@ Set Hammer GSMode 63.
 Section Semantics.
 
     (* Given some (finite) variables, each with some HW register size, we define our semantics  *)
-    Context (states_var: Type) (states_var_fin : FiniteType states_var) (states_size : states_var -> nat).
+    Context (states_var: Type) (states_var_fin : FiniteType states_var) 
+            (inputs_var: Type) (inputs_var_fin : FiniteType inputs_var) 
+            (outputs_var: Type) (outputs_var_fin : FiniteType outputs_var) 
+            (states_size : states_var -> nat)
+            (inputs_size : inputs_var -> nat)
+            (outputs_size : outputs_var -> nat).
 
     (* All spec states are mapped to bits, the size is given by the states_size function *)
     Definition tf_states_type (x: states_var) := 
       bits_t (states_size x).
+
+    Definition tf_inputs_type (x: inputs_var) := 
+      bits_t (inputs_size x).
+
+    Definition tf_outputs_type (x: outputs_var) := 
+      bits_t (outputs_size x).
 
     (* Given a variable, a current variable, and a thunk to compute the new value if they match,
        returns `Some new value` if they match, None otherwise *)
@@ -33,138 +44,135 @@ Section Semantics.
       | right _ => None
       end.
 
+    (* Given a variable, a current variable, and a thunk to compute the new value if they match,
+       returns `Some new value` if they match, None otherwise *)
+    Definition when_outputs_match
+      (op_var: outputs_var)
+      (current_var: outputs_var)
+      (thunk: unit -> option (type_denote (tf_outputs_type current_var)))
+      : option (type_denote (tf_outputs_type current_var)) :=
+      match eq_dec op_var current_var with
+      | left e =>
+        match e with
+        | eq_refl => thunk tt
+        end
+      | right _ => None
+      end.
+
+    Lemma __convert_lt:
+      forall a b, a < b -> Nat.max a b = b.
+    Proof. lia. Qed.
+
+    Definition convert {szA szB}
+      (original : bits_t szA)
+      : bits_t szB :=
+      match eq_dec szA szB with
+      | left e => eq_rect szA (fun sz => bits_t sz) original szB e
+      | right n =>
+          match lt_dec szA szB with
+          | left l =>
+            let p := __convert_lt _ _ l in
+            eq_rect (Nat.max szA szB) bits_t (Bits.extend_end original szB false) szB p
+          | right r =>
+            Bits.slice 0 szB original
+          end
+      end.
+
     (* Given a current state, a variable & an operation, returns the new value for the variable if it is written to *)
     Definition tf_op_step_writes
       (state: ContextEnv.(env_t) tf_states_type)
+      (input: forall (x : inputs_var), (type_denote (tf_inputs_type x)))
       (var: states_var)
-      (state_op: tf_ops states_var)
+      (state_op: tf_ops states_var inputs_var outputs_var)
       : option (type_denote (tf_states_type var)) :=
         match state_op with
-        | tf_nop _ => None
-        | tf_neg _ x =>
+        | tf_nop _ _ _ => None
+        | tf_neg _ _ _ x =>
             when_vars_match x var (fun _ => Some (Bits.neg state.[var]))
+        | tf_input _ _ _ x y =>
+            when_vars_match x var (fun _ => Some (convert (input y)))
+        | tf_output _ _ _ x y =>
+            None
+        end.
+    
+    (* Currently simple due to single cycle synth, later we need to detect when the out field was written to *)
+    Definition tf_op_step_outputs
+      (state: ContextEnv.(env_t) tf_states_type)
+      (var: outputs_var)
+      (state_op: tf_ops states_var inputs_var outputs_var)
+      : option (type_denote (tf_outputs_type var)) :=
+        match state_op with
+        | tf_output _ _ _ x y => when_outputs_match y var (fun _ => Some (convert (state.[x])))
+        | _ => None
         end.
 
     (* Given a current state and an operation, returns the new state after the operation is applied *)
     Definition tf_op_step_commit
       (state: ContextEnv.(env_t) tf_states_type)
-      (state_op: tf_ops states_var)
+      (input: forall (x : inputs_var), (type_denote (tf_inputs_type x)))
+      (state_op: tf_ops states_var inputs_var outputs_var)
       : 
       (ContextEnv.(env_t) tf_states_type) :=
         (ContextEnv.(create)
           (fun k => 
-            match tf_op_step_writes state k state_op with
+            match tf_op_step_writes state input k state_op with
               | Some v => v
               | None => state.[k]
+              end)).
+
+    Definition tf_op_outputs
+      (state: ContextEnv.(env_t) tf_states_type)
+      (input: forall (x : inputs_var), (type_denote (tf_inputs_type x)))
+      (output: ContextEnv.(env_t) tf_outputs_type)
+      (state_op: tf_ops states_var inputs_var outputs_var)
+      : 
+      (ContextEnv.(env_t) tf_outputs_type) :=
+        (ContextEnv.(create)
+          (fun k => 
+            match tf_op_step_outputs state k state_op with
+              | Some v => v
+              | None => output.[k]
               end)).
 
     (* TODO: Semantics of a chain of operation steps *)
 
     Section Properties.
 
-      (* Nop Operation *)
-      Lemma tf_op_step_writes_nop :
-        forall (state: ContextEnv.(env_t) tf_states_type) (x : states_var),
-        tf_op_step_writes state x (tf_nop states_var) = None.
-      Proof.
-        intros.
-        unfold tf_op_step_writes.
-        reflexivity.
-      Qed.
-
-      Lemma tf_op_step_commit_nop :
-        forall (state: ContextEnv.(env_t) tf_states_type) (t : unit),
-        tf_op_step_commit state (tf_nop states_var) = state.
-      Proof.
-        intros.
-        unfold tf_op_step_commit.
-        apply equiv_eq. intros k. rewrite getenv_create.
-        rewrite tf_op_step_writes_nop.
-        timeout 10 sauto.
-      Qed.
-
-      (* Neg Operation *)
-      Lemma tf_op_step_writes_neg_other_var :
-        forall (state: ContextEnv.(env_t) tf_states_type) (x y : states_var),
-        x <> y -> tf_op_step_writes state y (tf_neg states_var x) = None.
-      Proof.
-        intros.
-        unfold tf_op_step_writes.
-        unfold when_vars_match.
-        destruct (eq_dec x y).
-        - contradiction.
-        - reflexivity.
-      Qed.
-
-      Lemma tf_op_step_commit_neg_other_var :
-        forall (state: ContextEnv.(env_t) tf_states_type) (x y : states_var),
-        x <> y -> (tf_op_step_commit state (tf_neg states_var x)).[y] = state.[y].
-      Proof.
-        intros.
-        unfold tf_op_step_commit.
-        rewrite getenv_create.
-        rewrite tf_op_step_writes_neg_other_var.
-        timeout 10 sauto. timeout 10 sauto.
-      Qed.
-
-      Lemma tf_op_step_writes_neg_same_var :
-        forall (state: ContextEnv.(env_t) tf_states_type) (x : states_var),
-        tf_op_step_writes state x (tf_neg states_var x) = Some (Bits.neg (state.[x])).
-      Proof.
-        intros.
-        unfold tf_op_step_writes, when_vars_match.
-        destruct (eq_dec x x).
-        - destruct e. reflexivity.
-        - contradiction.
-      Qed.
-
-      Lemma tf_op_step_commit_neg_same_var :
-        forall (state: ContextEnv.(env_t) tf_states_type) (x : states_var),
-        (tf_op_step_commit state (tf_neg states_var x)).[x] = Bits.neg (state.[x]).
-      Proof.
-        intros.
-        unfold tf_op_step_commit. rewrite getenv_create.
-        rewrite tf_op_step_writes_neg_same_var.
-        destruct (eq_dec x x).
-        - reflexivity.
-        - contradiction.
-      Qed.
-
       (* Unchanged Property *)
       Definition tf_op_var_not_written
         (var: states_var)
-        (state_op: tf_ops states_var)
+        (state_op: tf_ops states_var inputs_var outputs_var)
         : Prop :=
-        forall state,
-        tf_op_step_writes state var state_op = None.
+        forall state input,
+        tf_op_step_writes state input var state_op = None.
 
       Definition tf_op_var_not_written_dec
         (var: states_var)
-        (state_op: tf_ops states_var)
+        (state_op: tf_ops states_var inputs_var outputs_var)
         : {tf_op_var_not_written var state_op} + {~ (tf_op_var_not_written var state_op)}.
       Proof.
         unfold tf_op_var_not_written.
         destruct state_op. 
         - (* tf_nop *)
-          left. intros. rewrite tf_op_step_writes_nop. reflexivity.
+          left. intros. timeout 10 sauto.
         - (* tf_neg *)
           destruct (eq_dec x var).
-          + right. intros H. specialize (H (ContextEnv.(create) (fun k => Bits.zero))).
-            subst x. rewrite tf_op_step_writes_neg_same_var in H.
-            inversion H.
-          + left. intros. rewrite tf_op_step_writes_neg_other_var; auto. 
+          + right. intros H. specialize (H (ContextEnv.(create) (fun k => Bits.zero)) (fun k => Bits.zero)).
+            subst x. timeout 10 simpl in H. unfold when_vars_match in H. destruct (eq_dec var var).
+            destruct e. timeout 10 sauto. timeout 10 sauto.
+          + left. intros. timeout 10 simpl. unfold when_vars_match. destruct (eq_dec x var). destruct e. timeout 10 sauto. timeout 10 sauto.
+        - (* tf_input *)
+          destruct (eq_dec x var).
+          + right. intros H. specialize (H (ContextEnv.(create) (fun k => Bits.zero)) (fun k => Bits.zero)).
+            subst x. timeout 10 simpl in H. unfold when_vars_match in H. destruct (eq_dec var var).
+            destruct e. timeout 10 sauto. timeout 10 sauto.
+          + left. intros. timeout 10 simpl. unfold when_vars_match. destruct (eq_dec x var). destruct e. timeout 10 sauto. timeout 10 sauto.
+        - (* tf_output *)
+          left. intros. timeout 10 sauto. 
       Defined.
 
-      Definition tf_op_var_not_written_dec_nop
-        (var: states_var)
-        : tf_op_var_not_written var (tf_nop states_var).
-      Proof.
-        unfold tf_op_var_not_written.
-        intros. rewrite tf_op_step_writes_nop. reflexivity.
-      Qed.
-
       Definition filter_written_vars
-        (state_op: tf_ops states_var)
+        (state_op: tf_ops states_var inputs_var outputs_var)
         :
         forall x, In x (filter (fun v => if tf_op_var_not_written_dec v state_op then false else true) finite_elements) <-> ~ tf_op_var_not_written x state_op. 
       Proof.
@@ -182,60 +190,31 @@ Section Semantics.
             * reflexivity.
       Qed.
 
-      Definition filter_written_vars_nop
-        :
-        (filter (fun v => if tf_op_var_not_written_dec v (tf_nop states_var) then false else true) finite_elements) = [].
+      (* Outputs *)
+      Definition tf_op_no_output
+        (var: outputs_var)
+        (state_op: tf_ops states_var inputs_var outputs_var)
+        : Prop :=
+        forall state,
+        tf_op_step_outputs state var state_op = None.
+      
+      Definition tf_op_no_output_dec
+        (var: outputs_var)
+        (state_op: tf_ops states_var inputs_var outputs_var)
+        : {tf_op_no_output var state_op} + {~ (tf_op_no_output var state_op)}.
       Proof.
-        set (f_list := filter _ _).
-        destruct (f_list) eqn:E.
-        - reflexivity.
-        - assert (In s f_list) by (timeout 10 sauto). subst f_list.
-          rewrite filter_written_vars in H. contradict H. unfold tf_op_var_not_written. intros. rewrite tf_op_step_writes_nop. reflexivity.
-      Qed.
-
-      Definition filter_written_vars_neg
-        :
-        forall x, (filter (fun v => if tf_op_var_not_written_dec v (tf_neg states_var x) then false else true) finite_elements) = [x].
-      Proof.
-        intros.
-        set (f_list := filter _ _).
-        assert (NoDup f_list).
-        {
-          subst f_list. apply NoDup_filter. apply finite_nodup.
-        }
-        assert (In x f_list).
-        {
-          subst f_list. apply filter_written_vars. unfold not. intros. specialize (H0 (ContextEnv.(create) (fun k => Bits.zero))).
-          rewrite tf_op_step_writes_neg_same_var in H0. inversion H0.
-        }
-        assert (forall y, y <> x -> ~ In y f_list).
-        {
-          subst f_list. intros. rewrite filter_written_vars. unfold not. intros. apply H2. clear H2.
-          unfold tf_op_var_not_written. intros. rewrite tf_op_step_writes_neg_other_var; auto.
-        }
-
-        destruct f_list as [| y l].
-        - exfalso. apply H0.
-        - assert (Heq_y_x : y = x).
-          {
-            destruct (eq_dec y x) as [Heq | Hneq].
-            - exact Heq.
-            - exfalso. specialize (H1 y Hneq). timeout 10 sauto.
-          } subst y.
-          assert (Heq_l_nil : l = []).
-          {
-            destruct l as [| z l'].
-            - reflexivity.
-            - exfalso.
-              assert (H_z_neq_x : z <> x).
-              { inversion H. timeout 10 sauto. }
-              specialize (H1 z H_z_neq_x).
-              exfalso. apply H1.
-              timeout 10 sauto.
-          } subst l.
-          
-          reflexivity.
-      Qed.
+        unfold tf_op_no_output.
+        destruct state_op. 
+        - (* tf_nop *) left. intros. timeout 10 sauto.
+        - (* tf_neg *) left. intros. timeout 10 sauto.
+        - (* tf_input *) left. intros. timeout 10 sauto.
+        - (* tf_output *)
+          destruct (eq_dec y var).
+          + right. intros H. specialize (H (ContextEnv.(create) (fun k => Bits.zero))).
+            subst y. timeout 10 simpl in H. unfold when_outputs_match in H. destruct (eq_dec var var).
+            destruct e. timeout 10 sauto. timeout 10 sauto.
+          + left. intros. timeout 10 simpl. unfold when_outputs_match. destruct (eq_dec y var). destruct e. timeout 10 sauto. timeout 10 sauto.
+      Defined.
 
     End Properties.
 

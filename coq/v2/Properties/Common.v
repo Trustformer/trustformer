@@ -5,6 +5,9 @@ Require Import Koika.KoikaForm.Untyped.UntypedSemantics.
 Require Import Koika.KoikaForm.SimpleVal.
 Require Import Koika.KoikaForm.Untyped.UntypedLogs.
 
+Require Import Coq.Lists.List.
+
+
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
@@ -68,7 +71,7 @@ Section FiniteType.
     Proof.
         unfold finite_cardinality.
         generalize (finite_surjective x). intros H.
-        apply nth_error_Some. timeout 10 sauto.
+        apply nth_error_Some. (* hammer. *) sfirstorder.
     Qed.
 
     Definition finite_bits_needed :=
@@ -80,7 +83,7 @@ Section FiniteType.
         unfold finite_bits_needed, finite_cardinality.
         generalize (finite_surjective x). intros H.
         assert (H_lt : finite_index x < Datatypes.length finite_elements).
-        { apply nth_error_Some. timeout 10 sauto. }
+        { apply nth_error_Some. (* hammer. *) sfirstorder. }
         assert (H_log : Datatypes.length finite_elements <= 2 ^ log2 (Datatypes.length finite_elements)).
         { 
             destruct (Datatypes.length finite_elements) as [| [| n]]; simpl.
@@ -89,6 +92,42 @@ Section FiniteType.
             - apply Nat.log2_up_spec. lia.
         }
         timeout 10 lia.
+    Qed.
+
+    Lemma finite_elements_is_finfun_listing:
+        FinFun.Listing finite_elements.
+    Proof.
+        unfold FinFun.Listing.
+        split.
+        - apply finite_nodup.
+        - unfold FinFun.Full.
+          intros x.
+          generalize (finite_surjective x). intros H.
+          apply (nth_error_In finite_elements (finite_index x)). (* hammer. *) sfirstorder.
+    Qed.
+
+    Lemma finite_index_finfun_inj: 
+        FinFun.Injective finite_index.
+    Proof.
+        unfold FinFun.Injective. exact finite_index_injective.
+    Qed.
+
+    Lemma finite_index_plus_constant_r_inj:
+        forall c x y,
+        finite_index x + c = finite_index y + c ->
+        x = y.
+    Proof.
+        intros. generalize (finite_index_injective x y). intros.
+        apply Nat.add_cancel_r in H. (* hammer. *) sfirstorder.
+    Qed.
+
+    Lemma finite_index_plus_constant_l_inj:
+        forall c x y,
+        c + finite_index x = c + finite_index y ->
+        x = y.
+    Proof.
+        intros. generalize (finite_index_injective x y). intros.
+        apply Nat.add_cancel_l in H. (* hammer. *) sfirstorder.
     Qed.
 
 End FiniteType.
@@ -140,12 +179,12 @@ Section Schedule.
         induction s; intros; simpl in *.
         - auto.
         - destruct (eq_dec r r0).
-            + exfalso; apply H. timeout 10 sauto.
-            + timeout 10 sauto.
+            + exfalso; apply H. (* hammer. *) sfirstorder.
+            + (* hammer. *) sfirstorder.
         - destruct (eq_dec r r0).
-            + exfalso; apply H. timeout 10 sauto.
-            + timeout 10 sauto.
-        - timeout 10 sauto.
+            + exfalso; apply H. (* hammer. *) sfirstorder.
+            + (* hammer. *) sfirstorder.
+        - (* hammer. *) sfirstorder.
     Qed.
 
 End Schedule.
@@ -161,6 +200,38 @@ Section Environments.
     Proof.
         intros. unfold getenv. cbn.
         rewrite cassoc_ccreate. reflexivity.
+    Qed.
+
+    Lemma get_put_eq:
+        forall {K : Type} {FT: FiniteType K} {V : esig K} (ev : env_t ContextEnv V) (k : K) (v : V k),
+            ContextEnv.(getenv) (ContextEnv.(putenv) ev k v) k = v.
+    Proof.
+        intros. rewrite get_put_eq. reflexivity.
+    Qed.
+
+    Lemma cassoc_put_eq:
+        forall {K : Type} {FT: FiniteType K} {V : esig K} (ev : env_t ContextEnv V) (k : K) (v : V k),
+            cassoc (finite_member k) (ContextEnv.(putenv) ev k v) = v.
+    Proof.
+        intros. generalize (get_put_eq ev k v). intros H.
+        unfold getenv in H. cbn in *. rewrite H. reflexivity.
+    Qed.
+
+    Lemma get_put_neq:
+        forall {K : Type} {FT: FiniteType K} {V : esig K} (ev : env_t ContextEnv V) (k k' : K) (v : V k),
+            k <> k' ->
+            ContextEnv.(getenv) (ContextEnv.(putenv) ev k v) k' = ContextEnv.(getenv) ev k'.
+    Proof.
+        intros. rewrite get_put_neq. reflexivity. sfirstorder.
+    Qed.
+
+    Lemma cassoc_put_neq:
+        forall {K : Type} {FT: FiniteType K} {V : esig K} (ev : env_t ContextEnv V) (k k' : K) (v : V k),
+            k <> k' ->
+            cassoc (finite_member k') (ContextEnv.(putenv) ev k v) = cassoc (finite_member k') ev.
+    Proof.
+        intros. generalize (get_put_neq ev k k' v H). intros Hget.
+        unfold getenv in Hget. cbn in *. rewrite Hget. reflexivity.
     Qed.
 
 End Environments.

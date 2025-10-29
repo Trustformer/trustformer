@@ -25,75 +25,143 @@ Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
 
+Ltac unfold_tfctx := repeat (
+  unfold tf_spec_states in * || unfold tf_spec_states_fin in * || unfold tf_spec_states_names in * || unfold tf_spec_states_size in * 
+  || unfold tf_spec_states_init in * 
+  
+  || unfold tf_spec_inputs in * || unfold tf_spec_inputs_fin in * || unfold tf_spec_inputs_names in * || unfold tf_spec_inputs_size in * 
+  
+  || unfold tf_spec_outputs in * || unfold tf_spec_outputs_fin in * || unfold tf_spec_outputs_names in * || unfold tf_spec_outputs_size in * 
+  
+  || unfold tf_spec_action in * || unfold tf_spec_action_fin in * || unfold tf_spec_action_names in * 
+  
+  || unfold tf_spec_action_ops in *).
+
+Ltac unfold_specs := repeat (
+  unfold spec_states in * || unfold spec_states_fin in * || unfold spec_states_size in * || unfold spec_states_t in *
+    || unfold spec_states_init in * || unfold spec_all_states in * || unfold spec_state_index in * || unfold spec_state_num in * 
+    
+    || unfold spec_inputs in * || unfold spec_inputs_fin in * || unfold spec_inputs_size in * || unfold spec_inputs_t in * 
+    || unfold spec_all_inputs in * || unfold spec_input_index in * || unfold spec_input_num in * 
+    
+    || unfold spec_outputs in * || unfold spec_outputs_fin in * || unfold spec_outputs_size in * || unfold spec_outputs_t in * 
+    || unfold spec_all_outputs in * || unfold spec_output_index in * || unfold spec_output_num in * 
+    
+    || unfold spec_action in * || unfold spec_action_fin in * || unfold spec_all_actions in * || unfold spec_action_index in * 
+    || unfold spec_action_num in * 
+    
+    || unfold spec_action_ops in *).
+
+Ltac unfold_specs_tfctx := unfold_specs ; unfold_tfctx.
+
 Section CompositionalCorrectness.
 
-    (* Generalize over any input to the synthesis *)
-    Context (some_fs_states: Type).
-    Context (some_fs_states_fin : FiniteType some_fs_states).
-    Context (some_fs_states_names : Show some_fs_states).
-    Context (some_fs_states_size : some_fs_states -> nat).
-    Context (some_fs_states_init : forall x: some_fs_states, tf_states_type some_fs_states some_fs_states_size x).
-    Context (some_fs_action : Type).
-    Context (some_fs_action_fin : FiniteType some_fs_action).
-    Context (some_fs_action_names : Show some_fs_action).
-    Context (some_fs_action_ops : some_fs_action -> tf_ops some_fs_states).
+  (* Opaque finite_elements. *)
+  Arguments finite_elements : simpl never.
 
-    (* We craft the tx_context here as it leads to cleaner proofs than generalizing over it*)
-    Definition tf_ctx := {|
-      tf_spec_states := some_fs_states;
-      tf_spec_states_fin := some_fs_states_fin;
-      tf_spec_states_names := some_fs_states_names;
-      tf_spec_states_size := some_fs_states_size;
-      tf_spec_states_init := some_fs_states_init;
-      tf_spec_action := some_fs_action;
-      tf_spec_action_fin := some_fs_action_fin;
-      tf_spec_action_names := some_fs_action_names;
-      tf_spec_action_ops := some_fs_action_ops
-    |}.
-    Definition some_fs_states_t := tf_states_type some_fs_states some_fs_states_size.
+  (* Generalize over any input to the synthesis *)
+  Context (some_fs_states: Type).
+  Context (some_fs_states_fin : FiniteType some_fs_states).
+  Context (some_fs_states_names : Show some_fs_states).
+  Context (some_fs_states_size : some_fs_states -> nat).
+  Context (some_fs_states_init : forall x: some_fs_states, tf_states_type some_fs_states some_fs_states_size x).
 
-    Context (sigma: ext_fn_t -> val -> val).
-    Context (sigma_valid: 
-     forall f x, 
-     exists (f_t : retSig (Sigma tf_ctx f)),
-     sigma f x = val_of_value f_t
-    ).
+  Context (some_fs_inputs : Type).
+  Context (some_fs_inputs_fin : FiniteType some_fs_inputs).
+  Context (some_fs_inputs_names : Show some_fs_inputs).
+  Context (some_fs_inputs_size : some_fs_inputs -> nat).
 
-    (* Obtain the various outputs of the synthesis *)
-    Definition some_R := R tf_ctx.
-    Definition some_r := r tf_ctx.
-    Definition some_rules := rules tf_ctx.
-    Definition some_system_schedule := system_schedule tf_ctx.
-    Definition some_reg_t := reg_t tf_ctx.
-    Definition some_cmd_reg_size := cmd_reg_size tf_ctx.
+  Context (some_fs_outputs : Type).
+  Context (some_fs_outputs_fin : FiniteType some_fs_outputs).
+  Context (some_fs_outputs_names : Show some_fs_outputs).
+  Context (some_fs_outputs_size : some_fs_outputs -> nat).
 
-    Instance some_reg_t_finite : FiniteType (some_reg_t) := reg_t_finite tf_ctx.
-    Definition some_reg_t_elements := @finite_elements some_reg_t some_reg_t_finite.
-    Definition some_fs_state_elements := @finite_elements some_fs_states some_fs_states_fin.
+  Context (some_fs_action : Type).
+  Context (some_fs_action_fin : FiniteType some_fs_action).
+  Context (some_fs_action_names : Show some_fs_action).
+  Context (some_fs_action_ops : some_fs_action -> tf_ops some_fs_states some_fs_inputs some_fs_outputs).
+
+  (* We craft the tx_context here as it leads to cleaner proofs than generalizing over it*)
+  Definition tf_ctx := {|
+    tf_spec_states := some_fs_states;
+    tf_spec_states_fin := some_fs_states_fin;
+    tf_spec_states_names := some_fs_states_names;
+    tf_spec_states_size := some_fs_states_size;
+    tf_spec_states_init := some_fs_states_init;
+
+    tf_spec_inputs := some_fs_inputs;
+    tf_spec_inputs_fin := some_fs_inputs_fin;
+    tf_spec_inputs_names := some_fs_inputs_names;
+    tf_spec_inputs_size := some_fs_inputs_size;
+
+    tf_spec_outputs := some_fs_outputs;
+    tf_spec_outputs_fin := some_fs_outputs_fin;
+    tf_spec_outputs_names := some_fs_outputs_names;
+    tf_spec_outputs_size := some_fs_outputs_size;
+
+    tf_spec_action := some_fs_action;
+    tf_spec_action_fin := some_fs_action_fin;
+    tf_spec_action_names := some_fs_action_names;
+    tf_spec_action_ops := some_fs_action_ops
+  |}.
+  Definition some_fs_states_t := tf_states_type some_fs_states some_fs_states_size.
+
+  Context (sigma: (ext_fn_t tf_ctx) -> val -> val).
+  Context (sigma_valid: 
+    forall f x, 
+    exists (f_t : retSig (Sigma tf_ctx f)),
+    sigma f x = val_of_value f_t
+  ).
+
+  (* Obtain the various outputs of the synthesis *)
+  Definition some_R := R tf_ctx.
+  Definition some_r := r tf_ctx.
+  Definition some_rules := rules tf_ctx.
+  Definition some_system_schedule := system_schedule tf_ctx.
+  Definition some_reg_t := reg_t tf_ctx.
+  Definition some_cmd_reg_size := cmd_reg_size tf_ctx.
+
+  Instance some_reg_t_finite : FiniteType (some_reg_t) := _reg_t_finite tf_ctx.
+  Definition some_reg_t_elements := @finite_elements some_reg_t some_reg_t_finite.
+  Definition some_fs_state_elements := @finite_elements some_fs_states some_fs_states_fin.
 
 
-    (* Encoding of commands as bitvectors *)
-    Definition _fs_cmd_encoding (a: some_fs_action) :=
-      Bits.of_nat some_cmd_reg_size (@finite_index some_fs_action _ a).
-    Definition _encoded_cmd (a: some_fs_action) : type_denote (maybe (bits_t some_cmd_reg_size)) :=
-        (Ob~1, (_fs_cmd_encoding a, tt)).
-    Definition encoded_cmd (a: some_fs_action) := val_of_value (_encoded_cmd a).
+  (* Encoding of commands as bitvectors *)
+  Definition _fs_cmd_encoding (a: some_fs_action) :=
+    Bits.of_nat some_cmd_reg_size (@finite_index some_fs_action _ a).
+  Definition _encoded_cmd (a: some_fs_action) : type_denote (maybe (bits_t some_cmd_reg_size)) :=
+      (Ob~1, (_fs_cmd_encoding a, tt)).
+  Definition encoded_cmd (a: some_fs_action) := val_of_value (_encoded_cmd a).
 
-    Definition val_true := Bits ( [true] ).
-    Eval compute in val_true.
+  Definition val_true := Bits ( [true] ).
+
+  Ltac unfold_some_specs := 
+    repeat (unfold some_fs_states_t in * || unfold some_R in * || unfold some_r in * || unfold some_rules in * || unfold some_system_schedule in * 
+    || unfold some_reg_t in * || unfold some_cmd_reg_size in * || unfold some_reg_t_elements in * || unfold some_fs_state_elements in * 
+    || unfold encoded_cmd in * || unfold _encoded_cmd in * || unfold _fs_cmd_encoding in * ).
+
+  Ltac unfold_all := unfold_some_specs ; unfold_specs_tfctx.
+
+  Ltac clean := 
+    (* the list of all regs is verbose this should clean it up a bit *)
+      try match goal with
+      | [ all_regs := _ |- _ ] => subst all_regs
+      | _ => idtac
+      end;
+      try set (all_regs := (map _ _ ++ map _ _  ++ map _ _)) in *;
+      try match goal with
+      | [ all_regs := _ |- _ ] => try (assert (all_regs = @finite_elements some_reg_t some_reg_t_finite) as _aux_H_all_regs by reflexivity; rewrite _aux_H_all_regs in *; clear _aux_H_all_regs; clear all_regs)
+      | _ => idtac
+      end
+      .
+
+  Ltac unfold_clean := unfold_all ; clean.
+      
+  Ltac squash := unfold_all ; timeout 10 cbn -[vect_to_list UntypedLogs.log_existsb UntypedLogs.log_empty _reg_name _out_name] 
+                 ; repeat f_equal.
 
   (* Properties about the encoding of commands *)
   Section Encoding.
-
-    Example val_of_value_for_cmd_is_struct :
-    forall (a : some_fs_action),
-      let sig := Maybe (bits_t some_cmd_reg_size) in
-      encoded_cmd a
-      =
-      Struct sig [val_true; Bits (vect_to_list (_fs_cmd_encoding a))].
-    Proof.
-      intros. unfold encoded_cmd, _encoded_cmd. reflexivity.
-    Qed.
 
     Lemma encoded_cmd_inj :
       forall (a1 a2 : some_fs_action),
@@ -118,8 +186,7 @@ Section CompositionalCorrectness.
 
     Lemma encoded_cmd_inj' :
       forall (a1 a2 : some_fs_action),
-      a1 <> a2 ->
-      encoded_cmd a1 <> encoded_cmd a2.
+      a1 <> a2 -> encoded_cmd a1 <> encoded_cmd a2.
     Proof.
       intros a1 a2 H_neq. intros H_eq.
       apply encoded_cmd_inj in H_eq.
@@ -129,18 +196,16 @@ Section CompositionalCorrectness.
     Lemma sigma_ext_in_cmd_is_struct :
       forall (cmd : some_fs_action) vars,
       exists valid' cmd_encoding,
-      sigma ext_in_cmd vars = Struct (Maybe (bits_t some_cmd_reg_size)) [Bits [valid']; Bits cmd_encoding].
+      sigma (ext_in_cmd tf_ctx) vars = Struct (Maybe (bits_t some_cmd_reg_size)) [Bits [valid']; Bits cmd_encoding].
     Proof.
       intros.
-      specialize (sigma_valid ext_in_cmd vars).
+      specialize (sigma_valid (ext_in_cmd tf_ctx) vars).
       unfold retSig, Sigma, val_of_value, some_cmd_reg_size in *.
       destruct sigma_valid as [f_t Heq].
       destruct f_t as [b v_and_unit].
       destruct v_and_unit as [v H_unit].
-      rewrite Heq.
-      eexists _,_.
-      simpl.
-      reflexivity.
+      rewrite Heq. eexists _,_.
+      simpl. reflexivity.
     Qed.   
 
     Lemma cmd_rule_eq_dec_equal:
@@ -152,26 +217,12 @@ Section CompositionalCorrectness.
         - intros H_eq. rewrite H_eq. reflexivity.
     Qed.
 
-    Lemma cmd_rule_eq_dec_if:
-      forall (cmd1 cmd2: some_fs_action) a b,
-        (if eq_dec (rule_cmd tf_ctx cmd1) (rule_cmd tf_ctx cmd2)
-        then a
-        else b) ->
-        ((cmd1 = cmd2 -> a) /\ (cmd1 <> cmd2 -> b)).
-    Proof.
-        intros. destruct (eq_dec (rule_cmd tf_ctx cmd1) (rule_cmd tf_ctx cmd2)) as [H_eq | H_neq].
-        - assert (cmd1 = cmd2) as H_cmd_eq.
-          { apply cmd_rule_eq_dec_equal. exact H_eq. }
-          timeout 10 sauto.
-        - timeout 10 sauto.
-    Qed.
-
-    Lemma reg_name_injective :
+    Lemma reg_name_inj :
       forall r1 r2,
         (_reg_name tf_ctx r1) = (_reg_name tf_ctx r2) -> r1 = r2.
     Proof.
       intros. unfold _reg_name in H.
-      timeout 10 simpl in H. unfold state_index in H.
+      timeout 10 simpl in H. unfold spec_state_index in H.
       injection H. intros.
       apply finite_index_injective.
       apply string_id_of_nat_inj in H0.
@@ -180,14 +231,19 @@ Section CompositionalCorrectness.
 
   End Encoding. 
 
-    (* Other helpful definitions *)
+  (* Other helpful definitions *)
   Definition hw_env_t := env_t ContextEnv (fun _ : some_reg_t => val).
+
+  (* Sometimes coq can not figure out some of the types for ULog, these should work  *)
+  Definition ULog_V := val.
+  Definition ULog_reg_t := reg_t tf_ctx.
+  Definition ULog_Renv := (@ContextEnv some_reg_t some_reg_t_finite).
 
   Section CmdGuard.
     
     Lemma interp_rule_wrong_cmd:
       forall (hw_reg_state: hw_env_t) log cmd,
-      sigma ext_in_cmd val_true <> encoded_cmd cmd ->
+      sigma (ext_in_cmd tf_ctx) val_true <> encoded_cmd cmd ->
       UntypedSemantics.interp_rule hw_reg_state sigma log (some_rules (rule_cmd tf_ctx cmd)) = None.
     Proof.
       intros.
@@ -197,134 +253,239 @@ Section CompositionalCorrectness.
       cbn. unfold val_true.
 
       (* We know what in_cmd will give as a result so lets substitute it in our code *)
-      set (sigma_val := sigma ext_in_cmd (Bits [true])) in *.
+      set (sigma_val := sigma (ext_in_cmd tf_ctx) (Bits [true])) in *.
       assert (HSigmaValCmd: sigma_val <> encoded_cmd cmd).
       { unfold sigma_val. exact H. }
       destruct sigma_val eqn:H_sigma_val.
-      cbn. timeout 10 sauto. cbn. timeout 10 sauto.
-      { remember (BitsToLists.get_field (Struct sig v) "valid") as valid_field_opt.
-        destruct valid_field_opt eqn:H_cmd_valid.
-        { cbn. destruct v0.
-          { cbn. destruct v0.
-            cbn. timeout 10 sauto. cbn. destruct v0.
-            { cbn. destruct b.
-              {
-                cbn. remember (BitsToLists.get_field_struct (struct_fields sig) v "data") as data_field_opt.
-                destruct data_field_opt.
-                { cbn. destruct v0.
-                  { cbn. 
-                    assert (BitsToLists.list_eqb Bool.eqb v0 (vect_to_list (Bits.of_nat (cmd_reg_size tf_ctx) (action_index tf_ctx cmd))) = false).
-                    { 
-                      rewrite <- Bool.not_true_iff_false.
-                      rewrite BitsToLists.list_eqb_correct.
-                      {
-                        intro H_eq. subst v0. subst sigma_val. clear valid_field_opt H_cmd_valid.
-                        timeout 10 cbn in *. unfold not in *.
-                        unfold _fs_cmd_encoding, some_cmd_reg_size, action_index, spec_action, spec_action_fin in *.
-                        unfold tf_ctx, tf_spec_action, tf_spec_action_fin in *. fold tf_ctx in *.
-                        apply HSigmaValCmd.
-                        generalize (sigma_ext_in_cmd_is_struct cmd (Bits [true])); intros.
-                        rewrite H_sigma_val in *. 
+      1,2,4: (* hammer *) timeout 10 sfirstorder.
+      remember (BitsToLists.get_field (Struct sig v) "valid") as valid_field_opt.
+      destruct valid_field_opt eqn:H_cmd_valid. 2: (* hammer *) sfirstorder.
+      cbn. destruct v0. 2-4: (* hammer *) timeout 10 sfirstorder.
+      cbn. destruct v0. (* hammer *) timeout 10 sfirstorder.
+      cbn. destruct v0. 2: (* hammer. *) timeout 10 sfirstorder.
+      cbn. destruct b. 2: (* hammer. *) timeout 10 sfirstorder.
+      cbn. remember (BitsToLists.get_field_struct _ _ _) as data_field_opt.
+      destruct data_field_opt. 2: (* hammer. *) timeout 10 sfirstorder.
+      cbn. destruct v0. 2,4: (* hammer. *) timeout 10 sfirstorder. 2: (* hammer. *) timeout 10 hauto.
+      cbn. set (eqb_result := BitsToLists.list_eqb _ _ _) in *. assert (eqb_result = false).
+      2: { rewrite H0. cbn. reflexivity. } subst eqb_result.
+      rewrite <- Bool.not_true_iff_false. rewrite BitsToLists.list_eqb_correct.
+      2: (* hammer. *) eauto using eqb_true_iff.
+                      
+      intro H_eq. subst.
+      timeout 10 cbn in *. unfold not in *.
+      unfold _fs_cmd_encoding in *. 
+      unfold_all.
+      apply HSigmaValCmd. clear HSigmaValCmd.
+      generalize (sigma_ext_in_cmd_is_struct cmd (Bits [true])); intros.
+      rewrite <- H_sigma_val in *. subst sigma_val. 
 
-                        destruct H0 as [valid' [cmd_encoding H_sigma_struct]].
-                        f_equal. timeout 10 sauto.
-                        injection H_sigma_struct as Heqv.
-                        rewrite Heqv in *. clear Heqv. rewrite H0 in *. clear H0.
-
-                        unfold BitsToLists.get_field_struct in *.
-                        f_equal. f_equal.
-                        { timeout 10 sauto. }
-                        { timeout 10 sauto. }
-                    
-                      } intros. split. intros. destruct a, b. timeout 10 sauto. timeout 10 sauto. timeout 10 sauto. timeout 10 sauto. 
-                        intros. rewrite H0. destruct b. timeout 10 sauto. timeout 10 sauto.
-                    } rewrite H0. cbn. timeout 10 sauto.
-                  } cbn. timeout 10 sauto. cbn. timeout 10 sauto. cbn. timeout 10 sauto.
-                } cbn. timeout 10 sauto.
-              } cbn. timeout 10 sauto.                         
-            } cbn. timeout 10 sauto.
-          } cbn. timeout 10 sauto. cbn. timeout 10 sauto. cbn. timeout 10 sauto.            
-        } cbn. timeout 10 sauto.  
-       } cbn. timeout 10 sauto.
+      destruct H0 as [valid' [cmd_encoding H_sigma_struct]].
+      rewrite H_sigma_struct in *.
+      repeat f_equal. all: (* hammer. *) timeout 10 hauto.
     Qed.
 
-    Lemma interp_scheduler_no_cmd:
-      forall (hw_reg_state: hw_env_t) cmd schedule log,
-      sigma ext_in_cmd val_true = encoded_cmd cmd ->
-      (~ Common.scheduler_has_rule schedule (rule_cmd tf_ctx cmd)) ->
-      UntypedSemantics.interp_scheduler' some_rules hw_reg_state sigma log schedule = log.
+    Lemma interp_rule_right_cmd:
+      forall (hw_reg_state: hw_env_t) log cmd,
+      sigma (ext_in_cmd tf_ctx) val_true = encoded_cmd cmd ->
+      UntypedSemantics.interp_rule hw_reg_state sigma log (some_rules (rule_cmd tf_ctx cmd)) = 
+      UntypedSemantics.interp_rule hw_reg_state sigma log (_rule_cmd tf_ctx cmd).
     Proof.
-      intros. unfold UntypedSemantics.interp_scheduler, UntypedSemantics.interp_scheduler'.
+      intros.
+      unfold some_rules.
+      unfold UntypedSemantics.interp_rule.
+      unfold UntypedSemantics.interp_action.
+      cbn -[_rule_cmd].
 
-      induction schedule. reflexivity.
-      {
-        rewrite IHschedule. clear IHschedule.
-        {
-          unfold not, Common.scheduler_has_rule in H0.
-          destruct r. destruct (eq_dec cmd0 cmd).
-          - subst cmd0. destruct (eq_dec (rule_cmd tf_ctx cmd) (rule_cmd tf_ctx cmd)).
-            + exfalso. apply H0. sauto.
-            + exfalso. unfold not in n. generalize (cmd_rule_eq_dec_equal cmd cmd). intros. inversion H1. timeout 10 sauto.
-          - rewrite interp_rule_wrong_cmd.
-            + timeout 10 sauto.
-            + generalize (encoded_cmd_inj' cmd0 cmd). intros. timeout 10 sauto.
-        }
-        {
-          generalize (Common.scheduler_has_not_rule_inductive (r |> schedule) (rule_cmd tf_ctx cmd) ).
-          intros.
-          pose proof (H1 H0) as H_derived.
-          destruct (eq_dec r (rule_cmd tf_ctx cmd)) as [H_eq | H_neq].
-          - exfalso. contradiction.
-          - exact H_derived.
-        }
-      }
-      {
-        rewrite IHschedule2. clear IHschedule2.
-        {
-          unfold not, Common.scheduler_has_rule in H0.
-          destruct r. destruct (eq_dec cmd0 cmd).
-          - subst cmd0. destruct (eq_dec (rule_cmd tf_ctx cmd) (rule_cmd tf_ctx cmd)).
-            + exfalso. apply H0. sauto.
-            + exfalso. unfold not in n. generalize (cmd_rule_eq_dec_equal cmd cmd). intros. inversion H1. timeout 10 sauto.
-          - rewrite interp_rule_wrong_cmd.
-            + timeout 10 sauto.
-            + generalize (encoded_cmd_inj' cmd0 cmd). intros. timeout 10 sauto.
+      set (sigma_val := sigma (ext_in_cmd tf_ctx) (Bits [true])) in *.
+      assert (HSigmaValCmd: sigma_val = encoded_cmd cmd).
+      { unfold sigma_val. exact H. } rewrite HSigmaValCmd in *. clear sigma_val HSigmaValCmd. clear H.
+      cbn -[_rule_cmd].
 
-        }
-        {
-          generalize (Common.scheduler_has_not_rule_inductive (Try r schedule1 schedule2) (rule_cmd tf_ctx cmd) ).
-          intros.
-          pose proof (H1 H0) as H_derived.
-          destruct (eq_dec r (rule_cmd tf_ctx cmd)) as [H_eq | H_neq].
-          - exfalso. contradiction.
-          - timeout 10 sauto.
-        }
-      }
-      {
-        rewrite IHschedule. clear IHschedule.
-        timeout 10 sauto.
-        {
-          generalize (Common.scheduler_has_not_rule_inductive (SPos p schedule) (rule_cmd tf_ctx cmd) ).
-          intros.
-          pose proof (H1 H0) as H_derived.
-          timeout 10 sauto.
-        }
-      }
+      (* Help out unpacking the relevant spec_action_index info from tf_ctx *)
+      unfold _fs_cmd_encoding, some_cmd_reg_size, spec_action_index, spec_action, spec_action_fin in *.
+      assert (@finite_index some_fs_action some_fs_action_fin cmd = @finite_index (spec_action tf_ctx) (spec_action_fin tf_ctx) cmd).
+      { unfold tf_ctx, tf_spec_action, tf_spec_action_fin in *. fold tf_ctx in *. reflexivity. } rewrite H in *; clear H.
+
+      (* Help out with the comparison *)
+      set (eq_true := BitsToLists.list_eqb _ _ _) in *.
+      assert (eq_true = true).
+      { unfold eq_true. apply BitsToLists.list_eqb_refl. (* hammer. *) timeout 10 sfirstorder using eqb_true_iff. } rewrite H in *; clear H. clear eq_true.
+
+      unfold opt_bind.
+      cbn.
+      reflexivity.
     Qed.
+
+    Definition interp_out_rule_result (hw_reg_state : hw_env_t) 
+        (log : @UntypedLogs._ULog val (reg_t tf_ctx) (@ContextEnv some_reg_t some_reg_t_finite)) (out : spec_outputs tf_ctx) := 
+      UntypedLogs.log_cons (REnv:=ULog_Renv) (tf_out_ack tf_ctx out) 
+          {| UntypedLogs.kind := LogWrite; UntypedLogs.port := P1; UntypedLogs.val := sigma (ext_output tf_ctx out) hw_reg_state.[tf_out tf_ctx out] |}
+          (
+            UntypedLogs.log_cons (tf_out tf_ctx out) 
+              {| UntypedLogs.kind := LogRead; UntypedLogs.port := P0; UntypedLogs.val := Bits [] |}
+              UntypedLogs.log_empty 
+          ).
+
+    Lemma interp_out_rule:
+      forall (hw_reg_state: hw_env_t) log out,
+      UntypedLogs.log_existsb log (tf_out tf_ctx out) UntypedLogs.is_write1 = false ->
+      UntypedLogs.log_existsb log (tf_out tf_ctx out) UntypedLogs.is_write0 = false ->
+      UntypedLogs.log_existsb log (tf_out_ack tf_ctx out) UntypedLogs.is_write1 = false ->
+      UntypedSemantics.interp_rule hw_reg_state sigma log (some_rules (rule_out tf_ctx out)) = 
+      Some(
+        interp_out_rule_result hw_reg_state log out
+      ). 
+    Proof.
+      intros.
+      unfold interp_out_rule_result, some_rules, rules, _rule_cmd.
+      unfold UntypedSemantics.interp_rule, UntypedSemantics.interp_action.
+
+      squash. rewrite H. rewrite H0. clear H H0. cbn.
+
+      (* Have we written to out this out ack this cycle? *)
+      set (has_w_ack := UntypedLogs.log_existsb _ _ _).
+      assert (has_w_ack = false). {
+        subst has_w_ack.
+        unfold UntypedLogs.log_existsb in *.
+        
+        unfold getenv in *. cbn [ContextEnv] in *.
+        rewrite !cassoc_ccreate. unfold UntypedLogs.RLog in *. rewrite Common.cassoc_put_neq. 
+        rewrite !cassoc_ccreate. rewrite app_nil_l. exact H1.
+        (* hammer. *) timeout 10 sfirstorder.
+      } rewrite H. clear H has_w_ack. squash.
+    Qed.
+
+    Definition log_after_outputs (hw_reg_state: hw_env_t) log := 
+      fold_right (fun (t : some_fs_outputs) (acc: env_t ContextEnv (fun _ : reg_t tf_ctx => UntypedLogs.RLog val)) => 
+        UntypedLogs.log_app (interp_out_rule_result hw_reg_state acc t) acc
+      ) log (rev finite_elements).
+      
+    Lemma interp_scheduler_only_outputs:
+      forall other (hw_reg_state: hw_env_t) log,
+        (forall o, In o finite_elements -> UntypedLogs.log_existsb log (tf_out tf_ctx o) UntypedLogs.is_write1 = false) ->
+        (forall o, In o finite_elements -> UntypedLogs.log_existsb log (tf_out tf_ctx o) UntypedLogs.is_write0 = false) ->
+        (forall o, In o finite_elements -> UntypedLogs.log_existsb log (tf_out_ack tf_ctx o) UntypedLogs.is_write1 = false) ->
+        UntypedSemantics.interp_scheduler' (rules tf_ctx) hw_reg_state sigma log
+          (fold_right (fun (t : some_fs_outputs) (acc : scheduler) => rule_out tf_ctx t |> acc) other finite_elements)
+        =
+        UntypedSemantics.interp_scheduler' (rules tf_ctx) hw_reg_state sigma (log_after_outputs hw_reg_state log) other.
+    Proof.
+      intros. unfold log_after_outputs.
+
+      set (output_list := finite_elements) in *.
+      assert (nodup: NoDup (output_list)).
+      { apply NoDup_map_inv with (f:=finite_index). apply finite_injective. }
+
+      generalize dependent log.
+      induction output_list.
+      { (* hammer. *) timeout 10 hauto lq: on. }
+      intros.
+      cbn -[rules UntypedLogs.log_app interp_out_rule_result hw_env_t] in *.
+
+      unfold_clean. rewrite interp_out_rule.
+      { rewrite !IHoutput_list.
+        { f_equal. cbn. clean. rewrite fold_right_app. cbn. reflexivity. }
+        all: inversion nodup; subst. exact H5. 
+        - intros. specialize (H o). destruct H. (* hammer *) timeout 10 fcrush. unfold UntypedLogs.log_existsb. 
+          cbn. unfold_clean. unfold getenv. cbn. 
+          rewrite !cassoc_ccreate. unfold ULog_Renv. unfold_clean. 
+          rewrite !Common.cassoc_put_neq. rewrite !cassoc_ccreate. rewrite app_nil_l. reflexivity.
+          (* hammer. *) timeout 10 sauto. (* hammer. *) timeout 10 sauto.
+        - intros. specialize (H0 o). destruct H0. (* hammer *) timeout 10 fcrush. unfold UntypedLogs.log_existsb. 
+          cbn. unfold_clean. unfold getenv. cbn. 
+          rewrite !cassoc_ccreate. unfold ULog_Renv. unfold_clean. 
+          rewrite !Common.cassoc_put_neq. rewrite !cassoc_ccreate. rewrite app_nil_l. reflexivity.
+          (* hammer. *) timeout 10 sauto. (* hammer. *) timeout 10 sauto.
+        - intros. specialize (H1 o). destruct H1. (* hammer *) timeout 10 fcrush. unfold UntypedLogs.log_existsb. 
+          cbn. unfold_clean. unfold getenv. cbn. 
+          rewrite !cassoc_ccreate. unfold ULog_Renv. unfold_clean. 
+          rewrite !Common.cassoc_put_neq. rewrite !cassoc_ccreate. rewrite app_nil_l. reflexivity.
+          (* hammer. *) timeout 10 sauto. (* hammer. *) timeout 10 sauto. 
+      }
+      all: (* hammer *) hauto lq: on.
+    Qed.
+
+    Lemma log_after_outputs_no_state_read_writes:
+      forall hw_reg_state log act,
+      UntypedLogs.log_existsb (log_after_outputs hw_reg_state log) (tf_reg tf_ctx act) UntypedLogs.is_write0 =
+      UntypedLogs.log_existsb log (tf_reg tf_ctx act) UntypedLogs.is_write0
+      /\
+      UntypedLogs.log_existsb (log_after_outputs hw_reg_state log) (tf_reg tf_ctx act) UntypedLogs.is_write1 =
+      UntypedLogs.log_existsb log (tf_reg tf_ctx act) UntypedLogs.is_write1
+      /\
+      UntypedLogs.log_existsb (log_after_outputs hw_reg_state log) (tf_reg tf_ctx act) UntypedLogs.is_read0 =
+      UntypedLogs.log_existsb log (tf_reg tf_ctx act) UntypedLogs.is_read0
+      /\
+      UntypedLogs.log_existsb (log_after_outputs hw_reg_state log) (tf_reg tf_ctx act) UntypedLogs.is_read1 =
+      UntypedLogs.log_existsb log (tf_reg tf_ctx act) UntypedLogs.is_read1.
+    Proof.
+      split. 2: split. 3: split.
+
+      all: (
+        intros;
+        unfold log_after_outputs;
+        set (output_list := (rev finite_elements)) in *;
+        induction output_list;
+        try reflexivity;
+        cbn -[interp_out_rule_result UntypedLogs.log_existsb env_t] in *;
+        unfold interp_out_rule_result at 1;
+        cbn -[interp_out_rule_result UntypedLogs.log_existsb env_t] in *;
+        unfold UntypedLogs.log_existsb, getenv, ULog_Renv in *;
+        unfold_clean; cbn -[interp_out_rule_result env_t] in *;
+        repeat ( rewrite !Common.cassoc_put_neq || rewrite !cassoc_ccreate || rewrite !Common.cassoc_put_neq );
+        try rewrite app_nil_l; try exact IHoutput_list;
+        (* hammer. *) timeout 10 sfirstorder
+      ).
+    Qed.
+
+    Lemma log_after_outputs_no_output_read_writes:
+      forall hw_reg_state log act,
+      UntypedLogs.log_existsb (log_after_outputs hw_reg_state log) (tf_reg tf_ctx act) UntypedLogs.is_write0 =
+      UntypedLogs.log_existsb log (tf_reg tf_ctx act) UntypedLogs.is_write0
+      /\
+      UntypedLogs.log_existsb (log_after_outputs hw_reg_state log) (tf_reg tf_ctx act) UntypedLogs.is_write1 =
+      UntypedLogs.log_existsb log (tf_reg tf_ctx act) UntypedLogs.is_write1
+      /\
+      UntypedLogs.log_existsb (log_after_outputs hw_reg_state log) (tf_reg tf_ctx act) UntypedLogs.is_read0 =
+      UntypedLogs.log_existsb log (tf_reg tf_ctx act) UntypedLogs.is_read0
+      /\
+      UntypedLogs.log_existsb (log_after_outputs hw_reg_state log) (tf_reg tf_ctx act) UntypedLogs.is_read1 =
+      UntypedLogs.log_existsb log (tf_reg tf_ctx act) UntypedLogs.is_read1.
+    Proof.
+      split. 2: split. 3: split.
+
+      all: (
+        intros;
+        unfold log_after_outputs;
+        set (output_list := (rev finite_elements)) in *;
+        induction output_list;
+        try reflexivity;
+        cbn -[interp_out_rule_result UntypedLogs.log_existsb env_t] in *;
+        unfold interp_out_rule_result at 1;
+        cbn -[interp_out_rule_result UntypedLogs.log_existsb env_t] in *;
+        unfold UntypedLogs.log_existsb, getenv, ULog_Renv in *;
+        unfold_clean; cbn -[interp_out_rule_result env_t] in *;
+        repeat ( rewrite !Common.cassoc_put_neq || rewrite !cassoc_ccreate || rewrite !Common.cassoc_put_neq );
+        try rewrite app_nil_l; try exact IHoutput_list;
+        (* hammer. *) timeout 10 sfirstorder
+      ).
+    Qed.
+
+    (* --- TODO: Update below --- *)
 
     Lemma interp_scheduler_only_cmd:
-      forall (hw_reg_state: hw_env_t) cmd,
-      sigma ext_in_cmd val_true = encoded_cmd cmd ->
-      UntypedSemantics.interp_scheduler some_rules hw_reg_state sigma some_system_schedule = 
-      UntypedSemantics.interp_scheduler some_rules hw_reg_state sigma ( rule_cmd tf_ctx cmd |> done ).
+      forall (hw_reg_state: hw_env_t) cmd state_var,
+      sigma (ext_in_cmd tf_ctx) val_true = encoded_cmd cmd ->
+      UntypedLogs.latest_write (UntypedSemantics.interp_scheduler some_rules hw_reg_state sigma some_system_schedule) (tf_reg tf_ctx state_var) =
+      UntypedLogs.latest_write (UntypedSemantics.interp_scheduler some_rules hw_reg_state sigma ( rule_cmd tf_ctx cmd |> done )) (tf_reg tf_ctx state_var).
     Proof.
       intros.
       unfold UntypedSemantics.interp_scheduler.
-      (* unfold UntypedSemantics.interp_scheduler'. *)
 
       set (schedule := some_system_schedule) in *.
-      unfold some_system_schedule, system_schedule, system_schedule_actions in *.
-      unfold all_spec_actions in *.
+      unfold some_system_schedule, system_schedule, system_schedule_outputs, system_schedule_actions in *.
+      unfold_all. cbn in schedule.
 
       set (action_order := finite_elements) in *.
 
@@ -337,104 +498,79 @@ Section CompositionalCorrectness.
       { 
         intros H_empty.
         subst action_order.
-        generalize (@finite_surjective (spec_action tf_ctx) (spec_action_fin tf_ctx) cmd). intros H1.
+        generalize (finite_surjective cmd). intros H1.
         rewrite H_empty in H1.
         rewrite nth_error_nil in H1. inversion H1.
       }
       assert (action_order_has_cmd : In cmd action_order).
       { 
         subst action_order.
-        generalize (@finite_surjective (spec_action tf_ctx) (spec_action_fin tf_ctx) cmd). intros H1.
+        generalize (finite_surjective cmd). intros H1.
         apply nth_error_In with (finite_index cmd). exact H1.
       }
 
+      subst schedule.
       induction (action_order).
       { destruct action_order_some. reflexivity. }
+      
+      timeout 10 cbn -[some_rules UntypedLogs.log_empty].
+
+      destruct (eq_dec a cmd).
       {
-        timeout 10 cbn -[some_rules UntypedLogs.log_empty].
-
-        destruct (eq_dec a cmd).
+        subst a. assert (H_not_in_l: ~ In cmd l). { inversion H0. timeout 10 sauto. }
+        
+        assert ((~ Common.scheduler_has_rule (fold_right (fun (t : some_fs_action) (acc : scheduler) => rule_cmd tf_ctx t |> acc) (done) l) (rule_cmd tf_ctx cmd))).
         {
-          subst a. assert (H_not_in_l: ~ In cmd l). { inversion H0. timeout 10 sauto. }
-          
-          assert ((~ Common.scheduler_has_rule (fold_right (fun (t : some_fs_action) (acc : scheduler) => rule_cmd tf_ctx t |> acc) (done) l) (rule_cmd tf_ctx cmd))).
+          unfold not. unfold Common.scheduler_has_rule. intros H_in.
+          clear IHl. induction l.
+          { timeout 10 sauto. }
           {
-            unfold not. unfold Common.scheduler_has_rule. intros H_in.
-            clear IHl. induction l.
+            destruct (eq_dec a cmd) as [H_eq | H_neq].
             { timeout 10 sauto. }
-            {
-              destruct (eq_dec a cmd) as [H_eq | H_neq].
-              { timeout 10 sauto. }
-              { 
-                timeout 10 cbn [fold_right Common.scheduler_has_rule] in H_in. 
-                destruct (eq_dec (rule_cmd tf_ctx a) (rule_cmd tf_ctx cmd)) as [H_eq2 | H_neq2].
-                apply cmd_rule_eq_dec_equal in H_eq2. subst a. contradiction.
-                apply IHl. timeout 10 sauto. timeout 10 sauto. timeout 10 sauto. timeout 10 sauto.
-                exact H_in.                
-              }
+            { 
+              timeout 10 cbn [fold_right Common.scheduler_has_rule] in H_in. 
+              destruct (eq_dec (rule_cmd tf_ctx a) (rule_cmd tf_ctx cmd)) as [H_eq2 | H_neq2].
+              apply cmd_rule_eq_dec_equal in H_eq2. subst a. contradiction.
+              apply IHl.
+              (* hammer. *) timeout 10 hauto lq:on.
+              (* hammer. *) timeout 10 sfirstorder.
+              (* hammer. *) timeout 10 sauto lq:on.
+              (* hammer. *) timeout 10 sfirstorder.
+              exact H_in.                
             }
-          }
-
-          case_eq (@UntypedSemantics.interp_rule pos_t var_t fn_name_t EqDec_string (reg_t tf_ctx) ext_fn_t (@ContextEnv some_reg_t some_reg_t_finite) hw_reg_state sigma (@UntypedLogs.log_empty val (reg_t tf_ctx) (@ContextEnv some_reg_t some_reg_t_finite)) (some_rules (rule_cmd tf_ctx cmd))).
-          {
-            intros. rewrite (interp_scheduler_no_cmd hw_reg_state cmd). reflexivity. exact H. exact H1.
-          }
-          {
-            intros. rewrite (interp_scheduler_no_cmd hw_reg_state cmd). reflexivity. exact H. exact H1.
           }
         }
+
+        case_eq (@UntypedSemantics.interp_rule pos_t var_t fn_name_t EqDec_string (reg_t tf_ctx) (ext_fn_t tf_ctx) (@ContextEnv some_reg_t some_reg_t_finite) hw_reg_state sigma (@UntypedLogs.log_empty val (reg_t tf_ctx) (@ContextEnv some_reg_t some_reg_t_finite)) (some_rules (rule_cmd tf_ctx cmd))).
         {
-          rewrite interp_rule_wrong_cmd.
-          {
-            inversion action_order_has_cmd. congruence.
-            inversion H0. subst l0 x.
-            destruct (eq_dec l []).
-            { subst l. contradiction. }
-            {
-              apply IHl.
-              timeout 10 sauto.
-              timeout 10 sauto.
-              timeout 10 sauto.
-            }
-          }
-          {
-            unfold not. intros. assert (encoded_cmd cmd = encoded_cmd a). { timeout 10 sauto. } apply encoded_cmd_inj' in H2. contradiction. timeout 10 sauto.
-          }
+          intros. rewrite (interp_scheduler_no_cmd hw_reg_state cmd). reflexivity. exact H. exact H1.
+        }
+        {
+          intros. rewrite (interp_scheduler_no_cmd hw_reg_state cmd). reflexivity. exact H. exact H1.
         }
       }
+      {
+        rewrite interp_rule_wrong_cmd.
+        {
+          inversion action_order_has_cmd. congruence.
+          inversion H0. subst l0 x.
+          destruct (eq_dec l []).
+          { subst l. contradiction. }
+          {
+            apply IHl.
+            timeout 10 sauto.
+            timeout 10 sauto.
+            timeout 10 sauto.
+          }
+        }
+        {
+          unfold not. intros. assert (encoded_cmd cmd = encoded_cmd a). { timeout 10 sauto. } apply encoded_cmd_inj' in H2. contradiction. timeout 10 sauto.
+        }
+      }
+      
     Qed. 
     
-    Lemma interp_rule_right_cmd:
-      forall (hw_reg_state: hw_env_t) log cmd,
-      sigma ext_in_cmd val_true = encoded_cmd cmd ->
-      UntypedSemantics.interp_rule hw_reg_state sigma log (some_rules (rule_cmd tf_ctx cmd)) = 
-      UntypedSemantics.interp_rule hw_reg_state sigma log (_rule_cmd tf_ctx cmd).
-    Proof.
-      intros.
-      unfold some_rules.
-      unfold UntypedSemantics.interp_rule.
-      unfold UntypedSemantics.interp_action.
-      cbn -[_rule_cmd].
-
-      set (sigma_val := sigma ext_in_cmd (Bits [true])) in *.
-      assert (HSigmaValCmd: sigma_val = encoded_cmd cmd).
-      { unfold sigma_val. exact H. } rewrite HSigmaValCmd in *. clear sigma_val HSigmaValCmd. clear H.
-      cbn -[_rule_cmd].
-
-      (* Help out unpacking the relevant action_index info from tf_ctx *)
-      unfold _fs_cmd_encoding, some_cmd_reg_size, action_index, spec_action, spec_action_fin in *.
-      assert (@finite_index some_fs_action some_fs_action_fin cmd = @finite_index (spec_action tf_ctx) (spec_action_fin tf_ctx) cmd).
-      { unfold tf_ctx, tf_spec_action, tf_spec_action_fin in *. fold tf_ctx in *. reflexivity. } rewrite H in *; clear H.
-
-      (* Help out with the comparison *)
-      set (eq_true := BitsToLists.list_eqb _ _ _) in *.
-      assert (eq_true = true).
-      { unfold eq_true. apply BitsToLists.list_eqb_refl. intros. destruct a. timeout 10 sauto. timeout 10 sauto. } rewrite H in *; clear H. clear eq_true.
-
-      unfold opt_bind.
-      cbn.
-      reflexivity.
-    Qed.
+    
 
   End CmdGuard.
 
@@ -617,7 +753,7 @@ Section CompositionalCorrectness.
       generalize dependent H.
       generalize dependent H0.
 
-      unfold _rule_write_state_vars, all_spec_states, some_fs_state_elements, spec_states, spec_states_fin, tf_spec_states, tf_spec_states_fin in *.
+      unfold _rule_write_state_vars, spec_all_states, some_fs_state_elements, spec_states, spec_states_fin, tf_spec_states, tf_spec_states_fin in *.
       timeout 10 simpl. 
 
       generalize finite_injective.
@@ -702,7 +838,6 @@ Section CompositionalCorrectness.
     Definition _ur (x: some_reg_t) := val_of_value (some_r x).
     Definition initial_hw_state := 
         ContextEnv.(create) _ur.
-    Check initial_hw_state.
 
     Definition next_hw_cycle (hw_reg_state: env_t ContextEnv (fun _ : some_reg_t => val)) := 
     UntypedSemantics.interp_cycle some_rules hw_reg_state sigma some_system_schedule.
@@ -723,7 +858,7 @@ Section CompositionalCorrectness.
 
     Lemma latest_write_eq_some_fs_op_step_writes:
       forall hw_reg_state fs_state cmd state_var,
-      sigma ext_in_cmd val_true = encoded_cmd cmd ->
+      sigma (ext_in_cmd tf_ctx) val_true = encoded_cmd cmd ->
       StateR hw_reg_state fs_state ->
       UntypedLogs.latest_write (UntypedSemantics.interp_scheduler some_rules hw_reg_state sigma some_system_schedule) (tf_reg tf_ctx state_var) 
       = match (some_fs_op_step_writes fs_state state_var (some_fs_action_ops cmd)) with
@@ -749,7 +884,7 @@ Section CompositionalCorrectness.
 
             rewrite (@interp_act_read_state_vars ContextEnv).
             {
-              simpl. unfold _rule_aux, all_spec_states. cbn -[_reg_name].  
+              simpl. unfold _rule_aux, spec_all_states. cbn -[_reg_name].  
               destruct (some_fs_action_ops cmd) eqn:H_ops.
               { (* nop *)
                 cbn -[_reg_name]. 
@@ -842,7 +977,7 @@ Section CompositionalCorrectness.
                   { rewrite e. subst RegList StateList. timeout 10 cbn -[_reg_name]. destruct string_rec. { reflexivity. } contradict n. timeout 10 sauto. }
 
                   timeout 10 cbn -[_reg_name]. destruct string_rec. {
-                    contradict e. unfold not. intros. apply reg_name_injective in H. timeout 10 sauto.
+                    contradict e. unfold not. intros. apply reg_name_inj in H. timeout 10 sauto.
                   }
 
                   apply in_inv in H_in. destruct H_in. timeout 10 sauto.
@@ -937,7 +1072,7 @@ Section CompositionalCorrectness.
     
     Theorem NextState_correct:
         forall cmd fs_state hw_reg_state,
-        sigma ext_in_cmd val_true = encoded_cmd cmd ->
+        sigma (ext_in_cmd tf_ctx) val_true = encoded_cmd cmd ->
         StateR hw_reg_state fs_state ->
         StateR (next_hw_cycle hw_reg_state) (some_fs_step fs_state (some_fs_action_ops cmd)).
     Proof.
