@@ -243,6 +243,38 @@ Section Environments.
 
 End Environments.
 
+Section BitsToLists.
+    
+    Lemma bits_to_list_assoc_fallback_cons:
+        forall {K V: Type} {eq: EqDec K} (l: list (K * V)) (k: K) x k1 v1,
+        BitsToLists.list_assoc l k = Some x -> 
+            BitsToLists.list_assoc ((k1, v1) :: l) k <> None.
+    Proof.
+        intros. unfold not. intros.  unfold BitsToLists.list_assoc in *. 
+        destruct (eq_dec k k1).
+        - inversion H0.
+        - hauto.
+    Qed.
+    
+    Lemma bits_to_list_assoc_fallback_app:
+        forall {K V: Type} {eq: EqDec K} (l: list (K * V)) (k: K) x a,
+        BitsToLists.list_assoc l k = Some x -> 
+            BitsToLists.list_assoc (a ++ l) k <> None.
+    Proof.
+        intros. unfold not. intros. unfold BitsToLists.list_assoc in *.
+        generalize dependent H.
+        induction a; intros. 
+        { rewrite app_nil_l in H0. (* hammer. *) timeout 10 sfirstorder. }
+        rewrite <- app_comm_cons in H0.
+        cbn in H0. destruct a as [k1 v1].
+        destruct (eq_dec k k1).
+        - inversion H0.
+        - hauto.
+    Qed.
+        
+
+End BitsToLists.
+
 Section ContextLogs.
     Context {V: Type}.
 

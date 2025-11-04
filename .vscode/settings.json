@@ -8,5 +8,8 @@
     "files.associations": {
         "*.v": "coq",
         "**/build/**/*.v": "verilog"
-    }
+    },
+    "files.watcherExclude": {
+        "**/target": true
+    },
 }
