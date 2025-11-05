@@ -216,6 +216,25 @@ Section Semantics.
           + left. intros. timeout 10 simpl. unfold when_outputs_match. destruct (eq_dec y var). destruct e. timeout 10 sauto. timeout 10 sauto.
       Defined.
 
+      Definition filter_written_outputs
+        (state_op: tf_ops states_var inputs_var outputs_var)
+        :
+        forall x, In x (filter (fun v => if tf_op_no_output_dec v state_op then false else true) finite_elements) <-> ~ tf_op_no_output x state_op. 
+      Proof.
+        intros. split; intros H.
+        - unfold tf_op_no_output in *. unfold not. intros.
+          apply filter_In in H. destruct H as [H1 H2].
+          destruct (tf_op_no_output_dec x state_op).
+          + inversion H2.
+          + auto.
+        - unfold tf_op_no_output in *. unfold not in H.
+          apply filter_In. split.
+          + apply nth_error_In with (n := finite_index x). exact (finite_surjective x).
+          + destruct (tf_op_no_output_dec x state_op).
+            * exfalso; apply H; auto.
+            * reflexivity.
+      Qed.
+
     End Properties.
 
 End Semantics.

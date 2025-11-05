@@ -294,4 +294,26 @@ Section ContextLogs.
         rewrite !existsb_app. rewrite H. reflexivity.
     Qed.
 
+    Lemma cassoc_log_cons_neq:
+        forall (log: Log) (idx idx': reg_t) (le: LogEntry V),
+            idx <> idx' ->
+            cassoc (finite_member idx') (log_cons idx le log) = cassoc (finite_member idx') log.
+    Proof.
+        intros. unfold log_cons. rewrite cassoc_put_neq. 2: exact H. reflexivity.
+    Qed.
+
+    Lemma cassoc_log_cons_eq:
+        forall (log: Log) (idx: reg_t) (le: LogEntry V),
+            cassoc (finite_member idx) (log_cons idx le log) = le :: cassoc (finite_member idx) log.
+    Proof.
+        intros. unfold log_cons. rewrite cassoc_put_eq. reflexivity.
+    Qed.
+
+    Lemma cassoc_log_app:
+        forall (log1 log2: Log) (idx: reg_t),
+            cassoc (finite_member idx) (log_app log1 log2) = cassoc (finite_member idx) log1 ++ cassoc (finite_member idx) log2.
+    Proof.
+        intros. unfold log_app. simpl. rewrite cassoc_ccreate. unfold getenv. cbn. reflexivity.
+    Qed.
+
 End ContextLogs.
