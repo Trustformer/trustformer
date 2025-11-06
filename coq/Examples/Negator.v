@@ -3,9 +3,9 @@ Require Import Koika.Std.
 Require Koika.KoikaForm.Untyped.UntypedSemantics.
 Require Import Koika.KoikaForm.SimpleVal.
 
-Require Import Trustformer.v2_2.Syntax.
-Require Import Trustformer.v2_2.Semantics.
-Require Import Trustformer.v2_2.Synthesis.
+Require Import Trustformer.Syntax.
+Require Import Trustformer.Semantics.
+Require Import Trustformer.Synthesis.
 
 Require Import Coq.Logic.EqdepFacts.
 
@@ -181,7 +181,7 @@ Section Synthesis.
                         koika_rule_names := Synthesis.rule_names tf_ctx;
                         koika_rule_external := (fun _ => false);
                         koika_scheduler := system_schedule;
-                        koika_module_name := "V2_2Example_Negator" |};
+                        koika_module_name := "Example_Negator" |};
 
       ip_sim := {| sp_ext_fn_specs fn := {| efs_name := show fn; efs_method := false |};
                   sp_prelude := None |};
@@ -195,5 +195,5 @@ End Synthesis.
 
 Definition prog := Interop.Backends.register package.
 Set Extraction Output Directory "build".
-Extraction "V2_2Example_Negator.ml" prog.
+Extraction "Example_Negator.ml" prog.
 

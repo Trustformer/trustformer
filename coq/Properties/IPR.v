@@ -6,11 +6,11 @@ Require Koika.Properties.SemanticProperties.
 Require Koika.KoikaForm.Untyped.UntypedSemantics.
 Require Import Koika.KoikaForm.SimpleVal.
 
-Require Import Trustformer.v2_2.Syntax.
-Require Import Trustformer.v2_2.Semantics.
-Require Import Trustformer.v2_2.Synthesis.
-Require Import Trustformer.v2_2.Utils.
-Require Trustformer.v2_2.Properties.Common.
+Require Import Trustformer.Syntax.
+Require Import Trustformer.Semantics.
+Require Import Trustformer.Synthesis.
+Require Import Trustformer.Utils.
+Require Trustformer.Properties.Common.
 From Koika.Utils Require Import Tactics.
 
 Require Import Coq.Logic.FunctionalExtensionality.
@@ -51,7 +51,7 @@ Ltac unfold_specs := repeat (
     || unfold spec_action in * || unfold spec_action_fin in * || unfold spec_all_actions in * || unfold spec_action_index in * 
     || unfold spec_action_num in * 
     
-    || unfold spec_action_ops in *).
+    || unfold spec_action_ops in * || unfold synth_convert in * ).
 
 Ltac unfold_specs_tfctx := unfold_specs ; unfold_tfctx.
 
@@ -1163,12 +1163,21 @@ Section CompositionalCorrectness.
         | _ => []
       end.
 
+    Definition val_convert (out_var_size in_var_size : nat) (x : val) : val :=
+      if Nat.eq_dec out_var_size in_var_size then
+        x
+      else 
+        if Nat.ltb in_var_size out_var_size then
+          Bits (bits_of_value_lossy x ++ repeat false (out_var_size - in_var_size))
+        else
+          Bits (firstn (out_var_size) (bits_of_value_lossy x)).
+
     Definition assignments_added (hw_reg_state: hw_env_t) cmd :=
       match some_fs_action_ops cmd with
         | tf_nop _ _ _ => [ ]
         | tf_neg _ _ _ x => [ ( _reg_name tf_ctx x, Bits (map negb (bits_of_value_lossy hw_reg_state.[tf_reg tf_ctx x])) ) ]
-        | tf_input _ _ _ x y => [ (_reg_name tf_ctx x, sigma (ext_input tf_ctx y) (Bits [true])) ]
-        | tf_output _ _ _ x y => [ (_out_name tf_ctx y, hw_reg_state.[tf_reg tf_ctx x]) ]
+        | tf_input _ _ _ x y => [ (_reg_name tf_ctx x, val_convert (some_fs_states_size x) (some_fs_inputs_size y) (sigma (ext_input tf_ctx y) (Bits [true])) )]
+        | tf_output _ _ _ x y => [ (_out_name tf_ctx y, val_convert (some_fs_outputs_size y) (some_fs_states_size x) hw_reg_state.[tf_reg tf_ctx x]) ]
       end.
 
     Definition log_after_rule_right_cmd (hw_reg_state: hw_env_t) cmd :=
@@ -1200,26 +1209,56 @@ Section CompositionalCorrectness.
 
     Local Ltac tac_interp_rule_right_cmd_out1 := 
           intros o reg combined_log Hwritten; unfold written_outputs in Hwritten; cbn in Hwritten;
-          apply filter_In in Hwritten; (* hammer. *) hauto lq: on.
+          apply filter_In in Hwritten; (* hammer. *) timeout 10 hauto lq: on.
     
     Local Ltac tac_interp_rule_right_cmd_out2 :=
           intros o Hwritten; unfold written_outputs in Hwritten; cbn in Hwritten;
-          apply filter_In in Hwritten; (* hammer. *) hauto lq: on. 
-    
+          apply filter_In in Hwritten; (* hammer. *) timeout 10 hauto lq: on.
+        
+    Local Ltac tac_interp_rule_right_cmd_out3 IHl hw_reg_state :=
+          intros o reg combined_log Hwritten; subst reg; subst combined_log; unfold_all;
+          unfold UntypedLogs.log_existsb in *;
+          repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn -[_reg_name _out_name] in *;
+          repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn -[_reg_name _out_name] in *;
+
+          unfold log_after_act_write_state_vars in *;
+          set (Hwritten_s := written_vars _);
+          assert (H2: Hwritten_s = []) by (
+            unfold Hwritten_s, written_vars; cbn;
+            induction some_fs_state_elements; try reflexivity; cbn; exact IHl
+          ); rewrite H2; clear H2;
+
+          cbn -[_reg_name _out_name] in *;
+
+          generalize (log_after_act_read_state_vars_no_output_read_writes hw_reg_state finite_elements o); intros;
+          unfold UntypedLogs.log_existsb, getenv in *; cbn in *; (* hammer; *) timeout 10 hauto lq: on.
+
+    Local Ltac tac_interp_rule_right_cmd_out4 y :=
+          intros o Hwritten;
+            
+          assert (y = o) by (
+            unfold written_outputs in Hwritten; unfold_all; cbn -[spec_no_output_dec] in Hwritten;
+            unfold spec_no_output_dec in Hwritten; apply filter_written_outputs in Hwritten;
+            unfold not in Hwritten; unfold tf_op_no_output in Hwritten; cbn in Hwritten;
+            unfold when_outputs_match in Hwritten; destruct (eq_dec y o) as [e | n]; try (rewrite e; reflexivity);
+            exfalso; apply Hwritten; intros; reflexivity
+          ); subst y;
+          
+          cbn -[_reg_name _out_name] in *; destruct string_rec as [e | n]; try apply out_name_inj' in n; (* hammer. *) timeout 10 hauto lq: on. 
 
     Lemma interp_rule_right_cmd:
       forall (hw_reg_state: hw_env_t) cmd,
       sigma (ext_in_cmd tf_ctx) val_true = encoded_cmd cmd ->
-      (forall s, exists bl, hw_reg_state.[tf_reg tf_ctx s] = Bits bl) ->
+      (forall s, exists bl, hw_reg_state.[tf_reg tf_ctx s] = Bits bl /\ Datatypes.length bl = some_fs_states_size s) ->
       UntypedSemantics.interp_rule hw_reg_state sigma UntypedLogs.log_empty (rules tf_ctx (rule_cmd tf_ctx cmd)) = 
         log_after_rule_right_cmd hw_reg_state cmd.
     Proof.
       intros.
-      unfold log_after_rule_right_cmd, assignments_added, bits_of_value_lossy.
+      unfold log_after_rule_right_cmd, assignments_added, bits_of_value_lossy, val_convert.
       rewrite interp_rule_right_cmd' with (1:=H). unfold _rule_cmd.
       unfold UntypedSemantics.interp_rule. 
       rewrite (@interp_act_read_state_vars ContextEnv). 2: { intros. apply Common.log_existsb_empty. }
-      cbn. unfold _rule_aux, op_to_uaction. 
+      cbn -[_reg_name _out_name Nat.ltb]. unfold _rule_aux, op_to_uaction. 
 
       destruct (some_fs_action_ops cmd).
       { (* NOP *)
@@ -1235,7 +1274,7 @@ Section CompositionalCorrectness.
         generalize (all_vars_after_read_vars_correct hw_reg_state). intros.
         cbn -[_reg_name] in *. unfold_all.
                 
-        rewrite (H1 x). cbn -[_reg_name] in *. destruct (H0 x) as [bl Hbl].
+        rewrite (H1 x). cbn -[_reg_name] in *. destruct (H0 x) as [bl [Hbl Hblsize]].
         rewrite Hbl. cbn -[_reg_name] in *.
         
         rewrite (@interp_act_write_state_vars ContextEnv).
@@ -1247,58 +1286,123 @@ Section CompositionalCorrectness.
         tac_interp_rule_right_cmd_out2.
       }
       { (* INPUT *)
-        cbn -[_reg_name] in *. unfold_all.
-        rewrite (@interp_act_write_state_vars ContextEnv).
-        2: tac_interp_rule_right_cmd_vars1 hw_reg_state reg combined_log s.
-        2: tac_interp_rule_right_cmd_vars2 hw_reg_state s.
+        cbn -[_reg_name _out_name Nat.ltb] in *. unfold_all.
+        destruct (Nat.eq_dec (some_fs_states_size x) (some_fs_inputs_size y)).
+        { (* Sizes match *)
+          cbn -[_reg_name _out_name] in *.
+          rewrite (@interp_act_write_state_vars ContextEnv).
+          2: tac_interp_rule_right_cmd_vars1 hw_reg_state reg combined_log s.
+          2: tac_interp_rule_right_cmd_vars2 hw_reg_state s.
 
-        rewrite (@interp_act_write_output_vars ContextEnv). reflexivity.
-        tac_interp_rule_right_cmd_out1.
-        tac_interp_rule_right_cmd_out2.
+          rewrite (@interp_act_write_output_vars ContextEnv). reflexivity.
+          tac_interp_rule_right_cmd_out1.
+          tac_interp_rule_right_cmd_out2.
+        } { (* Size Conversion *)
+          destruct (Nat.ltb (some_fs_inputs_size y) (some_fs_states_size x)) eqn:Hlt.
+          { (* Input smaller than state, zero-extend *)
+            cbn -[_reg_name _out_name] in *.
+            specialize (sigma_valid (ext_input tf_ctx y) (Bits [true])) as Hvalid. destruct Hvalid as [input Hinput].
+            rewrite Hinput in *. cbn -[_reg_name _out_name] in *.
+            rewrite (@interp_act_write_state_vars ContextEnv).
+            2: tac_interp_rule_right_cmd_vars1 hw_reg_state reg combined_log s.
+            2: tac_interp_rule_right_cmd_vars2 hw_reg_state s.
+
+            rewrite (@interp_act_write_output_vars ContextEnv). cbn -[_reg_name _out_name] in *.
+            rewrite Common.datatypes_length_vect_fold_left_of_bits. reflexivity.
+            tac_interp_rule_right_cmd_out1.
+            tac_interp_rule_right_cmd_out2.
+          } { (* Input larger than state, truncate *)
+            cbn -[_reg_name _out_name Nat.ltb] in *.
+            specialize (sigma_valid (ext_input tf_ctx y) (Bits [true])) as Hvalid. destruct Hvalid as [input Hinput].
+            rewrite Hinput in *. cbn -[_reg_name _out_name Nat.ltb] in *.
+            rewrite (@interp_act_write_state_vars ContextEnv).
+            2: tac_interp_rule_right_cmd_vars1 hw_reg_state reg combined_log s.
+            2: tac_interp_rule_right_cmd_vars2 hw_reg_state s.
+
+            rewrite (@interp_act_write_output_vars ContextEnv). cbn -[_reg_name _out_name Nat.ltb] in *.
+            rewrite Common.datatypes_length_firstn_vect_fold_left_of_bits. 2: (* hammer *) timeout 10 hauto b: on. 
+            rewrite Common.repeat_nil by (lia). rewrite app_nil_r. reflexivity.
+            tac_interp_rule_right_cmd_out1.
+            tac_interp_rule_right_cmd_out2.
+          }
+        }
       }
       { (* OUTPUT *)
         generalize (all_vars_after_read_vars_correct hw_reg_state). intros.
-        cbn -[_reg_name _out_name] in *. unfold_all.
+        cbn -[_reg_name _out_name Nat.ltb] in *. unfold_all.
 
-        rewrite (H1 x). cbn -[_reg_name _out_name] in *. destruct (H0 x) as [bl Hbl].
-        rewrite Hbl. cbn -[_reg_name _out_name] in *. unfold_all.
+        destruct (Nat.eq_dec (some_fs_outputs_size y) (some_fs_states_size x)).
+        { (* Sizes match *)
+          clear e. cbn -[_reg_name _out_name] in *.
+          rewrite (H1 x). cbn -[_reg_name _out_name Nat.ltb] in *. destruct (H0 x) as [bl [Hbl Hblsize]].
+          rewrite Hbl. cbn -[_reg_name _out_name Nat.ltb] in *. unfold_all.
 
-        rewrite (@interp_act_write_state_vars ContextEnv).
-        2: tac_interp_rule_right_cmd_vars1 hw_reg_state reg combined_log s.
-        2: tac_interp_rule_right_cmd_vars2 hw_reg_state s.
+          rewrite (@interp_act_write_state_vars ContextEnv).
+          2: tac_interp_rule_right_cmd_vars1 hw_reg_state reg combined_log s.
+          2: tac_interp_rule_right_cmd_vars2 hw_reg_state s.
 
-        rewrite (@interp_act_write_output_vars ContextEnv). reflexivity.
-        {
-          intros o reg combined_log Hwritten. subst reg. subst combined_log. unfold_all.
-          unfold UntypedLogs.log_existsb in *.
-          repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn -[_reg_name _out_name] in *.
-          repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn -[_reg_name _out_name] in *.
+          rewrite (@interp_act_write_output_vars ContextEnv). reflexivity.
+          tac_interp_rule_right_cmd_out3 IHl hw_reg_state.
+          tac_interp_rule_right_cmd_out4 y.
+        } { (* Size Conversion *)
+          clear n.
+          destruct (Nat.ltb (some_fs_states_size x) (some_fs_outputs_size y)) eqn:Hlt.
+          (* Output smaller than state, truncate *)
+          { 
+            cbn -[_reg_name _out_name Nat.ltb] in *.
+            rewrite (H1 x). cbn -[_reg_name _out_name Nat.ltb] in *. destruct (H0 x) as [bl [Hbl Hblsize]].
+            rewrite Hbl. cbn -[_reg_name _out_name Nat.ltb] in *. unfold_all.
 
-          unfold log_after_act_write_state_vars in *.
-          set (Hwritten_s := written_vars _).
-          assert (Hwritten_s = []). {
-            unfold Hwritten_s, written_vars. cbn.
-            induction some_fs_state_elements. reflexivity. cbn. exact IHl.
-          } rewrite H2; clear H2.
+            rewrite (@interp_act_write_state_vars ContextEnv).
+            2: tac_interp_rule_right_cmd_vars1 hw_reg_state reg combined_log s.
+            2: tac_interp_rule_right_cmd_vars2 hw_reg_state s.
 
-          cbn -[_reg_name _out_name] in *.
+            rewrite (@interp_act_write_output_vars ContextEnv). cbn -[_reg_name _out_name Nat.ltb] in *. rewrite Hblsize. reflexivity.
+            tac_interp_rule_right_cmd_out3 IHl hw_reg_state.
+            tac_interp_rule_right_cmd_out4 y.
+          } { (* Output larger than state, zero-extend *)
+            cbn -[_reg_name _out_name Nat.ltb] in *.
+            rewrite (H1 x). cbn -[_reg_name _out_name Nat.ltb] in *. destruct (H0 x) as [bl [Hbl Hblsize]].
+            rewrite Hbl. cbn -[_reg_name _out_name Nat.ltb] in *. unfold_all.
 
-          generalize (log_after_act_read_state_vars_no_output_read_writes hw_reg_state finite_elements o); intros.
-          unfold UntypedLogs.log_existsb, getenv in *; cbn in *. (* hammer. *) timeout 10 hauto lq: on.
+            rewrite (@interp_act_write_state_vars ContextEnv).
+            2: tac_interp_rule_right_cmd_vars1 hw_reg_state reg combined_log s.
+            2: tac_interp_rule_right_cmd_vars2 hw_reg_state s.
+
+            rewrite (@interp_act_write_output_vars ContextEnv). cbn -[_reg_name _out_name Nat.ltb] in *.
+            repeat f_equal. rewrite firstn_length. rewrite Hblsize. rewrite Common.repeat_nil. 2: (* hammer *) hauto b: on.
+            rewrite app_nil_r. reflexivity.
+            tac_interp_rule_right_cmd_out3 IHl hw_reg_state.
+            tac_interp_rule_right_cmd_out4 y.
+          }
         }
-        {
-          intros o Hwritten.
-          
-          assert (y = o). {
-            unfold written_outputs in Hwritten. unfold_all. cbn -[spec_no_output_dec] in Hwritten.
-            unfold spec_no_output_dec in Hwritten. apply filter_written_outputs in Hwritten.
-            unfold not in Hwritten. unfold tf_op_no_output in Hwritten. cbn in Hwritten.
-            unfold when_outputs_match in Hwritten. destruct (eq_dec y o). rewrite e; reflexivity.
-            exfalso. apply Hwritten. intros. reflexivity.
-          } subst y.
-          
-          cbn -[_reg_name _out_name] in *. destruct string_rec. (* hammer. *) timeout 10 hauto lq: on. 
-          apply out_name_inj' in n. (* hammer. *) timeout 10 hauto lq: on. 
+      }
+    Qed.
+
+    Lemma val_convert_correct:
+      forall szA szB ( x : bits_t szA ),
+        val_convert szB szA (Bits (vect_to_list x)) = Bits (vect_to_list (convert (szA:=szA) (szB:=szB) x)).
+    Proof.
+      intros. unfold val_convert, bits_of_value_lossy, convert. cbn -[Nat.ltb].
+      destruct (Nat.eq_dec szB szA).
+      { destruct e. destruct Nat.eq_dec. 2: congruence. simpl. destruct e. reflexivity. }
+      {
+        destruct (Nat.ltb szA szB) eqn:Hlt.
+        { (* szB < szA *) 
+          apply Nat.ltb_lt in Hlt. destruct lt_dec. 2: lia.
+          destruct Nat.eq_dec. congruence. destruct (__convert_lt szA szB l). simpl.
+          unfold Bits.extend_end. destruct (vect_extend_end_cast szA szB). simpl.
+          assert ((szA + (szB - szA) - szA) = (szB - szA)) by lia. rewrite H. clear H.
+          rewrite vect_to_list_app. rewrite BitsToLists.repeat_bits_const. reflexivity.
+        } {
+          (* szA < szB *)
+          apply Nat.ltb_nlt in Hlt. destruct Nat.eq_dec. congruence.
+          destruct lt_dec. lia.
+          unfold Bits.slice. rewrite BitsToLists.vect_extend_end_firstn. unfold Bits.extend_end.
+          destruct (vect_extend_end_cast (Nat.min szB (szA - 0)) szB). simpl.
+          assert ((szB - Nat.min szB (szA - 0)) = 0) by lia. rewrite H. clear H. cbn.
+          rewrite vect_to_list_app. rewrite app_nil_r. rewrite vect_to_list_firstn. rewrite vect_to_list_skipn.
+          rewrite skipn_O. reflexivity. 
         }
       }
     Qed.
@@ -1517,7 +1621,7 @@ Section CompositionalCorrectness.
     Lemma interp_scheduler_writes_state_only_cmd (hw_reg_state: hw_env_t) cmd reg:
       ((exists state_var, tf_reg tf_ctx state_var = reg) \/ (exists out_var, tf_out tf_ctx out_var = reg)) ->
       sigma (ext_in_cmd tf_ctx) val_true = encoded_cmd cmd ->
-      (forall s, exists bl, hw_reg_state.[tf_reg tf_ctx s] = Bits bl) ->
+      (forall s, exists bl, hw_reg_state.[tf_reg tf_ctx s] = Bits bl /\ Datatypes.length bl = some_fs_states_size s) ->
       UntypedLogs.latest_write (UntypedSemantics.interp_scheduler' some_rules hw_reg_state sigma UntypedLogs.log_empty some_system_schedule) reg =
       UntypedLogs.latest_write (UntypedSemantics.interp_scheduler' some_rules hw_reg_state sigma UntypedLogs.log_empty (rule_cmd tf_ctx cmd |> done)) reg.
     Proof.
@@ -1802,10 +1906,13 @@ Section CompositionalCorrectness.
     forall hw_reg_state fs_state,
     StateR hw_reg_state fs_state ->
     forall x,
-      exists bl, hw_reg_state.[tf_reg tf_ctx x] = Bits bl.
+      exists bl, hw_reg_state.[tf_reg tf_ctx x] = Bits bl /\ Datatypes.length bl = some_fs_states_size x.
   Proof.
       intros hw_reg_state fs_state H_state x.
-      specialize (H_state x). unfold getenv in *. cbn in *. (* hammer. *) timeout 10 sfirstorder.
+      specialize (H_state x). unfold getenv in *. cbn in *.
+      exists (vect_to_list (cassoc (finite_member x) fs_state)).
+      split. (* hammer. *) timeout 10 sfirstorder.
+      rewrite vect_to_list_length. reflexivity.
   Qed.
 
   Definition OutputR (hw_reg_state: hw_env_t) (fs_output: (ContextEnv.(env_t) some_fs_outputs_t)) :=
@@ -2151,8 +2258,7 @@ Section CompositionalCorrectness.
             2: { contradict n. timeout 10 sauto. }
 
             unfold val_true in H_input. rewrite <- (H_input y).
-            unfold convert. (* <------- Oh no, what to do with the conversion? spec is typed, but hw is not *)
-            admit.
+            apply val_convert_correct.
           }
           {
             set (written_vars_list := (written_vars _)).
@@ -2259,8 +2365,7 @@ Section CompositionalCorrectness.
             2: { contradict n. timeout 10 sauto. }
 
             unfold getenv. unfold_all. cbn. rewrite (H_state x).
-            unfold convert. (* <------- Oh no, what to do with the conversion? spec is typed, but hw is not *)
-            admit.
+            apply val_convert_correct.
           }
           {
             set (written_outputs_list := (written_outputs _)).

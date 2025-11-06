@@ -317,3 +317,45 @@ Section ContextLogs.
     Qed.
 
 End ContextLogs.
+
+Section Datatypes.
+
+    Lemma datatypes_length_vect_fold_left_of_bits:
+        forall {n} (v : bits n),
+            Datatypes.length (vect_fold_left (fun (acc : list bool) (t : bool) => t :: acc) [] v) = n.
+    Proof.
+        intros. unfold vect_fold_left.
+        induction n; intros; simpl. reflexivity.
+        rewrite IHn. simpl. lia.
+    Qed.
+
+    Lemma datatypes_length_firstn_vect_fold_left_of_bits':
+        forall {n} (v : bits n),
+            Datatypes.length (firstn n (vect_fold_left (fun (acc : list bool) (t : bool) => t :: acc) [] v)) = n.
+    Proof.
+        intros. unfold vect_fold_left.
+        induction n; intros; simpl. reflexivity.
+        rewrite IHn. simpl. lia.
+    Qed.
+
+    Lemma datatypes_length_firstn_vect_fold_left_of_bits:
+        forall {n} x (v : bits n),
+            x < n ->
+            Datatypes.length (firstn x (vect_fold_left (fun (acc : list bool) (t : bool) => t :: acc) [] v)) = x.
+    Proof.
+        unfold vect_fold_left.
+        induction n; intros; simpl. lia.
+        destruct x; simpl. reflexivity.
+        rewrite IHn; lia.
+    Qed.
+
+    Lemma repeat_nil:
+        forall {A: Type} n (a: A),
+        n = 0%nat ->
+        repeat a n = [].
+    Proof.
+        intros. subst. reflexivity.
+    Qed.
+
+End Datatypes.
+

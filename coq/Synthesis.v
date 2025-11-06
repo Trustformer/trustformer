@@ -6,10 +6,10 @@ Require Koika.Properties.SemanticProperties.
 Require Koika.KoikaForm.Untyped.UntypedSemantics.
 Require Import Koika.KoikaForm.SimpleVal.
 
-Require Import Trustformer.v2.Syntax.
-Require Import Trustformer.v2.Semantics.
-Require Import Trustformer.v2.Utils.
-Require Trustformer.v2.Properties.Common.
+Require Import Trustformer.Syntax.
+Require Import Trustformer.Semantics.
+Require Import Trustformer.Utils.
+Require Trustformer.Properties.Common.
 From Koika.Utils Require Import Tactics.
 
 Require Import Streams.
@@ -311,20 +311,28 @@ Section TrustformerSynthesis.
           end
       }.
 
-    Definition system_schedule_actions : scheduler  :=
-      List.fold_right (fun t acc => rule_cmd t |> acc) Done spec_all_actions.
-
     Definition system_schedule_outputs : scheduler := 
-      List.fold_right (fun t acc => rule_out t |> acc) system_schedule_actions spec_all_outputs.
+      List.fold_right (fun t acc => rule_out t |> acc) Done spec_all_outputs.
 
-    Definition system_schedule := system_schedule_outputs.
+    Definition system_schedule_actions : scheduler  :=
+      List.fold_right (fun t acc => rule_cmd t |> acc) system_schedule_outputs spec_all_actions.
+
+    Definition system_schedule := system_schedule_actions.
     
+    Definition synth_convert (out_var_size in_var_size : nat) code : uaction reg_t ext_fn_t :=
+      if Nat.eq_dec out_var_size in_var_size then
+        code
+      else if Nat.ltb in_var_size out_var_size then
+        (UUnop (UBits1 (UZExtL out_var_size)) code)
+      else
+        (UUnop (UBits1 (USlice 0 out_var_size)) code).
+
     Definition op_to_uaction (op: tf_ops spec_states spec_inputs spec_outputs) (code: uaction reg_t ext_fn_t) : uaction reg_t ext_fn_t :=
       match op with
       | tf_nop _ _ _ => code 
       | tf_neg _ _ _ x => UBind (_reg_name x) (UUnop (UBits1 UNot) (UVar (_reg_name x))) code
-      | tf_input _ _ _ x y => UBind (_reg_name x) (UExternalCall (ext_input y) {{Ob~1}}) code
-      | tf_output _ _ _ x y => UBind (_out_name y) (UVar (_reg_name x)) code
+      | tf_input _ _ _ x y => UBind (_reg_name x) (synth_convert (spec_states_size x) (spec_inputs_size y) (UExternalCall (ext_input y) {{Ob~1}})) code
+      | tf_output _ _ _ x y => UBind (_out_name y) (synth_convert (spec_outputs_size y) (spec_states_size x) (UVar (_reg_name x))) code
       end.
 
     Definition _rule_aux
@@ -358,7 +366,7 @@ Section TrustformerSynthesis.
         if spec_no_output_dec x op then
           acc
         else
-          USeq {{ write1(tf_out x, `UVar (_out_name x)`) }} acc
+          USeq {{ write0(tf_out x, `UVar (_out_name x)`) }} acc
       ) code spec_all_outputs.
 
     Definition _rule_cmd cmd : uaction reg_t ext_fn_t :=
@@ -379,7 +387,7 @@ Section TrustformerSynthesis.
                   `_rule_cmd cmd`
             }}
           | rule_out out =>
-            UWrite P1 (tf_out_ack out) (UExternalCall (ext_output out) ({{ read0(tf_out out) }} ))
+            UWrite P1 (tf_out_ack out) (UExternalCall (ext_output out) ({{ read1(tf_out out) }} ))
           end).
 
 End TrustformerSynthesis.

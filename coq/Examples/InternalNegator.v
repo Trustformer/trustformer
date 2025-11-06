@@ -3,12 +3,20 @@ Require Import Koika.Std.
 Require Koika.KoikaForm.Untyped.UntypedSemantics.
 Require Import Koika.KoikaForm.SimpleVal.
 
-Require Import Trustformer.v1.TrustformerSyntax.
-Require Import Trustformer.v1.TrustformerSemantics.
-Require Import Trustformer.v1.TrustformerSynthesis.
+Require Import Trustformer.Syntax.
+Require Import Trustformer.Semantics.
+Require Import Trustformer.Synthesis.
 
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
+
+(*
+    An example specification and synthesis of a simple negator module.
+    The hardware module has a single internal state register (32 bits) and supports two actions (nop, neg).
+    Actions are triggered through a command register, where the first 1 bit indicates if the command is valid,
+    and the remaining bits indicate the action to perform.
+
+ *)
 
 Section FunctionalSpecification.
 
@@ -25,9 +33,23 @@ Section FunctionalSpecification.
     | fs_st_val
     .
 
+    Inductive fs_inputs :=
+    .
+
+    Inductive fs_outputs :=
+    .
+
     Definition fs_states_size (x: fs_states) : nat :=
     match x with
     | fs_st_val => sz
+    end.
+
+    Definition fs_inputs_size (x: fs_inputs) : nat := 
+    match x with
+    end.
+
+    Definition fs_outputs_size (x: fs_outputs) : nat := 
+    match x with
     end.
 
     Definition fs_states_t := tf_states_type fs_states fs_states_size. 
@@ -40,14 +62,14 @@ Section FunctionalSpecification.
     Definition fs_transitions
         (act: fs_action)
         :
-        (tf_ops fs_states)
+        (tf_ops fs_states fs_inputs fs_outputs)
         :=
         match act with
-        | fs_act_nop => tf_nop fs_states
-        | fs_act_neg => tf_neg fs_states fs_st_val
+        | fs_act_nop => tf_nop _ _ _ 
+        | fs_act_neg => tf_neg _ _ _ fs_st_val
         end.
 
-    Definition fs_step := tf_op_step_commit fs_states _ fs_states_size. 
+    Definition fs_step := tf_op_step_commit fs_states _ fs_inputs fs_outputs fs_states_size fs_inputs_size.
     
     Section Examples.
 
@@ -56,18 +78,15 @@ Section FunctionalSpecification.
         Proof. reflexivity. Qed.
 
         Definition s1_trans := fs_transitions fs_act_nop.
-        Definition s1_state := fs_step s_init s1_trans.
+        Definition s1_state := fs_step s_init (fun _ => Bits.zero) s1_trans.
         Example s1_example : ContextEnv.(getenv) s1_state fs_st_val = bits_false.
         Proof. ssimpl. Qed.
         
         Definition s2_trans := fs_transitions fs_act_neg.
-        Definition s2_state := fs_step s_init s2_trans.
+        Definition s2_state := fs_step s_init (fun _ => Bits.zero) s2_trans.
         Example s2_example : ContextEnv.(getenv) s2_state fs_st_val = bits_true.
         Proof. 
-            unfold s2_state, s2_trans, fs_transitions.
-            rewrite tf_op_step_commit_neg_same_var.
-            unfold s_init. rewrite getenv_create.   
-            reflexivity.    
+            cbn -[vect_to_list]. sauto.
         Qed.
 
     End Examples.
@@ -82,40 +101,52 @@ Section Synthesis.
         tf_spec_states_fin := _; 
         tf_spec_states_size := fs_states_size;
         tf_spec_states_init := fs_states_init;
+
+        tf_spec_inputs := fs_inputs;
+        tf_spec_inputs_fin := _;
+        tf_spec_inputs_size := fs_inputs_size;
+
+        tf_spec_outputs := fs_outputs;
+        tf_spec_outputs_fin := _;
+        tf_spec_outputs_size := fs_outputs_size;
+
         tf_spec_action := fs_action;
         tf_spec_action_fin := _; 
         tf_spec_action_ops := fs_transitions
     |}.
 
-    Definition R := TrustformerSynthesis.R tf_ctx.
-    Check R.
-    Definition r := TrustformerSynthesis.r tf_ctx.
-    Check r.
-    Definition Sigma := TrustformerSynthesis.Sigma tf_ctx.
-    Check Sigma.
+    Definition R := Synthesis.R tf_ctx.
 
-    Definition rules := TrustformerSynthesis.rules tf_ctx.
-    Check rules.
-    Definition system_schedule := TrustformerSynthesis.system_schedule tf_ctx.
-    Check system_schedule.
+    Definition r := Synthesis.r tf_ctx.
+
+    Definition Sigma := Synthesis.Sigma tf_ctx.
+
+    Definition rules := Synthesis.rules tf_ctx.
+
+    Definition system_schedule := Synthesis.system_schedule tf_ctx.
+    
+    Definition ext_fn_specs := Synthesis.ext_fn_specs tf_ctx.
+
+    Instance ext_fn_names : Show (ext_fn_t tf_ctx) := Synthesis.ext_fn_names tf_ctx.
 
     Definition checked_rules := tc_rules R Sigma rules.
 
     Definition package :=
       {| ip_koika := {| koika_reg_types := R;
-                        koika_reg_names := TrustformerSynthesis.reg_names tf_ctx;
+                        koika_reg_names := Synthesis.reg_names tf_ctx;
                         koika_reg_init := r;
                         koika_ext_fn_types := Sigma;
                         koika_rules := checked_rules;
-                        koika_rule_names := TrustformerSynthesis.rule_names tf_ctx;
+                        koika_rule_names := Synthesis.rule_names tf_ctx;
                         koika_rule_external := (fun _ => false);
                         koika_scheduler := system_schedule;
-                        koika_module_name := "ExampleTrustformerV1" |};
+                        koika_module_name := "Example_InternalNegator" |};
 
       ip_sim := {| sp_ext_fn_specs fn := {| efs_name := show fn; efs_method := false |};
                   sp_prelude := None |};
 
       ip_verilog := {| vp_ext_fn_specs := ext_fn_specs |} |}.
+    
 
 End Synthesis.
 
@@ -123,5 +154,5 @@ End Synthesis.
 
 Definition prog := Interop.Backends.register package.
 Set Extraction Output Directory "build".
-Extraction "ExampleTrustformerV1.ml" prog.
+Extraction "Example_InternalNegator.ml" prog.
 

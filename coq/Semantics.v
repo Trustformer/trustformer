@@ -5,7 +5,7 @@ Require Import Koika.Utils.Environments.
 
 Require Import Coq.Logic.FunctionalExtensionality.
 
-Require Import Trustformer.v2_2.Syntax.
+Require Import Trustformer.Syntax.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
