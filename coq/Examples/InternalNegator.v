@@ -29,6 +29,21 @@ Section FunctionalSpecification.
     | fs_act_neg
     .
 
+    Definition fs_action_encoding (a: fs_action) : bits_t 16 :=
+    match a with
+    | fs_act_nop => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0
+    | fs_act_neg => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~0~1~0
+    end.
+
+    Lemma fs_action_encoding_inj :
+        forall a1 a2,
+        fs_action_encoding a1 = fs_action_encoding a2 ->
+        a1 = a2.
+    Proof.
+        intros. unfold fs_action_encoding in H.
+        destruct a1; destruct a2; try reflexivity; try discriminate.
+    Qed.
+
     Inductive fs_states :=
     | fs_st_val
     .
@@ -112,6 +127,8 @@ Section Synthesis.
 
         tf_spec_action := fs_action;
         tf_spec_action_fin := _; 
+        tf_spec_action_encoding := fs_action_encoding;
+        tf_spec_action_encoding_inj := fs_action_encoding_inj;
         tf_spec_action_ops := fs_transitions
     |}.
 

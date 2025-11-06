@@ -80,6 +80,13 @@ Section CompositionalCorrectness.
   Context (some_fs_action : Type).
   Context (some_fs_action_fin : FiniteType some_fs_action).
   Context (some_fs_action_names : Show some_fs_action).
+  Context (some_fs_action_reg_size : nat).
+  Context (some_fs_action_encoding : some_fs_action -> bits_t some_fs_action_reg_size).
+  Context (some_fs_action_encoding_inj :
+    forall a1 a2,
+    some_fs_action_encoding a1 = some_fs_action_encoding a2 ->
+    a1 = a2
+  ).
   Context (some_fs_action_ops : some_fs_action -> tf_ops some_fs_states some_fs_inputs some_fs_outputs).
 
   (* We craft the tx_context here as it leads to cleaner proofs than generalizing over it*)
@@ -103,6 +110,9 @@ Section CompositionalCorrectness.
     tf_spec_action := some_fs_action;
     tf_spec_action_fin := some_fs_action_fin;
     tf_spec_action_names := some_fs_action_names;
+    tf_spec_action_reg_size := some_fs_action_reg_size;
+    tf_spec_action_encoding := some_fs_action_encoding;
+    tf_spec_action_encoding_inj := some_fs_action_encoding_inj;
     tf_spec_action_ops := some_fs_action_ops
   |}.
   Definition some_fs_states_t := tf_states_type some_fs_states some_fs_states_size.
@@ -122,7 +132,7 @@ Section CompositionalCorrectness.
   Definition some_rules := rules tf_ctx.
   Definition some_system_schedule := system_schedule tf_ctx.
   Definition some_reg_t := reg_t tf_ctx.
-  Definition some_cmd_reg_size := cmd_reg_size tf_ctx.
+  Definition some_cmd_reg_size := tf_spec_action_reg_size tf_ctx.
 
   Instance some_reg_t_finite : FiniteType (some_reg_t) := _reg_t_finite tf_ctx.
   Definition some_reg_t_elements := @finite_elements some_reg_t some_reg_t_finite.
@@ -132,7 +142,7 @@ Section CompositionalCorrectness.
 
   (* Encoding of commands as bitvectors *)
   Definition _fs_cmd_encoding (a: some_fs_action) :=
-    Bits.of_nat some_cmd_reg_size (@finite_index some_fs_action _ a).
+    tf_spec_action_encoding tf_ctx a.
   Definition _encoded_cmd (a: some_fs_action) : type_denote (maybe (bits_t some_cmd_reg_size)) :=
       (Ob~1, (_fs_cmd_encoding a, tt)).
   Definition encoded_cmd (a: some_fs_action) := val_of_value (_encoded_cmd a).
@@ -212,12 +222,7 @@ Section CompositionalCorrectness.
       apply app_inj_tail in H_eq.
       destruct H_eq as [H_bits_eq H_ob_eq]. clear H_ob_eq.
       apply vect_to_list_inj in H_bits_eq.
-      apply f_equal with (f:=Bits.to_nat) in H_bits_eq.
-      rewrite Bits.to_nat_of_nat in H_bits_eq.
-      rewrite Bits.to_nat_of_nat in H_bits_eq.
-      - apply finite_index_injective. exact H_bits_eq.
-      - rewrite pow2_correct. unfold some_cmd_reg_size, cmd_reg_size. apply Common.finite_bits_needed_correct.
-      - rewrite pow2_correct. unfold some_cmd_reg_size, cmd_reg_size. apply Common.finite_bits_needed_correct.
+      apply some_fs_action_encoding_inj. exact H_bits_eq.
     Qed.
 
     Lemma encoded_cmd_inj' :
@@ -1141,11 +1146,6 @@ Section CompositionalCorrectness.
       assert (HSigmaValCmd: sigma_val = encoded_cmd cmd).
       { unfold sigma_val. exact H. } rewrite HSigmaValCmd in *. clear sigma_val HSigmaValCmd. clear H.
       cbn -[_rule_cmd].
-
-      (* Help out unpacking the relevant spec_action_index info from tf_ctx *)
-      unfold _fs_cmd_encoding, some_cmd_reg_size, spec_action_index, spec_action, spec_action_fin in *.
-      assert (@finite_index some_fs_action some_fs_action_fin cmd = @finite_index (spec_action tf_ctx) (spec_action_fin tf_ctx) cmd).
-      { unfold tf_ctx, tf_spec_action, tf_spec_action_fin in *. fold tf_ctx in *. reflexivity. } rewrite H in *; clear H.
 
       (* Help out with the comparison *)
       set (eq_true := BitsToLists.list_eqb _ _ _) in *.

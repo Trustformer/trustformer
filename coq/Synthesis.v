@@ -43,6 +43,9 @@ Record TFSynthContext := {
   tf_spec_action : Type;
   tf_spec_action_fin : FiniteType tf_spec_action;
   tf_spec_action_names : Show tf_spec_action;
+  tf_spec_action_reg_size : nat;
+  tf_spec_action_encoding : tf_spec_action -> bits_t tf_spec_action_reg_size;
+  tf_spec_action_encoding_inj : forall a1 a2, tf_spec_action_encoding a1 = tf_spec_action_encoding a2 -> a1 = a2;
   tf_spec_action_ops : tf_spec_action -> tf_ops tf_spec_states tf_spec_inputs tf_spec_outputs (* TODO: more than just a single op *)
 }.
 
@@ -55,6 +58,8 @@ Ltac unfold_tfctx := repeat (
   || unfold tf_spec_outputs in * || unfold tf_spec_outputs_fin in * || unfold tf_spec_outputs_names in * || unfold tf_spec_outputs_size in * 
   
   || unfold tf_spec_action in * || unfold tf_spec_action_fin in * || unfold tf_spec_action_names in * 
+
+  || unfold tf_spec_action_reg_size in * || unfold tf_spec_action_encoding in * || unfold tf_spec_action_encoding_inj in *
   
   || unfold tf_spec_action_ops in *).
 
@@ -95,6 +100,10 @@ Section TrustformerSynthesis.
     Definition spec_action_index := @finite_index spec_action spec_action_fin.
     Definition spec_action_num := List.length spec_all_actions.
 
+    Definition spec_action_reg_size := tf_spec_action_reg_size tf_synth_ctx.
+    Definition spec_action_encoding := tf_spec_action_encoding tf_synth_ctx.
+    Definition spec_action_encoding_inj := tf_spec_action_encoding_inj tf_synth_ctx.
+
     Definition spec_action_ops := tf_spec_action_ops tf_synth_ctx.
 
 
@@ -115,6 +124,8 @@ Section TrustformerSynthesis.
        
        || unfold spec_action in * || unfold spec_action_fin in * || unfold spec_all_actions in * || unfold spec_action_index in * 
        || unfold spec_action_num in * 
+       
+       || unfold spec_action_reg_size in * || unfold spec_action_encoding in * || unfold spec_action_encoding_inj in *
        
        || unfold spec_action_ops in *).
     
@@ -270,11 +281,9 @@ Section TrustformerSynthesis.
     | ext_output (x : spec_outputs)
     .
 
-    Definition cmd_reg_size := @Common.finite_bits_needed spec_action spec_action_fin.
-
     Definition Sigma (fn: ext_fn_t) : ExternalSignature :=
       match fn with
-      | ext_in_cmd => {$ bits_t 1 ~> maybe (bits_t cmd_reg_size) $}
+      | ext_in_cmd => {$ bits_t 1 ~> maybe (bits_t spec_action_reg_size) $}
       | ext_input x => {$ bits_t 1 ~> spec_inputs_t x $}
       | ext_output x => {$ spec_outputs_t x ~> bits_t 1 $}
       end.
@@ -380,7 +389,7 @@ Section TrustformerSynthesis.
     Definition rules :=
         (fun rl =>  match rl with
           | rule_cmd cmd => 
-            let cmd_enc := Bits.of_nat cmd_reg_size (spec_action_index cmd) in
+            let cmd_enc := spec_action_encoding cmd in
             {{
                   guard(get(extcall ext_in_cmd(Ob~1), valid));
                   guard(get(extcall ext_in_cmd(Ob~1), data) == #cmd_enc);
