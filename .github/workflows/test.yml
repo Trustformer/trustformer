@@ -23,6 +23,4 @@ jobs:
             allow-import-from-derivation = true
 
       - name: Build Trustformer Library and Example Modules
-        run: |
-          nix develop -c make coq
-          nix develop -c make test
+        run: nix develop -c make
