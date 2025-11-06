@@ -48,6 +48,25 @@
         ];
 
       in {
+
+        ocamlPackages = ocamlPackages;
+        coqPackages = coqPackages;
+
+        packages.default = pkgs.coqPackages_8_19.mkCoqDerivation {
+          pname = name;
+          version = self.shortRev or "dev";
+          src = self;
+
+          overrideNativeBuildInputs = nativeBuildInputs;
+          overrideBuildInputs = buildInputs;
+
+          propagatedBuildInputs = buildInputs;
+
+          useDune = true;
+          opam-name = name;
+          setCOQBIN = false;
+        };
+
         devShell = pkgs.mkShell {
           nativeBuildInputs = nativeBuildInputs;
           buildInputs = buildInputs;

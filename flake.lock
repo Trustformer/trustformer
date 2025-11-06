@@ -42,11 +42,11 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1757489759,
-        "narHash": "sha256-TRXwPxEMCyZIvOFm+nLKdWQXLjhPvAExw8923SL/cs0=",
+        "lastModified": 1761724447,
+        "narHash": "sha256-D13V92h34cHuB5YxMo7hcBuZHr9fVZaYff7/59IthMY=",
         "owner": "Trustformer",
         "repo": "koika",
-        "rev": "6312c2b349340687e769d777dff722e028d4827b",
+        "rev": "7a0d9229cedb42af73a44aef14485bc8cf1a1d04",
         "type": "github"
       },
       "original": {
@@ -73,11 +73,11 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1757034884,
-        "narHash": "sha256-PgLSZDBEWUHpfTRfFyklmiiLBE1i1aGCtz4eRA3POao=",
+        "lastModified": 1762361079,
+        "narHash": "sha256-lz718rr1BDpZBYk7+G8cE6wee3PiBUpn8aomG/vLLiY=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "ca77296380960cd497a765102eeb1356eb80fed0",
+        "rev": "ffcdcf99d65c61956d882df249a9be53e5902ea5",
         "type": "github"
       },
       "original": {

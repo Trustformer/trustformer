@@ -2,10 +2,7 @@
 default: all
 
 coq:
-	@echo "This does not work currently :("
-	exit 1
-	mkdir -p build
-	dune build @coq/all
+	dune build
 
 ML_FILES := $(wildcard build/*.ml)
 
@@ -16,12 +13,20 @@ build/%.v: build/%.ml
 
 compile: $(VERILOG_FILES)
 
+copy_build:
+	@if [ -d _build/default/build/. ]; then \
+		mkdir -p build; \
+		rsync -aru _build/default/build/. build; \
+	fi
+
 # --
 
-all: coq compile
+all: coq copy_build compile
+
+test: copy_build compile
+# For now test just builds & compiles
 
 clean:
-	dune clean
-	rm -rf build
+	rm -rf build/*
 
-.PHONY: coq all clean
+.PHONY: coq all test clean
