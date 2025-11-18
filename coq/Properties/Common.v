@@ -6,7 +6,8 @@ Require Import Koika.KoikaForm.SimpleVal.
 Require Import Koika.KoikaForm.Untyped.UntypedLogs.
 
 Require Import Coq.Lists.List.
-
+Require Import Coq.Logic.EqdepFacts.
+Require Import Coq.Program.Equality.
 
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
@@ -271,6 +272,14 @@ Section BitsToLists.
         - inversion H0.
         - hauto.
     Qed.
+
+    Lemma bits_of_list_vect_to_list:
+        forall {n} (b: bits n),
+            Bits.of_list (vect_to_list b) = rew [vect bool] (BitsToLists.len_to_list n b) in b.
+    Proof.
+        intros. apply vect_to_list_inj. rewrite BitsToLists.vect_to_list_of_list.
+        rewrite vect_to_list_eq_rect. reflexivity.
+    Qed. 
         
 
 End BitsToLists.
@@ -355,6 +364,20 @@ Section Datatypes.
         repeat a n = [].
     Proof.
         intros. subst. reflexivity.
+    Qed.
+
+    Lemma datatypes_length_bitwise:
+        forall l1 l2 f,
+            Datatypes.length (BitsToLists.bitwise f l1 l2) = Nat.max (Datatypes.length l1) (Datatypes.length l2).
+    Proof.
+        intros. 
+        generalize dependent l2.
+        induction l1; intros.
+        - cbn. destruct l2; simpl. reflexivity. 
+          rewrite map_length. reflexivity.
+        - cbn. destruct l2.
+          + cbn. rewrite map_length. reflexivity.
+          + cbn. rewrite IHl1. reflexivity.
     Qed.
 
 End Datatypes.

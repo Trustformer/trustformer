@@ -89,8 +89,8 @@ Section FunctionalSpecification.
         :=
         match act with
         | fs_act_nop => tf_nop _ _ _ 
-        | fs_act_neg => tf_neg _ _ _ fs_st_val
-        | fs_act_read => tf_output _ _ _ fs_st_val fs_out_val
+        | fs_act_neg => tf_assign _ _ _ fs_st_val (tf_op1 _ (tf_not) (tf_var _ fs_st_val))
+        | fs_act_read => tf_output _ _ _ fs_out_val fs_st_val 
         | fs_act_write => tf_input _ _ _ fs_st_val fs_in_val
         end.
 

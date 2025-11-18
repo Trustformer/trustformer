@@ -12,4 +12,5 @@
     "files.watcherExclude": {
         "**/target": true
     },
+    "vscoq.goals.maxDepth": 64,
 }

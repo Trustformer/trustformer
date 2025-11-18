@@ -81,7 +81,7 @@ Section FunctionalSpecification.
         :=
         match act with
         | fs_act_nop => tf_nop _ _ _ 
-        | fs_act_neg => tf_neg _ _ _ fs_st_val
+        | fs_act_neg => tf_assign _ _ _ fs_st_val (tf_op1 _ (tf_not) (tf_var _ fs_st_val))
         end.
 
     Definition fs_step := tf_op_step_commit fs_states _ fs_inputs fs_outputs fs_states_size fs_inputs_size.

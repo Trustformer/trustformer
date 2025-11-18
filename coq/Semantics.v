@@ -59,8 +59,8 @@ Section Semantics.
       | right _ => None
       end.
 
-    Lemma __convert_lt:
-      forall a b, a < b -> Nat.max a b = b.
+    Lemma __convert_le:
+      forall a b, a <= b -> Nat.max a b = b.
     Proof. lia. Qed.
 
     Definition convert {szA szB}
@@ -69,14 +69,41 @@ Section Semantics.
       match eq_dec szA szB with
       | left e => eq_rect szA (fun sz => bits_t sz) original szB e
       | right n =>
-          match lt_dec szA szB with
+          match le_dec szA szB with
           | left l =>
-            let p := __convert_lt _ _ l in
+            let p := __convert_le _ _ l in
             eq_rect (Nat.max szA szB) bits_t (Bits.extend_end original szB false) szB p
           | right r =>
             Bits.slice 0 szB original
           end
       end.
+
+    Fixpoint tf_eval_expr {szB}
+      (expr: tf_expr states_var)
+      (state: ContextEnv.(env_t) tf_states_type)
+      : bits_t szB :=
+        match expr with
+        | tf_const _ value =>
+            Bits.of_nat szB value
+        | tf_var _ v =>
+            convert state.[v]
+        | tf_op1 _ op src =>
+            let val_src := tf_eval_expr src state in
+            match op with
+            | tf_not => Bits.neg val_src
+            end
+        | tf_op2 _ op src1 src2 =>
+            let val_src1 := tf_eval_expr src1 state in
+            let val_src2 := tf_eval_expr src2 state in
+            match op with
+            | tf_and => Bits.and val_src1 val_src2
+            | tf_or => Bits.or val_src1 val_src2
+            | tf_xor => Bits.xor val_src1 val_src2
+            | tf_add => Bits.plus val_src1 val_src2
+            | tf_sub => Bits.minus val_src1 val_src2
+            | tf_mul => convert (Bits.mul val_src1 val_src2)
+            end
+        end.
 
     (* Given a current state, a variable & an operation, returns the new value for the variable if it is written to *)
     Definition tf_op_step_writes
@@ -87,8 +114,8 @@ Section Semantics.
       : option (type_denote (tf_states_type var)) :=
         match state_op with
         | tf_nop _ _ _ => None
-        | tf_neg _ _ _ x =>
-            when_vars_match x var (fun _ => Some (Bits.neg state.[var]))
+        | tf_assign _ _ _ x expr =>
+            when_vars_match x var (fun _ => Some (tf_eval_expr expr state))
         | tf_input _ _ _ x y =>
             when_vars_match x var (fun _ => Some (convert (input y)))
         | tf_output _ _ _ x y =>
@@ -102,7 +129,7 @@ Section Semantics.
       (state_op: tf_ops states_var inputs_var outputs_var)
       : option (type_denote (tf_outputs_type var)) :=
         match state_op with
-        | tf_output _ _ _ x y => when_outputs_match y var (fun _ => Some (convert (state.[x])))
+        | tf_output _ _ _ x y => when_outputs_match x var (fun _ => Some (convert (state.[y])))
         | _ => None
         end.
 
@@ -155,18 +182,18 @@ Section Semantics.
         destruct state_op. 
         - (* tf_nop *)
           left. intros. timeout 10 sauto.
-        - (* tf_neg *)
-          destruct (eq_dec x var).
+        - (* tf_assign *)
+          destruct (eq_dec dst var).
           + right. intros H. specialize (H (ContextEnv.(create) (fun k => Bits.zero)) (fun k => Bits.zero)).
-            subst x. timeout 10 simpl in H. unfold when_vars_match in H. destruct (eq_dec var var).
+            subst dst. timeout 10 simpl in H. unfold when_vars_match in H. destruct (eq_dec var var).
             destruct e. timeout 10 sauto. timeout 10 sauto.
-          + left. intros. timeout 10 simpl. unfold when_vars_match. destruct (eq_dec x var). destruct e. timeout 10 sauto. timeout 10 sauto.
+          + left. intros. timeout 10 simpl. unfold when_vars_match. destruct (eq_dec dst var). destruct e. timeout 10 sauto. timeout 10 sauto.
         - (* tf_input *)
-          destruct (eq_dec x var).
+          destruct (eq_dec dst var).
           + right. intros H. specialize (H (ContextEnv.(create) (fun k => Bits.zero)) (fun k => Bits.zero)).
-            subst x. timeout 10 simpl in H. unfold when_vars_match in H. destruct (eq_dec var var).
+            subst dst. timeout 10 simpl in H. unfold when_vars_match in H. destruct (eq_dec var var).
             destruct e. timeout 10 sauto. timeout 10 sauto.
-          + left. intros. timeout 10 simpl. unfold when_vars_match. destruct (eq_dec x var). destruct e. timeout 10 sauto. timeout 10 sauto.
+          + left. intros. timeout 10 simpl. unfold when_vars_match. destruct (eq_dec dst var). destruct e. timeout 10 sauto. timeout 10 sauto.
         - (* tf_output *)
           left. intros. timeout 10 sauto. 
       Defined.
@@ -209,11 +236,11 @@ Section Semantics.
         - (* tf_neg *) left. intros. timeout 10 sauto.
         - (* tf_input *) left. intros. timeout 10 sauto.
         - (* tf_output *)
-          destruct (eq_dec y var).
+          destruct (eq_dec dst var).
           + right. intros H. specialize (H (ContextEnv.(create) (fun k => Bits.zero))).
-            subst y. timeout 10 simpl in H. unfold when_outputs_match in H. destruct (eq_dec var var).
+            subst dst. timeout 10 simpl in H. unfold when_outputs_match in H. destruct (eq_dec var var).
             destruct e. timeout 10 sauto. timeout 10 sauto.
-          + left. intros. timeout 10 simpl. unfold when_outputs_match. destruct (eq_dec y var). destruct e. timeout 10 sauto. timeout 10 sauto.
+          + left. intros. timeout 10 simpl. unfold when_outputs_match. destruct (eq_dec dst var). destruct e. timeout 10 sauto. timeout 10 sauto.
       Defined.
 
       Definition filter_written_outputs

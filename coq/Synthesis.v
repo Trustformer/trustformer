@@ -331,17 +331,36 @@ Section TrustformerSynthesis.
     Definition synth_convert (out_var_size in_var_size : nat) code : uaction reg_t ext_fn_t :=
       if Nat.eq_dec out_var_size in_var_size then
         code
-      else if Nat.ltb in_var_size out_var_size then
+      else if Nat.leb in_var_size out_var_size then
         (UUnop (UBits1 (UZExtL out_var_size)) code)
       else
         (UUnop (UBits1 (USlice 0 out_var_size)) code).
 
+    Fixpoint expr_to_uaction (e: tf_expr spec_states) (target_size: nat) : uaction reg_t ext_fn_t :=
+      match e with
+        | tf_const _ value =>
+            let val := Bits.of_nat target_size value in {{#val}}
+        | tf_var _ v =>
+            synth_convert target_size (spec_states_size v) (UVar (_reg_name v))
+        | tf_op1 _ op src =>
+            (UUnop (UBits1 UNot) (expr_to_uaction src target_size))
+        | tf_op2 _ op src1 src2 =>
+            match op with
+            | tf_and => (UBinop (UBits2 UAnd) (expr_to_uaction src1 target_size) (expr_to_uaction src2 target_size))
+            | tf_or => (UBinop (UBits2 UOr) (expr_to_uaction src1 target_size) (expr_to_uaction src2 target_size))
+            | tf_xor => (UBinop (UBits2 UXor) (expr_to_uaction src1 target_size) (expr_to_uaction src2 target_size))
+            | tf_add => (UBinop (UBits2 UPlus) (expr_to_uaction src1 target_size) (expr_to_uaction src2 target_size))
+            | tf_sub => (UBinop (UBits2 UMinus) (expr_to_uaction src1 target_size) (expr_to_uaction src2 target_size))
+            | tf_mul => synth_convert target_size (target_size+target_size) (UBinop (UBits2 UMul) (expr_to_uaction src1 target_size) (expr_to_uaction src2 target_size))
+            end
+        end.
+
     Definition op_to_uaction (op: tf_ops spec_states spec_inputs spec_outputs) (code: uaction reg_t ext_fn_t) : uaction reg_t ext_fn_t :=
       match op with
       | tf_nop _ _ _ => code 
-      | tf_neg _ _ _ x => UBind (_reg_name x) (UUnop (UBits1 UNot) (UVar (_reg_name x))) code
+      | tf_assign _ _ _ x expr => UBind (_reg_name x) (expr_to_uaction expr (spec_states_size x)) code
       | tf_input _ _ _ x y => UBind (_reg_name x) (synth_convert (spec_states_size x) (spec_inputs_size y) (UExternalCall (ext_input y) {{Ob~1}})) code
-      | tf_output _ _ _ x y => UBind (_out_name y) (synth_convert (spec_outputs_size y) (spec_states_size x) (UVar (_reg_name x))) code
+      | tf_output _ _ _ x y => UBind (_out_name x) (synth_convert (spec_outputs_size x) (spec_states_size y) (UVar (_reg_name y))) code
       end.
 
     Definition _rule_aux
