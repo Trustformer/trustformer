@@ -352,6 +352,16 @@ Section TrustformerSynthesis.
             | tf_add => (UBinop (UBits2 UPlus) (expr_to_uaction src1 target_size) (expr_to_uaction src2 target_size))
             | tf_sub => (UBinop (UBits2 UMinus) (expr_to_uaction src1 target_size) (expr_to_uaction src2 target_size))
             | tf_mul => synth_convert target_size (target_size+target_size) (UBinop (UBits2 UMul) (expr_to_uaction src1 target_size) (expr_to_uaction src2 target_size))
+            | tf_cmp cmp_op =>
+                let op_f := match cmp_op with
+                  | tf_eq => (UEq false)
+                  | tf_neq => (UEq true)
+                  | tf_lt => (UBits2 (UCompare false cLt))
+                  | tf_le => (UBits2 (UCompare false cLe))
+                  | tf_gt => (UBits2 (UCompare false cGt))
+                  | tf_ge => (UBits2 (UCompare false cGe))
+                  end in
+                synth_convert target_size 1 (UBinop (op_f) (expr_to_uaction src1 target_size) (expr_to_uaction src2 target_size))
             end
         end.
 

@@ -37,7 +37,7 @@ Section TrustformerSyntax.
         | tf_add                                (* Addition *)
         | tf_sub                                (* Subtraction *)
         | tf_mul                                (* Multiplication *)
-        (* | tf_cmp (cmp_op: tf_comparison_ops)  *)   (* Comparison Operations *)
+        | tf_cmp (cmp_op: tf_comparison_ops)    (* Comparison Operations *)
         (* | tf_div *)
         (* | tf_mod *)
         .

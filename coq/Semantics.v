@@ -102,6 +102,21 @@ Section Semantics.
             | tf_add => Bits.plus val_src1 val_src2
             | tf_sub => Bits.minus val_src1 val_src2
             | tf_mul => convert (Bits.mul val_src1 val_src2)
+            | tf_cmp cmp_op =>
+                match cmp_op with
+                | tf_eq =>
+                    if beq_dec val_src1 val_src2 then Bits.of_nat szB 1 else Bits.of_nat szB 0
+                | tf_neq =>
+                    if beq_dec val_src1 val_src2 then Bits.of_nat szB 0 else Bits.of_nat szB 1
+                | tf_lt =>
+                    if Bits.unsigned_lt val_src1 val_src2 then Bits.of_nat szB 1 else Bits.of_nat szB 0
+                | tf_le =>
+                    if Bits.unsigned_le val_src1 val_src2 then Bits.of_nat szB 1 else Bits.of_nat szB 0
+                | tf_gt =>
+                    if Bits.unsigned_gt val_src1 val_src2 then Bits.of_nat szB 1 else Bits.of_nat szB 0
+                | tf_ge =>
+                    if Bits.unsigned_ge val_src1 val_src2 then Bits.of_nat szB 1 else Bits.of_nat szB 0
+                end
             end
         end.
 
