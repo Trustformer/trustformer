@@ -108,6 +108,7 @@ Section CompositionalCorrectness.
       (Ob~1, (_fs_cmd_encoding a, tt)).
   Definition encoded_cmd (a: spec_action) := val_of_value (_encoded_cmd a).
 
+  (* Useful Tactics *)
   Ltac clean := 
     (* the list of all regs is verbose this should clean it up a bit *)
       try match goal with
@@ -124,6 +125,8 @@ Section CompositionalCorrectness.
   Ltac unfold_misc := unfold var_t in *.
   Ltac cbn2 := unfold_misc; timeout 10 cbn -[vect_to_list UntypedLogs.log_existsb UntypedLogs.log_empty _reg_name _out_name Nat.eq_dec] in *; unfold_misc.
 
+  Ltac unfold_getenv := unfold getenv; cbn [ContextEnv].
+  Ltac unfold_getenv_all := unfold getenv in *; cbn [ContextEnv] in *.
 
   (* ============ Helper Lemmas on the synthesis results ============= *)
   Lemma list_decidable_eq_spec_states : ListDec.decidable_eq spec_states.
@@ -376,8 +379,8 @@ Section CompositionalCorrectness.
     Proof.
       intros.
       unfold log_after_act_read_state_vars.
-      unfold UntypedLogs.log_existsb in *. cbn in *.
-      set (c_nil := ccreate _ _).
+      unfold UntypedLogs.log_existsb  in *.
+      set (c_nil := UntypedLogs.log_empty). 
       assert (
         existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_read0 kind prt) (getenv RegCEnv c_nil (tf_reg tf_ctx act)) = false
         /\
@@ -386,12 +389,12 @@ Section CompositionalCorrectness.
         existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_write1 kind prt) (getenv RegCEnv c_nil (tf_reg tf_ctx act)) = false
       ).
       {
-        subst c_nil. unfold getenv. cbn. rewrite cassoc_ccreate. cbn. (* hammer *) timeout 10 hauto lq: on.
+        subst c_nil. unfold UntypedLogs.log_empty. rewrite getenv_create. cbn [existsb]. repeat split.
       }
 
       generalize dependent c_nil.
       induction l; intros. exact H.
-      unfold UntypedLogs.log_existsb in *. cbn in *. unfold getenv in *. cbn in *.
+      unfold UntypedLogs.log_existsb in *. cbn in *.
       set (cons1 := UntypedLogs.log_cons _ _ _).
       specialize (IHl cons1).
       assert (
@@ -402,8 +405,8 @@ Section CompositionalCorrectness.
         existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_write1 kind prt) (cassoc (finite_member (tf_reg tf_ctx act)) cons1) = false
       ).
       { 
-        subst cons1. unfold UntypedLogs.log_cons. cbn. destruct (eq_dec (tf_reg tf_ctx act) (tf_reg tf_ctx a)).
-        { rewrite e in *. rewrite Common.cassoc_put_eq. cbn. unfold getenv. cbn. exact H. }
+        subst cons1. unfold UntypedLogs.log_cons. destruct (eq_dec (tf_reg tf_ctx act) (tf_reg tf_ctx a)).
+        { rewrite e in *. rewrite Common.cassoc_put_eq. cbn [existsb UntypedLogs.is_read0 UntypedLogs.is_write0 UntypedLogs.is_write1]. cbn. exact H. }
         { rewrite Common.cassoc_put_neq. 2: { (* hammer. *) timeout 10 hauto lq: on. } exact H. }
       }
       specialize (IHl H0). exact IHl.
@@ -433,7 +436,7 @@ Section CompositionalCorrectness.
         existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_write1 kind prt) (getenv RegCEnv c_nil (tf_out tf_ctx out)) = false
       ).
       {
-        subst c_nil. unfold getenv. cbn. rewrite cassoc_ccreate. cbn. (* hammer. *) timeout 10 sfirstorder.
+        subst c_nil. unfold getenv. cbn. rewrite cassoc_ccreate. cbn. (* hammer *) timeout 10 sfirstorder.
       }
 
       generalize dependent c_nil.
@@ -451,7 +454,7 @@ Section CompositionalCorrectness.
         existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_write1 kind prt) (cassoc (finite_member (tf_out tf_ctx out)) cons1) = false
       ).
       { 
-        subst cons1. unfold UntypedLogs.log_cons. cbn.  rewrite Common.cassoc_put_neq. 2: { timeout 10 hauto. } exact H.
+        subst cons1. unfold UntypedLogs.log_cons. cbn.  rewrite Common.cassoc_put_neq. 2: { (* hammer. *) timeout 10 hauto lq: on. } exact H.
       }
       specialize (IHl H0). exact IHl.
     Qed.
@@ -1412,7 +1415,7 @@ Section CompositionalCorrectness.
                 rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
                 rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
                 generalize (value_of_expr_bits expr1 hw_reg_state (S f_dst) H); intros. destruct H0 as [bl1 [Hval1 Hlen1]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                generalize (value_of_expr_bits expr2 hw_reg_state (S f_dst) H); intros. destruct H0 as [bl2 [Hval2 Hlen2]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
+                generalize (value_of_expr_bits expr2 hw_reg_state (S f_dst) H); intros. destruct H0 as [bl2 [Hval2 Hlen2]]. destruct value_of_expr. 2-4: (* hammer. *) timeout 10 hauto.
                 cbn2. repeat f_equal. destruct (Nat.eq_dec _ _). all: (* hammer *) timeout 10 hauto lq: on.
               }
               { rewrite Nat.leb_gt in Hleb. assert (f_dst = 0) by lia. subst. cbn2. 
@@ -2248,15 +2251,14 @@ Section CompositionalCorrectness.
       
       destruct (eq_dec a cmd).
       {
-        timeout 10 cbn -[rules UntypedLogs.log_empty] in *. clear IHl.
+        cbn [fold_right UntypedSemantics.interp_scheduler'] in *. clear IHl.
         subst a. assert (H_not_in_l: ~ In cmd l). { inversion H_nodup. timeout 10 sauto. }
       
         rewrite !(interp_scheduler_no_cmd hw_reg_state cmd). 2: exact H0. 2: exact H_not_in_l.
-        unfold create, getenv. cbn -[rules UntypedLogs.log_empty]. 
 
-        generalize (interp_rule_right_cmd hw_reg_state cmd H0 H1); intros Hcmd_log.
+        rewrite (interp_rule_right_cmd hw_reg_state cmd H0 H1). 
         
-        rewrite Hcmd_log. clear Hcmd_log. cbn [log_after_rule_right_cmd].
+        cbn [log_after_rule_right_cmd].
         rewrite !(interp_scheduler_no_cmd hw_reg_state cmd). 2: exact H0. 2: exact H_not_in_l.
 
         rewrite interp_scheduler_outputs.
@@ -2264,8 +2266,9 @@ Section CompositionalCorrectness.
           intros o H_in. unfold UntypedLogs.log_existsb.
           unfold log_after_act_write_output_vars, log_after_act_write_state_vars, log_after_act_read_state_vars.
           
-          repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn -[_reg_name _out_name].
-          repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn -[_reg_name _out_name].
+          repeat (unfold_getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r).
+          cbn [UntypedLogs.log_app map2 create RegCEnv].
+          repeat (unfold_getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r).
 
           rewrite <- !fold_left_rev_right.
 
@@ -2292,16 +2295,17 @@ Section CompositionalCorrectness.
           induction (l1).
           2: tac_interp_scheduler_writes_state_only_cmd_nowrite1 (tf_reg tf_ctx a) (tf_out tf_ctx o) IHl0.
 
-          repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn -[_reg_name _out_name].
-          repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn -[_reg_name _out_name].
+          cbn [fold_right UntypedLogs.log_empty create RegCEnv]. 
+          repeat (unfold_getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r).
           reflexivity.
         }
         2: {
           intros o H_in. unfold UntypedLogs.log_existsb.
           unfold log_after_act_write_output_vars, log_after_act_write_state_vars, log_after_act_read_state_vars.
           
-          repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn -[_reg_name _out_name].
-          repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn -[_reg_name _out_name].
+          repeat (unfold_getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r).
+          cbn [UntypedLogs.log_app map2 create RegCEnv].
+          repeat (unfold_getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r).
 
           rewrite <- !fold_left_rev_right.
 
@@ -2320,27 +2324,32 @@ Section CompositionalCorrectness.
           induction (l1).
           2: tac_interp_scheduler_writes_state_only_cmd_nowrite1 (tf_reg tf_ctx a) (tf_out_ack tf_ctx o) IHl0.
 
-          repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn -[_reg_name _out_name].
-          repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn -[_reg_name _out_name].
+          cbn [fold_right UntypedLogs.log_empty create RegCEnv]. 
+          repeat (unfold_getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r).
           reflexivity.
         }
 
-        cbn -[_reg_name _out_name]. unfold log_after_rules_out.
+        unfold log_after_rules_out.
         induction (rev finite_elements).
-        { cbn -[_reg_name _out_name]. reflexivity. }
-        cbn -[_reg_name _out_name UntypedLogs.log_app] in *.
+        { reflexivity. }
+        cbn [UntypedSemantics.interp_scheduler' fold_right] in *.
 
-        repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn -[_reg_name _out_name UntypedLogs.log_app].
-        repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn -[_reg_name _out_name UntypedLogs.log_app].
+        repeat (unfold_getenv_all || rewrite !cassoc_ccreate in * || rewrite app_nil_l in * || rewrite app_nil_r in *).
+        unfold UntypedLogs.latest_write, UntypedLogs.log_find, UntypedLogs.RLog in *. 
+        repeat (unfold_getenv_all || rewrite !cassoc_ccreate  in * || rewrite app_nil_l  in * || rewrite app_nil_r in *).
 
-        unfold UntypedLogs.RLog.  set (log1 := putenv  _ _ _ _ ). set (log2 := fold_right _ _ _).
-        rewrite (Common.cassoc_log_app log1 log2 reg). subst log1. subst log2. cbn -[_reg_name _out_name].
+        set (log1 := interp_rule_out_result _ _ _ ). set (log2 := fold_right _ _ _).
+        rewrite (Common.cassoc_log_app log1 log2 reg). subst log1. subst log2.
+        
+        unfold interp_rule_out_result, UntypedLogs.log_cons.
+        cbn [fold_right] in *.
 
         destruct reg.
         { (* state_var *)
           rewrite Common.cassoc_put_neq by ((* hammer *) timeout 10 sauto). rewrite Common.cassoc_put_neq by ((* hammer *) timeout 10 sauto).
-          repeat (unfold getenv in * || rewrite !cassoc_ccreate in * || rewrite app_nil_l in * || rewrite app_nil_r in *); cbn -[_reg_name _out_name] in *.
-          repeat (unfold getenv in * || rewrite !cassoc_ccreate in * || rewrite app_nil_l in * || rewrite app_nil_r in *); cbn -[_reg_name _out_name] in *.
+
+          cbn [fold_right UntypedLogs.log_empty create RegCEnv]. 
+          repeat (unfold_getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r).
           unfold UntypedLogs.RLog. 
           apply IHl0.
         }
@@ -2349,15 +2358,17 @@ Section CompositionalCorrectness.
           destruct (eq_dec x a).
           { 
             subst a. rewrite Common.cassoc_put_eq.
-            repeat (unfold getenv in * || rewrite !cassoc_ccreate in * || rewrite app_nil_l in * || rewrite app_nil_r in *); cbn -[_reg_name _out_name] in *.
-            repeat (unfold getenv in * || rewrite !cassoc_ccreate in * || rewrite app_nil_l in * || rewrite app_nil_r in *); cbn -[_reg_name _out_name] in *.
+
+            cbn [fold_right UntypedLogs.log_empty create RegCEnv]. 
+            repeat (unfold_getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r).
             unfold UntypedLogs.RLog. 
             apply IHl0.
           }
           {
             rewrite Common.cassoc_put_neq by ((* hammer *) timeout 10 sauto).
-            repeat (unfold getenv in * || rewrite !cassoc_ccreate in * || rewrite app_nil_l in * || rewrite app_nil_r in *); cbn -[_reg_name _out_name] in *.
-            repeat (unfold getenv in * || rewrite !cassoc_ccreate in * || rewrite app_nil_l in * || rewrite app_nil_r in *); cbn -[_reg_name _out_name] in *.
+            
+            cbn [fold_right UntypedLogs.log_empty create RegCEnv]. 
+            repeat (unfold_getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r).
             unfold UntypedLogs.RLog. 
             apply IHl0.
           }
@@ -2367,7 +2378,7 @@ Section CompositionalCorrectness.
         }
       }
       {
-        timeout 10 cbn -[rules UntypedLogs.log_empty UntypedLogs.latest_write encoded_cmd] in *.
+        cbn [fold_right UntypedSemantics.interp_scheduler'] in *.
         rewrite interp_rule_wrong_cmd.
         {
           inversion H_in_l. congruence.
