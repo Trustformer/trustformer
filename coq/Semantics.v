@@ -59,6 +59,7 @@ Section Semantics.
       | right _ => None
       end.
 
+    (* Logic for the implicit type conversion *)
     Lemma __convert_le:
       forall a b, a <= b -> Nat.max a b = b.
     Proof. lia. Qed.
@@ -78,6 +79,7 @@ Section Semantics.
           end
       end.
 
+    (* Evaluation of expressions *)
     Fixpoint tf_eval_expr {szB}
       (expr: tf_expr states_var)
       (state: ContextEnv.(env_t) tf_states_type)
