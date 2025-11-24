@@ -264,7 +264,7 @@ Section CompositionalCorrectness.
       match UntypedSemantics.interp_action hw_reg_state sigma newGamma sched_log read_logs code with
       | Some (final_log, v, Gamma') => Some (final_log, v, skipn (List.length state_list) Gamma')
       | None => None
-      end.
+      end.    
     Proof.
       intros. unfold Gamma_after_act_read_state_vars, log_after_act_read_state_vars in *.
 
@@ -278,6 +278,7 @@ Section CompositionalCorrectness.
         - intros. reflexivity.
       }
       {
+        (* All Writes succeed *)
         intros. timeout 10 simpl. unfold opt_bind.
         rewrite H. timeout 10 simpl.
 
@@ -341,7 +342,6 @@ Section CompositionalCorrectness.
             } rewrite H0. reflexivity. 
           }
         } 
-        
         rewrite Heq. clear Heq. clear HeqLMM. clear HeqRM.
 
         case_eq RM.
@@ -889,6 +889,423 @@ Section CompositionalCorrectness.
 
   End ActionInterpretation.
 
+  Section Expressions.
+    
+    Definition bits_of_value_lossy (v: val) : list bool :=
+      match v with
+        | Bits bl => bl
+        | _ => []
+      end.
+
+    Definition val_convert (out_var_size in_var_size : nat) (x : val) : val :=
+      if Nat.eq_dec out_var_size in_var_size then
+        x
+      else 
+        if Nat.leb in_var_size out_var_size then
+          Bits (bits_of_value_lossy x ++ repeat false (out_var_size - in_var_size))
+        else
+          Bits (firstn (out_var_size) (bits_of_value_lossy x)).
+
+    Lemma val_convert_same:
+      forall s x, val_convert s s x = x.
+    Proof.
+      intros.
+      unfold val_convert.
+      destruct (Nat.eq_dec s s).
+      - reflexivity.
+      - exfalso. apply n. reflexivity.
+    Qed.
+
+    Lemma val_convert_more:
+      forall s1 s2 x, 
+        s1 > s2 ->
+        val_convert s1 s2 x = Bits (bits_of_value_lossy x ++ repeat false (s1 - s2)).
+    Proof.
+      intros.
+      unfold val_convert.
+      destruct (Nat.eq_dec s1 s2).
+      - lia.
+      - destruct (Nat.leb s2 s1) eqn:Hleb.
+        + reflexivity.
+        + (* hammer. *) timeout 10 hauto b: on.
+    Qed.
+
+    Lemma val_convert_less:
+      forall s1 s2 x, 
+        s1 < s2 ->
+        val_convert s1 s2 x = Bits (firstn (s1) (bits_of_value_lossy x)).
+    Proof.
+      intros.
+      unfold val_convert.
+      destruct (Nat.eq_dec s1 s2).
+      - lia.
+      - destruct (Nat.leb s2 s1) eqn:Hleb.
+        + (* hammer. *) timeout 10 hauto b: on.
+        + reflexivity.
+    Qed.
+
+    Lemma val_convert_of_bits_is_bits:
+      forall s1 s2 bl1,
+        ((Datatypes.length bl1) = s2) ->
+        exists bl2, val_convert s1 s2 (Bits bl1) = Bits bl2 /\ Datatypes.length bl2 = s1.
+    Proof.
+      intros. subst. unfold val_convert. destruct (Nat.eq_dec _ _). 
+      econstructor; split; try auto. unfold bits_of_value_lossy.
+      destruct (Nat.leb _ _ ) eqn:Hleb.
+      {
+        rewrite Nat.leb_le in Hleb.
+        econstructor; split; try reflexivity. 
+        rewrite List.app_length, repeat_length. lia.
+      }
+      {
+        rewrite Nat.leb_gt in Hleb.
+        econstructor; split; try reflexivity. 
+        rewrite firstn_length. lia.
+      }
+    Qed.
+
+    Lemma synth_convert_is_val_convert:
+      forall hw_reg_state Gamma Log code f_dst f_src bl, 
+        (UntypedSemantics.interp_action hw_reg_state sigma Gamma UntypedLogs.log_empty Log code = Some (Log, Bits bl, Gamma) 
+          /\ Datatypes.length bl = f_src) ->
+
+        UntypedSemantics.interp_action (REnv:=RegCEnv) hw_reg_state sigma Gamma UntypedLogs.log_empty Log
+          (synth_convert tf_ctx f_dst f_src code ) =
+          Some (Log, val_convert f_dst f_src (Bits bl), Gamma).
+    Proof.
+      intros.
+      destruct H as [Hcode Hlen].
+
+      unfold synth_convert, val_convert.
+      destruct (Nat.eq_dec f_dst f_src). exact Hcode.
+      destruct (Nat.leb f_src f_dst) eqn:Hleb.
+      { cbn2. rewrite Hcode, <- Hlen. cbn2.
+        reflexivity.
+      } {
+        cbn2. rewrite Hcode. cbn2.
+        rewrite Nat.leb_gt in Hleb.
+        rewrite firstn_length.
+        replace (Init.Nat.min f_dst (Datatypes.length _)) with f_dst by lia.
+        rewrite Nat.sub_diag. cbn2.
+        rewrite app_nil_r. reflexivity.
+      }
+    Qed.
+        
+    Fixpoint value_of_expr (expr: tf_expr spec_states) (hw_reg_state: hw_env_t) (target_size: nat) : val :=
+      match expr with
+        | tf_const _ value => 
+            Bits (vect_to_list (Bits.of_nat (target_size) value))
+        | tf_var _ v =>
+            val_convert target_size (spec_states_size v) hw_reg_state.[tf_reg tf_ctx v]
+        | tf_op1 _ op src =>
+            match UntypedSemantics.usigma1 UNot (value_of_expr src hw_reg_state target_size) with
+              | Some v => v
+              | None => Bits []
+            end
+        | tf_op2 _ op src1 src2 =>
+            let v1 := (bits_of_value_lossy (value_of_expr src1 hw_reg_state target_size)) in
+            let v2 := (bits_of_value_lossy (value_of_expr src2 hw_reg_state target_size)) in
+            match op with
+              | tf_and => 
+                  Bits (UntypedSemantics.ubits2_sigma UAnd v1 v2)
+              | tf_or => 
+                  Bits (UntypedSemantics.ubits2_sigma UOr v1 v2)
+              | tf_xor => 
+                  Bits (UntypedSemantics.ubits2_sigma UXor v1 v2)
+              | tf_add => 
+                  Bits (UntypedSemantics.ubits2_sigma UPlus v1 v2)
+              | tf_sub => 
+                  Bits (UntypedSemantics.ubits2_sigma UMinus v1 v2)
+              | tf_mul => 
+                  val_convert target_size (target_size + target_size) (Bits (UntypedSemantics.ubits2_sigma UMul v1 v2))
+              | tf_cmp cop =>
+                  match cop with
+                    | tf_eq => val_convert target_size (1) 
+                      (Bits [if BitsToLists.val_beq (value_of_expr src1 hw_reg_state target_size) (value_of_expr src2 hw_reg_state target_size) then true else false])
+                    | tf_neq  => val_convert target_size (1) 
+                      (Bits [if BitsToLists.val_beq (value_of_expr src1 hw_reg_state target_size) (value_of_expr src2 hw_reg_state target_size) then false else true])
+                    | tf_lt  => val_convert target_size (1) (Bits (UntypedSemantics.ubits2_sigma (UCompare false cLt) v1 v2))
+                    | tf_le  => val_convert target_size (1) (Bits (UntypedSemantics.ubits2_sigma (UCompare false cLe) v1 v2))
+                    | tf_gt  => val_convert target_size (1) (Bits (UntypedSemantics.ubits2_sigma (UCompare false cGt) v1 v2))
+                    | tf_ge  => val_convert target_size (1) (Bits (UntypedSemantics.ubits2_sigma (UCompare false cGe) v1 v2))
+                  end
+            end
+        end. 
+
+    Lemma value_of_expr_bits:
+      forall expr hw_reg_state f_dst,
+        (forall s, exists bl, hw_reg_state.[tf_reg tf_ctx s] = Bits bl /\ Datatypes.length bl = spec_states_size s) ->
+        exists bl, value_of_expr expr hw_reg_state f_dst = Bits bl /\ Datatypes.length bl = f_dst.
+    Proof.
+      intros. induction expr.
+      {
+        econstructor. cbn2. split. reflexivity. rewrite vect_to_list_length. reflexivity.
+      } {
+        cbn2. unfold val_convert. destruct (Nat.eq_dec _ _). specialize (H v). (* hammer. *) timeout 10 sfirstorder.
+        destruct (Nat.leb _ _ ) eqn:Hleb.
+        { 
+          econstructor. specialize (H v). destruct H as [bl [Hhw Hlen]].
+          split. reflexivity. unfold bits_of_value_lossy.
+          cbn2. rewrite Hhw. rewrite app_length, repeat_length. rewrite Hlen, Nat.add_comm. 
+          rewrite Nat.leb_le in Hleb. rewrite (Nat.sub_add _ _ Hleb). reflexivity.
+        }
+        {
+          econstructor. specialize (H v). destruct H as [bl [Hhw Hlen]].
+          split. reflexivity. unfold bits_of_value_lossy.
+          cbn2. rewrite Hhw. rewrite firstn_length. rewrite Hlen. 
+          apply leb_complete_conv in Hleb. lia.
+        }
+      } {
+        cbn2. unfold UntypedSemantics.usigma1. destruct IHexpr as [bl [Hval Hlen]].
+        rewrite Hval. econstructor. split. reflexivity. unfold UntypedSemantics.usigma1'. rewrite map_length. exact Hlen. 
+      } {
+        cbn2. destruct IHexpr1 as [bl1 [Hval1 Hlen1]]. destruct IHexpr2 as [bl2 [Hval2 Hlen2]].
+        rewrite Hval1. rewrite Hval2. destruct op.
+        1-3: econstructor; split; try reflexivity; rewrite Common.datatypes_length_bitwise; unfold bits_of_value_lossy; rewrite Hlen1, Hlen2; lia.
+        1-2: econstructor; split; try reflexivity; rewrite vect_to_list_length; unfold bits_of_value_lossy; lia.
+        { apply val_convert_of_bits_is_bits. { rewrite vect_to_list_length. unfold bits_of_value_lossy. lia. } }
+        { destr; subst. 1-2: apply val_convert_of_bits_is_bits; reflexivity. 
+          all: apply val_convert_of_bits_is_bits; destr; simpl_eq; try reflexivity; (* hammer *) timeout 10 hauto lq: on.
+        }
+      }
+    Qed.
+
+    Ltac prove_expr_is_bits expr1 hw_reg_state f_dst H :=
+      let H0 := fresh "H0" in
+      let bl1 := fresh "bl1" in
+      let Hval1 := fresh "Hval1" in
+      let Hval2 := fresh "Hval2" in
+      generalize (value_of_expr_bits expr1 hw_reg_state f_dst H); intros H0; 
+      destruct H0 as [bl1 [Hval1 Hval2]];
+      destruct value_of_expr; try congruence; inversion Hval1; subst bl1; clear Hval1.
+
+    Lemma interp_act_expr_to_uaction:
+      forall expr f_dst hw_reg_state,
+        (forall s, exists bl, hw_reg_state.[tf_reg tf_ctx s] = Bits bl /\ Datatypes.length bl = spec_states_size s) ->
+        (* TODO: generalize this for any logs that fulfill some conditions (reads succeed) *)
+        UntypedSemantics.interp_action hw_reg_state sigma
+          (Gamma_after_act_read_state_vars hw_reg_state [] UntypedLogs.log_empty UntypedLogs.log_empty spec_all_states)
+          UntypedLogs.log_empty
+          (log_after_act_read_state_vars hw_reg_state UntypedLogs.log_empty UntypedLogs.log_empty spec_all_states) 
+          (expr_to_uaction tf_ctx expr f_dst) 
+          = Some ( 
+            (log_after_act_read_state_vars hw_reg_state UntypedLogs.log_empty UntypedLogs.log_empty spec_all_states, 
+            (value_of_expr expr hw_reg_state f_dst), 
+            Gamma_after_act_read_state_vars hw_reg_state [] UntypedLogs.log_empty UntypedLogs.log_empty spec_all_states)
+          ).
+    Proof.
+      intros. (* repeat econstructor. *)
+
+      generalize dependent f_dst.
+      induction expr; intros.
+      { (* tf_const *)
+        unfold value_of_expr. cbn2; unfold synth_convert; cbn2. repeat f_equal.
+      } { (* tf_var *)
+        unfold value_of_expr. cbn2. 
+        destruct hw_reg_state.[tf_reg tf_ctx v] eqn:Hval. 2-4: (* hammer. *) timeout 10 sauto.
+        apply synth_convert_is_val_convert. cbn2. rewrite !all_vars_after_read_vars_correct. cbn2.
+        (* hammer. *) timeout 10 hauto b: on.
+      } { (* tf_op1 *)
+        unfold value_of_expr. cbn2.
+        rewrite IHexpr. cbn2. unfold opt_bind, UntypedSemantics.usigma1.
+        prove_expr_is_bits expr hw_reg_state f_dst H. 
+      } { (* tf_op2 *)
+        cbn2.
+        destruct op.
+        {
+          cbn2. rewrite IHexpr1. cbn2. rewrite IHexpr2. cbn2.
+          prove_expr_is_bits expr1 hw_reg_state f_dst H. prove_expr_is_bits expr2 hw_reg_state f_dst H.
+          cbn2. reflexivity.
+        }
+        {
+          cbn2. rewrite IHexpr1. cbn2. rewrite IHexpr2. cbn2.
+          prove_expr_is_bits expr1 hw_reg_state f_dst H. prove_expr_is_bits expr2 hw_reg_state f_dst H.
+          cbn2. reflexivity.
+        }
+        {
+          cbn2. rewrite IHexpr1. cbn2. rewrite IHexpr2. cbn2.
+          prove_expr_is_bits expr1 hw_reg_state f_dst H. prove_expr_is_bits expr2 hw_reg_state f_dst H.
+          cbn2. reflexivity.
+        }
+        {
+          cbn2. rewrite IHexpr1. cbn2. rewrite IHexpr2. cbn2.
+          prove_expr_is_bits expr1 hw_reg_state f_dst H. prove_expr_is_bits expr2 hw_reg_state f_dst H.
+          cbn2. reflexivity.
+        }
+        {
+          cbn2. rewrite IHexpr1. cbn2. rewrite IHexpr2. cbn2.
+          prove_expr_is_bits expr1 hw_reg_state f_dst H. prove_expr_is_bits expr2 hw_reg_state f_dst H.
+          cbn2. reflexivity.
+        }
+        { 
+          apply synth_convert_is_val_convert. cbn2.
+          rewrite IHexpr1. cbn2. rewrite IHexpr2. cbn2.
+          prove_expr_is_bits expr1 hw_reg_state f_dst H. prove_expr_is_bits expr2 hw_reg_state f_dst H.
+          cbn2. split; try reflexivity. subst.
+          rewrite vect_to_list_length. lia.   
+        }
+        {
+          destruct cmp_op. 
+          all:
+          ( 
+            apply synth_convert_is_val_convert; cbn2;
+            rewrite IHexpr1; cbn2; rewrite IHexpr2; cbn2;
+            prove_expr_is_bits expr1 hw_reg_state f_dst H; prove_expr_is_bits expr2 hw_reg_state f_dst H;
+            cbn2; split; try reflexivity; subst; destr; destruct Heqs; cbn2; reflexivity   
+          ).
+        }
+      } 
+    Qed.
+
+    Lemma val_convert_correct:
+      forall {szC} szA szB ( x : bits_t szC ),
+        (szA = szC) ->
+        val_convert szB szA (Bits (vect_to_list x)) = Bits (vect_to_list (convert (szA:=szC) (szB:=szB) x)).
+    Proof.
+      intros. unfold val_convert, bits_of_value_lossy, convert. cbn -[Nat.ltb].
+      destruct (Nat.eq_dec szB szA).
+      { destruct e. destruct Nat.eq_dec. 2: congruence. simpl. destruct e. reflexivity. }
+      {
+        destruct (Nat.leb szA szB) eqn:Hle.
+        { (* szB < szA *) 
+          apply Nat.leb_le in Hle. destr. destr. destruct (__convert_le szC szB l). simpl.
+          unfold Bits.extend_end. destruct (vect_extend_end_cast szC szB). simpl.
+          assert ((szC + (szB - szC) - szA) = (szB - szC)) by lia. rewrite H0. clear H0.
+          rewrite vect_to_list_app. rewrite BitsToLists.repeat_bits_const. reflexivity.
+        } {
+          (* szA < szB *)
+          apply leb_iff_conv in Hle. destruct Nat.eq_dec. congruence.
+          destr. lia.
+          unfold Bits.slice. rewrite BitsToLists.vect_extend_end_firstn. unfold Bits.extend_end.
+          destruct (vect_extend_end_cast (Nat.min szB (szC - 0)) szB). simpl.
+          assert ((szB - Nat.min szB (szC - 0)) = 0) by lia. rewrite H0. clear H0. cbn.
+          rewrite vect_to_list_app. rewrite app_nil_r. rewrite vect_to_list_firstn. rewrite vect_to_list_skipn.
+          rewrite skipn_O. reflexivity. 
+        }
+      }
+    Qed.
+
+    Lemma val_convert_correct2:
+      forall szB bl,
+        (Datatypes.length bl <= 1) -> 
+        val_convert szB 1 (Bits bl) = 
+        Bits (
+          match bl with
+          | [] => repeat false (szB - 1)
+          | x :: xs => vect_to_list ( if x then Bits.of_positive szB 1 else Bits.zeroes szB )
+          end
+        ).
+    Proof.
+      intros. unfold val_convert, bits_of_value_lossy, convert. cbn2.
+      destruct bl.
+      {
+        destr. rewrite Common.repeat_nil by lia; reflexivity.
+        destr. rewrite app_nil_l. reflexivity.
+        assert (szB = 0) by sauto. subst. reflexivity.
+      }
+      {
+        assert (bl = []). {
+          destruct bl; try reflexivity.
+          simpl in H. lia.
+        }
+        subst. destr.
+        - subst. f_equal. cbn2. destr; reflexivity.
+        - destr; destruct szB; try congruence; destr. 
+          + induction szB. congruence. unfold vect_to_list.
+            cbn2. rewrite Common.vect_fold_left_of_zeros. rewrite app_nil_r. reflexivity.
+          + induction szB. congruence. unfold vect_to_list.
+            cbn2. rewrite Common.vect_fold_left_of_zeros. rewrite app_nil_r. reflexivity.
+          + reflexivity.
+          + reflexivity.
+      }
+    Qed.
+
+    Lemma value_of_expr_correct:
+      forall expr hw_reg_state fs_state state_var, 
+        ( forall x : spec_states, hw_reg_state.[tf_reg tf_ctx x] = Bits (vect_to_list (fs_state.[x])) ) ->
+      value_of_expr expr hw_reg_state (spec_states_size state_var) 
+      = Bits (vect_to_list (n:=(spec_states_size state_var)) (tf_eval_expr spec_states spec_states_fin spec_states_size expr fs_state)).
+    Proof.
+      intros.
+
+      induction expr. 
+      { (* tf_const *)
+        cbn2. reflexivity.
+      } 
+      { (* tf_var *)
+        cbn2;  rewrite (H v). rewrite val_convert_correct; reflexivity. 
+      }
+      { (* tf_op1 *)
+        cbn2;  rewrite IHexpr. cbn2. destruct op.
+        unfold Bits.neg, Bits.map. rewrite vect_to_list_map. reflexivity.
+      }
+      {
+        cbn2;  rewrite IHexpr1. rewrite IHexpr2. cbn2. destruct op.
+        - f_equal. apply BitsToLists.and_correct'.
+        - f_equal. apply BitsToLists.or_correct'.
+        - f_equal. apply BitsToLists.xor_correct'.
+        - f_equal. unfold Bits.plus. rewrite !Common.bits_of_list_vect_to_list. rewrite !Bits.to_N_rew. rewrite vect_to_list_length. reflexivity.
+        - f_equal. unfold Bits.minus. rewrite !Common.bits_of_list_vect_to_list. rewrite !BitsToLists.bits_map_rew.  rewrite !Bits.to_N_rew. rewrite !vect_to_list_length. reflexivity.
+        - rewrite val_convert_correct. 2: { rewrite !vect_to_list_length. reflexivity. }
+          rewrite !Common.bits_of_list_vect_to_list. rewrite !Bits.to_N_rew. rewrite !vect_to_list_length. reflexivity.
+        - destr.
+          * rewrite val_convert_correct2. 2: { destr; unfold Datatypes.length. all: lia. } 
+            repeat f_equal. destruct BitsToLists.list_eqb eqn:Heqb.
+              {
+                rewrite (BitsToLists.list_eqb_correct _ Bool.eqb_true_iff) in Heqb.
+                unfold beq_dec. apply vect_to_list_inj in Heqb. destruct (eq_dec _ _); try congruence.
+              }
+              {
+                rewrite <- Bool.not_true_iff_false, (BitsToLists.list_eqb_correct _ Bool.eqb_true_iff) in Heqb.
+                unfold beq_dec. destruct (eq_dec _ _); try congruence.
+              }
+          * rewrite val_convert_correct2. 2: { destr; unfold Datatypes.length. all: lia. } 
+            repeat f_equal. destruct BitsToLists.list_eqb eqn:Heqb.
+              {
+                rewrite (BitsToLists.list_eqb_correct _ Bool.eqb_true_iff) in Heqb.
+                unfold beq_dec. apply vect_to_list_inj in Heqb. destruct (eq_dec _ _); try congruence.
+              }
+              {
+                rewrite <- Bool.not_true_iff_false, (BitsToLists.list_eqb_correct _ Bool.eqb_true_iff) in Heqb.
+                unfold beq_dec. destruct (eq_dec _ _); try congruence.
+              }
+          * rewrite val_convert_correct2. 2: { destr; unfold Datatypes.length. all: lia. } 
+            repeat f_equal. destruct Nat.eq_dec. 
+            + unfold Bits.unsigned_lt in *; unfold Bits.lift_comparison in *.
+              rewrite !Koika.BitsToLists.vect_of_list_to_list, !Bits.to_N_rew.
+              reflexivity.
+            + rewrite !vect_to_list_length in n.
+              unfold Bits.unsigned_lt in *; unfold Bits.lift_comparison in *.
+              destr.
+          * rewrite val_convert_correct2. 2: { destr; unfold Datatypes.length. all: lia. } 
+            repeat f_equal. destruct Nat.eq_dec. 
+            + unfold Bits.unsigned_le in *; unfold Bits.lift_comparison in *.
+              rewrite !Koika.BitsToLists.vect_of_list_to_list, !Bits.to_N_rew.
+              reflexivity.
+            + rewrite !vect_to_list_length in n.
+              unfold Bits.unsigned_le in *; unfold Bits.lift_comparison in *.
+              destr.
+          * rewrite val_convert_correct2. 2: { destr; unfold Datatypes.length. all: lia. } 
+            repeat f_equal. destruct Nat.eq_dec. 
+            + unfold Bits.unsigned_gt in *; unfold Bits.lift_comparison in *.
+              rewrite !Koika.BitsToLists.vect_of_list_to_list, !Bits.to_N_rew.
+              reflexivity.
+            + rewrite !vect_to_list_length in n.
+              unfold Bits.unsigned_gt in *; unfold Bits.lift_comparison in *.
+              destr.
+          * rewrite val_convert_correct2. 2: { destr; unfold Datatypes.length. all: lia. } 
+            repeat f_equal. destruct Nat.eq_dec. 
+            + unfold Bits.unsigned_ge in *; unfold Bits.lift_comparison in *.
+              rewrite !Koika.BitsToLists.vect_of_list_to_list, !Bits.to_N_rew.
+              reflexivity.
+            + rewrite !vect_to_list_length in n.
+              unfold Bits.unsigned_ge in *; unfold Bits.lift_comparison in *.
+              destr.
+      }
+    Qed.
+
+  End Expressions.
+
   Section CmdGuard.
     
     Lemma interp_rule_wrong_cmd:
@@ -988,447 +1405,6 @@ Section CompositionalCorrectness.
       unfold opt_bind.
       cbn.
       reflexivity.
-    Qed.
-
-    Definition bits_of_value_lossy (v: val) : list bool :=
-      match v with
-        | Bits bl => bl
-        | _ => []
-      end.
-
-    Definition val_convert (out_var_size in_var_size : nat) (x : val) : val :=
-      if Nat.eq_dec out_var_size in_var_size then
-        x
-      else 
-        if Nat.leb in_var_size out_var_size then
-          Bits (bits_of_value_lossy x ++ repeat false (out_var_size - in_var_size))
-        else
-          Bits (firstn (out_var_size) (bits_of_value_lossy x)).
-
-    Lemma val_convert_same:
-      forall s x, val_convert s s x = x.
-    Proof.
-      intros.
-      unfold val_convert.
-      destruct (Nat.eq_dec s s).
-      - reflexivity.
-      - exfalso. apply n. reflexivity.
-    Qed.
-
-    Lemma val_convert_more:
-      forall s1 s2 x, 
-        s1 > s2 ->
-        val_convert s1 s2 x = Bits (bits_of_value_lossy x ++ repeat false (s1 - s2)).
-    Proof.
-      intros.
-      unfold val_convert.
-      destruct (Nat.eq_dec s1 s2).
-      - lia.
-      - destruct (Nat.leb s2 s1) eqn:Hleb.
-        + reflexivity.
-        + (* hammer. *) timeout 10 hauto b: on.
-    Qed.
-
-    Lemma val_convert_less:
-      forall s1 s2 x, 
-        s1 < s2 ->
-        val_convert s1 s2 x = Bits (firstn (s1) (bits_of_value_lossy x)).
-    Proof.
-      intros.
-      unfold val_convert.
-      destruct (Nat.eq_dec s1 s2).
-      - lia.
-      - destruct (Nat.leb s2 s1) eqn:Hleb.
-        + (* hammer. *) timeout 10 hauto b: on.
-        + reflexivity.
-    Qed.
-
-    Lemma val_convert_of_bits_is_bits:
-      forall s1 s2 bl1,
-        ((Datatypes.length bl1) = s2) ->
-        exists bl2, val_convert s1 s2 (Bits bl1) = Bits bl2 /\ Datatypes.length bl2 = s1.
-    Proof.
-      intros. subst. unfold val_convert. destruct (Nat.eq_dec _ _). 
-      econstructor; split; try auto. unfold bits_of_value_lossy.
-      destruct (Nat.leb _ _ ) eqn:Hleb.
-      {
-        rewrite Nat.leb_le in Hleb.
-        econstructor; split; try reflexivity. 
-        rewrite List.app_length, repeat_length. lia.
-      }
-      {
-        rewrite Nat.leb_gt in Hleb.
-        econstructor; split; try reflexivity. 
-        rewrite firstn_length. lia.
-      }
-    Qed.
-        
-    Fixpoint value_of_expr (expr: tf_expr spec_states) (hw_reg_state: hw_env_t) (target_size: nat) : val :=
-      match expr with
-        | tf_const _ value => 
-            Bits (vect_to_list (Bits.of_nat (target_size) value))
-        | tf_var _ v =>
-            val_convert target_size (spec_states_size v) hw_reg_state.[tf_reg tf_ctx v]
-        | tf_op1 _ op src =>
-            match UntypedSemantics.usigma1 UNot (value_of_expr src hw_reg_state target_size) with
-              | Some v => v
-              | None => Bits []
-            end
-        | tf_op2 _ op src1 src2 =>
-            let v1 := (bits_of_value_lossy (value_of_expr src1 hw_reg_state target_size)) in
-            let v2 := (bits_of_value_lossy (value_of_expr src2 hw_reg_state target_size)) in
-            match op with
-              | tf_and => 
-                  Bits (UntypedSemantics.ubits2_sigma UAnd v1 v2)
-              | tf_or => 
-                  Bits (UntypedSemantics.ubits2_sigma UOr v1 v2)
-              | tf_xor => 
-                  Bits (UntypedSemantics.ubits2_sigma UXor v1 v2)
-              | tf_add => 
-                  Bits (UntypedSemantics.ubits2_sigma UPlus v1 v2)
-              | tf_sub => 
-                  Bits (UntypedSemantics.ubits2_sigma UMinus v1 v2)
-              | tf_mul => 
-                  val_convert target_size (target_size + target_size) (Bits (UntypedSemantics.ubits2_sigma UMul v1 v2))
-              | tf_cmp cop =>
-                  match cop with
-                    | tf_eq => val_convert target_size (1) 
-                      (Bits [if BitsToLists.val_beq (value_of_expr src1 hw_reg_state target_size) (value_of_expr src2 hw_reg_state target_size) then true else false])
-                    | tf_neq  => val_convert target_size (1) 
-                      (Bits [if BitsToLists.val_beq (value_of_expr src1 hw_reg_state target_size) (value_of_expr src2 hw_reg_state target_size) then false else true])
-                    | tf_lt  => val_convert target_size (1) (Bits (UntypedSemantics.ubits2_sigma (UCompare false cLt) v1 v2))
-                    | tf_le  => val_convert target_size (1) (Bits (UntypedSemantics.ubits2_sigma (UCompare false cLe) v1 v2))
-                    | tf_gt  => val_convert target_size (1) (Bits (UntypedSemantics.ubits2_sigma (UCompare false cGt) v1 v2))
-                    | tf_ge  => val_convert target_size (1) (Bits (UntypedSemantics.ubits2_sigma (UCompare false cGe) v1 v2))
-                  end
-            end
-        end. 
-
-    Lemma value_of_expr_bits:
-      forall expr hw_reg_state f_dst,
-        (forall s, exists bl, hw_reg_state.[tf_reg tf_ctx s] = Bits bl /\ Datatypes.length bl = spec_states_size s) ->
-        exists bl, value_of_expr expr hw_reg_state f_dst = Bits bl /\ Datatypes.length bl = f_dst.
-    Proof.
-      intros. induction expr.
-      {
-        econstructor. cbn2. split. reflexivity. rewrite vect_to_list_length. reflexivity.
-      } {
-        cbn2. unfold val_convert. destruct (Nat.eq_dec _ _). specialize (H v). (* hammer. *) timeout 10 sfirstorder.
-        destruct (Nat.leb _ _ ) eqn:Hleb.
-        { 
-          econstructor. specialize (H v). destruct H as [bl [Hhw Hlen]].
-          split. reflexivity. unfold bits_of_value_lossy.
-          cbn2. rewrite Hhw. rewrite app_length, repeat_length. rewrite Hlen, Nat.add_comm. 
-          rewrite Nat.leb_le in Hleb. rewrite (Nat.sub_add _ _ Hleb). reflexivity.
-        }
-        {
-          econstructor. specialize (H v). destruct H as [bl [Hhw Hlen]].
-          split. reflexivity. unfold bits_of_value_lossy.
-          cbn2. rewrite Hhw. rewrite firstn_length. rewrite Hlen. 
-          apply leb_complete_conv in Hleb. lia.
-        }
-      } {
-        cbn2. unfold UntypedSemantics.usigma1. destruct IHexpr as [bl [Hval Hlen]].
-        rewrite Hval. econstructor. split. reflexivity. unfold UntypedSemantics.usigma1'. rewrite map_length. exact Hlen. 
-      } {
-        cbn2. destruct IHexpr1 as [bl1 [Hval1 Hlen1]]. destruct IHexpr2 as [bl2 [Hval2 Hlen2]].
-        rewrite Hval1. rewrite Hval2. destruct op.
-        1-3: econstructor; split; try reflexivity; rewrite Common.datatypes_length_bitwise; unfold bits_of_value_lossy; rewrite Hlen1, Hlen2; lia.
-        1-2: econstructor; split; try reflexivity; rewrite vect_to_list_length; unfold bits_of_value_lossy; lia.
-        { apply val_convert_of_bits_is_bits. { rewrite vect_to_list_length. unfold bits_of_value_lossy. lia. } }
-        { destr; subst. 1-2: apply val_convert_of_bits_is_bits; reflexivity. 
-          all: apply val_convert_of_bits_is_bits; destr; simpl_eq; try reflexivity; (* hammer *) timeout 10 hauto lq: on.
-        }
-      }
-    Qed.
-
-    Lemma interp_act_expr_to_uaction:
-      forall expr f_dst hw_reg_state,
-        (forall s, exists bl, hw_reg_state.[tf_reg tf_ctx s] = Bits bl /\ Datatypes.length bl = spec_states_size s) ->
-        (* TODO: generalize this for any logs that fulfill some conditions (reads succeed) *)
-        UntypedSemantics.interp_action hw_reg_state sigma
-          (Gamma_after_act_read_state_vars hw_reg_state [] UntypedLogs.log_empty UntypedLogs.log_empty spec_all_states)
-          UntypedLogs.log_empty
-          (log_after_act_read_state_vars hw_reg_state UntypedLogs.log_empty UntypedLogs.log_empty spec_all_states) 
-          (expr_to_uaction tf_ctx expr f_dst) 
-          = Some ( 
-            (log_after_act_read_state_vars hw_reg_state UntypedLogs.log_empty UntypedLogs.log_empty spec_all_states, 
-            (value_of_expr expr hw_reg_state f_dst), 
-            Gamma_after_act_read_state_vars hw_reg_state [] UntypedLogs.log_empty UntypedLogs.log_empty spec_all_states)
-          ).
-    Proof.
-      intros. (* repeat econstructor. *)
-
-      generalize dependent f_dst.
-      induction expr; intros.
-      { (* tf_const *)
-        unfold value_of_expr. cbn2; unfold synth_convert; cbn2. repeat f_equal.
-      } { (* tf_var *)
-        unfold value_of_expr. cbn2; unfold synth_convert; cbn2. 
-        destruct (Nat.eq_dec f_dst (spec_states_size v)).
-        {
-          rewrite e. cbn2. rewrite all_vars_after_read_vars_correct. cbn2.
-          repeat f_equal. rewrite val_convert_same. reflexivity.
-        } {
-          destruct (Nat.leb (spec_states_size v) f_dst) eqn:Hneq.
-          {
-            cbn2. rewrite !all_vars_after_read_vars_correct. cbn2.
-            unfold UntypedSemantics.usigma1. specialize (H v). destruct H as [bl [Hhw Hlen]]. cbn2. rewrite Hhw. cbn2.
-            repeat f_equal.
-            assert (f_dst > (spec_states_size v)) by (* hammer *) hauto b: on.
-            rewrite (val_convert_more _ _ _ H). (* hammer. *) timeout 10 sfirstorder.
-          } {
-            cbn2. rewrite !all_vars_after_read_vars_correct. cbn2.
-            unfold UntypedSemantics.usigma1. specialize (H v). destruct H as [bl [Hhw Hlen]]. cbn2. rewrite Hhw. cbn2.
-            repeat f_equal.
-            assert (f_dst < (spec_states_size v)) by (* hammer *) hauto b: on.
-            rewrite (val_convert_less _ _ _ H). rewrite firstn_length. rewrite Hlen. rewrite min_l. 2: lia. rewrite Nat.sub_diag. cbn2.
-            rewrite app_nil_r. reflexivity.
-          }
-        }
-      } { (* tf_op1 *)
-        unfold value_of_expr. cbn2; unfold synth_convert; cbn2.
-        rewrite IHexpr. cbn2; unfold synth_convert; cbn2. unfold opt_bind, UntypedSemantics.usigma1.
-        generalize (value_of_expr_bits expr hw_reg_state f_dst H); intros. destruct H0 as [bl Hval]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-        reflexivity.
-      } { (* tf_op2 *)
-        cbn2; unfold synth_convert; cbn2.
-        destruct op.
-        {
-          cbn2; unfold synth_convert; cbn2.
-          rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-          rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-          generalize (value_of_expr_bits expr1 hw_reg_state f_dst H); intros. destruct H0 as [bl1 Hval1]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-          generalize (value_of_expr_bits expr2 hw_reg_state f_dst H); intros. destruct H0 as [bl2 Hval2]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-          cbn2. reflexivity.
-        }
-        {
-          cbn2; unfold synth_convert; cbn2.
-          rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-          rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-          generalize (value_of_expr_bits expr1 hw_reg_state f_dst H); intros. destruct H0 as [bl1 Hval1]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-          generalize (value_of_expr_bits expr2 hw_reg_state f_dst H); intros. destruct H0 as [bl2 Hval2]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-          cbn2. reflexivity.
-        }
-        {
-          cbn2; unfold synth_convert; cbn2.
-          rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-          rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-          generalize (value_of_expr_bits expr1 hw_reg_state f_dst H); intros. destruct H0 as [bl1 Hval1]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-          generalize (value_of_expr_bits expr2 hw_reg_state f_dst H); intros. destruct H0 as [bl2 Hval2]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-          cbn2. reflexivity.
-        }
-        {
-          cbn2; unfold synth_convert; cbn2.
-          rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-          rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-          generalize (value_of_expr_bits expr1 hw_reg_state f_dst H); intros. destruct H0 as [bl1 Hval1]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-          generalize (value_of_expr_bits expr2 hw_reg_state f_dst H); intros. destruct H0 as [bl2 Hval2]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-          cbn2. reflexivity.
-        }
-        {
-          cbn2; unfold synth_convert; cbn2.
-          rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-          rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-          generalize (value_of_expr_bits expr1 hw_reg_state f_dst H); intros. destruct H0 as [bl1 Hval1]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-          generalize (value_of_expr_bits expr2 hw_reg_state f_dst H); intros. destruct H0 as [bl2 Hval2]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-          cbn2. reflexivity.
-        }
-        { 
-          unfold val_convert. destruct (Nat.eq_dec _ _).
-          { cbn2. 
-            rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-            rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-            generalize (value_of_expr_bits expr1 hw_reg_state f_dst H); intros. destruct H0 as [bl1 Hval1]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-            generalize (value_of_expr_bits expr2 hw_reg_state f_dst H); intros. destruct H0 as [bl2 Hval2]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-            cbn2. reflexivity.
-          }
-          {
-            destruct (Nat.leb _ _ ) eqn:Hleb.
-            {
-              rewrite Nat.leb_le in Hleb. assert (f_dst = 0) by lia. subst f_dst. (* hammer. *) timeout 10 hauto.
-            }
-            {
-              cbn2. 
-              rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-              rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-              generalize (value_of_expr_bits expr1 hw_reg_state f_dst H); intros. destruct H0 as [bl1 [Hval1 Hlen1]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-              generalize (value_of_expr_bits expr2 hw_reg_state f_dst H); intros. destruct H0 as [bl2 [Hval2 Hlen2]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-              cbn2. repeat f_equal. rewrite firstn_length, vect_to_list_length. inversion Hval1. inversion Hval2. subst v. subst v0. cbn2. 
-              
-              assert ((f_dst - Init.Nat.min f_dst (Datatypes.length bl1 + Datatypes.length bl2)) = 0).
-              rewrite Hlen1, Hlen2. lia. rewrite H0. cbn. rewrite app_nil_r. reflexivity.
-            }
-          }
-        }
-        {
-          destruct cmp_op. 
-          { 
-            unfold val_convert. destruct (Nat.eq_dec _ _).
-            { cbn2. 
-              rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-              rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-              generalize (value_of_expr_bits expr1 hw_reg_state f_dst H); intros. destruct H0 as [bl1 Hval1]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-              generalize (value_of_expr_bits expr2 hw_reg_state f_dst H); intros. destruct H0 as [bl2 Hval2]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-              cbn2. reflexivity.
-            }
-            {
-              destruct (Nat.leb _ _ ) eqn:Hleb.
-              { rewrite Nat.leb_le in Hleb. destruct f_dst; try lia. 
-                cbn2. 
-                rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-                rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-                generalize (value_of_expr_bits expr1 hw_reg_state f_dst H); intros. destruct H0 as [bl1 [Hval1 Hlen1]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                generalize (value_of_expr_bits expr2 hw_reg_state f_dst H); intros. destruct H0 as [bl2 [Hval2 Hlen2]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                cbn2. repeat f_equal. 
-              }
-              { rewrite Nat.leb_gt in Hleb. assert (f_dst = 0) by lia. subst. cbn2. 
-                rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-                rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-                reflexivity. 
-              }
-            }
-          }
-          { 
-            unfold val_convert. destruct (Nat.eq_dec _ _).
-            { cbn2. 
-              rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-              rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-              generalize (value_of_expr_bits expr1 hw_reg_state f_dst H); intros. destruct H0 as [bl1 Hval1]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-              generalize (value_of_expr_bits expr2 hw_reg_state f_dst H); intros. destruct H0 as [bl2 Hval2]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-              cbn2. reflexivity.
-            }
-            {
-              destruct (Nat.leb _ _ ) eqn:Hleb.
-              { rewrite Nat.leb_le in Hleb. destruct f_dst; try lia. 
-                cbn2. 
-                rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-                rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-                generalize (value_of_expr_bits expr1 hw_reg_state f_dst H); intros. destruct H0 as [bl1 [Hval1 Hlen1]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                generalize (value_of_expr_bits expr2 hw_reg_state f_dst H); intros. destruct H0 as [bl2 [Hval2 Hlen2]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                cbn2. repeat f_equal. 
-              }
-              { rewrite Nat.leb_gt in Hleb. assert (f_dst = 0) by lia. subst. cbn2. 
-                rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-                rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-                reflexivity. 
-              }
-            }
-          }
-          { 
-            unfold val_convert. destruct (Nat.eq_dec _ _).
-            { cbn2. 
-              rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-              rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-              generalize (value_of_expr_bits expr1 hw_reg_state f_dst H); intros. destruct H0 as [bl1 Hval1]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-              generalize (value_of_expr_bits expr2 hw_reg_state f_dst H); intros. destruct H0 as [bl2 Hval2]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-              cbn2. reflexivity.
-            }
-            {
-              destruct (Nat.leb _ _ ) eqn:Hleb.
-              { rewrite Nat.leb_le in Hleb. destruct f_dst; try lia. 
-                cbn2. 
-                rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-                rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-                generalize (value_of_expr_bits expr1 hw_reg_state (S f_dst) H); intros. destruct H0 as [bl1 [Hval1 Hlen1]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                generalize (value_of_expr_bits expr2 hw_reg_state (S f_dst) H); intros. destruct H0 as [bl2 [Hval2 Hlen2]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                cbn2. repeat f_equal. destruct (Nat.eq_dec _ _). all: (* hammer *) timeout 10 hauto lq: on.
-              }
-              { rewrite Nat.leb_gt in Hleb. assert (f_dst = 0) by lia. subst. cbn2. 
-                rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-                rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-                generalize (value_of_expr_bits expr1 hw_reg_state 0 H); intros. destruct H0 as [bl1 [Hval1 Hlen1]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                generalize (value_of_expr_bits expr2 hw_reg_state 0 H); intros. destruct H0 as [bl2 [Hval2 Hlen2]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                cbn2. reflexivity.
-              }
-            }
-          }
-          { 
-            unfold val_convert. destruct (Nat.eq_dec _ _).
-            { cbn2. 
-              rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-              rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-              generalize (value_of_expr_bits expr1 hw_reg_state f_dst H); intros. destruct H0 as [bl1 Hval1]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-              generalize (value_of_expr_bits expr2 hw_reg_state f_dst H); intros. destruct H0 as [bl2 Hval2]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-              cbn2. reflexivity.
-            }
-            {
-              destruct (Nat.leb _ _ ) eqn:Hleb.
-              { rewrite Nat.leb_le in Hleb. destruct f_dst; try lia. 
-                cbn2. 
-                rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-                rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-                generalize (value_of_expr_bits expr1 hw_reg_state (S f_dst) H); intros. destruct H0 as [bl1 [Hval1 Hlen1]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                generalize (value_of_expr_bits expr2 hw_reg_state (S f_dst) H); intros. destruct H0 as [bl2 [Hval2 Hlen2]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                cbn2. repeat f_equal. destruct (Nat.eq_dec _ _). all: (* hammer *) timeout 10 hauto lq: on.
-              }
-              { rewrite Nat.leb_gt in Hleb. assert (f_dst = 0) by lia. subst. cbn2. 
-                rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-                rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-                generalize (value_of_expr_bits expr1 hw_reg_state 0 H); intros. destruct H0 as [bl1 [Hval1 Hlen1]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                generalize (value_of_expr_bits expr2 hw_reg_state 0 H); intros. destruct H0 as [bl2 [Hval2 Hlen2]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                cbn2. reflexivity.
-              }
-            }
-          }
-          { 
-            unfold val_convert. destruct (Nat.eq_dec _ _).
-            { cbn2. 
-              rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-              rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-              generalize (value_of_expr_bits expr1 hw_reg_state f_dst H); intros. destruct H0 as [bl1 Hval1]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-              generalize (value_of_expr_bits expr2 hw_reg_state f_dst H); intros. destruct H0 as [bl2 Hval2]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-              cbn2. reflexivity.
-            }
-            {
-              destruct (Nat.leb _ _ ) eqn:Hleb.
-              { rewrite Nat.leb_le in Hleb. destruct f_dst; try lia. 
-                cbn2. 
-                rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-                rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-                generalize (value_of_expr_bits expr1 hw_reg_state (S f_dst) H); intros. destruct H0 as [bl1 [Hval1 Hlen1]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                generalize (value_of_expr_bits expr2 hw_reg_state (S f_dst) H); intros. destruct H0 as [bl2 [Hval2 Hlen2]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                cbn2. repeat f_equal. destruct (Nat.eq_dec _ _). all: (* hammer *) timeout 10 hauto lq: on.
-              }
-              { rewrite Nat.leb_gt in Hleb. assert (f_dst = 0) by lia. subst. cbn2. 
-                rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-                rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-                generalize (value_of_expr_bits expr1 hw_reg_state 0 H); intros. destruct H0 as [bl1 [Hval1 Hlen1]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                generalize (value_of_expr_bits expr2 hw_reg_state 0 H); intros. destruct H0 as [bl2 [Hval2 Hlen2]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                cbn2. reflexivity.
-              }
-            }
-          }
-          { 
-            unfold val_convert. destruct (Nat.eq_dec _ _).
-            { cbn2. 
-              rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-              rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-              generalize (value_of_expr_bits expr1 hw_reg_state f_dst H); intros. destruct H0 as [bl1 Hval1]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-              generalize (value_of_expr_bits expr2 hw_reg_state f_dst H); intros. destruct H0 as [bl2 Hval2]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-              cbn2. reflexivity.
-            }
-            {
-              destruct (Nat.leb _ _ ) eqn:Hleb.
-              { rewrite Nat.leb_le in Hleb. destruct f_dst; try lia. 
-                cbn2. 
-                rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-                rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-                generalize (value_of_expr_bits expr1 hw_reg_state (S f_dst) H); intros. destruct H0 as [bl1 [Hval1 Hlen1]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                generalize (value_of_expr_bits expr2 hw_reg_state (S f_dst) H); intros. destruct H0 as [bl2 [Hval2 Hlen2]]. destruct value_of_expr. 2-4: (* hammer. *) timeout 10 hauto.
-                cbn2. repeat f_equal. destruct (Nat.eq_dec _ _). all: (* hammer *) timeout 10 hauto lq: on.
-              }
-              { rewrite Nat.leb_gt in Hleb. assert (f_dst = 0) by lia. subst. cbn2. 
-                rewrite IHexpr1. cbn2; unfold synth_convert; cbn2.
-                rewrite IHexpr2. cbn2; unfold synth_convert; cbn2.
-                generalize (value_of_expr_bits expr1 hw_reg_state 0 H); intros. destruct H0 as [bl1 [Hval1 Hlen1]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                generalize (value_of_expr_bits expr2 hw_reg_state 0 H); intros. destruct H0 as [bl2 [Hval2 Hlen2]]. destruct value_of_expr. 2-4: (* hammer *) timeout 10 hauto lq: on.
-                cbn2. reflexivity.
-              }
-            }
-          }
-        }
-      } 
     Qed.
 
     Definition assignments_added (hw_reg_state: hw_env_t) cmd :=
@@ -1638,326 +1614,6 @@ Section CompositionalCorrectness.
             tac_interp_rule_right_cmd_out4 dst.
           }
         }
-      }
-    Qed.
-
-    Lemma val_convert_correct:
-      forall szA szB ( x : bits_t szA ),
-        val_convert szB szA (Bits (vect_to_list x)) = Bits (vect_to_list (convert (szA:=szA) (szB:=szB) x)).
-    Proof.
-      intros. unfold val_convert, bits_of_value_lossy, convert. cbn -[Nat.ltb].
-      destruct (Nat.eq_dec szB szA).
-      { destruct e. destruct Nat.eq_dec. 2: congruence. simpl. destruct e. reflexivity. }
-      {
-        destruct (Nat.leb szA szB) eqn:Hle.
-        { (* szB < szA *) 
-          apply Nat.leb_le in Hle. destr. destr. destruct (__convert_le szA szB l). simpl.
-          unfold Bits.extend_end. destruct (vect_extend_end_cast szA szB). simpl.
-          assert ((szA + (szB - szA) - szA) = (szB - szA)) by lia. rewrite H. clear H.
-          rewrite vect_to_list_app. rewrite BitsToLists.repeat_bits_const. reflexivity.
-        } {
-          (* szA < szB *)
-          apply leb_iff_conv in Hle. destruct Nat.eq_dec. congruence.
-          destr. lia.
-          unfold Bits.slice. rewrite BitsToLists.vect_extend_end_firstn. unfold Bits.extend_end.
-          destruct (vect_extend_end_cast (Nat.min szB (szA - 0)) szB). simpl.
-          assert ((szB - Nat.min szB (szA - 0)) = 0) by lia. rewrite H. clear H. cbn.
-          rewrite vect_to_list_app. rewrite app_nil_r. rewrite vect_to_list_firstn. rewrite vect_to_list_skipn.
-          rewrite skipn_O. reflexivity. 
-        }
-      }
-    Qed.
-
-    Lemma value_of_expr_correct:
-      forall expr hw_reg_state fs_state state_var, 
-        ( forall x : spec_states, hw_reg_state.[tf_reg tf_ctx x] = Bits (vect_to_list (fs_state.[x])) ) ->
-      value_of_expr expr hw_reg_state (spec_states_size state_var) 
-      = Bits (vect_to_list (n:=(spec_states_size state_var)) (tf_eval_expr spec_states spec_states_fin spec_states_size expr fs_state)).
-    Proof.
-      intros.
-
-      induction expr. 
-      { (* tf_const *)
-        cbn2. reflexivity.
-      } 
-      { (* tf_var *)
-        cbn2;  rewrite (H v). rewrite val_convert_correct. reflexivity. 
-      }
-      { (* tf_op1 *)
-        cbn2;  rewrite IHexpr. cbn2. destruct op.
-        unfold Bits.neg, Bits.map. rewrite vect_to_list_map. reflexivity.
-      }
-      {
-        cbn2;  rewrite IHexpr1. rewrite IHexpr2. cbn2. destruct op.
-        - f_equal. apply BitsToLists.and_correct'.
-        - f_equal. apply BitsToLists.or_correct'.
-        - f_equal. apply BitsToLists.xor_correct'.
-        - f_equal. unfold Bits.plus. rewrite !Common.bits_of_list_vect_to_list. rewrite !Bits.to_N_rew. rewrite vect_to_list_length. reflexivity.
-        - f_equal. unfold Bits.minus. rewrite !Common.bits_of_list_vect_to_list. rewrite !BitsToLists.bits_map_rew.  rewrite !Bits.to_N_rew. rewrite !vect_to_list_length. reflexivity.
-        - unfold val_convert, convert, bits_of_value_lossy. destr.
-          { f_equal. destr. rewrite !Common.bits_of_list_vect_to_list. rewrite !Bits.to_N_rew. rewrite vect_to_list_length. 
-            destruct e0. simpl_eq. replace (spec_states_size state_var) with 0 in * by lia. cbn2. reflexivity.
-          }
-          destr. { f_equal. destr. destr. all: (* hammer *) timeout 10 hauto b: on. }
-          f_equal. destr. destr. lia. rewrite !Common.bits_of_list_vect_to_list. rewrite !Bits.to_N_rew. rewrite vect_to_list_length.
-          rewrite BitsToLists.slice. cbn2. unfold Bits.mul. rewrite vect_to_list_length.
-          rewrite Nat.min_l by lia. rewrite Nat.sub_diag. rewrite app_nil_r. reflexivity.
-        - destr.
-          * unfold val_convert, convert, bits_of_value_lossy. destr.
-            { f_equal. destr.
-              {
-                rewrite (BitsToLists.list_eqb_correct _ Bool.eqb_true_iff) in Heqb.
-                unfold beq_dec. apply vect_to_list_inj in Heqb. destruct (eq_dec _ _); try congruence.
-                subst; rewrite e. cbn. reflexivity.
-              }
-              {
-                rewrite <- Bool.not_true_iff_false, (BitsToLists.list_eqb_correct _ Bool.eqb_true_iff) in Heqb.
-                unfold beq_dec. destruct (eq_dec _ _); try congruence.
-                subst; rewrite e. cbn. reflexivity.
-              }
-            }
-            destr. { f_equal. destr.
-              {
-                rewrite Nat.leb_le in Heqb.
-                rewrite (BitsToLists.list_eqb_correct _ Bool.eqb_true_iff) in Heqb0.
-                unfold beq_dec. apply vect_to_list_inj in Heqb0. destruct (eq_dec _ _); try congruence.
-
-                destruct (spec_states_size state_var) eqn:Hsz. lia.
-                cbn [Bits.of_positive vect_to_list vect_cons]. 
-                rewrite BitsToLists.vect_to_list_cons. rewrite <- Koika.BitsToLists.repeat_bits_const. replace (S n0 - 1) with n0 by lia. reflexivity.
-              }
-              {
-                rewrite Nat.leb_le in Heqb.
-                rewrite <- Bool.not_true_iff_false, (BitsToLists.list_eqb_correct _ Bool.eqb_true_iff) in Heqb0.
-                unfold beq_dec. destruct (eq_dec _ _); try congruence.
-
-                destruct (spec_states_size state_var) eqn:Hsz. lia.
-                cbn [Bits.of_positive vect_to_list vect_cons]. 
-                rewrite <- Koika.BitsToLists.repeat_bits_const. replace (S n1 - 1) with n1 by lia. reflexivity.
-              }
-            } { f_equal. destr.
-              {
-                rewrite Nat.leb_gt in Heqb.
-                rewrite (BitsToLists.list_eqb_correct _ Bool.eqb_true_iff) in Heqb0.
-                unfold beq_dec. apply vect_to_list_inj in Heqb0. destruct (eq_dec _ _); try congruence.
-
-                destruct (spec_states_size state_var) eqn:Hsz. 2: lia.
-                cbn [Bits.of_positive vect_to_list vect_cons]. 
-                reflexivity.
-              }
-              {
-                rewrite Nat.leb_gt in Heqb.
-                rewrite <- Bool.not_true_iff_false, (BitsToLists.list_eqb_correct _ Bool.eqb_true_iff) in Heqb0.
-                unfold beq_dec. destruct (eq_dec _ _); try congruence.
-
-                destruct (spec_states_size state_var) eqn:Hsz. 2: lia.
-                cbn [Bits.of_positive vect_to_list vect_cons]. 
-                rewrite <- Koika.BitsToLists.repeat_bits_const. reflexivity.
-              }
-            }
-          * unfold val_convert, convert, bits_of_value_lossy. destr.
-            { f_equal. destr.
-              {
-                rewrite (BitsToLists.list_eqb_correct _ Bool.eqb_true_iff) in Heqb.
-                unfold beq_dec. apply vect_to_list_inj in Heqb. destruct (eq_dec _ _); try congruence.
-                subst; rewrite e. cbn. reflexivity.
-              }
-              {
-                rewrite <- Bool.not_true_iff_false, (BitsToLists.list_eqb_correct _ Bool.eqb_true_iff) in Heqb.
-                unfold beq_dec. destruct (eq_dec _ _); try congruence.
-                subst; rewrite e. cbn. reflexivity.
-              }
-            }
-            destr. { f_equal. destr.
-              {
-                rewrite Nat.leb_le in Heqb.
-                rewrite (BitsToLists.list_eqb_correct _ Bool.eqb_true_iff) in Heqb0.
-                unfold beq_dec. apply vect_to_list_inj in Heqb0. destruct (eq_dec _ _); try congruence.
-
-                destruct (spec_states_size state_var) eqn:Hsz. lia.
-                cbn [Bits.of_positive vect_to_list vect_cons]. 
-                rewrite <- Koika.BitsToLists.repeat_bits_const. replace (S n0 - 1) with n0 by lia. reflexivity.
-              }
-              {
-                rewrite Nat.leb_le in Heqb.
-                rewrite <- Bool.not_true_iff_false, (BitsToLists.list_eqb_correct _ Bool.eqb_true_iff) in Heqb0.
-                unfold beq_dec. destruct (eq_dec _ _); try congruence.
-
-                destruct (spec_states_size state_var) eqn:Hsz. lia.
-                cbn [Bits.of_positive vect_to_list vect_cons]. 
-                rewrite BitsToLists.vect_to_list_cons. rewrite <- Koika.BitsToLists.repeat_bits_const. replace (S n1 - 1) with n1 by lia. reflexivity.
-              }
-            } { f_equal. destr.
-              {
-                rewrite Nat.leb_gt in Heqb.
-                rewrite (BitsToLists.list_eqb_correct _ Bool.eqb_true_iff) in Heqb0.
-                unfold beq_dec. apply vect_to_list_inj in Heqb0. destruct (eq_dec _ _); try congruence.
-
-                destruct (spec_states_size state_var) eqn:Hsz. 2: lia.
-                cbn [Bits.of_positive vect_to_list vect_cons]. 
-                reflexivity.
-              }
-              {
-                rewrite Nat.leb_gt in Heqb.
-                rewrite <- Bool.not_true_iff_false, (BitsToLists.list_eqb_correct _ Bool.eqb_true_iff) in Heqb0.
-                unfold beq_dec. destruct (eq_dec _ _); try congruence.
-
-                destruct (spec_states_size state_var) eqn:Hsz. 2: lia.
-                cbn [Bits.of_positive vect_to_list vect_cons]. reflexivity.
-              }
-            }
-          * unfold val_convert, convert, bits_of_value_lossy. destr.
-            { rewrite e. cbn2. f_equal. destr.
-              { simpl_eq. rewrite e in *; rewrite !Bits.single_cons.
-                destr; reflexivity.
-              }
-              (* hammer *) timeout 10 hauto lq: on.
-            }
-            destr. { f_equal. destr.
-              {
-                rewrite Nat.leb_le in Heqb. rewrite e in *.
-                simpl_eq. 
-                unfold Bits.unsigned_lt in *; unfold Bits.lift_comparison in *.
-                rewrite !Koika.BitsToLists.vect_of_list_to_list, !Bits.to_N_rew.
-                destr; destruct (spec_states_size state_var) eqn:Hsz; try lia; cbn2.
-                all: (
-                  replace (n0 - 0) with n0 by lia;
-                  rewrite Koika.BitsToLists.vect_to_list_cons;
-                  rewrite <- Koika.BitsToLists.repeat_bits_const;
-                  reflexivity
-                ).
-              }
-              {
-                rewrite Nat.leb_le in Heqb. simpl_eq. clear Heqs0.
-                rewrite !Koika.Utils.Vect.vect_to_list_length in n0; congruence.
-              }
-            } { f_equal. destr.
-              {
-                rewrite Nat.leb_gt in Heqb. rewrite e in *.
-                simpl_eq. 
-                unfold Bits.unsigned_lt in *; unfold Bits.lift_comparison in *.
-                rewrite !Koika.BitsToLists.vect_of_list_to_list, !Bits.to_N_rew.
-                destr; destruct (spec_states_size state_var) eqn:Hsz; try lia; reflexivity.
-              }
-              {
-                rewrite Nat.leb_gt in Heqb. simpl_eq. clear Heqs0.
-                rewrite !Koika.Utils.Vect.vect_to_list_length in n0; congruence.
-              }
-            }
-          * unfold val_convert, convert, bits_of_value_lossy. destr.
-            { rewrite e. cbn2. f_equal. destr.
-              { simpl_eq. rewrite e in *; rewrite !Bits.single_cons.
-                destr; reflexivity.
-              }
-              (* hammer *) timeout 10 hauto lq: on.
-            }
-            destr. { f_equal. destr.
-              {
-                rewrite Nat.leb_le in Heqb. rewrite e in *.
-                simpl_eq. 
-                unfold Bits.unsigned_le in *; unfold Bits.lift_comparison in *.
-                rewrite !Koika.BitsToLists.vect_of_list_to_list, !Bits.to_N_rew.
-                destr; destruct (spec_states_size state_var) eqn:Hsz; try lia; cbn2.
-                all: (
-                  replace (n0 - 0) with n0 by lia;
-                  rewrite Koika.BitsToLists.vect_to_list_cons;
-                  rewrite <- Koika.BitsToLists.repeat_bits_const;
-                  reflexivity
-                ).
-              }
-              {
-                rewrite Nat.leb_le in Heqb. simpl_eq. clear Heqs0.
-                rewrite !Koika.Utils.Vect.vect_to_list_length in n0; congruence.
-              }
-            } { f_equal. destr.
-              {
-                rewrite Nat.leb_gt in Heqb. rewrite e in *.
-                simpl_eq. 
-                unfold Bits.unsigned_le in *; unfold Bits.lift_comparison in *.
-                rewrite !Koika.BitsToLists.vect_of_list_to_list, !Bits.to_N_rew.
-                destr; destruct (spec_states_size state_var) eqn:Hsz; try lia; reflexivity.
-              }
-              {
-                rewrite Nat.leb_gt in Heqb. simpl_eq. clear Heqs0.
-                rewrite !Koika.Utils.Vect.vect_to_list_length in n0; congruence.
-              }
-            }
-          * unfold val_convert, convert, bits_of_value_lossy. destr.
-            { rewrite e. cbn2. f_equal. destr.
-              { simpl_eq. rewrite e in *; rewrite !Bits.single_cons.
-                destr; reflexivity.
-              }
-              (* hammer *) timeout 10 hauto lq: on.
-            }
-            destr. { f_equal. destr.
-              {
-                rewrite Nat.leb_le in Heqb. rewrite e in *.
-                simpl_eq. 
-                unfold Bits.unsigned_gt in *; unfold Bits.lift_comparison in *.
-                rewrite !Koika.BitsToLists.vect_of_list_to_list, !Bits.to_N_rew.
-                destr; destruct (spec_states_size state_var) eqn:Hsz; try lia; cbn2.
-                all: (
-                  replace (n0 - 0) with n0 by lia;
-                  rewrite Koika.BitsToLists.vect_to_list_cons;
-                  rewrite <- Koika.BitsToLists.repeat_bits_const;
-                  reflexivity
-                ).
-              }
-              {
-                rewrite Nat.leb_le in Heqb. simpl_eq. clear Heqs0.
-                rewrite !Koika.Utils.Vect.vect_to_list_length in n0; congruence.
-              }
-            } { f_equal. destr.
-              {
-                rewrite Nat.leb_gt in Heqb. rewrite e in *.
-                simpl_eq. 
-                unfold Bits.unsigned_gt in *; unfold Bits.lift_comparison in *.
-                rewrite !Koika.BitsToLists.vect_of_list_to_list, !Bits.to_N_rew.
-                destr; destruct (spec_states_size state_var) eqn:Hsz; try lia; reflexivity.
-              }
-              {
-                rewrite Nat.leb_gt in Heqb. simpl_eq. clear Heqs0.
-                rewrite !Koika.Utils.Vect.vect_to_list_length in n0; congruence.
-              }
-            }
-          * unfold val_convert, convert, bits_of_value_lossy. destr.
-            { rewrite e. cbn2. f_equal. destr.
-              { simpl_eq. rewrite e in *; rewrite !Bits.single_cons.
-                destr; reflexivity.
-              }
-              (* hammer *) timeout 10 hauto lq: on.
-            }
-            destr. { f_equal. destr.
-              {
-                rewrite Nat.leb_le in Heqb. rewrite e in *.
-                simpl_eq. 
-                unfold Bits.unsigned_ge in *; unfold Bits.lift_comparison in *.
-                rewrite !Koika.BitsToLists.vect_of_list_to_list, !Bits.to_N_rew.
-                destr; destruct (spec_states_size state_var) eqn:Hsz; try lia; cbn2.
-                all: (
-                  replace (n0 - 0) with n0 by lia;
-                  rewrite Koika.BitsToLists.vect_to_list_cons;
-                  rewrite <- Koika.BitsToLists.repeat_bits_const;
-                  reflexivity
-                ).
-              }
-              {
-                rewrite Nat.leb_le in Heqb. simpl_eq. clear Heqs0.
-                rewrite !Koika.Utils.Vect.vect_to_list_length in n0; congruence.
-              }
-            } { f_equal. destr.
-              {
-                rewrite Nat.leb_gt in Heqb. rewrite e in *.
-                simpl_eq. 
-                unfold Bits.unsigned_ge in *; unfold Bits.lift_comparison in *.
-                rewrite !Koika.BitsToLists.vect_of_list_to_list, !Bits.to_N_rew.
-                destr; destruct (spec_states_size state_var) eqn:Hsz; try lia; reflexivity.
-              }
-              {
-                rewrite Nat.leb_gt in Heqb. simpl_eq. clear Heqs0.
-                rewrite !Koika.Utils.Vect.vect_to_list_length in n0; congruence.
-              }
-            }
       }
     Qed.
 
@@ -2561,6 +2217,7 @@ Section CompositionalCorrectness.
 
             rewrite <- (H_input src).
             apply val_convert_correct.
+            reflexivity.
           }
           {
             set (written_vars_list := (written_vars _)).
@@ -2647,6 +2304,7 @@ Section CompositionalCorrectness.
 
           unfold getenv.  cbn. rewrite (H_state src).
           apply val_convert_correct.
+          reflexivity.
         }
         {
           set (written_outputs_list := (written_outputs _)).

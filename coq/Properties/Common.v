@@ -257,7 +257,14 @@ Section BitsToLists.
         intros. apply vect_to_list_inj. rewrite BitsToLists.vect_to_list_of_list.
         rewrite vect_to_list_eq_rect. reflexivity.
     Qed. 
-        
+    
+    Lemma vect_fold_left_of_zeros:
+        forall n acc,
+            vect_fold_left (fun (acc : list bool) (t : bool) => t :: acc) acc (Bits.zeroes n) = repeat false n ++ acc.
+    Proof.
+        intros. induction n; intros; simpl. reflexivity.
+        rewrite IHn. simpl. reflexivity.
+    Qed.
 
 End BitsToLists.
 
