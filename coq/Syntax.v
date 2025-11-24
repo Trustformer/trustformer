@@ -15,10 +15,6 @@ Section TrustformerSyntax.
 
     Inductive tf_unary_ops :=
         | tf_not                                (* Bitwise NOT *)
-        (* | tf_sign_extend *)                        (* Sign extend *)
-        (* | tf_zero_extend_left *)                   (* Zero extend left *)
-        (* | tf_zero_extend_right *)                  (* Zero extend right *)
-        (* | tf_slice (offset: nat) (width: nat) *)   (* Slice *)
         .
 
     Inductive tf_comparison_ops :=
@@ -38,15 +34,13 @@ Section TrustformerSyntax.
         | tf_sub                                (* Subtraction *)
         | tf_mul                                (* Multiplication *)
         | tf_cmp (cmp_op: tf_comparison_ops)    (* Comparison Operations *)
-        (* | tf_div *)
-        (* | tf_mod *)
         .
 
     Inductive tf_expr :=
         | tf_const (value: nat)                                             (* Constant value *)
         | tf_var (v: states_var)                                            (* Variable reference *) 
-        | tf_op1 (op: tf_unary_ops) (src: tf_expr)                       (* Unary operation *)
-        | tf_op2 (op: tf_binary_ops) (src1: tf_expr) (src2: tf_expr)  (* Binary operation *)
+        | tf_op1 (op: tf_unary_ops) (src: tf_expr)                          (* Unary operation *)
+        | tf_op2 (op: tf_binary_ops) (src1: tf_expr) (src2: tf_expr)        (* Binary operation *)
         .
 
     (* Atomic operations on variables *)

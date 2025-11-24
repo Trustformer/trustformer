@@ -72,34 +72,11 @@ Section FiniteType.
     Context {T: Type}.
     Context {fin_t: FiniteType T}.
 
-    Definition finite_cardinality := List.length (finite_elements).
-
-    Lemma finite_index_in_range (x: T):
-        (finite_index x < finite_cardinality)%nat.
+    Lemma finite_index_bounded (x: T):
+        (finite_index x < List.length (finite_elements))%nat.
     Proof.
-        unfold finite_cardinality.
         generalize (finite_surjective x). intros H.
         apply nth_error_Some. (* hammer. *) sfirstorder.
-    Qed.
-
-    Definition finite_bits_needed :=
-        log2 finite_cardinality.
-
-    Lemma finite_bits_needed_correct (x: T):
-        (finite_index x < 2 ^ finite_bits_needed)%nat.
-    Proof.
-        unfold finite_bits_needed, finite_cardinality.
-        generalize (finite_surjective x). intros H.
-        assert (H_lt : finite_index x < Datatypes.length finite_elements).
-        { apply nth_error_Some. (* hammer. *) sfirstorder. }
-        assert (H_log : Datatypes.length finite_elements <= 2 ^ log2 (Datatypes.length finite_elements)).
-        { 
-            destruct (Datatypes.length finite_elements) as [| [| n]]; simpl.
-            - lia.
-            - lia.
-            - apply Nat.log2_up_spec. lia.
-        }
-        timeout 10 lia.
     Qed.
 
     Lemma finite_elements_is_finfun_listing:
@@ -280,7 +257,14 @@ Section BitsToLists.
         intros. apply vect_to_list_inj. rewrite BitsToLists.vect_to_list_of_list.
         rewrite vect_to_list_eq_rect. reflexivity.
     Qed. 
-        
+    
+    Lemma vect_fold_left_of_zeros:
+        forall n acc,
+            vect_fold_left (fun (acc : list bool) (t : bool) => t :: acc) acc (Bits.zeroes n) = repeat false n ++ acc.
+    Proof.
+        intros. induction n; intros; simpl. reflexivity.
+        rewrite IHn. simpl. reflexivity.
+    Qed.
 
 End BitsToLists.
 

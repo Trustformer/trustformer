@@ -13,4 +13,5 @@
         "**/target": true
     },
     "vscoq.goals.maxDepth": 64,
+    "vscoq.memory.limit": 32,
 }

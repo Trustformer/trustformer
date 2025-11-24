@@ -18,6 +18,7 @@ Require Import Coq.Strings.String.
 Require Import Coq.Logic.Eqdep_dec.
 Require Import Coq.Init.Tactics.
 Require Import Coq.Setoids.Setoid.
+Require Import Coq.micromega.Lia.
 
 Require Import Hammer.Plugin.Hammer.
 Set Hammer ATPLimit 5.
@@ -49,90 +50,64 @@ Record TFSynthContext := {
   tf_spec_action_ops : tf_spec_action -> tf_ops tf_spec_states tf_spec_inputs tf_spec_outputs (* TODO: more than just a single op *)
 }.
 
-Ltac unfold_tfctx := repeat (
-  unfold tf_spec_states in * || unfold tf_spec_states_fin in * || unfold tf_spec_states_names in * || unfold tf_spec_states_size in * 
-  || unfold tf_spec_states_init in * 
-  
-  || unfold tf_spec_inputs in * || unfold tf_spec_inputs_fin in * || unfold tf_spec_inputs_names in * || unfold tf_spec_inputs_size in * 
-  
-  || unfold tf_spec_outputs in * || unfold tf_spec_outputs_fin in * || unfold tf_spec_outputs_names in * || unfold tf_spec_outputs_size in * 
-  
-  || unfold tf_spec_action in * || unfold tf_spec_action_fin in * || unfold tf_spec_action_names in * 
-
-  || unfold tf_spec_action_reg_size in * || unfold tf_spec_action_encoding in * || unfold tf_spec_action_encoding_inj in *
-  
-  || unfold tf_spec_action_ops in *).
-
 Section TrustformerSynthesis.
 
-    Context (tf_synth_ctx: TFSynthContext).
+    Context (tf_ctx: TFSynthContext).
 
     (* ====== Abbreviations ====== *)
 
-    Definition spec_states := tf_spec_states tf_synth_ctx.
-    Definition spec_states_fin : FiniteType spec_states := tf_spec_states_fin tf_synth_ctx.
-    Definition spec_states_size := tf_spec_states_size tf_synth_ctx.
-    Definition spec_states_t := tf_states_type spec_states spec_states_size.
-    Definition spec_states_init := tf_spec_states_init tf_synth_ctx.
-    Definition spec_all_states := @finite_elements spec_states spec_states_fin.
-    Definition spec_state_index := @finite_index spec_states spec_states_fin.
-    Definition spec_state_num := List.length spec_all_states.
+    Local Notation spec_states := (tf_spec_states tf_ctx).
+    Local Notation spec_states_fin := (tf_spec_states_fin tf_ctx).
+    Local Notation spec_states_size := (tf_spec_states_size tf_ctx).
+    Local Notation spec_states_t := (tf_states_type spec_states spec_states_size).
+    Local Notation spec_states_init := (tf_spec_states_init tf_ctx).
+    Local Notation spec_all_states := (@finite_elements spec_states spec_states_fin).
+    Local Notation spec_state_index := (@finite_index spec_states spec_states_fin).
+    Local Notation spec_state_num := (Datatypes.length spec_all_states).
 
-    Definition spec_inputs := tf_spec_inputs tf_synth_ctx.
-    Definition spec_inputs_fin : FiniteType spec_inputs := tf_spec_inputs_fin tf_synth_ctx.
-    Definition spec_inputs_size := tf_spec_inputs_size tf_synth_ctx.
-    Definition spec_inputs_t := tf_inputs_type spec_inputs spec_inputs_size.
-    Definition spec_all_inputs := @finite_elements spec_inputs spec_inputs_fin.
-    Definition spec_input_index := @finite_index spec_inputs spec_inputs_fin.
-    Definition spec_input_num := List.length spec_all_inputs.
+    Local Notation spec_inputs := (tf_spec_inputs tf_ctx).
+    Local Notation spec_inputs_fin := (tf_spec_inputs_fin tf_ctx).
+    Local Notation spec_inputs_size := (tf_spec_inputs_size tf_ctx).
+    Local Notation spec_inputs_t := (tf_inputs_type spec_inputs spec_inputs_size).
+    Local Notation spec_all_inputs := (@finite_elements spec_inputs spec_inputs_fin).
+    Local Notation spec_input_index := (@finite_index spec_inputs spec_inputs_fin).
+    Local Notation spec_input_num := (Datatypes.length spec_all_inputs).
 
-    Definition spec_outputs := tf_spec_outputs tf_synth_ctx.
-    Definition spec_outputs_fin : FiniteType spec_outputs := tf_spec_outputs_fin tf_synth_ctx.
-    Definition spec_outputs_size := tf_spec_outputs_size tf_synth_ctx.
-    Definition spec_outputs_t := tf_outputs_type spec_outputs spec_outputs_size.
-    Definition spec_all_outputs := @finite_elements spec_outputs spec_outputs_fin.
-    Definition spec_output_index := @finite_index spec_outputs spec_outputs_fin.
-    Definition spec_output_num := List.length spec_all_outputs.
+    Local Notation spec_outputs := (tf_spec_outputs tf_ctx).
+    Local Notation spec_outputs_fin := (tf_spec_outputs_fin tf_ctx).
+    Local Notation spec_outputs_size := (tf_spec_outputs_size tf_ctx).
+    Local Notation spec_outputs_t := (tf_outputs_type spec_outputs spec_outputs_size).
+    Local Notation spec_all_outputs := (@finite_elements spec_outputs spec_outputs_fin).
+    Local Notation spec_output_index := (@finite_index spec_outputs spec_outputs_fin).
+    Local Notation spec_output_num := (Datatypes.length spec_all_outputs).
 
-    Definition spec_action := tf_spec_action tf_synth_ctx.
-    Definition spec_action_fin := tf_spec_action_fin tf_synth_ctx.
-    Definition spec_all_actions := @finite_elements spec_action spec_action_fin.
-    Definition spec_action_index := @finite_index spec_action spec_action_fin.
-    Definition spec_action_num := List.length spec_all_actions.
+    Local Notation spec_action := (tf_spec_action tf_ctx).
+    Local Notation spec_action_fin := (tf_spec_action_fin tf_ctx).
+    Local Notation spec_all_actions := (@finite_elements spec_action spec_action_fin).
+    Local Notation spec_action_index := (@finite_index spec_action spec_action_fin).
+    Local Notation spec_action_num := (Datatypes.length spec_all_actions).
 
-    Definition spec_action_reg_size := tf_spec_action_reg_size tf_synth_ctx.
-    Definition spec_action_encoding := tf_spec_action_encoding tf_synth_ctx.
-    Definition spec_action_encoding_inj := tf_spec_action_encoding_inj tf_synth_ctx.
+    Local Notation spec_action_reg_size := (tf_spec_action_reg_size tf_ctx).
+    Local Notation spec_action_encoding := (tf_spec_action_encoding tf_ctx).
+    Local Notation spec_action_encoding_inj := (tf_spec_action_encoding_inj tf_ctx).
 
-    Definition spec_action_ops := tf_spec_action_ops tf_synth_ctx.
+    Local Notation spec_action_ops := (tf_spec_action_ops tf_ctx).
 
+    Local Notation spec_var_not_written_dec := (tf_op_var_not_written_dec spec_states spec_states_fin spec_inputs spec_outputs spec_states_size spec_inputs_size spec_outputs_size).
+    Local Notation spec_no_output_dec := (tf_op_no_output_dec spec_states spec_states_fin spec_inputs spec_outputs spec_outputs_fin spec_states_size spec_inputs_size spec_outputs_size).
 
-    Instance show_spec_states : Show spec_states := tf_spec_states_names tf_synth_ctx.
-    Instance show_spec_inputs : Show spec_inputs := tf_spec_inputs_names tf_synth_ctx.
-    Instance show_spec_outputs : Show spec_outputs := tf_spec_outputs_names tf_synth_ctx.
-    Instance show_spec_action : Show spec_action := tf_spec_action_names tf_synth_ctx.
+    (* ====== Instances ====== *)
 
-   Ltac unfold_specs := repeat (
-      unfold spec_states in * || unfold spec_states_fin in * || unfold spec_states_size in * || unfold spec_states_t in *
-       || unfold spec_states_init in * || unfold spec_all_states in * || unfold spec_state_index in * || unfold spec_state_num in * 
-       
-       || unfold spec_inputs in * || unfold spec_inputs_fin in * || unfold spec_inputs_size in * || unfold spec_inputs_t in * 
-       || unfold spec_all_inputs in * || unfold spec_input_index in * || unfold spec_input_num in * 
-       
-       || unfold spec_outputs in * || unfold spec_outputs_fin in * || unfold spec_outputs_size in * || unfold spec_outputs_t in * 
-       || unfold spec_all_outputs in * || unfold spec_output_index in * || unfold spec_output_num in * 
-       
-       || unfold spec_action in * || unfold spec_action_fin in * || unfold spec_all_actions in * || unfold spec_action_index in * 
-       || unfold spec_action_num in * 
-       
-       || unfold spec_action_reg_size in * || unfold spec_action_encoding in * || unfold spec_action_encoding_inj in *
-       
-       || unfold spec_action_ops in *).
-    
-    Ltac unfold_specs_tfctx := unfold_specs ; unfold_tfctx.
+    Instance show_spec_states : Show spec_states := tf_spec_states_names tf_ctx.
+    Instance show_spec_inputs : Show spec_inputs := tf_spec_inputs_names tf_ctx.
+    Instance show_spec_outputs : Show spec_outputs := tf_spec_outputs_names tf_ctx.
+    Instance show_spec_action : Show spec_action := tf_spec_action_names tf_ctx.
 
-    Definition spec_var_not_written_dec := tf_op_var_not_written_dec spec_states spec_states_fin spec_inputs spec_outputs spec_states_size spec_inputs_size spec_outputs_size.
-    Definition spec_no_output_dec := tf_op_no_output_dec spec_states spec_states_fin spec_inputs spec_outputs spec_outputs_fin spec_states_size spec_inputs_size spec_outputs_size.
+    Instance _eq_dec_states : EqDec spec_states.
+    Proof. pose spec_states_fin. apply EqDec_FiniteType. Defined.
+
+    Instance _eq_dec_outputs : EqDec spec_outputs.
+    Proof. pose spec_outputs_fin. apply EqDec_FiniteType. Defined.
 
     (* ====== Registers ====== *)
 
@@ -141,6 +116,16 @@ Section TrustformerSynthesis.
     | tf_out (x : spec_outputs)
     | tf_out_ack (x : spec_outputs)
     .
+
+    Local Ltac solve_lookup_in_app := 
+      rewrite !map_length; (* hammer. *) hauto use: @Common.finite_index_bounded, vect_skipn_plus_cast unfold: finite_elements, tf_spec_states, tf_spec_outputs.    
+
+    Local Ltac solve_bounded_lia H H0 s1 s2 t1 t2 :=
+      rewrite in_map_iff in *; 
+      destruct H as [s1 [Hs1_in Hs1_eq]]; destruct H0 as [s2 [Hs2_in Hs2_eq]]; subst;
+      generalize (Common.finite_index_bounded s1 (fin_t := t1));
+      generalize (Common.finite_index_bounded s2 (fin_t := t2));
+      lia.
 
     Instance _reg_t_finite : FiniteType reg_t.
     Proof.
@@ -156,91 +141,38 @@ Section TrustformerSynthesis.
         ++ map (fun x => tf_out x) spec_all_outputs
         ++ map (fun x => tf_out_ack x) spec_all_outputs).
       {
-        intros. unfold_specs. destruct a. 
+        intros. destruct a. 
         {
-          rewrite nth_error_app1. rewrite nth_error_map. rewrite (@finite_surjective spec_states spec_states_fin _). 
-          (* hammer. *) sfirstorder.
-          rewrite <- nth_error_Some. rewrite nth_error_map. rewrite (@finite_surjective spec_states spec_states_fin _).
-          (* hammer. *) sfirstorder.
+          rewrite nth_error_app1 by solve_lookup_in_app.
+          rewrite nth_error_map. 
+          rewrite (@finite_surjective spec_states spec_states_fin _). (* hammer. *) sfirstorder.
         }
         {
-          rewrite nth_error_app2. rewrite nth_error_app1.
-          rewrite Nat.add_comm. rewrite map_length. rewrite Nat.add_sub.
-          rewrite nth_error_map. rewrite (@finite_surjective spec_outputs spec_outputs_fin _). 
-          (* hammer. *) sfirstorder.
-          rewrite !map_length. rewrite Nat.add_comm. rewrite Nat.add_sub. 
-          generalize (@finite_surjective spec_outputs spec_outputs_fin x). intros.
-          apply nth_error_Some.
-          (* hammer. *) scongruence use: @finite_surjective unfold: spec_outputs, tf_spec_outputs.
-          rewrite !map_length. 
-          (* hammer. *) sfirstorder.
+          rewrite nth_error_app2 by solve_lookup_in_app.
+          rewrite nth_error_app1 by solve_lookup_in_app.
+
+          rewrite !map_length. replace (_ + _ - _) with (spec_output_index x) by lia. rewrite nth_error_map.
+          rewrite (@finite_surjective spec_outputs spec_outputs_fin x). (* hammer. *) sfirstorder.
         }
         {
-          rewrite nth_error_app2. rewrite nth_error_app2.
-          rewrite Nat.add_comm. rewrite Nat.add_comm. rewrite !map_length.
-          rewrite Nat.add_comm. rewrite Nat.add_assoc. rewrite Nat.add_comm. rewrite Nat.add_assoc.
-          rewrite Nat.add_sub. rewrite Nat.add_comm. rewrite Nat.add_sub.
-          rewrite nth_error_map. rewrite (@finite_surjective spec_outputs spec_outputs_fin _). 
-          (* hammer. *) sfirstorder.
-          rewrite !map_length. rewrite Nat.add_comm. rewrite Nat.add_comm. rewrite Nat.add_comm. rewrite Nat.add_assoc.
-          rewrite Nat.add_comm. rewrite Nat.add_assoc. rewrite Nat.add_sub. lia.
-          rewrite !map_length. lia.
+          rewrite nth_error_app2 by solve_lookup_in_app.
+          rewrite nth_error_app2 by solve_lookup_in_app.
+
+          rewrite !map_length. replace (_ + _ + _ - _ - _) with (spec_output_index x) by lia. rewrite nth_error_map.
+          rewrite (@finite_surjective spec_outputs spec_outputs_fin x). (* hammer. *) sfirstorder.
         }
       }
       {
-        rewrite map_app. rewrite !map_map. apply NoDup_app. 
-        assert ((fun x : spec_states => spec_state_index x) = spec_state_index) by reflexivity. rewrite H. clear H.
-        apply (@finite_injective spec_states spec_states_fin).
-        rewrite map_app. rewrite !map_map. apply NoDup_app.
-        {
-          apply FinFun.Injective_carac. apply Common.finite_elements_is_finfun_listing.
-          unfold FinFun.Injective. apply Common.finite_index_plus_constant_l_inj.
-        } {
-          apply FinFun.Injective_map_NoDup. unfold FinFun.Injective.
-          apply Common.finite_index_plus_constant_l_inj. apply Common.finite_elements_is_finfun_listing.
-        } {
-          intros. rewrite in_map_iff in H. rewrite in_map_iff in H0.
-          destruct H as [s1 [Hs1_in Hs1_eq]]. destruct H0 as [s2 [Hs2_in Hs2_eq]]. subst x.
-          rewrite <- Nat.add_assoc in Hs2_in. apply Nat.add_cancel_l in Hs2_in.
-          assert (spec_output_num > spec_output_index s1). {
-            apply Common.finite_index_in_range.
-          }
-          lia.
-        } {
-          intros. rewrite in_map_iff in H. rewrite in_map_iff in H0.
-          destruct H as [s1 [Hs1_in Hs1_eq]]. destruct H0 as [s2 [Hs2_in Hs2_eq]]. subst x.
-          destruct s2.
-          {
-            apply in_app_or in Hs2_eq. destruct Hs2_eq as [Hs2_eq | Hs2_eq].
-            apply in_map_iff in Hs2_eq. destruct Hs2_eq as [s2' [Hs2'_in Hs2'_eq]]. subst.
-            congruence.
-            apply in_map_iff in Hs2_eq. destruct Hs2_eq as [s2' [Hs2'_in Hs2'_eq]]. subst.
-            congruence.
-          } {
-            assert (spec_state_num > spec_state_index s1). {
-              apply Common.finite_index_in_range.
-            }
-            lia.
-          } {
-            assert (spec_state_num > spec_state_index s1). {
-              apply Common.finite_index_in_range.
-            }
-            lia.
-          }
-        }
+        rewrite !map_app, !map_map. apply NoDup_app. 2: apply NoDup_app.
+        - apply (finite_injective (FiniteType := spec_states_fin)).
+        - apply FinFun.Injective_map_NoDup. 2: apply finite_nodup. unfold FinFun.Injective. apply Common.finite_index_plus_constant_l_inj.
+        - apply FinFun.Injective_map_NoDup. 2: apply finite_nodup. unfold FinFun.Injective. apply Common.finite_index_plus_constant_l_inj.
+        - intros. 
+          solve_bounded_lia H H0 s1 s2 @spec_outputs_fin @spec_outputs_fin.
+        - intros. apply in_app_or in H0. destruct H0. 
+          * solve_bounded_lia H H0 s1 s2 @spec_states_fin @spec_outputs_fin.
+          * solve_bounded_lia H H0 s1 s2 @spec_states_fin @spec_outputs_fin.
       }
-    Defined.
-
-    Instance eq_dec_states : EqDec spec_states.
-    Proof.
-      pose spec_states_fin.  
-      apply EqDec_FiniteType.
-    Defined.
-
-    Instance eq_dec_outputs : EqDec spec_outputs.
-    Proof.
-      pose spec_outputs_fin.  
-      apply EqDec_FiniteType.
     Defined.
 
     Definition _reg_name (x: spec_states) : string :=
