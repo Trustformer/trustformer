@@ -477,7 +477,7 @@ Section CompositionalCorrectness.
       }
     Qed.
 
-    Definition written_outputs (state_op: tf_ops (spec_states) (spec_inputs) (spec_outputs)) := 
+    Definition written_outputs (state_op: tf_op (spec_states) (spec_inputs) (spec_outputs)) := 
         List.filter (fun o => if (spec_no_output_dec o state_op) then false else true) spec_all_outputs.
 
     Definition log_after_act_write_output_vars (hw_reg_state: hw_env_t) (sched_log: RegCEnvLog) action_log output_list Gamma :=
@@ -678,7 +678,7 @@ Section CompositionalCorrectness.
       }
     Qed.
 
-    Definition written_vars (state_op: tf_ops (spec_states) (spec_inputs) (spec_outputs)) := 
+    Definition written_vars (state_op: tf_op (spec_states) (spec_inputs) (spec_outputs)) := 
         List.filter (fun s => if (spec_var_not_written_dec s state_op) then false else true) spec_all_states.
 
     Definition log_after_act_write_state_vars (hw_reg_state: hw_env_t) (sched_log: RegCEnvLog) action_log state_list Gamma :=
