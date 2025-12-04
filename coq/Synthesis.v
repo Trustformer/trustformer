@@ -301,7 +301,7 @@ Section TrustformerSynthesis.
 
     Definition op_to_uaction (op: tf_op spec_states spec_inputs spec_outputs) (code: uaction reg_t ext_fn_t) : uaction reg_t ext_fn_t :=
       match op with
-      | tf_nop _ _ _ => code 
+      | tf_nop _ _ _ => UBind "_unused" {{ #Ob }} code 
       | tf_assign _ _ _ x expr => UBind (_reg_name x) (expr_to_uaction expr (spec_states_size x)) code
       | tf_output _ _ _ x expr => UBind (_out_name x) (expr_to_uaction expr (spec_outputs_size x)) code
       end.
@@ -320,53 +320,78 @@ Section TrustformerSynthesis.
       end.      
         
     (* Helper function that reads all state registers into variables *)
-    Fixpoint _rule_read_state_vars_rec (states_to_read : list (spec_states)) (code: uaction reg_t ext_fn_t): uaction reg_t ext_fn_t :=
+    (* Fixpoint _rule_read_state_vars_rec (states_to_read : list (spec_states)) (code: uaction reg_t ext_fn_t): uaction reg_t ext_fn_t :=
       match states_to_read with
       | [] => code
       | x :: rest =>
         UBind (_reg_name x) 
           {{ read1(tf_reg x) }} 
           (_rule_read_state_vars_rec rest code)
-      end.
+      end. *)
 
     (* Helper function that reads all output registers into variables *)
-    Fixpoint _rule_read_out_vars_rec (outputs_to_read : list (spec_outputs)) (code: uaction reg_t ext_fn_t): uaction reg_t ext_fn_t :=
+    (* Fixpoint _rule_read_out_vars_rec (outputs_to_read : list (spec_outputs)) (code: uaction reg_t ext_fn_t): uaction reg_t ext_fn_t :=
       match outputs_to_read with
       | [] => code
       | x :: rest =>
         UBind (_out_name x) 
           {{ read0(tf_out x) }} 
           (_rule_read_out_vars_rec rest code)
-      end.
+      end. *)
 
     (* Helper function that writes back all modified state variables *)
-    Definition _rule_write_state_vars (ops: tf_ops spec_states spec_inputs spec_outputs) (code: uaction reg_t ext_fn_t) : uaction reg_t ext_fn_t  := 
+    (* Definition _rule_write_state_vars (ops: tf_ops spec_states spec_inputs spec_outputs) (code: uaction reg_t ext_fn_t) : uaction reg_t ext_fn_t  := 
       List.fold_right (fun x acc => 
         if spec_var_written_dec x ops then
           USeq {{ write1(tf_reg x, `UVar (_reg_name x)`) }} acc
         else
           acc
-      ) code spec_all_states.
+      ) code spec_all_states. *)
     
     (* Helper function that writes back all modified output variables *)
-    Definition _rule_write_output_vars (ops: tf_ops spec_states spec_inputs spec_outputs) (code: uaction reg_t ext_fn_t) : uaction reg_t ext_fn_t  := 
+    (* Definition _rule_write_output_vars (ops: tf_ops spec_states spec_inputs spec_outputs) (code: uaction reg_t ext_fn_t) : uaction reg_t ext_fn_t  := 
       List.fold_right (fun x acc => 
         if spec_out_written_dec x ops then
           USeq {{ write0(tf_out x, `UVar (_out_name x)`) }} acc
         else
           acc 
-      ) code spec_all_outputs.
+      ) code spec_all_outputs. *)
+
+    Definition _rule_read_var0 (var_map: reg_t -> string) (reg : reg_t) (code: uaction reg_t ext_fn_t): uaction reg_t ext_fn_t :=
+        UBind (var_map reg) {{ read0(reg) }} code.
+
+    Definition _rule_read_vars0 (var_map: reg_t -> string) (regs : list reg_t) (code: uaction reg_t ext_fn_t): uaction reg_t ext_fn_t :=
+      List.fold_right (_rule_read_var0 var_map) code regs.
+
+    Definition _rule_write_var0 (var_map: reg_t -> string) (reg : reg_t) (code: uaction reg_t ext_fn_t): uaction reg_t ext_fn_t :=
+        USeq {{ write0(reg, `UVar (var_map reg)`) }} code.
+
+    Definition _rule_write_vars0 (var_map: reg_t -> string) (regs : list reg_t) (code: uaction reg_t ext_fn_t): uaction reg_t ext_fn_t :=
+      List.fold_right (_rule_write_var0 var_map) code regs.
+
+    Definition _written_outputs (state_ops: tf_ops (spec_states) (spec_inputs) (spec_outputs)) := 
+        List.filter (fun o => if (spec_out_written_dec o state_ops) then true else false) spec_all_outputs.
+
+    Definition _written_states (state_ops: tf_ops (spec_states) (spec_inputs) (spec_outputs)) := 
+        List.filter (fun s => if (spec_var_written_dec s state_ops) then true else false) spec_all_states.
+
+    Definition _register_var_name (r: reg_t) : string :=
+      match r with
+      | tf_reg x => _reg_name x
+      | tf_out x => _out_name x
+      | tf_out_ack x => "ack_" ++ _out_name x
+      end.
 
     Definition _rule_cmd cmd : uaction reg_t ext_fn_t :=
       let rule_ops := spec_action_ops cmd in
-      _rule_read_state_vars_rec spec_all_states (
-        _rule_read_out_vars_rec spec_all_outputs (
+      _rule_read_vars0 _register_var_name (map tf_reg spec_all_states) (
+        _rule_read_vars0 _register_var_name (map tf_out spec_all_outputs) (
 
           _rule_aux rule_ops (
           
-            _rule_write_state_vars rule_ops (
-              _rule_write_output_vars rule_ops
-                {{ pass }})))).
+            _rule_write_vars0 _register_var_name (map tf_reg (_written_states rule_ops)) (
+              _rule_write_vars0 _register_var_name (map tf_out (_written_outputs rule_ops)) (
+                {{ pass }} ))))).
 
     Definition rules :=
         (fun rl =>  match rl with

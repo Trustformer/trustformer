@@ -114,18 +114,37 @@ Section Semantics.
         | tf_output _ _ _ dst expr => tf_out_update dst (tf_eval_expr (szB:=(outputs_size dst)) expr state input)
         end.
 
+    Definition tf_op_step_commit_state
+      (sys_state: ContextEnv.(env_t) tf_states_type)
+      (update: tf_update)
+      : ContextEnv.(env_t) tf_states_type :=
+        match update with
+        | tf_no_update => sys_state
+        | tf_st_update var value =>
+            ContextEnv.(putenv) sys_state var value
+        | tf_out_update _ _ =>
+            sys_state
+        end.
+
+    Definition tf_op_step_commit_output
+      (sys_state: ContextEnv.(env_t) tf_outputs_type)
+      (update: tf_update)
+      : ContextEnv.(env_t) tf_outputs_type :=
+        match update with
+        | tf_no_update => sys_state
+        | tf_st_update _ _ =>
+            sys_state
+        | tf_out_update var value =>
+            ContextEnv.(putenv) sys_state var value
+        end.
+
     Definition tf_op_step_commit
       (sys_state: ContextEnv.(env_t) tf_states_type * ContextEnv.(env_t) tf_outputs_type)
       (update: tf_update)
       : 
       (ContextEnv.(env_t) tf_states_type * ContextEnv.(env_t) tf_outputs_type) :=
-        match update with
-        | tf_no_update => sys_state
-        | tf_st_update var value =>
-            (ContextEnv.(putenv) (fst sys_state) var value, snd sys_state)
-        | tf_out_update var value =>
-            (fst sys_state, ContextEnv.(putenv) (snd sys_state) var value)
-        end.
+        (tf_op_step_commit_state (fst sys_state) update,
+         tf_op_step_commit_output (snd sys_state) update).
 
     Fixpoint tf_ops_updates
       (state_ops: tf_ops states_var inputs_var outputs_var)
@@ -218,6 +237,38 @@ Section Semantics.
             * right. unfold not. intros. destruct H as [H|H]; congruence.
       Defined.
           
+      Lemma tf_ops_var_not_written_means_ops_run_unchanged:
+        forall state_ops sys_state input var,
+          ~ tf_ops_var_written var state_ops ->
+          (fst (tf_ops_run state_ops sys_state input)).[var] = (fst sys_state).[var].
+      Proof.
+        intros state_ops. (* destruct sys_state as [state output]. generalize dependent state. generalize dependent output. *)
+        unfold tf_ops_run. induction state_ops; intros; rename H into Hnw; simpl.
+        - (* tf_ops_base *)
+          unfold tf_ops_var_written, tf_op_var_written in Hnw.
+          destruct op; cbn; try reflexivity.
+          destruct (eq_dec dst var).
+          * rewrite e. contradict Hnw. eexists (fst sys_state), input, _. cbn. rewrite e. reflexivity.
+          * rewrite get_put_neq by exact n. reflexivity.
+        - (* tf_ops_cons *)
+          cbn in Hnw. unfold tf_op_var_written in Hnw. 
+          destruct op; cbn -[tf_ops_run] in *.
+          * apply (IHstate_ops (tf_op_step_commit sys_state tf_no_update)). intro. apply Hnw; clear Hnw. right. exact H.
+          * destruct (eq_dec dst var).
+            -- subst dst. contradict Hnw. left. eexists (fst sys_state), input, _. cbn. reflexivity.
+            -- rewrite (IHstate_ops (tf_op_step_commit _ _)). 2: { intro. apply Hnw; clear Hnw. right. exact H. }
+               cbn. rewrite get_put_neq by exact n. reflexivity.
+          * rewrite (IHstate_ops (tf_op_step_commit _ _)). 2: { intro. apply Hnw; clear Hnw. right. exact H. }
+            cbn. reflexivity.
+        - (* tf_ops_if *)
+          cbn in Hnw. set (cond_val := tf_eval_expr (szB:=1) _ _ _) in *.
+          destruct cond_val; destruct vtl; cbn.
+          destruct vhd; cbn.
+          + (* then branch taken *)
+            apply (IHstate_ops1 sys_state). intro. apply Hnw; clear Hnw . left. exact H.
+          +  (* then branch not taken *)
+            apply (IHstate_ops2 sys_state). intro. apply Hnw; clear Hnw. right. exact H.
+      Qed.
 
       Definition tf_op_out_written
         (var: outputs_var)
@@ -277,6 +328,39 @@ Section Semantics.
             * left. right. exact t.
             * right. unfold not. intros. destruct H as [H|H]; congruence.
       Defined.
+
+      Definition tf_ops_out_not_written_means_ops_run_unchanged:
+        forall state_ops sys_state input var,
+          ~ tf_ops_out_written var state_ops ->
+          (snd (tf_ops_run state_ops sys_state input)).[var] = (snd sys_state).[var].
+      Proof.
+        intros state_ops.
+        unfold tf_ops_run. induction state_ops; intros; rename H into Hnw; simpl.
+        - (* tf_ops_base *)
+          unfold tf_ops_out_written, tf_op_out_written in Hnw.
+          destruct op; cbn; try reflexivity.
+          destruct (eq_dec dst var).
+          * rewrite e. contradict Hnw. eexists (fst sys_state), input, _. cbn. rewrite e. reflexivity.
+          * rewrite get_put_neq by exact n. reflexivity.
+        - (* tf_ops_cons *)
+          cbn in Hnw. unfold tf_op_out_written in Hnw. 
+          destruct op; cbn -[tf_ops_run] in *.
+          * apply (IHstate_ops (tf_op_step_commit sys_state tf_no_update)). intro. apply Hnw; clear Hnw. right. exact H.
+          * rewrite (IHstate_ops (tf_op_step_commit _ _)). 2: { intro. apply Hnw; clear Hnw. right. exact H. }
+               cbn. reflexivity.
+          * destruct (eq_dec dst var).
+            -- subst dst. contradict Hnw. left. eexists (fst sys_state), input, _. cbn. reflexivity.
+            -- rewrite (IHstate_ops (tf_op_step_commit _ _)). 2: { intro. apply Hnw; clear Hnw. right. exact H. }
+               cbn. rewrite get_put_neq by exact n. reflexivity.
+        - (* tf_ops_if *)
+          cbn in Hnw. set (cond_val := tf_eval_expr (szB:=1) _ _ _) in *.
+          destruct cond_val; destruct vtl; cbn.
+          destruct vhd; cbn.
+          + (* then branch taken *)
+            apply (IHstate_ops1 sys_state). intro. apply Hnw; clear Hnw . left. exact H.
+          +  (* then branch not taken *)
+            apply (IHstate_ops2 sys_state). intro. apply Hnw; clear Hnw. right. exact H.
+      Qed.
 
     End Properties.
 

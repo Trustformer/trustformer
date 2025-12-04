@@ -250,6 +250,73 @@ Section BitsToLists.
         - hauto.
     Qed.
 
+    Lemma bits_to_list_assoc_app:
+        forall {K V: Type} {eq: EqDec K} (l: list (K * V)) (k: K) x a,
+        BitsToLists.list_assoc l k = Some x -> 
+            BitsToLists.list_assoc (l ++ a) k = Some x.
+    Proof.
+        intros. generalize dependent H.
+        induction l; intros; cbn in *; try congruence.
+        destruct a0 as [k1 v1]. destruct (eq_dec k k1).
+        - subst. exact H.
+        - apply IHl. exact H.
+    Qed.
+
+    Lemma bits_to_list_assoc_app_not_in:
+        forall {K V: Type} {eq: EqDec K} (l: list (K * V)) (k: K) x a,
+        ~ In k (map fst a) ->
+        BitsToLists.list_assoc l k = Some x -> 
+            BitsToLists.list_assoc (a ++ l) k = Some x.
+    Proof.
+        intros. generalize dependent H0.
+        induction a; intros; cbn in *.
+        - exact H0.
+        - destruct a as [k1 v1]. destruct (eq_dec k k1).
+            + subst. contradict H. left. reflexivity.
+            + apply IHa; auto.
+    Qed.
+
+    Lemma bits_to_list_assoc_app_not_in2:
+        forall {K V: Type} {eq: EqDec K} (l: list (K * V)) (k: K) x a,
+        ~ In k (map fst a) ->
+        BitsToLists.list_assoc (a ++ l) k = Some x -> 
+            BitsToLists.list_assoc l k = Some x.
+    Proof.
+        intros. generalize dependent H0.
+        induction a; intros; cbn in *.
+        - exact H0.
+        - destruct a as [k1 v1]. destruct (eq_dec k k1).
+            + subst. contradict H. left. reflexivity.
+            + apply IHa; auto.
+    Qed.
+
+    Lemma bits_to_list_assoc_app_not_in3:
+        forall {K V: Type} {eq: EqDec K} (l: list (K * V)) (k: K) a,
+        ~ In k (map fst a) ->
+        BitsToLists.list_assoc (a ++ l) k = BitsToLists.list_assoc l k.
+    Proof.
+        intros.
+        induction a; intros; cbn in *.
+        - reflexivity.
+        - destruct a as [k1 v1]. destruct (eq_dec k k1).
+            + subst. contradict H. left. reflexivity.
+            + apply IHa; auto.
+    Qed.
+
+    Lemma bits_to_list_assoc_app_both_none:
+        forall {K V: Type} {eq: EqDec K} (l: list (K * V)) (k: K) a,
+        BitsToLists.list_assoc l k = None ->
+        BitsToLists.list_assoc a k = None -> 
+            BitsToLists.list_assoc (a ++ l) k = None.
+    Proof.
+        intros. generalize dependent H0.
+        induction a; intros; cbn in *.
+        - exact H.
+        - destruct a as [k1 v1]. destruct (eq_dec k k1).
+            + inversion H0.
+            + apply IHa; auto.
+    Qed.
+
     Lemma bits_of_list_vect_to_list:
         forall {n} (b: bits n),
             Bits.of_list (vect_to_list b) = rew [vect bool] (BitsToLists.len_to_list n b) in b.
@@ -365,4 +432,94 @@ Section Datatypes.
     Qed.
 
 End Datatypes.
+
+Section Lists.
+
+    Lemma in_filter_means_in_filter_cons:
+        forall {A: Type} (f: A -> bool) (l: list A) a b,
+        In a (filter f l) ->
+        In a (filter f (b :: l)).
+    Proof.
+        intros. destruct (f b) eqn:Hfb; cbn; rewrite Hfb.
+        - right. exact H.
+        - exact H.
+    Qed.
+
+End Lists.
+
+Section Bits.
+
+    Lemma bits_single_is_neg_beq_dec:
+        forall x, beq_dec x Ob~0 = negb (Bits.single x).
+    Proof.
+        intros. unfold Bits.single, beq_dec.
+        destruct x. destruct vtl. destruct vhd; cbn; auto.
+    Qed. 
+
+End Bits.
+
+Section Helper.
+
+    Lemma tl_skipn:
+        forall {T} (l: list T) n,
+        tl (List.skipn n l) = List.skipn (S n) l.
+    Proof.
+        intros.
+        generalize dependent l.
+        induction n; intros; simpl.
+        - reflexivity.
+        - destruct l; simpl in *; try reflexivity. apply IHn.
+    Qed.
+
+    Lemma pair_inj':
+        forall {A B: Type} (p1 p2: A * B),
+        fst p1 = fst p2 ->
+        snd p1 = snd p2 ->
+        p1 = p2.
+    Proof.
+        intros. destruct p1. destruct p2. simpl in *.
+        subst. reflexivity.
+    Qed.
+
+    Lemma tf_h_match_skipn_cons:
+        forall {T1 T2 T3} (X1 X2: option (T1 * T2 * list T3)) n1 n2,
+        n2 = S n1 ->
+        X1 = X2 ->
+        match
+            match X1 with
+            | Some (l, v, G) => Some (l, v, List.skipn n1 G)
+            | None => None
+            end
+        with
+        | Some (l, v, G) => Some (l, v, tl G)
+        | None => None
+        end = match X2 with
+        | Some (l, v, G) => Some (l, v, List.skipn n2 G)
+        | None => None
+        end.
+    Proof.
+        intros. rewrite H, H0. destruct X2 as [[[l v] G]|]; simpl.
+        - repeat f_equal. destruct G.
+          * rewrite skipn_nil. reflexivity.
+          * rewrite tl_skipn. reflexivity.
+        - reflexivity.
+    Qed.
+
+    Lemma tf_h_match_skipn:
+        forall {T1 T2 T3} (X1 X2: option (T1 * T2 * list T3)) n1 n2,
+        n2 = n1 ->
+        X1 = X2 ->
+        match X1 with
+        | Some (l, v, G) => Some (l, v, List.skipn n1 G)
+        | None => None
+        end = match X2 with
+        | Some (l, v, G) => Some (l, v, List.skipn n2 G)
+        | None => None
+        end.
+    Proof.
+        intros. rewrite H, H0. destruct X2 as [[[l v] G]|]; simpl; reflexivity.
+    Qed.
+
+End Helper.
+
 
