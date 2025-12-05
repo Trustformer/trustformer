@@ -7,12 +7,14 @@ Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Synthesis.
 
+Require Import Coq.Logic.EqdepFacts.
+
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
 (*
-    An example specification and synthesis of a simple negator module.
-    The hardware module has a single internal state register (32 bits) and supports two actions (nop, neg).
+    An example specification and synthesis of a simple lockbox.
+    The hardware module has a single internal state register (32 bits) and supports two actions (set, test).
     Actions are triggered through a command register, where the first 1 bit indicates if the command is valid,
     and the remaining bits indicate the action to perform.
 
@@ -25,14 +27,14 @@ Section FunctionalSpecification.
     Definition bits_true := Bits.neg (bits_false).
 
     Inductive fs_action :=
-    | fs_act_nop
-    | fs_act_neg
+    | fs_act_set
+    | fs_act_test
     .
 
     Definition fs_action_encoding (a: fs_action) : bits_t 16 :=
     match a with
-    | fs_act_nop => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0
-    | fs_act_neg => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~0~1~0
+    | fs_act_set => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0
+    | fs_act_test => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~0~1~0
     end.
 
     Lemma fs_action_encoding_inj :
@@ -49,9 +51,11 @@ Section FunctionalSpecification.
     .
 
     Inductive fs_inputs :=
+    | fs_in_val
     .
 
     Inductive fs_outputs :=
+    | fs_out_val
     .
 
     Definition fs_states_size (x: fs_states) : nat :=
@@ -61,10 +65,12 @@ Section FunctionalSpecification.
 
     Definition fs_inputs_size (x: fs_inputs) : nat := 
     match x with
+    | fs_in_val => sz
     end.
 
     Definition fs_outputs_size (x: fs_outputs) : nat := 
     match x with
+    | fs_out_val => sz
     end.
 
     Definition fs_states_t := tf_states_type fs_states fs_states_size. 
@@ -80,29 +86,54 @@ Section FunctionalSpecification.
         (tf_ops fs_states fs_inputs fs_outputs)
         :=
         match act with
-        | fs_act_nop => tf_ops_base _ _ _ (tf_nop _ _ _) 
-        | fs_act_neg => tf_ops_base _ _ _ (tf_assign _ _ _ fs_st_val (tf_op1 _ _ (tf_not) (tf_var _ _ fs_st_val)))
+        | fs_act_set => tf_ops_base _ _ _ (tf_assign _ _ _ fs_st_val (tf_input _ _ fs_in_val))
+        | fs_act_test => tf_ops_if _ _ _ 
+            (tf_op2 _ _ (tf_cmp sz tf_eq) (tf_var _ _ fs_st_val) (tf_input _ _ fs_in_val)) 
+                (tf_ops_base _ _ _ (tf_output _ _ _ fs_out_val (tf_const _ _ 1)))
+                (tf_ops_base _ _ _ (tf_output _ _ _ fs_out_val (tf_const _ _ 0)))
         end.
 
     Definition fs_step := tf_ops_run fs_states _ fs_inputs fs_outputs _ fs_states_size fs_inputs_size fs_outputs_size.
     
     Section Examples.
+        Definition bits_10 := Bits.of_nat sz 10.
 
         Definition s_init := ContextEnv.(create) fs_states_init.
         Example s_example : ContextEnv.(getenv) s_init fs_st_val = bits_false.
         Proof. reflexivity. Qed.
 
-        Definition s1_trans := fs_transitions fs_act_nop.
-        Definition s1_state := fst (fs_step s1_trans (s_init, ContextEnv.(create) (fun _ => Bits.zero)) (fun _ => Bits.zero)).
-        Example s1_example : ContextEnv.(getenv) s1_state fs_st_val = bits_false.
-        Proof. ssimpl. Qed.
-        
-        Definition s2_trans := fs_transitions fs_act_neg.
-        Definition s2_state := fst (fs_step s2_trans (s_init, ContextEnv.(create) (fun _ => Bits.zero)) (fun _ => Bits.zero)).
-        Example s2_example : ContextEnv.(getenv) s2_state fs_st_val = bits_true.
+        Definition s1_trans := fs_transitions fs_act_set.
+        Definition s1_trans_r := (fs_step s1_trans (s_init, ContextEnv.(create) (fun _ => Bits.zero)) (fun x => match x with fs_in_val => bits_10 end)).
+        Definition s1_state := fst s1_trans_r.
+        Definition s1_output := snd s1_trans_r.
+        Example s1_example_state : ContextEnv.(getenv) s1_state fs_st_val = bits_10.
         Proof. 
             cbn -[vect_to_list]. sauto.
         Qed.
+        Example s1_example_output : ContextEnv.(getenv) s1_output fs_out_val = bits_false.
+        Proof. ssimpl. Qed.
+
+        Definition s2_trans := fs_transitions fs_act_test.
+        Definition s2_trans_r := (fs_step s2_trans s1_trans_r (fun _ => Bits.zero)).
+        Definition s2_state := fst s2_trans_r.
+        Definition s2_output := snd s2_trans_r.
+        Example s2_example : ContextEnv.(getenv) s2_state fs_st_val = bits_10.
+        Proof. 
+            cbn -[vect_to_list]. sauto.
+        Qed.
+        Example s2_example_output : ContextEnv.(getenv) s2_output fs_out_val = Bits.of_nat sz 0.
+        Proof. ssimpl. Qed.
+        
+        Definition s3_trans := fs_transitions fs_act_test.
+        Definition s3_trans_r := (fs_step s3_trans s2_trans_r (fun x => match x with fs_in_val => bits_10 end)).
+        Definition s3_state := fst s3_trans_r.
+        Definition s3_output := snd s3_trans_r.
+        Example s3_example : ContextEnv.(getenv) s3_state fs_st_val = bits_10.
+        Proof. 
+            cbn -[vect_to_list Bits.neg]. sauto.
+        Qed.
+        Example s3_example_output : ContextEnv.(getenv) s3_output fs_out_val = Bits.of_nat sz 1.
+        Proof. ssimpl. Qed.
 
     End Examples.
 
@@ -157,7 +188,7 @@ Section Synthesis.
                         koika_rule_names := Synthesis.rule_names tf_ctx;
                         koika_rule_external := (fun _ => false);
                         koika_scheduler := system_schedule;
-                        koika_module_name := "Example_InternalNegator" |};
+                        koika_module_name := "Example_Negator" |};
 
       ip_sim := {| sp_ext_fn_specs fn := {| efs_name := show fn; efs_method := false |};
                   sp_prelude := None |};
@@ -171,5 +202,5 @@ End Synthesis.
 
 Definition prog := Interop.Backends.register package.
 Set Extraction Output Directory "build".
-Extraction "Example_InternalNegator.ml" prog.
+Extraction "Example_Negator.ml" prog.
 

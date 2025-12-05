@@ -90,14 +90,13 @@ Section FunctionalSpecification.
         (tf_ops fs_states fs_inputs fs_outputs)
         :=
         match act with
-        | fs_act_nop => tf_nop _ _ _ 
-        | fs_act_neg => tf_assign _ _ _ fs_st_val (tf_op1 _ (tf_not) (tf_var _ fs_st_val))
-        | fs_act_read => tf_output _ _ _ fs_out_val fs_st_val
-        | fs_act_write => tf_input _ _ _ fs_st_val fs_in_val
+        | fs_act_nop => tf_ops_base _ _ _ (tf_nop _ _ _)
+        | fs_act_neg => tf_ops_base _ _ _ (tf_assign _ _ _ fs_st_val (tf_op1 _ _ (tf_not) (tf_var _ _ fs_st_val)))
+        | fs_act_read => tf_ops_base _ _ _ (tf_output _ _ _ fs_out_val (tf_var _ _ fs_st_val))
+        | fs_act_write => tf_ops_base _ _ _ (tf_assign _ _ _ fs_st_val (tf_input _ _ fs_in_val))
         end.
 
-    Definition fs_step := tf_op_step_commit fs_states _ fs_inputs fs_outputs fs_states_size fs_inputs_size.
-    Definition fs_output := tf_op_outputs fs_states _ fs_inputs fs_outputs _ fs_states_size fs_inputs_size fs_outputs_size.
+    Definition fs_step := tf_ops_run fs_states _ fs_inputs fs_outputs _ fs_states_size fs_inputs_size fs_outputs_size.
     
     Section Examples.
         Definition bits_10 := Bits.of_nat sz 10.
@@ -108,16 +107,18 @@ Section FunctionalSpecification.
         Proof. reflexivity. Qed.
 
         Definition s1_trans := fs_transitions fs_act_nop.
-        Definition s1_state := fs_step s_init (fun _ => Bits.zero) s1_trans.
-        Definition s1_output := fs_output s_init (fun _ => Bits.zero) (ContextEnv.(create) (fun _ => Bits.zero)) s1_trans.
+        Definition s1_trans_r := (fs_step s1_trans (s_init, ContextEnv.(create) (fun _ => Bits.zero)) (fun _ => Bits.zero)).
+        Definition s1_state := fst s1_trans_r.
+        Definition s1_output := snd s1_trans_r.
         Example s1_example_state : ContextEnv.(getenv) s1_state fs_st_val = bits_false.
         Proof. ssimpl. Qed.
         Example s1_example_output : ContextEnv.(getenv) s1_output fs_out_val = bits_false.
         Proof. ssimpl. Qed.
 
         Definition s2_trans := fs_transitions fs_act_write.
-        Definition s2_state := fs_step s_init (fun x => match x with fs_in_val => bits_10 end) s2_trans.
-        Definition s2_output := fs_output s_init (fun x => match x with fs_in_val => bits_10 end) (ContextEnv.(create) (fun _ => Bits.zero)) s2_trans.
+        Definition s2_trans_r := (fs_step s2_trans (s_init, ContextEnv.(create) (fun _ => Bits.zero)) (fun x => match x with fs_in_val => bits_10 end)).
+        Definition s2_state := fst s2_trans_r.
+        Definition s2_output := snd s2_trans_r.
         Example s2_example : ContextEnv.(getenv) s2_state fs_st_val = bits_10.
         Proof. 
             cbn -[vect_to_list]. sauto.
@@ -126,8 +127,9 @@ Section FunctionalSpecification.
         Proof. ssimpl. Qed.
         
         Definition s3_trans := fs_transitions fs_act_neg.
-        Definition s3_state := fs_step s2_state (fun _ => Bits.zero) s3_trans.
-        Definition s3_output := fs_output s2_state (fun _ => Bits.zero) (ContextEnv.(create) (fun _ => Bits.zero)) s3_trans.
+        Definition s3_trans_r := (fs_step s3_trans (s2_state, ContextEnv.(create) (fun _ => Bits.zero)) (fun _ => Bits.zero)).
+        Definition s3_state := fst s3_trans_r.
+        Definition s3_output := snd s3_trans_r.
         Example s3_example : ContextEnv.(getenv) s3_state fs_st_val = bits_neg10.
         Proof. 
             cbn -[vect_to_list Bits.neg]. sauto.
@@ -136,8 +138,9 @@ Section FunctionalSpecification.
         Proof. ssimpl. Qed.
 
         Definition s4_trans := fs_transitions fs_act_read.
-        Definition s4_state := fs_step s3_state (fun _ => Bits.zero) s4_trans.
-        Definition s4_output := fs_output s3_state (fun _ => Bits.zero) (ContextEnv.(create) (fun _ => Bits.zero)) s4_trans.
+        Definition s4_trans_r := (fs_step s4_trans (s3_state, ContextEnv.(create) (fun _ => Bits.zero)) (fun _ => Bits.zero)).
+        Definition s4_state := fst s4_trans_r.
+        Definition s4_output := snd s4_trans_r.
         Example s4_example : ContextEnv.(getenv) s4_state fs_st_val = bits_neg10.
         Proof. 
             cbn -[vect_to_list]. sauto.
