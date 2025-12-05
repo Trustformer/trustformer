@@ -317,6 +317,35 @@ Section BitsToLists.
             + apply IHa; auto.
     Qed.
 
+    Lemma bits_to_list_assoc_app_both_none1:
+        forall {K V: Type} {eq: EqDec K} (l: list (K * V)) (k: K) a,
+        BitsToLists.list_assoc a k = None -> 
+            BitsToLists.list_assoc (a ++ l) k = BitsToLists.list_assoc l k.
+    Proof.
+        intros. generalize dependent H.
+        induction a; intros; cbn in *.
+        - reflexivity.
+        - destruct a as [k1 v1]. destruct (eq_dec k k1).
+            + inversion H.
+            + apply IHa; auto.
+    Qed.
+
+    Lemma bits_to_list_assoc_app_not_in_middle:
+        forall {K V: Type} {eq: EqDec K} (l1 l2: list (K * V)) (k: K) a,
+        ~ In k (map fst a) ->
+        BitsToLists.list_assoc (l1 ++ a ++ l2) k = BitsToLists.list_assoc (l1 ++ l2) k.
+    Proof.
+        intros.
+        induction a; intros; cbn in *.
+        - reflexivity.
+        - destruct a as [k1 v1]. destruct (eq_dec k k1).
+          + subst. contradict H. left. reflexivity.
+          + destruct (BitsToLists.list_assoc l1 k) eqn:Hassoc.
+            * rewrite !bits_to_list_assoc_app with (x:=v) (1:=Hassoc). reflexivity.
+            * rewrite !bits_to_list_assoc_app_both_none1 with (1:=Hassoc) in *. cbn. destruct (eq_dec k k1); try congruence.
+              apply IHa. intro; apply H. right. exact H0.
+    Qed.
+
     Lemma bits_of_list_vect_to_list:
         forall {n} (b: bits n),
             Bits.of_list (vect_to_list b) = rew [vect bool] (BitsToLists.len_to_list n b) in b.

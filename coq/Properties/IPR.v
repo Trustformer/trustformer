@@ -515,6 +515,18 @@ Section CompositionalCorrectness.
 
     Definition OutputR (hw_reg_state: hw_env_t) (fs_output: spec_output_env_t) :=
         forall x, hw_reg_state.[tf_out tf_ctx x] = val_of_value (fs_output.[x]).
+
+    Lemma OutputR_means_sized_bits:
+      forall hw_reg_state fs_output,
+        OutputR hw_reg_state fs_output -> 
+        forall x, has_sized_bits (hw_reg_state.[tf_out tf_ctx x]) (spec_outputs_size x).
+    Proof.
+        intros hw_reg_state fs_output H_output x.
+        specialize (H_output x). unfold getenv in *. cbn in *.
+        exists (vect_to_list (cassoc (finite_member x) fs_output)).
+        split. (* hammer. *) timeout 10 sfirstorder.
+        rewrite vect_to_list_length. reflexivity.
+    Qed.
     
     Definition InputR (fs_input: forall (x : spec_inputs), (type_denote (spec_inputs_t x))) :=
         forall x, val_of_value (fs_input x) = sigma (ext_input tf_ctx x) val_true.
@@ -554,17 +566,17 @@ Section CompositionalCorrectness.
       rewrite BitsToLists.vect_of_list_to_list. vect_to_list_t. reflexivity.
     Qed.
 
-    Definition SpecStateEnvExt (fs_state: spec_state_env_t) (Gamma: list (string * val)) (PGok: Gamma_ok_state Gamma) : spec_state_env_t :=
+    Definition SpecStateEnvExt (fs_state: spec_state_env_t) (Gamma: list (string * val)) (PGokS: Gamma_ok_state Gamma) : spec_state_env_t :=
       ContextEnv (FT:=spec_states_fin).(create) (fun s => 
         match BitsToLists.list_assoc (V:=val) Gamma (_reg_name tf_ctx s) return spec_states_t s with
-        | Some v => val_to_bits (spec_states_size s) (lookup_s Gamma s) (PGok s)
+        | Some v => val_to_bits (spec_states_size s) (lookup_s Gamma s) (PGokS s)
         | None => fs_state.[s]
         end).
 
-    Definition SpecOutputEnvExt (fs_output: spec_output_env_t) (Gamma: list (string * val)) (PGok: Gamma_ok_output Gamma) : spec_output_env_t :=
+    Definition SpecOutputEnvExt (fs_output: spec_output_env_t) (Gamma: list (string * val)) (PGokS: Gamma_ok_output Gamma) : spec_output_env_t :=
       ContextEnv (FT:=spec_outputs_fin).(create) (fun o => 
         match BitsToLists.list_assoc (V:=val) Gamma (_out_name tf_ctx o) return spec_outputs_t o with
-        | Some v => val_to_bits (spec_outputs_size o) (lookup_o Gamma o) (PGok o)
+        | Some v => val_to_bits (spec_outputs_size o) (lookup_o Gamma o) (PGokS o)
         | None => fs_output.[o]
         end).
 
@@ -692,115 +704,6 @@ Section CompositionalCorrectness.
       }
     Qed.
 
-  (* Lemma log_after_act_read_state_vars_no_state_read_writes:
-      forall hw_reg_state l act,
-      UntypedLogs.log_existsb (log_after_act_read_state_vars hw_reg_state UntypedLogs.log_empty UntypedLogs.log_empty l) (tf_reg tf_ctx act) UntypedLogs.is_read0 = false
-      /\
-      UntypedLogs.log_existsb (log_after_act_read_state_vars hw_reg_state UntypedLogs.log_empty UntypedLogs.log_empty l) (tf_reg tf_ctx act) UntypedLogs.is_write0 = false
-      /\
-      UntypedLogs.log_existsb (log_after_act_read_state_vars hw_reg_state UntypedLogs.log_empty UntypedLogs.log_empty l) (tf_reg tf_ctx act) UntypedLogs.is_write1 = false.
-    Proof.
-      intros.
-      unfold log_after_act_read_state_vars.
-      unfold UntypedLogs.log_existsb  in *.
-      set (c_nil := UntypedLogs.log_empty). 
-      assert (
-        existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_read0 kind prt) (getenv RegCEnv c_nil (tf_reg tf_ctx act)) = false
-        /\
-        existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_write0 kind prt) (getenv RegCEnv c_nil (tf_reg tf_ctx act)) = false
-        /\
-        existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_write1 kind prt) (getenv RegCEnv c_nil (tf_reg tf_ctx act)) = false
-      ).
-      {
-        subst c_nil. unfold UntypedLogs.log_empty. rewrite getenv_create. cbn [existsb]. repeat split.
-      }
-
-      generalize dependent c_nil.
-      induction l; intros. exact H.
-      unfold UntypedLogs.log_existsb in *. cbn in *.
-      set (cons1 := UntypedLogs.log_cons _ _ _).
-      specialize (IHl cons1).
-      assert (
-        existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_read0 kind prt) (cassoc (finite_member (tf_reg tf_ctx act)) cons1) = false
-        /\
-        existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_write0 kind prt) (cassoc (finite_member (tf_reg tf_ctx act)) cons1) = false
-        /\
-        existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_write1 kind prt) (cassoc (finite_member (tf_reg tf_ctx act)) cons1) = false
-      ).
-      { 
-        subst cons1. unfold UntypedLogs.log_cons. destruct (eq_dec (tf_reg tf_ctx act) (tf_reg tf_ctx a)).
-        { rewrite e in *. rewrite Common.cassoc_put_eq. cbn [existsb UntypedLogs.is_read0 UntypedLogs.is_write0 UntypedLogs.is_write1]. cbn. exact H. }
-        { rewrite Common.cassoc_put_neq. 2: { (* hammer. *) timeout 10 hauto lq: on. } exact H. }
-      }
-      specialize (IHl H0). exact IHl.
-    Qed.
-
-    Lemma log_after_act_read_state_vars_no_output_read_writes:
-      forall hw_reg_state l out,
-      UntypedLogs.log_existsb (log_after_act_read_state_vars hw_reg_state UntypedLogs.log_empty UntypedLogs.log_empty l) (tf_out tf_ctx out) UntypedLogs.is_read0 = false
-      /\
-      UntypedLogs.log_existsb (log_after_act_read_state_vars hw_reg_state UntypedLogs.log_empty UntypedLogs.log_empty l) (tf_out tf_ctx out) UntypedLogs.is_read1 = false
-      /\
-      UntypedLogs.log_existsb (log_after_act_read_state_vars hw_reg_state UntypedLogs.log_empty UntypedLogs.log_empty l) (tf_out tf_ctx out) UntypedLogs.is_write0 = false
-      /\
-      UntypedLogs.log_existsb (log_after_act_read_state_vars hw_reg_state UntypedLogs.log_empty UntypedLogs.log_empty l) (tf_out tf_ctx out) UntypedLogs.is_write1 = false.
-    Proof.
-      intros.
-      unfold log_after_act_read_state_vars.
-      unfold UntypedLogs.log_existsb in *. cbn in *.
-      set (c_nil := ccreate _ _).
-      assert (
-        existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_read0 kind prt) (getenv RegCEnv c_nil (tf_out tf_ctx out)) = false
-        /\
-        existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_read1 kind prt) (getenv RegCEnv c_nil (tf_out tf_ctx out)) = false
-        /\
-        existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_write0 kind prt) (getenv RegCEnv c_nil (tf_out tf_ctx out)) = false
-        /\
-        existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_write1 kind prt) (getenv RegCEnv c_nil (tf_out tf_ctx out)) = false
-      ).
-      {
-        subst c_nil. unfold getenv. cbn. rewrite cassoc_ccreate. cbn. (* hammer *) timeout 10 sfirstorder.
-      }
-
-      generalize dependent c_nil.
-      induction l; intros. exact H.
-      unfold UntypedLogs.log_existsb in *. cbn in *. unfold getenv in *. cbn in *.
-      set (cons1 := UntypedLogs.log_cons _ _ _).
-      specialize (IHl cons1).
-      assert (
-        existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_read0 kind prt) (cassoc (finite_member (tf_out tf_ctx out)) cons1) = false
-        /\
-        existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_read1 kind prt) (cassoc (finite_member (tf_out tf_ctx out)) cons1) = false
-        /\
-        existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_write0 kind prt) (cassoc (finite_member (tf_out tf_ctx out)) cons1) = false
-        /\
-        existsb (fun '{| UntypedLogs.kind := kind; UntypedLogs.port := prt |} => UntypedLogs.is_write1 kind prt) (cassoc (finite_member (tf_out tf_ctx out)) cons1) = false
-      ).
-      { 
-        subst cons1. unfold UntypedLogs.log_cons. cbn.  rewrite Common.cassoc_put_neq. 2: { (* hammer. *) timeout 10 hauto lq: on. } exact H.
-      }
-      specialize (IHl H0). exact IHl.
-    Qed.
-
-    Lemma log_after_act_read_state_vars_no_find_last_write:
-      forall hw_reg_state l act,
-        list_find_opt UntypedLogs.log_latest_write_fn
-          (cassoc (finite_member act)
-            (log_after_act_read_state_vars hw_reg_state UntypedLogs.log_empty UntypedLogs.log_empty l)) = None.
-    Proof.
-      intros. unfold log_after_act_read_state_vars.
-      rewrite <- fold_left_rev_right.
-      induction (rev l); intros.
-      { cbn. rewrite cassoc_ccreate. cbn. reflexivity. }
-      {
-        cbn. unfold UntypedLogs.log_cons. 
-        destruct (eq_dec act (tf_reg tf_ctx a)).
-        { rewrite e in *. rewrite Common.cassoc_put_eq. cbn. apply IHl0. }
-        { rewrite Common.cassoc_put_neq. 2: { timeout 10 hauto. } apply IHl0. }
-      }
-    Qed. 
-  *)
-
     Definition ActionLog_after_write_vars0 Gamma action_log regs var_map :=
       fold_right (fun reg (acc_log: _ULog) =>
         log_cons (REnv:=RegCEnv) (reg) (LE Logs.LogWrite P0 (lookup Gamma (var_map reg))) acc_log
@@ -897,409 +800,6 @@ Section CompositionalCorrectness.
         }
       }
     Qed.
-
-  (* Definition log_after_act_write_output_vars (hw_reg_state: hw_env_t) (sched_log: RegCEnvLog) action_log output_list Gamma :=
-      let val_for_output := fun o => match BitsToLists.list_assoc Gamma (_out_name tf_ctx o) with
-        | Some v => v
-        | None => Bits []  (* Default value if not found, should not happen due to precondition *)
-        end
-      in
-        List.fold_left (fun (acc_log: UntypedLogs._ULog) o =>
-          UntypedLogs.log_cons (REnv:=RegCEnv) (tf_out tf_ctx o) (UntypedLogs.LE Logs.LogWrite P0 (val_for_output o)) acc_log
-        ) output_list action_log.
-
-    Lemma interp_act_write_output_vars {REnv : Env impl_reg} : 
-      forall (hw_reg_state: hw_env_t) (Gamma: list (string * val)) sched_log action_log state_op,
-
-        (* Precondition: Ensure all writes performed by the wrapper will succeed. *)
-        (forall o, 
-            let reg := tf_out tf_ctx o in 
-            let combined_log := 
-                (@ccreate impl_reg (fun _ : impl_reg => list (UntypedLogs.LogEntry val)) (@finite_elements impl_reg impl_regs_finite) 
-                  (fun (k : impl_reg) (_ : @member impl_reg k (@finite_elements impl_reg impl_regs_finite)) =>
-                    @app (UntypedLogs.LogEntry val) (@getenv impl_reg (@ContextEnv impl_reg impl_regs_finite) (fun _ : impl_reg => list (UntypedLogs.LogEntry val)) action_log k)
-                    (@getenv impl_reg (@ContextEnv impl_reg impl_regs_finite) (fun _ : impl_reg => list (UntypedLogs.LogEntry val)) sched_log k))) in
-            In o (written_outputs state_op) -> 
-              (
-                @UntypedLogs.log_existsb val impl_reg (@ContextEnv impl_reg impl_regs_finite) combined_log reg UntypedLogs.is_read1 = false
-                /\
-                @UntypedLogs.log_existsb val impl_reg (@ContextEnv impl_reg impl_regs_finite) combined_log reg UntypedLogs.is_write0 = false
-                /\
-                @UntypedLogs.log_existsb val impl_reg (@ContextEnv impl_reg impl_regs_finite) combined_log reg UntypedLogs.is_write1 = false
-              )
-            ) ->
-
-        (* Precondition: Ensure all written outputs have values in Gamma *)
-        (forall o, In o (written_outputs state_op) -> exists v, BitsToLists.list_assoc Gamma (_out_name tf_ctx o) = Some v) ->
-
-        (* ---------------- *)
-        let write_logs := log_after_act_write_output_vars hw_reg_state sched_log action_log (written_outputs state_op) Gamma in
-
-        UntypedSemantics.interp_action hw_reg_state sigma Gamma sched_log action_log (_rule_write_output_vars tf_ctx state_op {{ pass }}) = 
-        Some (write_logs, Bits [], Gamma).
-    Proof.
-      intros. unfold write_logs, log_after_act_write_output_vars, written_outputs in *.
-
-      generalize dependent H. generalize dependent H0.
-      
-      unfold _rule_write_output_vars. timeout 10 simpl in *.
-
-      set (OutputList := finite_elements). 
-      set (RegList := finite_elements).
-
-      assert (H_nodup: NoDup OutputList) by (exact finite_nodup).
-
-      generalize dependent action_log.
-      induction OutputList; intros.
-      {
-        timeout 10 simpl. 
-        assert ((vect_to_list Ob) = []). { (* hammer. *) timeout 10 hauto lq: on. } rewrite H1.
-        (* hammer. *) timeout 10 hauto lq: on.
-      }
-      {
-        timeout 10 simpl.
-        destruct (spec_out_written_dec a state_op) eqn:Heq.
-        {
-          timeout 10 simpl.
-
-          assert (exists v, BitsToLists.list_assoc Gamma (_out_name tf_ctx a) = Some v) as [v H1].
-          { apply H0. (* hammer. *) timeout 10 sauto. } rewrite H1 in *. clear H1. timeout 10 simpl.
-          set (any_read1s := UntypedLogs.log_existsb _ _ _).
-          assert (any_read1s = false). { 
-            apply (H a). rewrite filter_In. split.
-            - apply in_eq. 
-            - (* hammer. *) timeout 10 sauto.
-          } rewrite H1. clear H1 any_read1s.
-          set (any_write0s := UntypedLogs.log_existsb _ _ _).
-          assert (any_write0s = false). { 
-            apply (H a). rewrite filter_In. split.
-            - apply in_eq. 
-            - (* hammer. *) timeout 10 sauto.
-          } rewrite H1. clear H1 any_write0s.
-          set (any_write1s := UntypedLogs.log_existsb _ _ _).
-          assert (any_write1s = false). { 
-            apply (H a). rewrite filter_In. split.
-            - apply in_eq. 
-            - (* hammer. *) timeout 10 sauto.
-          } rewrite H1. clear H1 any_write1s.
-          timeout 10 simpl.
-
-          rewrite IHOutputList. reflexivity.
-          {
-            inversion H_nodup. exact H4.
-          } {
-            intros. apply H0. (* hammer. *) timeout 10 hauto.
-          } {
-            clear IHOutputList.
-            intros.
-            assert (~ In a OutputList) as H_not_in.
-            { inversion H_nodup. (* hammer. *) timeout 10 hauto lq: on. }
-
-            destruct (eq_dec o a).
-            { subst o. unfold not in H_not_in. apply filter_In in H1. (* hammer. *) timeout 10 hauto lq: on. }
-            {
-              assert (In o (filter (fun o : spec_outputs => if spec_out_written_dec o state_op then true else false) (a :: OutputList))).
-              {
-                apply Common.in_filter_means_in_filter_cons. exact H1.
-              }
-              specialize (H o H2).
-              unfold UntypedLogs.log_existsb in *. unfold getenv in *. cbn -[_out_name] in *. rewrite !cassoc_ccreate in *.
-              rewrite !cassoc_creplace_neq_k. all: (* hammer. *) timeout 10 hauto lq: on.
-            }
-          }
-        }
-        {
-          apply IHOutputList. inversion H_nodup. exact H4.
-          intros. apply H0. (* hammer. *) timeout 10 sauto. 
-          intros. apply H. (* hammer. *) timeout 10 sauto.
-        }
-      }
-    Qed.
-
-    Lemma log_after_act_write_output_vars_no_find_last_write_state:
-      forall hw_reg_state act l Gamma other,
-        list_find_opt UntypedLogs.log_latest_write_fn
-          (cassoc (finite_member (tf_reg tf_ctx act))
-            (log_after_act_write_output_vars hw_reg_state UntypedLogs.log_empty other l Gamma)) 
-        =
-        list_find_opt UntypedLogs.log_latest_write_fn
-          (cassoc (finite_member (tf_reg tf_ctx act)) other).
-    Proof.
-      intros. unfold log_after_act_write_output_vars.
-      rewrite <- fold_left_rev_right.
-      induction (rev l); intros.
-      { cbn. reflexivity. }
-      {
-        cbn -[_out_name _reg_name]. unfold UntypedLogs.log_cons. 
-        rewrite Common.cassoc_put_neq. 2: { timeout 10 hauto. } apply IHl0.
-      }
-    Qed.
-
-    Lemma log_after_act_write_output_vars_no_find_last_write_out:
-      forall hw_reg_state act l Gamma other,
-        ~ In act l -> 
-        list_find_opt UntypedLogs.log_latest_write_fn
-          (cassoc (finite_member (tf_out tf_ctx act))
-            (log_after_act_write_output_vars hw_reg_state UntypedLogs.log_empty other l Gamma)) 
-        =
-        list_find_opt UntypedLogs.log_latest_write_fn
-          (cassoc (finite_member (tf_out tf_ctx act)) other).
-    Proof.
-      intros. unfold log_after_act_write_output_vars.
-      rewrite <- fold_left_rev_right.
-      assert (~ In act (rev l)). { unfold not in *. intros. apply H. apply in_rev. exact H0. }
-      generalize dependent H0. 
-      induction (rev l); intros.
-      { cbn. reflexivity. }
-      {
-        assert (~ In act l0). { unfold not in *. intros. apply H0. apply in_cons. exact H1. }
-        specialize (IHl0 H1).
-        cbn -[_out_name _reg_name]. unfold UntypedLogs.log_cons. 
-        rewrite Common.cassoc_put_neq. 2: { timeout 10 hauto. } apply IHl0.
-      }
-    Qed.
-
-    Lemma log_after_act_write_output_vars_find_last_write_out:
-      forall hw_reg_state act l Gamma other,
-        In act l -> 
-        list_find_opt UntypedLogs.log_latest_write_fn
-          (cassoc (finite_member (tf_out tf_ctx act))
-            (log_after_act_write_output_vars hw_reg_state UntypedLogs.log_empty other l Gamma)) 
-        =
-        Some match BitsToLists.list_assoc Gamma (_out_name tf_ctx act) with
-              | Some v => v
-              | None => Bits []
-              end.
-    Proof.
-      intros. unfold log_after_act_write_output_vars.
-      rewrite <- fold_left_rev_right.
-      assert (In act (rev l)). { intros. apply in_rev. rewrite rev_involutive. exact H. }
-      generalize dependent H0. 
-      induction (rev l); intros.
-      { inversion H0. }
-      {
-        destruct (eq_dec act a).
-        { 
-          subst a. cbn -[_out_name _reg_name]. cbn -[_out_name _reg_name]. unfold UntypedLogs.log_cons. 
-          rewrite Common.cassoc_put_eq. cbn -[_out_name _reg_name]. reflexivity. 
-        }
-        {
-          assert (In act l0). { (* hammer. *) timeout 10 fcrush. }
-          specialize (IHl0 H1). cbn -[_out_name _reg_name]. unfold UntypedLogs.log_cons. 
-          rewrite Common.cassoc_put_neq. 2: { timeout 10 hauto. } apply IHl0.
-        }
-      }
-    Qed.
-
-    Definition written_vars (state_op: tf_ops (spec_states) (spec_inputs) (spec_outputs)) := 
-        List.filter (fun s => if (spec_var_written_dec s state_op) then true else false) spec_all_states.
-
-    Definition log_after_act_write_state_vars (hw_reg_state: hw_env_t) (sched_log: RegCEnvLog) action_log state_list Gamma :=
-      let val_for_state := fun s => match BitsToLists.list_assoc Gamma (_reg_name tf_ctx s) with
-        | Some v => v
-        | None => hw_reg_state.[tf_reg tf_ctx s] (* Default value if not found, should not happen due to precondition *)
-        end
-      in
-        List.fold_left (fun (acc_log: UntypedLogs._ULog) s =>
-          UntypedLogs.log_cons (REnv:=RegCEnv) (tf_reg tf_ctx s) (UntypedLogs.LE Logs.LogWrite P1 (val_for_state s)) acc_log
-        ) state_list action_log.
-
-    Lemma interp_act_write_state_vars : 
-      forall (hw_reg_state: hw_env_t) (Gamma: list (string * val)) sched_log action_log state_op other,
-
-      (* Precondition: Ensure all writes performed by the wrapper will succeed. *)
-      (forall s, 
-          let reg := tf_reg tf_ctx s in 
-          let combined_log := 
-              (@ccreate impl_reg (fun _ : impl_reg => list (UntypedLogs.LogEntry val)) (@finite_elements impl_reg impl_regs_finite) 
-                (fun (k : impl_reg) (_ : @member impl_reg k (@finite_elements impl_reg impl_regs_finite)) =>
-                  @app (UntypedLogs.LogEntry val) (@getenv impl_reg (@ContextEnv impl_reg impl_regs_finite) (fun _ : impl_reg => list (UntypedLogs.LogEntry val)) action_log k)
-                  (@getenv impl_reg (@ContextEnv impl_reg impl_regs_finite) (fun _ : impl_reg => list (UntypedLogs.LogEntry val)) sched_log k))) in
-          In s (written_vars state_op) -> @UntypedLogs.log_existsb val impl_reg (@ContextEnv impl_reg impl_regs_finite) combined_log reg UntypedLogs.is_write1 = false) ->
-
-      (* Precondition: Ensure all written vars have values in Gamma *)
-      (forall s, In s (written_vars state_op) -> exists v, BitsToLists.list_assoc Gamma (_reg_name tf_ctx s) = Some v) ->
-
-      (* ---------------- *)
-      let write_logs := log_after_act_write_state_vars hw_reg_state sched_log action_log (written_vars state_op) Gamma in
-
-      UntypedSemantics.interp_action hw_reg_state sigma Gamma sched_log action_log (_rule_write_state_vars tf_ctx state_op other) =
-      UntypedSemantics.interp_action hw_reg_state sigma Gamma sched_log write_logs other.
-    Proof.
-      intros. unfold write_logs, log_after_act_write_state_vars, written_vars in *.
-      
-      generalize dependent H. generalize dependent H0.
-
-      unfold _rule_write_state_vars in *.
-      timeout 10 simpl in *. 
-
-      set (StateList := finite_elements). 
-      set (RegList := finite_elements).
-
-      assert (H_nodup: NoDup StateList) by (exact finite_nodup).
-
-      generalize dependent action_log.
-      induction StateList; intros. reflexivity.
-      {
-        timeout 10 simpl.
-        destruct (spec_var_written_dec a state_op).
-        {
-          timeout 10 simpl.
-
-          assert (exists v, BitsToLists.list_assoc Gamma (_reg_name tf_ctx a) = Some v) as [v H1].
-          { apply H0. timeout 10 sauto. } rewrite H1 in *. clear H1. timeout 10 simpl.
-          set (any_write1s := UntypedLogs.log_existsb _ _ _).
-          assert (any_write1s = false). { 
-            apply (H a). rewrite filter_In. split.
-            - apply in_eq. 
-            - timeout 10 sauto.
-          }
-          rewrite H1. clear H1 any_write1s.
-          timeout 10 simpl.
-
-          rewrite IHStateList. reflexivity.
-          {
-            inversion H_nodup. exact H4.
-          } {
-            intros. apply H0. timeout 10 sauto.
-          } {
-            clear IHStateList.
-            intros.
-            assert (~ In a StateList) as H_not_in.
-            { inversion H_nodup. timeout 10 sauto. }
-
-            destruct (eq_dec s a).
-            { subst s. unfold not in H_not_in. apply filter_In in H1. timeout 10 sauto. }
-            {
-              assert (~ tf_op_var_not_written spec_states spec_states_fin spec_inputs spec_outputs spec_states_size spec_inputs_size s state_op). {
-                contradict H1. rewrite filter_In. timeout 10 sauto.
-              }
-              assert (In s (filter (fun s : spec_states => if spec_var_not_written_dec s state_op then false else true) (a :: StateList))).
-              {
-                apply filter_In. split.
-                - apply filter_In in H1. destruct H1. timeout 10 sauto.
-                - timeout 10 sauto.
-              }
-              specialize (H s H3).
-              unfold UntypedLogs.log_existsb in *. unfold getenv in *. cbn -[_reg_name] in *. rewrite !cassoc_ccreate in *.
-              rewrite !cassoc_creplace_neq_k. all: timeout 10 sauto.
-            }
-          }
-        }
-        {
-          apply IHStateList. inversion H_nodup. exact H4.
-          intros. apply H0. timeout 10 sauto. intros. apply H. timeout 10 sauto.
-        }
-      }
-    Qed.
-
-    Lemma log_after_act_write_state_vars_no_find_last_write_out:
-      forall hw_reg_state act l Gamma other,
-        list_find_opt UntypedLogs.log_latest_write_fn
-          (cassoc (finite_member (tf_out tf_ctx act))
-            (log_after_act_write_state_vars hw_reg_state UntypedLogs.log_empty other l Gamma)) 
-        =
-        list_find_opt UntypedLogs.log_latest_write_fn
-          (cassoc (finite_member (tf_out tf_ctx act)) other).
-    Proof.
-      intros. unfold log_after_act_write_state_vars.
-      rewrite <- fold_left_rev_right.
-      induction (rev l); intros.
-      { cbn. reflexivity. }
-      {
-        cbn -[_out_name _reg_name]. unfold UntypedLogs.log_cons. 
-        rewrite Common.cassoc_put_neq. 2: { timeout 10 hauto. } apply IHl0.
-      }
-    Qed.
-
-    Lemma log_after_act_write_state_vars_no_find_last_write_state:
-      forall hw_reg_state act l Gamma other,
-        ~ In act l -> 
-        list_find_opt UntypedLogs.log_latest_write_fn
-          (cassoc (finite_member (tf_reg tf_ctx act))
-            (log_after_act_write_state_vars hw_reg_state UntypedLogs.log_empty other l Gamma)) 
-        =
-        list_find_opt UntypedLogs.log_latest_write_fn
-          (cassoc (finite_member (tf_reg tf_ctx act)) other).
-    Proof.
-      intros. unfold log_after_act_write_state_vars.
-      rewrite <- fold_left_rev_right.
-      assert (~ In act (rev l)). { unfold not in *. intros. apply H. apply in_rev. exact H0. }
-      generalize dependent H0. 
-      induction (rev l); intros.
-      { cbn. reflexivity. }
-      {
-        assert (~ In act l0). { unfold not in *. intros. apply H0. apply in_cons. exact H1. }
-        specialize (IHl0 H1).
-        cbn -[_out_name _reg_name]. unfold UntypedLogs.log_cons. 
-        rewrite Common.cassoc_put_neq. 2: { timeout 10 hauto. } apply IHl0.
-      }
-    Qed.
-
-    Lemma log_after_act_write_state_vars_find_last_write_state:
-      forall hw_reg_state act l Gamma other,
-        In act l -> 
-        list_find_opt UntypedLogs.log_latest_write_fn
-          (cassoc (finite_member (tf_reg tf_ctx act))
-            (log_after_act_write_state_vars hw_reg_state UntypedLogs.log_empty other l Gamma)) 
-        =
-        Some match BitsToLists.list_assoc Gamma (_reg_name tf_ctx act) with
-              | Some v => v
-              | None => hw_reg_state.[tf_reg tf_ctx act]
-              end.
-    Proof.
-      intros. unfold log_after_act_write_state_vars.
-      rewrite <- fold_left_rev_right.
-      assert (In act (rev l)). { intros. apply in_rev. rewrite rev_involutive. exact H. }
-      generalize dependent H0. 
-      induction (rev l); intros.
-      { inversion H0. }
-      {
-        destruct (eq_dec act a).
-        { 
-          subst a. cbn -[_out_name _reg_name]. cbn -[_out_name _reg_name]. unfold UntypedLogs.log_cons. 
-          rewrite Common.cassoc_put_eq. cbn -[_out_name _reg_name]. reflexivity. 
-        }
-        {
-          assert (In act l0). { (* hammer. *) timeout 10 fcrush. }
-          specialize (IHl0 H1). cbn -[_out_name _reg_name]. unfold UntypedLogs.log_cons. 
-          rewrite Common.cassoc_put_neq. 2: { timeout 10 hauto. } apply IHl0.
-        }
-      }
-    Qed. *)
-
-    (* Lemma all_vars_after_read_vars_correct:
-      forall hw_reg_state s,
-      (* TODO: currently all states are read, but in the future this only holds for the read states *)
-        BitsToLists.list_assoc
-            (Gamma_after_act_read_state_vars hw_reg_state [] UntypedLogs.log_empty UntypedLogs.log_empty (spec_all_states)) (_reg_name tf_ctx s) = Some hw_reg_state.[tf_reg tf_ctx s].
-    Proof.
-      intros. unfold Gamma_after_act_read_state_vars. rewrite List.app_nil_r.
-
-      set (spec_list := (rev _)).
-      assert (In s spec_list) as H_in_spec_list.
-      {
-        unfold spec_list. generalize (finite_surjective s (FiniteType:=spec_states_fin)).
-        intros H1. rewrite <- in_rev. apply nth_error_In with (finite_index s (FiniteType:=spec_states_fin)). exact H1.
-      }
-
-      generalize dependent H_in_spec_list.
-      induction spec_list; intros.
-      { (* hammer. *) timeout 10 sfirstorder. }
-      cbn -[_reg_name] in *.
-      destruct (string_rec _ _ _).
-      { apply reg_name_inj in e. subst a.
-        repeat (unfold getenv in * || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn in *.
-        repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn.
-         reflexivity.
-      }
-      {
-        apply reg_name_inj' in n.
-        destruct H_in_spec_list. congruence.
-        (* hammer *) hauto lq: on.
-      }
-    Qed. 
-  *)
 
     Lemma Gamma_after_intro_ok_state:
       forall hw_reg_state,
@@ -1409,7 +909,7 @@ Section CompositionalCorrectness.
           {
             rewrite <- in_rev in Hin. apply in_map_iff in Hin. destruct Hin as [s0 [Heq' Hin']]. congruence.
           }
-          all: contradict Heq; fcrush.
+          all: contradict Heq; timeout 10 fcrush.
         }
 
         apply Common.bits_to_list_assoc_app_not_in.
@@ -1419,7 +919,7 @@ Section CompositionalCorrectness.
             rewrite <- in_rev in Hin. apply in_map_iff in Hin. destruct Hin as [s0 [Heq' Hin']].
             assert (s0 = x) by congruence. subst s0. apply reg_name_inj in Heq. try congruence.
           }
-          all: contradict Heq; fcrush.
+          all: contradict Heq; timeout 10 fcrush.
         }
 
         cbn -[eq_dec]. destr.
@@ -1445,6 +945,42 @@ Section CompositionalCorrectness.
         2: { rewrite !map_app. rewrite app_nil_r in *. rewrite <- app_assoc. apply has_var_all_ignore_middle. exact IHl. }
         rewrite !map_app. rewrite app_nil_r in *. rewrite <- app_assoc. apply has_var_ignore_left. apply has_var_ignore_right. cbn.
         unfold has_var, lookup. cbn -[eq_dec _out_name]. destr. econstructor; reflexivity.
+      }
+    Qed.
+
+    Lemma Gamma_after_intro_is_hw_output:
+      forall hw_reg_state o,
+        BitsToLists.list_assoc
+          (Gamma_after_read_vars0 hw_reg_state (Gamma_after_read_vars0 hw_reg_state [] (map (tf_reg tf_ctx) spec_all_states) (_register_var_name tf_ctx))
+            (map (tf_out tf_ctx) spec_all_outputs) (_register_var_name tf_ctx)) 
+          (_out_name tf_ctx o) = Some( hw_reg_state.[(tf_out tf_ctx o)] ).
+    Proof.
+      intros. unfold Gamma_after_read_vars0, Gamma_ok_output.
+      apply Common.bits_to_list_assoc_app.
+
+      assert (NoDup spec_all_outputs) as H_nodup by (apply finite_nodup).
+      pose proof (spec_all_outputs_complete o) as H_in.
+      generalize dependent H_in.
+      generalize dependent H_nodup.
+      induction (spec_all_outputs); intros.
+      { inversion H_in. }
+      cbn [map rev]. rewrite map_app. cbn [map]. inv H_nodup; inv H_in.
+      {
+        apply Common.bits_to_list_assoc_app_not_in.
+        { rewrite map_map. cbn. rewrite in_map_iff. intro. destruct H as [x [Heq Hin]].
+          unfold _register_var_name in Heq. destruct x. 
+          { contradict Heq; timeout 10 fcrush. }
+          {
+            rewrite <- in_rev in Hin. apply in_map_iff in Hin. destruct Hin as [o0 [Heq' Hin']].
+            assert (o0 = x) by congruence. subst o0. apply out_name_inj in Heq. try congruence.
+          }
+          { contradict Heq; timeout 10 fcrush. }
+        }
+
+        cbn -[eq_dec]. destr.
+      }
+      {
+        apply Common.bits_to_list_assoc_app. exact (IHl H2 H).
       }
     Qed.
 
@@ -1503,7 +1039,7 @@ Section CompositionalCorrectness.
       
       cbn in *. destruct (eq_dec a a0).
       { subst a0. destruct Hn. left. reflexivity. }
-      { rewrite (may_write_log_cons_neq _ _ _ _ _ _ _ _ n). apply IHl0. fcrush. }
+      { rewrite (may_write_log_cons_neq _ _ _ _ _ _ _ _ n). apply IHl0. timeout 10 fcrush. }
     
     Qed.
 
@@ -1531,45 +1067,6 @@ Section CompositionalCorrectness.
         else
           Bits (firstn (out_var_size) (bits_of_value_lossy x)).
 
-  (* Lemma val_convert_same:
-      forall s x, val_convert s s x = x.
-    Proof.
-      intros.
-      unfold val_convert.
-      destruct (Nat.eq_dec s s).
-      - reflexivity.
-      - exfalso. apply n. reflexivity.
-    Qed.
-
-    Lemma val_convert_more:
-      forall s1 s2 x, 
-        s1 > s2 ->
-        val_convert s1 s2 x = Bits (bits_of_value_lossy x ++ repeat false (s1 - s2)).
-    Proof.
-      intros.
-      unfold val_convert.
-      destruct (Nat.eq_dec s1 s2).
-      - lia.
-      - destruct (Nat.leb s2 s1) eqn:Hleb.
-        + reflexivity.
-        + (* hammer. *) timeout 10 hauto b: on.
-    Qed.
-
-    Lemma val_convert_less:
-      forall s1 s2 x, 
-        s1 < s2 ->
-        val_convert s1 s2 x = Bits (firstn (s1) (bits_of_value_lossy x)).
-    Proof.
-      intros.
-      unfold val_convert.
-      destruct (Nat.eq_dec s1 s2).
-      - lia.
-      - destruct (Nat.leb s2 s1) eqn:Hleb.
-        + (* hammer. *) timeout 10 hauto b: on.
-        + reflexivity.
-    Qed. 
-  *)
-
     Lemma val_convert_sz_correct:
       forall val1 sz1 sz2,
         has_sized_bits val1 sz1 ->
@@ -1589,27 +1086,6 @@ Section CompositionalCorrectness.
         rewrite firstn_length. lia.
       }
     Qed.
-
-  (* Lemma val_convert_of_bits_is_bits:
-      forall s1 s2 bl1,
-        ((Datatypes.length bl1) = s2) ->
-        has_sized_bits (val_convert s1 s2 (Bits bl1)) s1.
-    Proof.
-      intros. subst. unfold val_convert. destruct (Nat.eq_dec _ _). 
-      econstructor; split; try auto. unfold bits_of_value_lossy.
-      destruct (Nat.leb _ _ ) eqn:Hleb.
-      {
-        rewrite Nat.leb_le in Hleb.
-        econstructor; split; try reflexivity. 
-        rewrite List.app_length, repeat_length. lia.
-      }
-      {
-        rewrite Nat.leb_gt in Hleb.
-        econstructor; split; try reflexivity. 
-        rewrite firstn_length. lia.
-      }
-    Qed. 
-  *)
 
     Lemma synth_convert_is_val_convert:
       forall (hw_reg_state: hw_env_t) (Gamma: list (string * val)) sched_log action_log action_log' code f_dst f_src ret_val, 
@@ -1844,12 +1320,12 @@ Section CompositionalCorrectness.
     Qed.
 
     Lemma value_of_expr_correct:
-      forall expr hw_reg_state Gamma fs_state n input PGok,
+      forall expr hw_reg_state Gamma fs_state n input PGokS,
         StateR hw_reg_state fs_state ->
         InputR input ->  
         (forall s, has_var Gamma (_reg_name tf_ctx s)) ->
         value_of_expr expr Gamma n
-        = Bits (vect_to_list (n:=n) (spec_eval_expr expr (SpecStateEnvExt fs_state Gamma PGok) input)).
+        = Bits (vect_to_list (n:=n) (spec_eval_expr expr (SpecStateEnvExt fs_state Gamma PGokS) input)).
     Proof.
       intros.
 
@@ -2107,88 +1583,6 @@ Section CompositionalCorrectness.
       destruct H; unfold isStateReg, isOutputReg in H; destruct H; congruence.
     Qed.   
 
-    (* Lemma interp_scheduler_out_no_writes:
-      forall (hw_reg_state: hw_env_t) reg log,
-        isStateReg reg \/ isOutputReg reg ->
-        may_read_all log P1 (map (tf_out tf_ctx) spec_all_outputs) = true ->
-        may_write_all log log_empty P1 (map (tf_out_ack tf_ctx) spec_all_outputs) = true ->
-        latest_write (interp_scheduler' impl_rules hw_reg_state sigma log (system_schedule_outputs tf_ctx)) reg = latest_write log reg.
-    Proof.
-      intros. unfold system_schedule_outputs.
-
-      assert (NoDup (spec_all_outputs)).
-      { apply NoDup_map_inv with (f:=(finite_index (FiniteType:=spec_outputs_fin))). apply finite_injective. }
-
-      generalize dependent H0. generalize dependent H1. generalize dependent H2. generalize dependent log.
-      induction (spec_all_outputs); intros. reflexivity.
-      cbn -[may_read log_empty] in H0. apply andb_true_iff in H0. destruct H0 as [H_read H_read_rest].
-      cbn -[may_write log_empty] in H1. apply andb_true_iff in H1. destruct H1 as [H_write H_write_rest].
-      cbn [interp_scheduler' fold_right]. rewrite interp_rule_out.
-      2: exact H_read. 2: exact H_write. set (new_log := (log_app _ log)).
-
-      assert (may_write_all new_log log_empty P1 (map (tf_out_ack tf_ctx) l) = true) as H_write_new.
-      {
-        clear IHl. clear H_read_rest. clear H_read. 
-        induction l; intros. reflexivity. inversion H2; subst. 
-        assert (NoDup (a :: l)) as H_nodup.
-        { constructor.
-          - intros H_in. apply H3. (* hammer. *) timeout 10 hauto lq: on.
-          - inversion H4; subst. exact H6.
-        } specialize (IHl H_nodup); clear H_nodup.
-        
-        unfold may_write_all in *. cbn -[may_write log_empty] in H_write_rest. apply andb_true_iff in H_write_rest. destruct H_write_rest as [H_write_curr H_write_rest].
-        specialize (IHl H_write_rest).
-
-        assert (a <> a0) as Hneq. { intros H_eq. subst. apply H3. (* hammer. *) timeout 10 hauto lq: on. }
-
-        cbn -[may_write log_empty new_log]; rewrite andb_true_iff; split.
-        2: exact IHl.
-        {
-          clear IHl. clear H_write_rest. clear H_write. unfold may_write, log_existsb in *.
-          subst new_log. cbn. unfold_getenv_all. rewrite !cassoc_ccreate. rewrite app_nil_l. 
-          rewrite !Common.cassoc_put_neq; try congruence. rewrite !cassoc_ccreate. rewrite app_nil_l.
-          rewrite Common.log_app_empty_l in H_write_curr. exact H_write_curr. 
-        }
-      }
-
-      assert (may_read_all new_log P1 (map (tf_out tf_ctx) l) = true) as H_read_new.
-      {
-        clear IHl. clear H_write_rest. clear H_write. clear H_write_new. 
-        induction l; intros. reflexivity. inversion H2; subst. 
-        assert (NoDup (a :: l)) as H_nodup.
-        { constructor.
-          - intros H_in. apply H3. (* hammer. *) timeout 10 hauto lq: on.
-          - inversion H4; subst. exact H6.
-        } specialize (IHl H_nodup); clear H_nodup.
-        
-        unfold may_read_all in *. cbn -[may_read log_empty] in H_read_rest. apply andb_true_iff in H_read_rest. destruct H_read_rest as [H_read_curr H_read_rest].
-        specialize (IHl H_read_rest).
-
-        assert (a <> a0) as Hneq. { intros H_eq. subst. apply H3. (* hammer. *) timeout 10 hauto lq: on. }
-
-        cbn -[may_read log_empty new_log]; rewrite andb_true_iff; split.
-        2: exact IHl.
-        {
-          clear IHl. clear H_read_rest. clear H_read. unfold may_read, log_existsb in *.
-          subst new_log. cbn. unfold_getenv_all. rewrite !cassoc_ccreate. rewrite app_nil_l. 
-          rewrite !Common.cassoc_put_neq; try congruence. rewrite !cassoc_ccreate. rewrite app_nil_l. exact H_read_curr.
-        }
-      }
-
-      inversion H2; subst.
-      specialize (IHl new_log H4 H_write_new H_read_new). clear H4 H_write_new H_read_new.
-      rewrite IHl. clear IHl.
-
-      subst new_log. cbn. unfold_getenv_all. rewrite !cassoc_ccreate.
-      rewrite Common.cassoc_put_neq.
-      {
-        destruct (eq_dec (tf_out tf_ctx a) reg).
-        - rewrite e. rewrite Common.cassoc_put_eq. reflexivity.
-        - rewrite !Common.cassoc_put_neq; try congruence. rewrite !cassoc_ccreate. rewrite app_nil_l. reflexivity.
-      }
-      destruct H; unfold isStateReg, isOutputReg in H; destruct H; congruence.
-    Qed.       *)
-
     Lemma writes_of_interp_scheduler_wrong_cmds_only:
       forall (hw_reg_state: hw_env_t) cmd reg log l,
         isStateReg reg \/ isOutputReg reg ->
@@ -2250,540 +1644,10 @@ Section CompositionalCorrectness.
         }
       }
     Qed.
-
-    (* 
-        TODO: 
-        1. prove the out_rules are irrelevant when looking at the writes
-        2. show that it suffices to look at the writes of the command rule only
-
-        3. induction proof over the rule_aux:
-           running rule_aux:
-           - leaves the log unchanged
-           - returns Bits [], since it sucessfully evaluates
-           - extends Gamma in a way that can be derived from looking at tf_op_step_updates
-
-           at the end rule_aux will produce a log that can be used to get the fs_state by extending it.
-           => can we show that proving this equivalence proofs the rest: i.e. if we can show that the hw_state+Gamma after by rule_aux is 
-              equivalent to the fs_state after executing the command, then we are done?
-    *)
-
-  (* Definition assignments_added (hw_reg_state: hw_env_t) cmd :=
-      match spec_action_ops cmd with
-        | tf_nop _ _ _ => [ ]
-        | tf_assign _ _ _ x expr => [ ( _reg_name tf_ctx x, value_of_expr expr hw_reg_state (spec_states_size x) ) ]
-        | tf_input _ _ _ x y => [ (_reg_name tf_ctx x, val_convert (spec_states_size x) (spec_inputs_size y) (sigma (ext_input tf_ctx y) (Bits [true])) )]
-        | tf_output _ _ _ x y => [ (_out_name tf_ctx x, val_convert (spec_outputs_size x) (spec_states_size y) hw_reg_state.[tf_reg tf_ctx y]) ]
-      end.
-
-    Definition log_after_rule_right_cmd (hw_reg_state: hw_env_t) cmd :=
-      let Gamma' := assignments_added hw_reg_state cmd
-                      ++ Gamma_after_act_read_state_vars hw_reg_state [] UntypedLogs.log_empty UntypedLogs.log_empty spec_all_states
-      in
-      Some
-        (log_after_act_write_output_vars hw_reg_state UntypedLogs.log_empty
-          (log_after_act_write_state_vars hw_reg_state UntypedLogs.log_empty
-            (log_after_act_read_state_vars hw_reg_state UntypedLogs.log_empty UntypedLogs.log_empty spec_all_states) 
-            (written_vars (spec_action_ops cmd))
-            Gamma') 
-          (written_outputs (spec_action_ops cmd))
-          Gamma'
-        ).
-
-    Local Ltac tac_interp_rule_right_cmd_vars1 hw_reg_state reg combined_log s := 
-          intros; subst reg; subst combined_log; unfold UntypedLogs.log_existsb in *;
-          repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn;
-          repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn;
-
-          generalize (log_after_act_read_state_vars_no_state_read_writes hw_reg_state spec_all_states s); intros;
-          unfold UntypedLogs.log_existsb, getenv in *; cbn; (* hammer. *) timeout 10 hauto lq: on.
-
-    Local Ltac tac_interp_rule_right_cmd_vars2 hw_reg_state s := 
-          intros; generalize (all_vars_after_read_vars_correct hw_reg_state s); intros Hvars_correct;
-          cbn2; try (destruct (string_rec _ _ _ _); (* hammer. *) timeout 10 sauto);
-          cbn2; rewrite Hvars_correct; (* hammer *) timeout 10 hauto lq: on.  
-
-    Local Ltac tac_interp_rule_right_cmd_out1 := 
-          intros o reg combined_log Hwritten; unfold written_outputs in Hwritten; cbn in Hwritten;
-          apply filter_In in Hwritten; (* hammer. *) timeout 10 hauto lq: on.
-    
-    Local Ltac tac_interp_rule_right_cmd_out2 :=
-          intros o Hwritten; unfold written_outputs in Hwritten; cbn in Hwritten;
-          apply filter_In in Hwritten; (* hammer. *) timeout 10 hauto lq: on.
-        
-    Local Ltac tac_interp_rule_right_cmd_out3 hw_reg_state :=
-          intros o reg combined_log Hwritten; subst reg; subst combined_log;
-          unfold UntypedLogs.log_existsb in *;
-          repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn -[_reg_name _out_name] in *;
-          repeat (unfold getenv || rewrite !cassoc_ccreate || rewrite app_nil_l || rewrite app_nil_r); cbn -[_reg_name _out_name] in *;
-
-          unfold log_after_act_write_state_vars in *;
-          set (Hwritten_s := written_vars _);
-          assert (H2: Hwritten_s = []) by (
-            unfold Hwritten_s, written_vars; cbn;
-            induction spec_all_states as [| s l IHl]; try reflexivity; cbn; exact IHl
-          ); rewrite H2; clear H2;
-
-          cbn -[_reg_name _out_name] in *;
-
-          generalize (log_after_act_read_state_vars_no_output_read_writes hw_reg_state spec_all_states o); intros;
-          unfold UntypedLogs.log_existsb, getenv in *; cbn in *; (* hammer; *) timeout 10 hauto lq: on.
-
-    Local Ltac tac_interp_rule_right_cmd_out4 y :=
-          intros o Hwritten;
-            
-          assert (y = o) by (
-            unfold written_outputs in Hwritten; cbn -[spec_no_output_dec] in Hwritten; apply filter_written_outputs in Hwritten;
-            unfold not in Hwritten; unfold tf_op_no_output in Hwritten; cbn in Hwritten;
-            unfold when_outputs_match in Hwritten; destruct (eq_dec y o) as [e | n]; try (rewrite e; reflexivity);
-            exfalso; apply Hwritten; intros; reflexivity
-          ); subst y;
-          
-          cbn -[_reg_name _out_name] in *; destruct string_rec as [e | n]; try apply out_name_inj' in n; (* hammer. *) timeout 10 hauto lq: on. 
-
-    Lemma interp_rule_right_cmd:
-      forall (hw_reg_state: hw_env_t) cmd,
-      sigma (ext_in_cmd tf_ctx) val_true = encoded_cmd cmd ->
-      (forall s, exists bl, hw_reg_state.[tf_reg tf_ctx s] = Bits bl /\ Datatypes.length bl = spec_states_size s) ->
-      UntypedSemantics.interp_rule hw_reg_state sigma UntypedLogs.log_empty (rules tf_ctx (rule_cmd tf_ctx cmd)) = 
-        log_after_rule_right_cmd hw_reg_state cmd.
-    Proof.
-      intros.
-      unfold log_after_rule_right_cmd, assignments_added, bits_of_value_lossy, val_convert.
-      rewrite interp_rule_right_cmd' with (1:=H). unfold _rule_cmd.
-      unfold UntypedSemantics.interp_rule. 
-      rewrite interp_act_read_state_vars. 2: { intros. apply Common.log_existsb_empty. }
-      cbn2. unfold _rule_aux, op_to_uaction. 
-
-      destruct (spec_action_ops cmd).
-      { (* NOP *)
-        rewrite interp_act_write_state_vars.
-        2: tac_interp_rule_right_cmd_vars1 hw_reg_state reg combined_log s.
-        2: tac_interp_rule_right_cmd_vars2 hw_reg_state s.
-
-        rewrite (interp_act_write_output_vars (REnv:=RegCEnv)). reflexivity.
-        tac_interp_rule_right_cmd_out1.
-        tac_interp_rule_right_cmd_out2.
-      }
-      { (* ASSIGN *)
-        generalize (interp_act_expr_to_uaction expr (spec_states_size dst) hw_reg_state H0); intros Hinterp_expr.
-        cbn2. 
-
-        rewrite Hinterp_expr; clear Hinterp_expr; cbn2.
-        
-        rewrite interp_act_write_state_vars.
-        2: tac_interp_rule_right_cmd_vars1 hw_reg_state reg combined_log s.
-        2: tac_interp_rule_right_cmd_vars2 hw_reg_state s. 
-
-        rewrite (interp_act_write_output_vars (REnv:=RegCEnv)). reflexivity.
-        tac_interp_rule_right_cmd_out1.
-        tac_interp_rule_right_cmd_out2.
-      }
-      { (* INPUT *)
-        unfold synth_convert.
-        cbn -[_reg_name _out_name Nat.ltb] in *. 
-        destruct (Nat.eq_dec (spec_states_size dst) (spec_inputs_size src)).
-        { (* Sizes match *)
-          cbn -[_reg_name _out_name] in *.
-          rewrite interp_act_write_state_vars.
-          2: tac_interp_rule_right_cmd_vars1 hw_reg_state reg combined_log s.
-          2: tac_interp_rule_right_cmd_vars2 hw_reg_state s.
-
-          rewrite (interp_act_write_output_vars (REnv:=RegCEnv)). reflexivity.
-          tac_interp_rule_right_cmd_out1.
-          tac_interp_rule_right_cmd_out2.
-        } { (* Size Conversion *)
-          destruct (Nat.leb (spec_inputs_size src) (spec_states_size dst)) eqn:Hle.
-          { (* Input smaller than state, zero-extend *)
-            cbn -[_reg_name _out_name] in *.
-            specialize (sigma_valid (ext_input tf_ctx src) (Bits [true])) as Hvalid. destruct Hvalid as [input Hinput].
-            rewrite Hinput in *. cbn -[_reg_name _out_name] in *.
-            rewrite interp_act_write_state_vars.
-            2: tac_interp_rule_right_cmd_vars1 hw_reg_state reg combined_log s.
-            2: tac_interp_rule_right_cmd_vars2 hw_reg_state s.
-
-            rewrite (interp_act_write_output_vars (REnv:=RegCEnv)). cbn -[_reg_name _out_name] in *.
-            rewrite vect_to_list_length. reflexivity.
-            tac_interp_rule_right_cmd_out1.
-            tac_interp_rule_right_cmd_out2.
-          } { (* Input larger than state, truncate *)
-            cbn -[_reg_name _out_name Nat.ltb] in *.
-            specialize (sigma_valid (ext_input tf_ctx src) (Bits [true])) as Hvalid. destruct Hvalid as [input Hinput].
-            rewrite Hinput in *. cbn -[_reg_name _out_name Nat.ltb] in *.
-            rewrite interp_act_write_state_vars.
-            2: tac_interp_rule_right_cmd_vars1 hw_reg_state reg combined_log s.
-            2: tac_interp_rule_right_cmd_vars2 hw_reg_state s.
-
-            rewrite (interp_act_write_output_vars (REnv:=RegCEnv)). cbn -[_reg_name _out_name Nat.ltb] in *.
-            rewrite firstn_length. rewrite vect_to_list_length. rewrite Common.repeat_nil by ((* hammer *) timeout 10 hauto b: on).
-            rewrite app_nil_r. reflexivity.
-            tac_interp_rule_right_cmd_out1.
-            tac_interp_rule_right_cmd_out2.
-          }
-        }
-      }
-      { (* OUTPUT *)
-        unfold synth_convert.
-        generalize (all_vars_after_read_vars_correct hw_reg_state). intros.
-        cbn -[_reg_name _out_name Nat.ltb] in *. 
-
-        destruct (Nat.eq_dec (spec_outputs_size dst) (spec_states_size src)).
-        { (* Sizes match *)
-          clear e. cbn -[_reg_name _out_name] in *.
-          rewrite (H1 src). cbn -[_reg_name _out_name Nat.ltb] in *. destruct (H0 src) as [bl [Hbl Hblsize]].
-          rewrite Hbl. cbn -[_reg_name _out_name Nat.ltb] in *. 
-
-          rewrite interp_act_write_state_vars.
-          2: tac_interp_rule_right_cmd_vars1 hw_reg_state reg combined_log s.
-          2: tac_interp_rule_right_cmd_vars2 hw_reg_state s.
-
-          clear H1.
-          rewrite (interp_act_write_output_vars (REnv:=RegCEnv)). reflexivity.
-          tac_interp_rule_right_cmd_out3 hw_reg_state.
-          tac_interp_rule_right_cmd_out4 dst.
-        } { (* Size Conversion *)
-          clear n.
-          destruct (Nat.leb (spec_states_size src) (spec_outputs_size dst)) eqn:Hle.
-          (* Output smaller than state, truncate *)
-          { 
-            cbn -[_reg_name _out_name Nat.ltb] in *.
-            rewrite (H1 src). cbn -[_reg_name _out_name Nat.ltb] in *. destruct (H0 src) as [bl [Hbl Hblsize]].
-            rewrite Hbl. cbn -[_reg_name _out_name Nat.ltb] in *. 
-
-            rewrite interp_act_write_state_vars.
-            2: tac_interp_rule_right_cmd_vars1 hw_reg_state reg combined_log s.
-            2: tac_interp_rule_right_cmd_vars2 hw_reg_state s.
-
-            clear H1.
-            rewrite (interp_act_write_output_vars (REnv:=RegCEnv)). cbn -[_reg_name _out_name Nat.ltb] in *. rewrite Hblsize. reflexivity.
-            tac_interp_rule_right_cmd_out3 hw_reg_state.
-            tac_interp_rule_right_cmd_out4 dst.
-          } { (* Output larger than state, zero-extend *)
-            cbn -[_reg_name _out_name Nat.ltb] in *.
-            rewrite (H1 src). cbn -[_reg_name _out_name Nat.ltb] in *. destruct (H0 src) as [bl [Hbl Hblsize]].
-            rewrite Hbl. cbn -[_reg_name _out_name Nat.ltb] in *. 
-
-            rewrite interp_act_write_state_vars.
-            2: tac_interp_rule_right_cmd_vars1 hw_reg_state reg combined_log s.
-            2: tac_interp_rule_right_cmd_vars2 hw_reg_state s.
-
-            clear H1.
-            rewrite (interp_act_write_output_vars (REnv:=RegCEnv)). cbn -[_reg_name _out_name Nat.ltb] in *.
-            repeat f_equal. rewrite firstn_length. rewrite Hblsize. rewrite Common.repeat_nil. 2: (* hammer *) hauto b: on.
-            rewrite app_nil_r. reflexivity.
-            tac_interp_rule_right_cmd_out3 hw_reg_state.
-            tac_interp_rule_right_cmd_out4 dst.
-          }
-        }
-      }
-    Qed.
-
-    Definition interp_rule_out_result (hw_reg_state : hw_env_t)
-        (log : @UntypedLogs._ULog val (reg_t tf_ctx) (@ContextEnv impl_reg impl_regs_finite)) (out : spec_outputs) := 
-      let ack_result :=
-        sigma (ext_output tf_ctx out)
-          match
-            list_find_opt UntypedLogs.log_latest_write0_fn
-              (ccreate impl_all_regs (fun (k : reg_t tf_ctx) (_ : member k impl_all_regs) => 
-                log.[k])).[tf_out tf_ctx out]
-          with
-          | Some v => v
-          | None => hw_reg_state.[tf_out tf_ctx out]
-          end
-      in
-        UntypedLogs.log_cons (REnv:=RegCEnv) (tf_out_ack tf_ctx out) 
-          {| UntypedLogs.kind := LogWrite; UntypedLogs.port := P1; UntypedLogs.val := ack_result |}
-          (
-            UntypedLogs.log_cons (tf_out tf_ctx out) 
-              {| UntypedLogs.kind := LogRead; UntypedLogs.port := P1; UntypedLogs.val := Bits [] |}
-              UntypedLogs.log_empty 
-          ).
-
-    Lemma interp_rule_out:
-      forall (hw_reg_state: hw_env_t) log out,
-      UntypedLogs.log_existsb log (tf_out tf_ctx out) UntypedLogs.is_write1 = false ->
-      UntypedLogs.log_existsb log (tf_out_ack tf_ctx out) UntypedLogs.is_write1 = false ->
-      UntypedSemantics.interp_rule hw_reg_state sigma log (impl_rules (rule_out tf_ctx out)) = 
-      Some(
-        interp_rule_out_result hw_reg_state log out
-      ). 
-    Proof.
-      intros.
-      unfold interp_rule_out_result, impl_rules, rules, _rule_cmd.
-      unfold UntypedSemantics.interp_rule, UntypedSemantics.interp_action.
-
-      cbn2. repeat f_equal. rewrite H. clear H. cbn.
-
-      (* Have we written to out this out ack this cycle? *)
-      set (has_w_ack := UntypedLogs.log_existsb _ _ _).
-      assert (has_w_ack = false). {
-        subst has_w_ack.
-        unfold UntypedLogs.log_existsb in *.
-        
-        unfold getenv in *. cbn [ContextEnv] in *.
-        rewrite !cassoc_ccreate. unfold UntypedLogs.RLog in *. rewrite Common.cassoc_put_neq. 
-        rewrite !cassoc_ccreate. rewrite app_nil_l. exact H0.
-        (* hammer. *) timeout 10 sfirstorder.
-      } rewrite H. clear H has_w_ack. cbn. cbn2. repeat f_equal.
-      unfold getenv in *. cbn [ContextEnv] in *. rewrite !cassoc_ccreate. rewrite app_nil_l. reflexivity.
-    Qed.
-
-    Definition log_after_rules_out (hw_reg_state: hw_env_t) log := 
-      fold_right (fun (t : spec_outputs) (acc: env_t ContextEnv (fun _ : reg_t tf_ctx => UntypedLogs.RLog val)) => 
-        UntypedLogs.log_app (interp_rule_out_result hw_reg_state acc t) acc
-      ) log (rev spec_all_outputs).
-      
-    Lemma interp_scheduler_outputs:
-      forall other (hw_reg_state: hw_env_t) log,
-        (forall o, In o spec_all_outputs -> UntypedLogs.log_existsb log (tf_out tf_ctx o) UntypedLogs.is_write1 = false) ->
-        (forall o, In o spec_all_outputs -> UntypedLogs.log_existsb log (tf_out_ack tf_ctx o) UntypedLogs.is_write1 = false) ->
-        UntypedSemantics.interp_scheduler' (rules tf_ctx) hw_reg_state sigma log
-          (fold_right (fun (t : spec_outputs) (acc : scheduler) => rule_out tf_ctx t |> acc) other spec_all_outputs)
-        =
-        UntypedSemantics.interp_scheduler' (rules tf_ctx) hw_reg_state sigma (log_after_rules_out hw_reg_state log) other.
-    Proof.
-      intros. unfold log_after_rules_out.
-
-      set (output_list := finite_elements) in *.
-      assert (nodup: NoDup (output_list)).
-      { apply NoDup_map_inv with (f:=(finite_index (FiniteType:=spec_outputs_fin))). apply finite_injective. }
-
-      generalize dependent log.
-      induction output_list.
-      { (* hammer. *) timeout 10 hauto lq: on. }
-      intros.
-      cbn -[rules UntypedLogs.log_app interp_rule_out_result hw_env_t] in *.
-
-      clean. rewrite interp_rule_out.
-      { rewrite !IHoutput_list.
-        { f_equal. cbn. clean. rewrite fold_right_app. cbn. reflexivity. }
-        all: inversion nodup; subst. exact H4. 
-        - intros. specialize (H o). destruct H. (* hammer *) timeout 10 fcrush. unfold UntypedLogs.log_existsb. 
-          cbn. clean. unfold getenv. cbn. 
-          rewrite !cassoc_ccreate.  clean. 
-          rewrite !Common.cassoc_put_neq. rewrite !cassoc_ccreate. rewrite app_nil_l. reflexivity.
-          (* hammer. *) timeout 10 sauto. (* hammer. *) timeout 10 sauto.
-        - intros. specialize (H0 o). destruct H0. (* hammer *) timeout 10 fcrush. unfold UntypedLogs.log_existsb. 
-          cbn. clean. unfold getenv. cbn. 
-          rewrite !cassoc_ccreate.  clean. 
-          rewrite !Common.cassoc_put_neq. rewrite !cassoc_ccreate. rewrite app_nil_l. reflexivity.
-          (* hammer. *) timeout 10 sauto. (* hammer. *) timeout 10 sauto.
-      }
-      all: (* hammer *) timeout 10 hauto lq: on.
-    Qed.
-
-    Lemma log_after_rules_out_no_state_read_writes:
-      forall hw_reg_state log act,
-      UntypedLogs.log_existsb (log_after_rules_out hw_reg_state log) (tf_reg tf_ctx act) UntypedLogs.is_write0 =
-      UntypedLogs.log_existsb log (tf_reg tf_ctx act) UntypedLogs.is_write0
-      /\
-      UntypedLogs.log_existsb (log_after_rules_out hw_reg_state log) (tf_reg tf_ctx act) UntypedLogs.is_write1 =
-      UntypedLogs.log_existsb log (tf_reg tf_ctx act) UntypedLogs.is_write1
-      /\
-      UntypedLogs.log_existsb (log_after_rules_out hw_reg_state log) (tf_reg tf_ctx act) UntypedLogs.is_read0 =
-      UntypedLogs.log_existsb log (tf_reg tf_ctx act) UntypedLogs.is_read0
-      /\
-      UntypedLogs.log_existsb (log_after_rules_out hw_reg_state log) (tf_reg tf_ctx act) UntypedLogs.is_read1 =
-      UntypedLogs.log_existsb log (tf_reg tf_ctx act) UntypedLogs.is_read1.
-    Proof.
-      split. 2: split. 3: split.
-
-      {
-        intros.
-        unfold log_after_rules_out.
-        set (output_list := (rev spec_all_outputs)) in *.
-        induction output_list.
-        try reflexivity.
-        cbn -[interp_rule_out_result UntypedLogs.log_existsb env_t] in *.
-        unfold interp_rule_out_result at 1.
-        cbn -[interp_rule_out_result UntypedLogs.log_existsb env_t] in *.
-        unfold UntypedLogs.log_existsb, getenv in *.
-        clean. cbn -[interp_rule_out_result env_t] in *.
-        repeat ( rewrite !Common.cassoc_put_neq || rewrite !cassoc_ccreate || rewrite !Common.cassoc_put_neq ).
-        try rewrite app_nil_l. try exact IHoutput_list.
-        (* hammer. *) timeout 10 hauto lq: on .
-        (* hammer. *) timeout 10 hauto lq: on .
-        (* hammer. *) timeout 10 hauto lq: on .
-      }
-
-      {
-        intros.
-        unfold log_after_rules_out.
-        set (output_list := (rev spec_all_outputs)) in *.
-        induction output_list.
-        try reflexivity.
-        cbn -[interp_rule_out_result UntypedLogs.log_existsb env_t] in *.
-        unfold interp_rule_out_result at 1.
-        cbn -[interp_rule_out_result UntypedLogs.log_existsb env_t] in *.
-        unfold UntypedLogs.log_existsb, getenv in *.
-        clean. cbn -[interp_rule_out_result env_t] in *.
-        repeat ( rewrite !Common.cassoc_put_neq || rewrite !cassoc_ccreate || rewrite !Common.cassoc_put_neq ).
-        try rewrite app_nil_l. try exact IHoutput_list.
-        (* hammer. *) timeout 10 hauto lq: on .
-        (* hammer. *) timeout 10 hauto lq: on .
-        (* hammer. *) timeout 10 hauto lq: on .
-      }
-
-      {
-        intros.
-        unfold log_after_rules_out.
-        set (output_list := (rev spec_all_outputs)) in *.
-        induction output_list.
-        try reflexivity.
-        cbn -[interp_rule_out_result UntypedLogs.log_existsb env_t] in *.
-        unfold interp_rule_out_result at 1.
-        cbn -[interp_rule_out_result UntypedLogs.log_existsb env_t] in *.
-        unfold UntypedLogs.log_existsb, getenv in *.
-        clean. cbn -[interp_rule_out_result env_t] in *.
-        repeat ( rewrite !Common.cassoc_put_neq || rewrite !cassoc_ccreate || rewrite !Common.cassoc_put_neq ).
-        try rewrite app_nil_l. try exact IHoutput_list.
-        (* hammer. *) timeout 10 hauto lq: on .
-        (* hammer. *) timeout 10 hauto lq: on .
-        (* hammer. *) timeout 10 hauto lq: on .
-      }
-
-      {
-        intros.
-        unfold log_after_rules_out.
-        set (output_list := (rev spec_all_outputs)) in *.
-        induction output_list.
-        try reflexivity.
-        cbn -[interp_rule_out_result UntypedLogs.log_existsb env_t] in *.
-        unfold interp_rule_out_result at 1.
-        cbn -[interp_rule_out_result UntypedLogs.log_existsb env_t] in *.
-        unfold UntypedLogs.log_existsb, getenv in *.
-        clean. cbn -[interp_rule_out_result env_t] in *.
-        repeat ( rewrite !Common.cassoc_put_neq || rewrite !cassoc_ccreate || rewrite !Common.cassoc_put_neq ).
-        try rewrite app_nil_l. try exact IHoutput_list.
-        (* hammer. *) timeout 10 hauto lq: on .
-        (* hammer. *) timeout 10 hauto lq: on .
-        (* hammer. *) timeout 10 hauto lq: on .
-      }
-    Qed.
-
-    Lemma log_after_rules_out_no_output_read_writes:
-      forall hw_reg_state log act,
-      UntypedLogs.log_existsb (log_after_rules_out hw_reg_state log) (tf_out tf_ctx act) UntypedLogs.is_write0 =
-      UntypedLogs.log_existsb log (tf_out tf_ctx act) UntypedLogs.is_write0
-      /\
-      UntypedLogs.log_existsb (log_after_rules_out hw_reg_state log) (tf_out tf_ctx act) UntypedLogs.is_write1 =
-      UntypedLogs.log_existsb log (tf_out tf_ctx act) UntypedLogs.is_write1
-      /\
-      UntypedLogs.log_existsb (log_after_rules_out hw_reg_state log) (tf_out tf_ctx act) UntypedLogs.is_read0 =
-      UntypedLogs.log_existsb log (tf_out tf_ctx act) UntypedLogs.is_read0.
-    Proof.
-      split. 2: split.
-
-      (* Repeated 3x, how can I do "all: (_)." with a destruct?  *)
-      intros.
-        unfold log_after_rules_out.
-        set (output_list := (rev finite_elements)) in *.
-        induction output_list.
-        try reflexivity.
-        cbn -[interp_rule_out_result UntypedLogs.log_existsb env_t] in *.
-        unfold interp_rule_out_result at 1.
-        cbn -[interp_rule_out_result UntypedLogs.log_existsb env_t] in *.
-        unfold UntypedLogs.log_existsb, getenv in *.
-        clean. cbn -[interp_rule_out_result env_t] in *.
-        destruct (eq_dec a act).
-        {
-          subst a.
-          repeat ( rewrite !Common.cassoc_put_eq || rewrite !cassoc_ccreate || rewrite Common.cassoc_put_neq ).
-          all: (* hammer. *) timeout 10 hauto lq: on.
-        } {
-          repeat ( rewrite !Common.cassoc_put_neq || rewrite !cassoc_ccreate ).
-          try rewrite app_nil_l; try exact IHoutput_list.
-          all: (* hammer. *) timeout 10 hauto lq: on.
-        }
-
-      intros.
-        unfold log_after_rules_out.
-        set (output_list := (rev finite_elements)) in *.
-        induction output_list.
-        try reflexivity.
-        cbn -[interp_rule_out_result UntypedLogs.log_existsb env_t] in *.
-        unfold interp_rule_out_result at 1.
-        cbn -[interp_rule_out_result UntypedLogs.log_existsb env_t] in *.
-        unfold UntypedLogs.log_existsb, getenv in *.
-        clean. cbn -[interp_rule_out_result env_t] in *.
-        destruct (eq_dec a act).
-        {
-          subst a.
-          repeat ( rewrite !Common.cassoc_put_eq || rewrite !cassoc_ccreate || rewrite Common.cassoc_put_neq ).
-          all: (* hammer. *) timeout 10 hauto lq: on.
-        } {
-          repeat ( rewrite !Common.cassoc_put_neq || rewrite !cassoc_ccreate ).
-          try rewrite app_nil_l; try exact IHoutput_list.
-          all: (* hammer. *) timeout 10 hauto lq: on.
-        }
-      
-      intros.
-        unfold log_after_rules_out.
-        set (output_list := (rev finite_elements)) in *.
-        induction output_list.
-        try reflexivity.
-        cbn -[interp_rule_out_result UntypedLogs.log_existsb env_t] in *.
-        unfold interp_rule_out_result at 1.
-        cbn -[interp_rule_out_result UntypedLogs.log_existsb env_t] in *.
-        unfold UntypedLogs.log_existsb, getenv in *.
-        clean. cbn -[interp_rule_out_result env_t] in *.
-        destruct (eq_dec a act).
-        {
-          subst a.
-          repeat ( rewrite !Common.cassoc_put_eq || rewrite !cassoc_ccreate || rewrite Common.cassoc_put_neq ).
-          all: (* hammer. *) timeout 10 hauto lq: on.
-        } {
-          repeat ( rewrite !Common.cassoc_put_neq || rewrite !cassoc_ccreate ).
-          try rewrite app_nil_l; try exact IHoutput_list.
-          all: (* hammer. *) timeout 10 hauto lq: on.
-        }
-  Qed. *)
     
   End CmdGuard.
 
   Section RegUpdates.
-
-    (* Lemma spec_eval_expr_pointwise:
-      forall szB expr S1 S2 input,
-        (forall s, S1.[s] = S2.[s]) -> (spec_eval_expr expr S1 input: bits szB) = (spec_eval_expr expr S2 input: bits szB).
-    Proof.
-      intros. generalize dependent szB.
-      induction expr; intros; cbn.
-      - reflexivity.
-      - rewrite H. reflexivity.
-      - reflexivity.
-      - rewrite IHexpr. reflexivity.
-      - rewrite !IHexpr1. rewrite !IHexpr2. destr; try reflexivity. 
-        rewrite !IHexpr1. rewrite !IHexpr2. reflexivity.
-    Qed.
-
-    Lemma sem_op_step_updates_pointwise:
-      forall op S1 S2 input,
-        (forall s, S1.[s] = S2.[s]) -> sem_op_step_updates op S1 input = sem_op_step_updates op S2 input.
-    Proof.
-      intros. unfold sem_op_step_updates. destr; f_equal; apply spec_eval_expr_pointwise; exact H.
-    Qed.
-
-    Lemma sem_ops_updates_pointwise:
-      forall ops S1 S2 O1 O2 input,
-        (forall s, S1.[s] = S2.[s]) ->
-        (forall o, O1.[o] = O2.[o]) ->
-        sem_ops_updates ops (S1, O1) input = sem_ops_updates ops (S2, O2) input.
-    Proof.
-      intros. 
-      generalize dependent S1. generalize dependent S2.
-      generalize dependent O1. generalize dependent O2.
-      induction ops; intros; cbn.
-      - f_equal. apply sem_op_step_updates_pointwise; exact H.
-      - f_equal. apply sem_op_step_updates_pointwise; exact H.
-        apply IHops.
-        * cbn. intros. f_equal. exact H.
-
-      apply IHop. exact H.
-      {
-        unfold sem_op_step_updates. unfold spec_eval_expr.
-
-      }
-    Qed. *)
 
     Definition var_from_reg (r: reg_t tf_ctx) : string :=
       match r with
@@ -2818,13 +1682,14 @@ Section CompositionalCorrectness.
       end.
 
     Lemma interp_op_to_uaction:
-      forall hw_reg_state fs_state fs_input fs_output Gamma sched_log action_log op code Gok,
+      forall hw_reg_state fs_state fs_input fs_output Gamma sched_log action_log op code GokS GokO,
       StateR hw_reg_state fs_state ->
       InputR fs_input ->
       OutputR hw_reg_state fs_output ->
       has_var_all Gamma (map (_register_var_name tf_ctx) (map (tf_reg tf_ctx) spec_all_states)) ->
-        let fs_state' := SpecStateEnvExt fs_state Gamma Gok in
-        let updates := sem_ops_updates (tf_ops_base spec_states spec_inputs spec_outputs op) (fs_state', fs_output) fs_input in
+        let fs_state' := SpecStateEnvExt fs_state Gamma GokS in
+        let fs_output' := SpecOutputEnvExt fs_output Gamma GokO in
+        let updates := sem_ops_updates (tf_ops_base spec_states spec_inputs spec_outputs op) (fs_state', fs_output') fs_input in
         let Gamma' := (sem_updates_to_Gamma_ext updates) ++ Gamma in
           interp_action hw_reg_state sigma Gamma sched_log action_log (op_to_uaction tf_ctx op code) =
           let/opt3 l, v, G := interp_action hw_reg_state sigma Gamma' sched_log action_log code in Some (l, v, tl G).
@@ -2844,9 +1709,9 @@ Section CompositionalCorrectness.
       }
       {
         (* ASSIGN *)
-        rewrite (interp_act_expr_to_uaction); try exact Gok; try exact H_hasvar'.
+        rewrite (interp_act_expr_to_uaction); try exact GokS; try exact H_hasvar'.
         
-        rewrite (value_of_expr_correct expr hw_reg_state Gamma fs_state (spec_states_size dst) fs_input Gok); 
+        rewrite (value_of_expr_correct expr hw_reg_state Gamma fs_state (spec_states_size dst) fs_input GokS); 
         try exact H_state; try exact H_input; try exact H_hasvar'.
 
         unfold opt_bind.
@@ -2856,9 +1721,9 @@ Section CompositionalCorrectness.
       }
       {
         (* OUTPUT *)
-        rewrite (interp_act_expr_to_uaction); try exact Gok; try exact H_hasvar'.
+        rewrite (interp_act_expr_to_uaction); try exact GokS; try exact H_hasvar'.
         
-        rewrite (value_of_expr_correct expr hw_reg_state Gamma fs_state (spec_outputs_size dst) fs_input Gok); 
+        rewrite (value_of_expr_correct expr hw_reg_state Gamma fs_state (spec_outputs_size dst) fs_input GokS); 
         try exact H_state; try exact H_input; try exact H_hasvar'.
 
         unfold opt_bind.
@@ -2869,13 +1734,14 @@ Section CompositionalCorrectness.
     Qed. 
 
     Lemma interp_aux_state:
-      forall Gamma Gok hw_reg_state fs_state fs_input fs_output sched_log action_log rule_ops code,
+      forall Gamma GokS GokO hw_reg_state fs_state fs_input fs_output sched_log action_log rule_ops code,
       StateR hw_reg_state fs_state ->
       InputR fs_input ->
       OutputR hw_reg_state fs_output ->
       has_var_all Gamma (map (_register_var_name tf_ctx) (map (tf_reg tf_ctx) spec_all_states)) ->
-        let fs_state' := SpecStateEnvExt fs_state Gamma Gok in
-        let updates := sem_ops_updates rule_ops (fs_state', fs_output) fs_input in
+        let fs_state' := SpecStateEnvExt fs_state Gamma GokS in
+        let fs_output' := SpecOutputEnvExt fs_output Gamma GokO in
+        let updates := sem_ops_updates rule_ops (fs_state', fs_output') fs_input in
         let Gamma' := (sem_updates_to_Gamma_ext updates) ++ Gamma in
           interp_action hw_reg_state sigma Gamma sched_log action_log (_rule_aux tf_ctx rule_ops code) =
           match interp_action hw_reg_state sigma Gamma' sched_log action_log code with
@@ -2892,62 +1758,63 @@ Section CompositionalCorrectness.
       induction rule_ops; intros.
       {
         cbn [sem_ops_updates _rule_aux interp_action].
-        rewrite (interp_op_to_uaction _ _ _ _ _ _ _ _ _ Gok H_state H_input H_output H_hasvar).
+        rewrite (interp_op_to_uaction _ _ _ _ _ _ _ _ _ GokS GokO H_state H_input H_output H_hasvar).
         unfold opt_bind. assert (Datatypes.length updates = 1) by reflexivity. rewrite H; clear H.
         reflexivity.
       } 
       {
         cbn [sem_ops_updates _rule_aux interp_action] in *.
-        rewrite (interp_op_to_uaction _ _ _ _ _ _ _ _ _ Gok H_state H_input H_output H_hasvar).
+        rewrite (interp_op_to_uaction _ _ _ _ _ _ _ _ _ GokS GokO H_state H_input H_output H_hasvar).
         set (Gamma'' := sem_updates_to_Gamma_ext _ ++ Gamma).
         unfold opt_bind.
 
-        assert (Gamma_ok_state Gamma'') as Gok''.
+        assert (Gamma_ok_state Gamma'') as GokS''.
         { 
           subst Gamma'' Gamma' updates fs_state'.
           unfold Gamma_ok_state in *; intros; unfold lookup_s in *; cbn; destr.
-          1,3: (rewrite app_nil_r; cbn; rewrite lookup_cons_neq; try exact (Gok s); fcrush).
+          1,3: (rewrite app_nil_r; cbn; rewrite lookup_cons_neq; try exact (GokS s); timeout 10 fcrush).
 
           rewrite app_nil_r; cbn. destruct (eq_dec s var); subst; try congruence.
           - rewrite lookup_cons_eq; try reflexivity. econstructor. split; try reflexivity. rewrite vect_to_list_length. reflexivity.
-          - rewrite lookup_cons_neq. exact (Gok s). unfold not in *; intros. apply n. apply reg_name_inj. exact H.
+          - rewrite lookup_cons_neq. exact (GokS s). unfold not in *; intros. apply n. apply reg_name_inj. exact H.
         }
 
-        (* assert (Gamma_ok_output Gamma'') as Gok_out.
+        assert (Gamma_ok_output Gamma'') as GokO''.
         { 
-          admit.
-        } *)
+          subst Gamma'' Gamma' updates fs_output'.
+          unfold Gamma_ok_output in *; intros; unfold lookup_o in *; cbn; destr.
+          1,2: (rewrite app_nil_r; cbn; rewrite lookup_cons_neq; try exact (GokO o); timeout 10 fcrush).
 
-        rewrite (IHrule_ops Gamma'' Gok''); clear IHrule_ops; try exact H_state; try exact H_input; try exact H_output.
+          rewrite app_nil_r; cbn. destruct (eq_dec o var); subst; try congruence.
+          - rewrite lookup_cons_eq; try reflexivity. econstructor. split; try reflexivity. rewrite vect_to_list_length. reflexivity.
+          - rewrite lookup_cons_neq. exact (GokO o). unfold not in *; intros. apply n. apply out_name_inj. exact H.
+        }
+
+        rewrite (IHrule_ops Gamma'' GokS'' GokO''); clear IHrule_ops; try exact H_state; try exact H_input; try exact H_output.
         2: {
           subst Gamma' Gamma'' updates. apply has_var_all_ignore_left. exact H_hasvar.
         }
 
         assert (
-          sem_op_step_commit (SpecStateEnvExt fs_state Gamma Gok, fs_output) (sem_op_step_updates op (SpecStateEnvExt fs_state Gamma Gok) fs_input) =
-          (SpecStateEnvExt fs_state (sem_updates_to_Gamma_ext [sem_op_step_updates op (SpecStateEnvExt fs_state Gamma Gok) fs_input] ++ Gamma) Gok'', fs_output)
-        ) as H_commit. { admit. }
-
-        (* assert (
-          sem_op_step_commit (SpecStateEnvExt fs_state Gamma Gok, fs_output) (sem_op_step_updates op (SpecStateEnvExt fs_state Gamma Gok) fs_input) =
-          (SpecStateEnvExt fs_state (sem_updates_to_Gamma_ext [sem_op_step_updates op (SpecStateEnvExt fs_state Gamma Gok) fs_input] ++ Gamma) Gok'', 
-           SpecOutputEnvExt fs_output (sem_updates_to_Gamma_ext [sem_op_step_updates op (SpecStateEnvExt fs_state Gamma Gok) fs_input] ++ Gamma) Gok_out)
+          sem_op_step_commit (SpecStateEnvExt fs_state Gamma GokS, SpecOutputEnvExt fs_output Gamma GokO) (sem_op_step_updates op (SpecStateEnvExt fs_state Gamma GokS) fs_input) =
+          (SpecStateEnvExt fs_state (sem_updates_to_Gamma_ext [sem_op_step_updates op (SpecStateEnvExt fs_state Gamma GokS) fs_input] ++ Gamma) GokS'',
+          SpecOutputEnvExt fs_output (sem_updates_to_Gamma_ext [sem_op_step_updates op (SpecStateEnvExt fs_state Gamma GokS) fs_input] ++ Gamma) GokO'')
         ) as H_commit. {
-          cbn -[SpecStateEnvExt] in Gok''.
-          set (fs_state'' := SpecStateEnvExt fs_state Gamma Gok) in *.
+          cbn -[SpecStateEnvExt] in GokS''.
+          set (fs_state'' := SpecStateEnvExt fs_state Gamma GokS) in *.
           apply Common.pair_inj'; cbn [fst snd]; apply equiv_eq; unfold equiv; intros; unfold_getenv_all.
           {
             unfold sem_op_step_commit, sem_op_step_commit_state.
             cbn. rewrite !cassoc_ccreate. unfold lookup_s, lookup in *.
-            generalize dependent (Gok''). generalize dependent (Gok). cbn. intro.
+            generalize dependent (GokS''). generalize dependent (GokS). cbn. intro.
             destruct (sem_op_step_updates op _ _); intros; rewrite ?cassoc_ccreate.
             {
-              generalize dependent (Gok'' k).  generalize dependent (Gok k). unfold lookup_s, lookup in *. cbn -[eq_dec].
-              destruct (eq_dec (_reg_name tf_ctx k) "_unused"). { unfold _reg_name in e. contradict e. fcrush. }
+              generalize dependent (GokS'' k).  generalize dependent (GokS k). unfold lookup_s, lookup in *. cbn -[eq_dec].
+              destruct (eq_dec (_reg_name tf_ctx k) "_unused"). { unfold _reg_name in e. contradict e. timeout 10 fcrush. }
               intros. destr. cbn. unfold val_to_bits. vect_to_list_t. reflexivity. 
             }
             {
-              generalize dependent (Gok'' k).  generalize dependent (Gok k). unfold lookup_s, lookup in *. cbn -[eq_dec].
+              generalize dependent (GokS'' k).  generalize dependent (GokS k). unfold lookup_s, lookup in *. cbn -[eq_dec].
               destruct (eq_dec (_reg_name tf_ctx k) (_reg_name tf_ctx var)); intros. 
               {
                 apply reg_name_inj in e. subst k. rewrite Common.cassoc_put_eq. cbn. unfold val_to_bits. vect_to_list_t.
@@ -2955,38 +1822,58 @@ Section CompositionalCorrectness.
               }
               {
                 apply reg_name_inj' in n. rewrite Common.cassoc_put_neq. 2: hauto. rewrite !cassoc_ccreate.
-                generalize (Gok k). unfold lookup_s, lookup in *. cbn -[eq_dec].
+                generalize (GokS k). unfold lookup_s, lookup in *. cbn -[eq_dec].
                 destr. cbn. intros. unfold val_to_bits. vect_to_list_t. reflexivity. 
               }
             }
             {
-              generalize dependent (Gok'' k).  generalize dependent (Gok k). unfold lookup_s, lookup in *. cbn -[eq_dec].
-              destruct (eq_dec (_reg_name tf_ctx k) (_out_name tf_ctx var)). { unfold _reg_name in e. contradict e. fcrush. }
+              generalize dependent (GokS'' k).  generalize dependent (GokS k). unfold lookup_s, lookup in *. cbn -[eq_dec].
+              destruct (eq_dec (_reg_name tf_ctx k) (_out_name tf_ctx var)). { unfold _reg_name in e. contradict e. timeout 10 fcrush. }
               intros. destr. cbn. unfold val_to_bits. vect_to_list_t. reflexivity.  
             }
           }
           {
             unfold sem_op_step_commit, sem_op_step_commit_output.
             cbn. unfold lookup_s, lookup_o, lookup in *.
-            generalize dependent (Gok''). generalize dependent (Gok). cbn. intro.
-            destruct (sem_op_step_updates op _ _); intros; rewrite ?cassoc_ccreate; try reflexivity.
-            
+            generalize dependent (GokO''). generalize dependent (GokO). cbn. intro.
+            destruct (sem_op_step_updates op _ _); intros; rewrite ?cassoc_ccreate.
+            {
+              generalize dependent (GokO'' k).  generalize dependent (GokO k). unfold lookup_o, lookup in *. cbn -[eq_dec].
+              destruct (eq_dec (_out_name tf_ctx k) "_unused"). { unfold _out_name in e. contradict e. timeout 10 fcrush. }
+              intros. destr. cbn. unfold val_to_bits. vect_to_list_t. reflexivity. 
+            }
+            {
+              generalize dependent (GokO'' k).  generalize dependent (GokO k). unfold lookup_o, lookup in *. cbn -[eq_dec].
+              destruct (eq_dec (_out_name tf_ctx k) (_reg_name tf_ctx var)). { unfold _out_name in e. contradict e. timeout 10 fcrush. }
+              intros. destr. cbn. unfold val_to_bits. vect_to_list_t. reflexivity.
+            }
+            {
+              generalize dependent (GokO'' k).  generalize dependent (GokO k). unfold lookup_o, lookup in *. cbn -[eq_dec].
+              destruct (eq_dec (_out_name tf_ctx k) (_out_name tf_ctx var)); intros. 
+              {
+                apply out_name_inj in e. subst k. rewrite Common.cassoc_put_eq. cbn. unfold val_to_bits. vect_to_list_t.
+                rewrite Common.bits_of_list_vect_to_list. simpl_eq. reflexivity.
+              }
+              {
+                apply out_name_inj' in n. rewrite Common.cassoc_put_neq. 2: hauto. rewrite !cassoc_ccreate.
+                generalize (GokO k). unfold lookup_o, lookup in *. cbn -[eq_dec].
+                destr. cbn. intros. unfold val_to_bits. vect_to_list_t. reflexivity. 
+              }
+            }
           }
-
-        } *)
+        }
 
         apply Common.tf_h_match_skipn_cons.
         {
-          subst updates. cbn [sem_ops_updates Datatypes.length]. repeat f_equal. subst Gamma' Gamma'' fs_state'. cbn -[SpecStateEnvExt sem_updates_to_Gamma_ext].
+          subst updates. cbn [sem_ops_updates Datatypes.length]. repeat f_equal. subst Gamma' Gamma'' fs_state' fs_output'. cbn -[SpecStateEnvExt SpecOutputEnvExt sem_updates_to_Gamma_ext].
           exact H_commit.
         }
         {
-          f_equal. subst Gamma' Gamma'' updates fs_state'. cbn -[SpecStateEnvExt sem_updates_to_Gamma_ext]. 
-          cbn -[SpecStateEnvExt sem_updates_to_Gamma_ext] in H_commit. rewrite H_commit. clear H_commit. 
+          f_equal. subst Gamma' Gamma'' updates fs_state' fs_output'. cbn -[SpecStateEnvExt SpecOutputEnvExt sem_updates_to_Gamma_ext]. 
+          cbn -[SpecStateEnvExt SpecOutputEnvExt sem_updates_to_Gamma_ext] in H_commit. rewrite H_commit. clear H_commit. 
           unfold sem_updates_to_Gamma_ext. set(ops_updates := sem_ops_updates rule_ops _ _). cbn [rev]. rewrite app_nil_l.
           rewrite flat_map_app. rewrite app_assoc. reflexivity.
         }
-        
       }
       {
         assert (H_hasvar': forall s : spec_states, has_var Gamma (_reg_name tf_ctx s)). {
@@ -2996,25 +1883,25 @@ Section CompositionalCorrectness.
         }
 
         cbn [sem_ops_updates _rule_aux interp_action] in *.
-        rewrite (interp_act_expr_to_uaction); try exact Gok; try exact H_hasvar'.
+        rewrite (interp_act_expr_to_uaction); try exact GokS; try exact H_hasvar'.
 
-        rewrite (value_of_expr_correct cond hw_reg_state Gamma fs_state 1 fs_input Gok); try exact H_state; try exact H_input; try exact H_hasvar'.
+        rewrite (value_of_expr_correct cond hw_reg_state Gamma fs_state 1 fs_input GokS); try exact H_state; try exact H_input; try exact H_hasvar'.
 
         subst Gamma' updates fs_state'. cbn -[SpecStateEnvExt]. 
         rewrite Common.bits_single_is_neg_beq_dec.
         destr; cbn [negb].
         {
-          rewrite (IHrule_ops1 Gamma Gok); clear IHrule_ops1; clear IHrule_ops2; 
-          try exact H_state; try exact H_input; try exact H_output; try exact Gok; try exact H_hasvar.
+          rewrite (IHrule_ops1 Gamma GokS GokO); clear IHrule_ops1; clear IHrule_ops2; 
+          try exact H_state; try exact H_input; try exact H_output; try exact GokS; try exact GokO; try exact H_hasvar.
           apply Common.tf_h_match_skipn. reflexivity. reflexivity.
         }
         {
-          rewrite (IHrule_ops2 Gamma Gok); clear IHrule_ops1; clear IHrule_ops2; 
-          try exact H_state; try exact H_input; try exact H_output; try exact Gok; try exact H_hasvar.
+          rewrite (IHrule_ops2 Gamma GokS GokO); clear IHrule_ops1; clear IHrule_ops2; 
+          try exact H_state; try exact H_input; try exact H_output; try exact GokS; try exact GokO; try exact H_hasvar.
           apply Common.tf_h_match_skipn. reflexivity. reflexivity.
         }
       }
-    Admitted. 
+    Qed. 
 
     Lemma interp_scheduler_correct:
       forall cmd fs_state hw_reg_state fs_input last_fs_output reg,
@@ -3071,12 +1958,13 @@ Section CompositionalCorrectness.
         - apply IHl.
       }
 
-      pose proof (Gamma_after_intro_ok_state hw_reg_state (StateR_means_sized_bits hw_reg_state fs_state H_state)) as Gok.
+      pose proof (Gamma_after_intro_ok_state hw_reg_state (StateR_means_sized_bits hw_reg_state fs_state H_state)) as GokS.
+      pose proof (Gamma_after_intro_ok_output hw_reg_state (OutputR_means_sized_bits hw_reg_state last_fs_output H_output)) as GokO.
       pose proof (Gamma_after_intro_has_state_vars hw_reg_state) as H_hasvar.
 
       (* Main Body _rule_aux *)
       cbn [interp_action]. 
-      rewrite (interp_aux_state _ Gok hw_reg_state fs_state fs_input last_fs_output ); try exact H_state; try exact H_input; try exact H_output; try exact H_hasvar.
+      rewrite (interp_aux_state _ GokS GokO hw_reg_state fs_state fs_input last_fs_output ); try exact H_state; try exact H_input; try exact H_output; try exact H_hasvar.
       
       
       (* Write back updated state vars *)
@@ -3118,48 +2006,94 @@ Section CompositionalCorrectness.
       {
         apply equiv_eq. unfold equiv; intros. 
         unfold SpecStateEnvExt. rewrite getenv_create. unfold Gamma_ok_state, lookup_s, lookup in *.
-        generalize (Gok k). rewrite Gamma_after_intro_is_hw_state. cbn.
+        generalize (GokS k). rewrite Gamma_after_intro_is_hw_state. cbn.
         rewrite H_state; intros. apply val_to_bits_of_sized_val_correct.
       }
       {
         apply equiv_eq. unfold equiv; intros. 
+        unfold SpecOutputEnvExt. rewrite getenv_create. unfold Gamma_ok_output, lookup_o, lookup in *.
+        generalize (GokO k). rewrite Gamma_after_intro_is_hw_output. cbn.
+        rewrite H_output; intros. apply val_to_bits_of_sized_val_correct.
+      }
+      {
+        apply equiv_eq. unfold equiv; intros. 
         unfold SpecStateEnvExt. rewrite getenv_create. unfold Gamma_ok_state, lookup_s, lookup in *.
-        generalize (Gok k). rewrite Gamma_after_intro_is_hw_state. cbn.
+        generalize (GokS k). rewrite Gamma_after_intro_is_hw_state. cbn.
         rewrite H_state; intros. apply val_to_bits_of_sized_val_correct.
+      }
+      {
+        apply equiv_eq. unfold equiv; intros. 
+        unfold SpecOutputEnvExt. rewrite getenv_create. unfold Gamma_ok_output, lookup_o, lookup in *.
+        generalize (GokO k). rewrite Gamma_after_intro_is_hw_output. cbn.
+        rewrite H_output; intros. apply val_to_bits_of_sized_val_correct.
       }
     Qed.
 
     Lemma sem_updates_state_correct:
       forall cmd fs_state hw_reg_state fs_input last_fs_output state_var,
+      StateR hw_reg_state fs_state ->
+      InputR fs_input ->
+      OutputR hw_reg_state last_fs_output -> 
       lookup
         (sem_updates_to_Gamma_ext (sem_ops_updates (spec_action_ops cmd) (fs_state, last_fs_output) fs_input) ++
           Gamma_after_read_vars0 hw_reg_state (Gamma_after_read_vars0 hw_reg_state [] (map (tf_reg tf_ctx) spec_all_states) (_register_var_name tf_ctx))
           (map (tf_out tf_ctx) spec_all_outputs) (_register_var_name tf_ctx)) (_register_var_name tf_ctx (tf_reg tf_ctx state_var)) 
       = val_of_value (fst (sem_ops_run (spec_action_ops cmd) (fs_state, last_fs_output) fs_input)).[state_var].
     Proof.
-      admit.
-      (* ================================================================= *)
-      (* ================================================================= *)
-      (* ===               STILL SO MUCH TO DOOOOOOOOOO                === *)
-      (* ================================================================= *)
-      (* ================================================================= *)
-    Admitted.
+      intros. rename H into H_state. rename H0 into H_input. rename H1 into H_output.
+      unfold lookup, sem_ops_run, sem_op_step_commit, sem_updates_to_Gamma_ext. cbn.
+      set(updates := sem_ops_updates _ _ _) in *. rewrite <- fold_left_rev_right.
+      set (sem_update_fun := fun _ => _). set (sem_commit_fun := fun _ _ => _).
+      induction (rev updates). 
+      { cbn. rewrite Gamma_after_intro_is_hw_state. cbn. rewrite H_state. reflexivity. }
+      {
+        destruct a; cbn -[eq_dec].
+        { destr. unfold _reg_name in e. timeout 10 fcrush. }
+        {
+          destruct (eq_dec (_reg_name tf_ctx state_var) (_reg_name tf_ctx var)).
+          { apply reg_name_inj in e. subst var. rewrite get_put_eq. reflexivity. }
+          { apply reg_name_inj' in n. rewrite get_put_neq; try timeout 10 hauto. }
+        }
+        {
+          destruct (eq_dec (_reg_name tf_ctx state_var) (_out_name tf_ctx var)).
+          { unfold _reg_name in e. unfold _out_name in e. timeout 10 fcrush. }
+          { exact IHl. }
+        }
+      }
+    Qed.
 
     Lemma sem_updates_output_correct:
       forall cmd fs_state hw_reg_state fs_input last_fs_output output_var,
+      StateR hw_reg_state fs_state ->
+      InputR fs_input ->
+      OutputR hw_reg_state last_fs_output -> 
       lookup
         (sem_updates_to_Gamma_ext (sem_ops_updates (spec_action_ops cmd) (fs_state, last_fs_output) fs_input) ++
           Gamma_after_read_vars0 hw_reg_state (Gamma_after_read_vars0 hw_reg_state [] (map (tf_reg tf_ctx) spec_all_states) (_register_var_name tf_ctx))
           (map (tf_out tf_ctx) spec_all_outputs) (_register_var_name tf_ctx)) (_register_var_name tf_ctx (tf_out tf_ctx output_var)) 
       = val_of_value (snd (sem_ops_run (spec_action_ops cmd) (fs_state, last_fs_output) fs_input)).[output_var].
     Proof.
-      (* ================================================================= *)
-      (* ================================================================= *)
-      (* ===               STILL SO MUCH TO DOOOOOOOOOO                === *)
-      (* ================================================================= *)
-      (* ================================================================= *)
-      admit.
-    Admitted.
+      intros. rename H into H_state. rename H0 into H_input. rename H1 into H_output.
+      unfold lookup, sem_ops_run, sem_op_step_commit, sem_updates_to_Gamma_ext. cbn.
+      set(updates := sem_ops_updates _ _ _) in *. rewrite <- fold_left_rev_right.
+      set (sem_update_fun := fun _ => _). set (sem_commit_fun := fun _ _ => _).
+      induction (rev updates). 
+      { cbn. rewrite Gamma_after_intro_is_hw_output. cbn. rewrite H_output. reflexivity. }
+      {
+        destruct a; cbn -[eq_dec].
+        { destr. unfold _reg_name in e. unfold _out_name in e. timeout 10 fcrush. }
+        {
+          destruct (eq_dec (_out_name tf_ctx output_var) (_reg_name tf_ctx var)).
+          { unfold _reg_name in e. unfold _out_name in e. timeout 10 fcrush. }
+          { exact IHl. }
+        }
+        {
+          destruct (eq_dec (_out_name tf_ctx output_var) (_out_name tf_ctx var)).
+          { apply out_name_inj in e. subst var. rewrite get_put_eq. reflexivity. }
+          { apply out_name_inj' in n. rewrite get_put_neq; try timeout 10 hauto. }
+        }
+      }
+    Qed.
       
   End RegUpdates.
 
@@ -3247,7 +2181,7 @@ Section CompositionalCorrectness.
         rewrite (latest_write_of_ActionLog_after_write_vars0_in).
         2: { apply in_map. exact H. }
 
-        rewrite sem_updates_state_correct. reflexivity.
+        rewrite sem_updates_state_correct; try exact H_state; try exact H_input; try exact H_output. reflexivity.
       }
       {
         (* 1. Prepare the Spec step *)
@@ -3290,7 +2224,7 @@ Section CompositionalCorrectness.
         rewrite (latest_write_of_ActionLog_after_write_vars0_in).
         2: { apply in_map. exact H. }
 
-        rewrite sem_updates_output_correct. reflexivity.
+        rewrite sem_updates_output_correct; try exact H_state; try exact H_input; try exact H_output. reflexivity.
       }
   Qed.
 
