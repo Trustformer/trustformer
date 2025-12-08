@@ -9,9 +9,9 @@ Set Hammer GSMode 63.
 Section TrustformerSyntax.
 
     (* Given some variables, inputs and outputs we define our syntax *)
-    Context (states_var: Type).
-    Context (inputs_var: Type).
-    Context (outputs_var: Type).
+    Context {states_var: Type}.
+    Context {inputs_var: Type}.
+    Context {outputs_var: Type}.
 
     Inductive tf_unary_ops :=
         | tf_not                                (* Bitwise NOT *)

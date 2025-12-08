@@ -73,7 +73,7 @@ Section FunctionalSpecification.
     | fs_out_val => sz
     end.
 
-    Definition fs_states_t := tf_states_type fs_states fs_states_size. 
+    Definition fs_states_t := tf_states_type fs_states_size. 
 
     Definition fs_states_init (x: fs_states) : (fs_states_t x) :=
     match x with
@@ -83,17 +83,17 @@ Section FunctionalSpecification.
     Definition fs_transitions
         (act: fs_action)
         :
-        (tf_ops fs_states fs_inputs fs_outputs)
+        (@tf_ops fs_states fs_inputs fs_outputs)
         :=
         match act with
-        | fs_act_set => tf_ops_base _ _ _ (tf_assign _ _ _ fs_st_val (tf_input _ _ fs_in_val))
-        | fs_act_test => tf_ops_if _ _ _ 
-            (tf_op2 _ _ (tf_cmp sz tf_eq) (tf_var _ _ fs_st_val) (tf_input _ _ fs_in_val)) 
-                (tf_ops_base _ _ _ (tf_output _ _ _ fs_out_val (tf_const _ _ 1)))
-                (tf_ops_base _ _ _ (tf_output _ _ _ fs_out_val (tf_const _ _ 0)))
+        | fs_act_set => tf_ops_base (tf_assign fs_st_val (tf_input fs_in_val))
+        | fs_act_test => tf_ops_if 
+            (tf_op2 (tf_cmp sz tf_eq) (tf_var fs_st_val) (tf_input fs_in_val)) 
+                (tf_ops_base (tf_output fs_out_val (tf_const 1)))
+                (tf_ops_base (tf_output fs_out_val (tf_const 0)))
         end.
 
-    Definition fs_step := tf_ops_run fs_states _ fs_inputs fs_outputs _ fs_states_size fs_inputs_size fs_outputs_size.
+    Definition fs_step := tf_ops_run fs_states_size fs_inputs_size fs_outputs_size.
     
     Section Examples.
         Definition bits_10 := Bits.of_nat sz 10.

@@ -67,7 +67,7 @@ Section FunctionalSpecification.
     match x with
     end.
 
-    Definition fs_states_t := tf_states_type fs_states fs_states_size. 
+    Definition fs_states_t := tf_states_type fs_states_size. 
 
     Definition fs_states_init (x: fs_states) : (fs_states_t x) :=
     match x with
@@ -77,14 +77,14 @@ Section FunctionalSpecification.
     Definition fs_transitions
         (act: fs_action)
         :
-        (tf_ops fs_states fs_inputs fs_outputs)
+        (@tf_ops fs_states fs_inputs fs_outputs)
         :=
         match act with
-        | fs_act_nop => tf_ops_base _ _ _ (tf_nop _ _ _) 
-        | fs_act_neg => tf_ops_base _ _ _ (tf_assign _ _ _ fs_st_val (tf_op1 _ _ (tf_not) (tf_var _ _ fs_st_val)))
+        | fs_act_nop => tf_ops_base (tf_nop) 
+        | fs_act_neg => tf_ops_base (tf_assign fs_st_val (tf_op1 (tf_not) (tf_var fs_st_val)))
         end.
 
-    Definition fs_step := tf_ops_run fs_states _ fs_inputs fs_outputs _ fs_states_size fs_inputs_size fs_outputs_size.
+    Definition fs_step := tf_ops_run fs_states_size fs_inputs_size fs_outputs_size.
     
     Section Examples.
 

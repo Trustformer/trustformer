@@ -41,7 +41,7 @@ Section CompositionalCorrectness.
   Local Notation spec_states := (tf_spec_states tf_ctx).
   Local Notation spec_states_fin := (tf_spec_states_fin tf_ctx).
   Local Notation spec_states_size := (tf_spec_states_size tf_ctx).
-  Local Notation spec_states_t := (tf_states_type spec_states spec_states_size).
+  Local Notation spec_states_t := (tf_states_type spec_states_size).
   Local Notation spec_states_init := (tf_spec_states_init tf_ctx).
   Local Notation spec_all_states := (@finite_elements spec_states spec_states_fin).
   Local Notation spec_state_index := (@finite_index spec_states spec_states_fin).
@@ -50,7 +50,7 @@ Section CompositionalCorrectness.
   Local Notation spec_inputs := (tf_spec_inputs tf_ctx).
   Local Notation spec_inputs_fin := (tf_spec_inputs_fin tf_ctx).
   Local Notation spec_inputs_size := (tf_spec_inputs_size tf_ctx).
-  Local Notation spec_inputs_t := (tf_inputs_type spec_inputs spec_inputs_size).
+  Local Notation spec_inputs_t := (tf_inputs_type spec_inputs_size).
   Local Notation spec_all_inputs := (@finite_elements spec_inputs spec_inputs_fin).
   Local Notation spec_input_index := (@finite_index spec_inputs spec_inputs_fin).
   Local Notation spec_input_num := (Datatypes.length spec_all_inputs).
@@ -58,7 +58,7 @@ Section CompositionalCorrectness.
   Local Notation spec_outputs := (tf_spec_outputs tf_ctx).
   Local Notation spec_outputs_fin := (tf_spec_outputs_fin tf_ctx).
   Local Notation spec_outputs_size := (tf_spec_outputs_size tf_ctx).
-  Local Notation spec_outputs_t := (tf_outputs_type spec_outputs spec_outputs_size).
+  Local Notation spec_outputs_t := (tf_outputs_type spec_outputs_size).
   Local Notation spec_all_outputs := (@finite_elements spec_outputs spec_outputs_fin).
   Local Notation spec_output_index := (@finite_index spec_outputs spec_outputs_fin).
   Local Notation spec_output_num := (Datatypes.length spec_all_outputs).
@@ -75,23 +75,23 @@ Section CompositionalCorrectness.
 
   Local Notation spec_action_ops := (tf_spec_action_ops tf_ctx).
 
-  Local Notation spec_var_written := (tf_ops_var_written spec_states spec_states_fin spec_inputs spec_outputs spec_states_size spec_inputs_size spec_outputs_size).
-  Local Notation spec_out_written := (tf_ops_out_written spec_states spec_states_fin spec_inputs spec_outputs spec_states_size spec_inputs_size spec_outputs_size).
-  Local Notation spec_var_written_dec := (tf_ops_var_written_dec spec_states spec_states_fin spec_inputs spec_outputs spec_states_size spec_inputs_size spec_outputs_size).
-  Local Notation spec_out_written_dec := (tf_ops_out_written_dec spec_states spec_states_fin spec_inputs spec_outputs spec_outputs_fin spec_states_size spec_inputs_size spec_outputs_size).
-  Local Notation spec_eval_expr := (tf_eval_expr spec_states spec_states_fin spec_inputs spec_states_size spec_inputs_size).
+  Local Notation spec_var_written := (tf_ops_var_written (states_var_fin:=spec_states_fin) spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation spec_out_written := (tf_ops_out_written (states_var_fin:=spec_states_fin) spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation spec_var_written_dec := (tf_ops_var_written_dec spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation spec_out_written_dec := (tf_ops_out_written_dec spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation spec_eval_expr := (tf_eval_expr spec_states_size spec_inputs_size).
 
-  Local Notation sem_var_not_written_means_ops_run_unchanged := (tf_ops_var_not_written_means_ops_run_unchanged spec_states spec_states_fin spec_inputs spec_outputs spec_outputs_fin spec_states_size spec_inputs_size spec_outputs_size).
-  Local Notation sem_out_not_written_means_ops_run_unchanged := (tf_ops_out_not_written_means_ops_run_unchanged spec_states spec_states_fin spec_inputs spec_outputs spec_outputs_fin spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation sem_var_not_written_means_ops_run_unchanged := (tf_ops_var_not_written_means_ops_run_unchanged spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation sem_out_not_written_means_ops_run_unchanged := (tf_ops_out_not_written_means_ops_run_unchanged spec_states_size spec_inputs_size spec_outputs_size).
 
-  Local Notation sem_op_step_updates := (tf_op_step_updates spec_states spec_states_fin spec_inputs spec_outputs spec_states_size spec_inputs_size spec_outputs_size).
-  Local Notation sem_op_step_commit_state := (tf_op_step_commit_state spec_states spec_states_fin spec_outputs spec_states_size spec_outputs_size).
-  Local Notation sem_op_step_commit_output := (tf_op_step_commit_output spec_states spec_outputs spec_outputs_fin spec_states_size spec_outputs_size).
-  Local Notation sem_op_step_commit := (tf_op_step_commit spec_states spec_states_fin spec_outputs spec_outputs_fin spec_states_size spec_outputs_size).
-  Local Notation sem_update := (tf_update spec_states spec_outputs spec_states_size spec_outputs_size).
+  Local Notation sem_op_step_updates := (tf_op_step_updates spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation sem_op_step_commit_state := (tf_op_step_commit_state spec_states_size spec_outputs_size).
+  Local Notation sem_op_step_commit_output := (tf_op_step_commit_output spec_states_size spec_outputs_size).
+  Local Notation sem_op_step_commit := (tf_op_step_commit spec_states_size spec_outputs_size).
+  Local Notation sem_update := (tf_update spec_states_size spec_outputs_size).
 
-  Local Notation sem_ops_updates := (tf_ops_updates spec_states spec_states_fin spec_inputs spec_outputs spec_outputs_fin spec_states_size spec_inputs_size spec_outputs_size).
-  Local Notation sem_ops_run := (tf_ops_run spec_states spec_states_fin spec_inputs spec_outputs spec_outputs_fin spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation sem_ops_updates := (tf_ops_updates spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation sem_ops_run := (tf_ops_run spec_states_size spec_inputs_size spec_outputs_size).
 
   (* Instances, they might require explicit unfolding *)
 
@@ -444,9 +444,6 @@ Section CompositionalCorrectness.
       apply (H_all var_name).
       apply H_subset. exact H_in1.
     Qed.
-
-    Definition has_bits (value : val) :=
-      exists bl : list bool, value = Bits bl.
 
     Definition has_sized_bits (value : val) (sz: nat):=
       exists bl : list bool, value = Bits bl /\ Datatypes.length bl = sz.
@@ -1113,17 +1110,17 @@ Section CompositionalCorrectness.
       }
     Qed.
         
-    Fixpoint value_of_expr (expr: tf_expr spec_states spec_inputs) (Gamma: list (string * val)) (target_size: nat) : val :=
+    Fixpoint value_of_expr (expr: tf_expr) (Gamma: list (string * val)) (target_size: nat) : val :=
       match expr with
-        | tf_const _ _ value => 
+        | tf_const value => 
             Bits (vect_to_list (Bits.of_nat (target_size) value))
-        | tf_var _ _ v =>
+        | tf_var v =>
             val_convert target_size (spec_states_size v) (lookup_s Gamma v)
-        | tf_input _ _ v =>
+        | tf_input v =>
             val_convert target_size (spec_inputs_size v) (sigma (ext_input tf_ctx v) val_true)
-        | tf_op1 _ _ op src =>
+        | tf_op1 op src =>
             value_of_option_lossy (UntypedSemantics.usigma1 UNot (value_of_expr src Gamma target_size))
-        | tf_op2 _ _ op src1 src2 =>
+        | tf_op2 op src1 src2 =>
             let v1 := (bits_of_value_lossy (value_of_expr src1 Gamma target_size)) in
             let v2 := (bits_of_value_lossy (value_of_expr src2 Gamma target_size)) in
             match op with
@@ -1667,9 +1664,9 @@ Section CompositionalCorrectness.
     Definition sem_updates_to_Gamma_ext (updates: list sem_update) : list (string * val) :=
       flat_map (fun update =>
         match update with
-          | tf_no_update _ _ _ _ => [ ("_unused", val_unreachable ) ]
-          | tf_st_update _ _ _ _ dst value => [ (_reg_name tf_ctx dst, val_of_value value) ]
-          | tf_out_update _ _ _ _ dst value => [ (_out_name tf_ctx dst, val_of_value value) ]
+          | tf_no_update _ _ => [ ("_unused", val_unreachable ) ]
+          | tf_st_update _ _ dst value => [ (_reg_name tf_ctx dst, val_of_value value) ]
+          | tf_out_update _ _ dst value => [ (_out_name tf_ctx dst, val_of_value value) ]
         end) (rev updates).
 
     Ltac assert_match_terms_equal :=
@@ -1689,7 +1686,7 @@ Section CompositionalCorrectness.
       has_var_all Gamma (map (_register_var_name tf_ctx) (map (tf_reg tf_ctx) spec_all_states)) ->
         let fs_state' := SpecStateEnvExt fs_state Gamma GokS in
         let fs_output' := SpecOutputEnvExt fs_output Gamma GokO in
-        let updates := sem_ops_updates (tf_ops_base spec_states spec_inputs spec_outputs op) (fs_state', fs_output') fs_input in
+        let updates := sem_ops_updates (tf_ops_base op) (fs_state', fs_output') fs_input in
         let Gamma' := (sem_updates_to_Gamma_ext updates) ++ Gamma in
           interp_action hw_reg_state sigma Gamma sched_log action_log (op_to_uaction tf_ctx op code) =
           let/opt3 l, v, G := interp_action hw_reg_state sigma Gamma' sched_log action_log code in Some (l, v, tl G).
@@ -2152,7 +2149,7 @@ Section CompositionalCorrectness.
         2: { unfold isStateReg. left. exists state_var. reflexivity. }
 
         (* 4. Ignore the writes to the output regs *)
-        cbn [latest_write]. rewrite Common.log_app_empty_r. cbn. 
+        cbn [latest_write]. rewrite Common.log_app_empty_r. cbn -[type_denote env_t]. 
         rewrite (latest_write_of_ActionLog_after_write_vars0_not_in).
         2: { induction _written_outputs. auto. cbn. unfold not; intros. destruct H; try congruence. }
 
@@ -2171,6 +2168,7 @@ Section CompositionalCorrectness.
             pose proof (spec_all_states_complete state_var) as H1.
             apply H; clear H. rewrite filter_In. split. exact H1. destr.
           }
+          Set Printing All.
           rewrite (sem_var_not_written_means_ops_run_unchanged); try exact H0.
       
           (* 6a.3 Conclude both sides are equal *)
@@ -2198,7 +2196,7 @@ Section CompositionalCorrectness.
         2: { unfold isOutputReg. right. exists output_var. reflexivity. }
 
         (* 4. Determine whether the output was written to or not *)
-        cbn [latest_write]. rewrite Common.log_app_empty_r. cbn. 
+        cbn [latest_write]. rewrite Common.log_app_empty_r. cbn -[type_denote env_t]. 
         destruct (ListDec.In_decidable list_decidable_eq_spec_outputs output_var (_written_outputs tf_ctx (spec_action_ops cmd))).
         2: {
           (* 5a.1 If the output was not written show the HW step becomes a NOP *)

@@ -29,7 +29,7 @@ Record TFSynthContext := {
   tf_spec_states_fin : FiniteType tf_spec_states;
   tf_spec_states_names : Show tf_spec_states;
   tf_spec_states_size : tf_spec_states -> nat;
-  tf_spec_states_init : forall x: tf_spec_states, tf_states_type tf_spec_states tf_spec_states_size x;
+  tf_spec_states_init : forall x: tf_spec_states, tf_states_type tf_spec_states_size x;
 
   tf_spec_inputs : Type;
   tf_spec_inputs_fin : FiniteType tf_spec_inputs;
@@ -47,7 +47,7 @@ Record TFSynthContext := {
   tf_spec_action_reg_size : nat;
   tf_spec_action_encoding : tf_spec_action -> bits_t tf_spec_action_reg_size;
   tf_spec_action_encoding_inj : forall a1 a2, tf_spec_action_encoding a1 = tf_spec_action_encoding a2 -> a1 = a2;
-  tf_spec_action_ops : tf_spec_action -> tf_ops tf_spec_states tf_spec_inputs tf_spec_outputs
+  tf_spec_action_ops : tf_spec_action -> @tf_ops tf_spec_states tf_spec_inputs tf_spec_outputs
 }.
 
 Section TrustformerSynthesis.
@@ -59,7 +59,7 @@ Section TrustformerSynthesis.
     Local Notation spec_states := (tf_spec_states tf_ctx).
     Local Notation spec_states_fin := (tf_spec_states_fin tf_ctx).
     Local Notation spec_states_size := (tf_spec_states_size tf_ctx).
-    Local Notation spec_states_t := (tf_states_type spec_states spec_states_size).
+    Local Notation spec_states_t := (tf_states_type spec_states_size).
     Local Notation spec_states_init := (tf_spec_states_init tf_ctx).
     Local Notation spec_all_states := (@finite_elements spec_states spec_states_fin).
     Local Notation spec_state_index := (@finite_index spec_states spec_states_fin).
@@ -68,7 +68,7 @@ Section TrustformerSynthesis.
     Local Notation spec_inputs := (tf_spec_inputs tf_ctx).
     Local Notation spec_inputs_fin := (tf_spec_inputs_fin tf_ctx).
     Local Notation spec_inputs_size := (tf_spec_inputs_size tf_ctx).
-    Local Notation spec_inputs_t := (tf_inputs_type spec_inputs spec_inputs_size).
+    Local Notation spec_inputs_t := (tf_inputs_type spec_inputs_size).
     Local Notation spec_all_inputs := (@finite_elements spec_inputs spec_inputs_fin).
     Local Notation spec_input_index := (@finite_index spec_inputs spec_inputs_fin).
     Local Notation spec_input_num := (Datatypes.length spec_all_inputs).
@@ -76,7 +76,7 @@ Section TrustformerSynthesis.
     Local Notation spec_outputs := (tf_spec_outputs tf_ctx).
     Local Notation spec_outputs_fin := (tf_spec_outputs_fin tf_ctx).
     Local Notation spec_outputs_size := (tf_spec_outputs_size tf_ctx).
-    Local Notation spec_outputs_t := (tf_outputs_type spec_outputs spec_outputs_size).
+    Local Notation spec_outputs_t := (tf_outputs_type spec_outputs_size).
     Local Notation spec_all_outputs := (@finite_elements spec_outputs spec_outputs_fin).
     Local Notation spec_output_index := (@finite_index spec_outputs spec_outputs_fin).
     Local Notation spec_output_num := (Datatypes.length spec_all_outputs).
@@ -93,10 +93,15 @@ Section TrustformerSynthesis.
 
     Local Notation spec_action_ops := (tf_spec_action_ops tf_ctx).
 
-    Local Notation spec_var_written_dec := (tf_ops_var_written_dec spec_states spec_states_fin spec_inputs spec_outputs spec_states_size spec_inputs_size spec_outputs_size).
-    Local Notation spec_out_written_dec := (tf_ops_out_written_dec spec_states spec_states_fin spec_inputs spec_outputs spec_outputs_fin spec_states_size spec_inputs_size spec_outputs_size).
+    Local Notation spec_var_written_dec := (tf_ops_var_written_dec spec_states_size spec_inputs_size spec_outputs_size).
+    Local Notation spec_out_written_dec := (tf_ops_out_written_dec spec_states_size spec_inputs_size spec_outputs_size).
 
     (* ====== Instances ====== *)
+
+    
+    Hint Extern 0 (FiniteType spec_states) => exact (tf_spec_states_fin tf_ctx) : typeclass_instances.
+    Hint Extern 0 (FiniteType spec_inputs) => exact (tf_spec_inputs_fin tf_ctx) : typeclass_instances.
+    Hint Extern 0 (FiniteType spec_outputs) => exact (tf_spec_outputs_fin tf_ctx) : typeclass_instances.
 
     Instance show_spec_states : Show spec_states := tf_spec_states_names tf_ctx.
     Instance show_spec_inputs : Show spec_inputs := tf_spec_inputs_names tf_ctx.
@@ -268,17 +273,17 @@ Section TrustformerSynthesis.
       else
         (UUnop (UBits1 (USlice 0 out_var_size)) code).
 
-    Fixpoint expr_to_uaction (e: tf_expr spec_states spec_inputs) (target_size: nat) : uaction reg_t ext_fn_t :=
+    Fixpoint expr_to_uaction (e: tf_expr) (target_size: nat) : uaction reg_t ext_fn_t :=
       match e with
-        | tf_const _ _ value =>
+        | tf_const value =>
             let val := Bits.of_nat target_size value in {{#val}}
-        | tf_var _ _ v =>
+        | tf_var v =>
             synth_convert target_size (spec_states_size v) (UVar (_reg_name v))
-        | tf_input _ _ v =>
+        | tf_input v =>
             synth_convert target_size (spec_inputs_size v) (UExternalCall (ext_input v) {{Ob~1}})
-        | tf_op1 _ _ op src =>
+        | tf_op1 op src =>
             (UUnop (UBits1 UNot) (expr_to_uaction src target_size))
-        | tf_op2 _ _ op src1 src2 =>
+        | tf_op2 op src1 src2 =>
             match op with
             | tf_and => (UBinop (UBits2 UAnd) (expr_to_uaction src1 target_size) (expr_to_uaction src2 target_size))
             | tf_or => (UBinop (UBits2 UOr) (expr_to_uaction src1 target_size) (expr_to_uaction src2 target_size))
@@ -299,63 +304,25 @@ Section TrustformerSynthesis.
             end
         end.
 
-    Definition op_to_uaction (op: tf_op spec_states spec_inputs spec_outputs) (code: uaction reg_t ext_fn_t) : uaction reg_t ext_fn_t :=
+    Definition op_to_uaction (op: tf_op) (code: uaction reg_t ext_fn_t) : uaction reg_t ext_fn_t :=
       match op with
-      | tf_nop _ _ _ => UBind "_unused" {{ #Ob }} code 
-      | tf_assign _ _ _ x expr => UBind (_reg_name x) (expr_to_uaction expr (spec_states_size x)) code
-      | tf_output _ _ _ x expr => UBind (_out_name x) (expr_to_uaction expr (spec_outputs_size x)) code
+      | tf_nop => UBind "_unused" {{ #Ob }} code 
+      | tf_assign x expr => UBind (_reg_name x) (expr_to_uaction expr (spec_states_size x)) code
+      | tf_output x expr => UBind (_out_name x) (expr_to_uaction expr (spec_outputs_size x)) code
       end.
 
     Fixpoint _rule_aux
-      (rule_ops: tf_ops spec_states spec_inputs spec_outputs)
+      (rule_ops: tf_ops)
       (code: uaction reg_t ext_fn_t)
       : uaction reg_t ext_fn_t :=
       match rule_ops with
-      | tf_ops_base _ _ _ op => op_to_uaction op code
-      | tf_ops_cons _ _ _ op1 op2 => op_to_uaction op1 (_rule_aux op2 code)
-      | tf_ops_if _ _ _ cond then_ops else_ops =>
+      | tf_ops_base op => op_to_uaction op code
+      | tf_ops_cons op1 op2 => op_to_uaction op1 (_rule_aux op2 code)
+      | tf_ops_if cond then_ops else_ops =>
           UIf (expr_to_uaction cond 1)
             (_rule_aux then_ops code)
             (_rule_aux else_ops code)
       end.      
-        
-    (* Helper function that reads all state registers into variables *)
-    (* Fixpoint _rule_read_state_vars_rec (states_to_read : list (spec_states)) (code: uaction reg_t ext_fn_t): uaction reg_t ext_fn_t :=
-      match states_to_read with
-      | [] => code
-      | x :: rest =>
-        UBind (_reg_name x) 
-          {{ read1(tf_reg x) }} 
-          (_rule_read_state_vars_rec rest code)
-      end. *)
-
-    (* Helper function that reads all output registers into variables *)
-    (* Fixpoint _rule_read_out_vars_rec (outputs_to_read : list (spec_outputs)) (code: uaction reg_t ext_fn_t): uaction reg_t ext_fn_t :=
-      match outputs_to_read with
-      | [] => code
-      | x :: rest =>
-        UBind (_out_name x) 
-          {{ read0(tf_out x) }} 
-          (_rule_read_out_vars_rec rest code)
-      end. *)
-
-    (* Helper function that writes back all modified state variables *)
-    (* Definition _rule_write_state_vars (ops: tf_ops spec_states spec_inputs spec_outputs) (code: uaction reg_t ext_fn_t) : uaction reg_t ext_fn_t  := 
-      List.fold_right (fun x acc => 
-        if spec_var_written_dec x ops then
-          USeq {{ write1(tf_reg x, `UVar (_reg_name x)`) }} acc
-        else
-          acc
-      ) code spec_all_states. *)
-    
-    (* Helper function that writes back all modified output variables *)
-    (* Definition _rule_write_output_vars (ops: tf_ops spec_states spec_inputs spec_outputs) (code: uaction reg_t ext_fn_t) : uaction reg_t ext_fn_t  := 
-      List.fold_right (fun x acc => 
-        if spec_out_written_dec x ops then
-          USeq {{ write0(tf_out x, `UVar (_out_name x)`) }} acc
-        else
-          acc 
-      ) code spec_all_outputs. *)
 
     Definition _rule_read_var0 (var_map: reg_t -> string) (reg : reg_t) (code: uaction reg_t ext_fn_t): uaction reg_t ext_fn_t :=
         UBind (var_map reg) {{ read0(reg) }} code.
@@ -369,10 +336,10 @@ Section TrustformerSynthesis.
     Definition _rule_write_vars0 (var_map: reg_t -> string) (regs : list reg_t) (code: uaction reg_t ext_fn_t): uaction reg_t ext_fn_t :=
       List.fold_right (_rule_write_var0 var_map) code regs.
 
-    Definition _written_outputs (state_ops: tf_ops (spec_states) (spec_inputs) (spec_outputs)) := 
+    Definition _written_outputs (state_ops: tf_ops) := 
         List.filter (fun o => if (spec_out_written_dec o state_ops) then true else false) spec_all_outputs.
 
-    Definition _written_states (state_ops: tf_ops (spec_states) (spec_inputs) (spec_outputs)) := 
+    Definition _written_states (state_ops: tf_ops) := 
         List.filter (fun s => if (spec_var_written_dec s state_ops) then true else false) spec_all_states.
 
     Definition _register_var_name (r: reg_t) : string :=
