@@ -146,19 +146,22 @@ Section Semantics.
         (tf_op_step_commit_state (fst sys_state) update,
          tf_op_step_commit_output (snd sys_state) update).
 
+    
+
     Fixpoint tf_ops_updates
       (state_ops: tf_ops)
       (sys_state: ContextEnv.(env_t) tf_states_type * ContextEnv.(env_t) tf_outputs_type)
       (input: forall (x : inputs_var), (type_denote (tf_inputs_type x)))
       : 
-      (list tf_update) :=
+      (list tf_update * (ContextEnv.(env_t) tf_states_type * ContextEnv.(env_t) tf_outputs_type)) :=
         match state_ops with
         | tf_ops_base op =>
-            [tf_op_step_updates op (fst sys_state) input]
-        | tf_ops_cons op ops =>
-            let update1 := tf_op_step_updates op (fst sys_state) input in
-            let new_sys_state1 := tf_op_step_commit sys_state update1 in
-            update1 :: tf_ops_updates ops new_sys_state1 input
+            let update := tf_op_step_updates op (fst sys_state) input in
+            ( [update], tf_op_step_commit sys_state update )
+        | tf_ops_cons ops1 ops2 =>
+            let (updates1, sys_state1) := tf_ops_updates ops1 sys_state input in
+            let (updates2, sys_state2) := tf_ops_updates ops2 sys_state1 input in
+            (updates1 ++ updates2, sys_state2)
         | tf_ops_if cond then_ops else_ops =>
             let cond_val := tf_eval_expr (szB:=1) cond (fst sys_state) input in
             if beq_dec cond_val Bits.zero then (* Note: we check for false i.e. all bits are zero, thus the bodies here are switched *)
@@ -173,10 +176,46 @@ Section Semantics.
       (input: forall (x : inputs_var), (type_denote (tf_inputs_type x)))
       : 
       (ContextEnv.(env_t) tf_states_type * ContextEnv.(env_t) tf_outputs_type) :=
-        let updates := tf_ops_updates state_ops sys_state input in
-        fold_left tf_op_step_commit updates sys_state.
+        snd (tf_ops_updates state_ops sys_state input).
 
     Section Properties.
+
+      Lemma tf_ops_updates_correct:
+        forall state_ops sys_state input updates final_state,
+          tf_ops_updates state_ops sys_state input = (updates, final_state) ->
+          final_state = fold_left tf_op_step_commit updates sys_state.
+      Proof.
+        intros state_ops. induction state_ops; intros; rename H into Hupd; simpl in *.
+        - (* tf_ops_base *)
+          inversion Hupd. reflexivity.
+        - (* tf_ops_cons *)
+          destruct (tf_ops_updates state_ops1 sys_state input) as [updates1 sys_state1] eqn:H1.
+          destruct (tf_ops_updates state_ops2 sys_state1 input) as [updates2 sys_state2] eqn:H2.
+          inversion Hupd. subst final_state.
+          specialize (IHstate_ops1 sys_state input updates1 sys_state1 H1).
+          specialize (IHstate_ops2 sys_state1 input updates2 sys_state2 H2).
+          rewrite IHstate_ops1 in *. rewrite IHstate_ops2 in *.
+          clear IHstate_ops1 IHstate_ops2.
+          rewrite <- fold_left_app. reflexivity.
+        - (* tf_ops_if *)
+          set (cond_val := tf_eval_expr (szB:=1) _ _ _) in *.
+          destruct cond_val; destruct vtl; destruct vhd; simpl in *.
+          + (* then branch taken *)
+            specialize (IHstate_ops1 sys_state input updates final_state Hupd).
+            exact IHstate_ops1.
+          + (* then branch not taken *)
+            specialize (IHstate_ops2 sys_state input updates final_state Hupd).
+            exact IHstate_ops2.
+      Qed.
+
+      Lemma tf_ops_updates_correct2:
+        forall state_ops sys_state input,
+          snd (tf_ops_updates state_ops sys_state input) = 
+          fold_left tf_op_step_commit (fst (tf_ops_updates state_ops sys_state input)) sys_state.
+      Proof.
+        intros. destruct (tf_ops_updates state_ops sys_state input) eqn:Hupd.
+        cbn in *. apply (tf_ops_updates_correct state_ops sys_state input). exact Hupd.
+      Qed.
 
       Definition tf_op_var_written
         (var: states_var)
@@ -210,9 +249,9 @@ Section Semantics.
         match state_ops with
         | tf_ops_base op =>
             tf_op_var_written var op
-        | tf_ops_cons op ops =>
-            tf_op_var_written var op \/
-            tf_ops_var_written var ops
+        | tf_ops_cons ops1 ops2 =>
+            tf_ops_var_written var ops1 \/
+            tf_ops_var_written var ops2
         | tf_ops_if cond then_ops else_ops =>
             tf_ops_var_written var then_ops \/
             tf_ops_var_written var else_ops
@@ -225,9 +264,9 @@ Section Semantics.
       Proof.
         induction state_ops.
         - exact (tf_op_var_written_dec var op).
-        - simpl. destruct (tf_op_var_written_dec var op).
+        - simpl. destruct IHstate_ops1.
           + left. left. exact t.
-          + destruct IHstate_ops.
+          + destruct IHstate_ops2.
             * left. right. exact t.
             * right. unfold not. intros. destruct H as [H|H]; congruence.
         - simpl. destruct IHstate_ops1.
@@ -251,15 +290,17 @@ Section Semantics.
           * rewrite e. contradict Hnw. eexists (fst sys_state), input, _. cbn. rewrite e. reflexivity.
           * rewrite get_put_neq by exact n. reflexivity.
         - (* tf_ops_cons *)
-          cbn in Hnw. unfold tf_op_var_written in Hnw. 
-          destruct op; cbn -[tf_ops_run] in *.
-          * apply (IHstate_ops (tf_op_step_commit sys_state tf_no_update)). intro. apply Hnw; clear Hnw. right. exact H.
-          * destruct (eq_dec dst var).
-            -- subst dst. contradict Hnw. left. eexists (fst sys_state), input, _. cbn. reflexivity.
-            -- rewrite (IHstate_ops (tf_op_step_commit _ _)). 2: { intro. apply Hnw; clear Hnw. right. exact H. }
-               cbn. rewrite get_put_neq by exact n. reflexivity.
-          * rewrite (IHstate_ops (tf_op_step_commit _ _)). 2: { intro. apply Hnw; clear Hnw. right. exact H. }
-            cbn. reflexivity.
+          cbn in Hnw.
+          assert (~ tf_ops_var_written var state_ops1) as Hnw1 by (intro H; apply Hnw; left; assumption).
+          assert (~ tf_ops_var_written var state_ops2) as Hnw2 by (intro H; apply Hnw; right; assumption).
+          destruct (tf_ops_updates state_ops1 sys_state input) as [updates1 s1] eqn:Heq1.
+          destruct (tf_ops_updates state_ops2 s1 input) as [updates2 s2] eqn:Heq2.
+          cbn.
+          specialize (IHstate_ops2 s1 input var Hnw2). rewrite Heq2 in IHstate_ops2.
+          cbn in IHstate_ops2. rewrite IHstate_ops2.        
+
+          specialize (IHstate_ops1 sys_state input var Hnw1). rewrite Heq1 in IHstate_ops1.
+          cbn in IHstate_ops1. apply IHstate_ops1.
         - (* tf_ops_if *)
           cbn in Hnw. set (cond_val := tf_eval_expr (szB:=1) _ _ _) in *.
           destruct cond_val; destruct vtl; cbn.
@@ -302,9 +343,9 @@ Section Semantics.
         match state_ops with
         | tf_ops_base op =>
             tf_op_out_written var op
-        | tf_ops_cons op ops =>
-            tf_op_out_written var op \/
-            tf_ops_out_written var ops
+        | tf_ops_cons ops1 ops2 =>
+            tf_ops_out_written var ops1 \/
+            tf_ops_out_written var ops2
         | tf_ops_if cond then_ops else_ops =>
             tf_ops_out_written var then_ops \/
             tf_ops_out_written var else_ops
@@ -317,9 +358,9 @@ Section Semantics.
       Proof.
         induction state_ops.
         - exact (tf_op_out_written_dec var op).
-        - simpl. destruct (tf_op_out_written_dec var op).
+        - simpl. destruct IHstate_ops1.
           + left. left. exact t.
-          + destruct IHstate_ops.
+          + destruct IHstate_ops2.
             * left. right. exact t.
             * right. unfold not. intros. destruct H as [H|H]; congruence.
         - simpl. destruct IHstate_ops1.
@@ -343,15 +384,17 @@ Section Semantics.
           * rewrite e. contradict Hnw. eexists (fst sys_state), input, _. cbn. rewrite e. reflexivity.
           * rewrite get_put_neq by exact n. reflexivity.
         - (* tf_ops_cons *)
-          cbn in Hnw. unfold tf_op_out_written in Hnw. 
-          destruct op; cbn -[tf_ops_run] in *.
-          * apply (IHstate_ops (tf_op_step_commit sys_state tf_no_update)). intro. apply Hnw; clear Hnw. right. exact H.
-          * rewrite (IHstate_ops (tf_op_step_commit _ _)). 2: { intro. apply Hnw; clear Hnw. right. exact H. }
-               cbn. reflexivity.
-          * destruct (eq_dec dst var).
-            -- subst dst. contradict Hnw. left. eexists (fst sys_state), input, _. cbn. reflexivity.
-            -- rewrite (IHstate_ops (tf_op_step_commit _ _)). 2: { intro. apply Hnw; clear Hnw. right. exact H. }
-               cbn. rewrite get_put_neq by exact n. reflexivity.
+          cbn in Hnw.
+          assert (~ tf_ops_out_written var state_ops1) as Hnw1 by (intro H; apply Hnw; left; assumption).
+          assert (~ tf_ops_out_written var state_ops2) as Hnw2 by (intro H; apply Hnw; right; assumption).
+          destruct (tf_ops_updates state_ops1 sys_state input) as [updates1 s1] eqn:Heq1.
+          destruct (tf_ops_updates state_ops2 s1 input) as [updates2 s2] eqn:Heq2.
+          cbn.
+          specialize (IHstate_ops2 s1 input var Hnw2). rewrite Heq2 in IHstate_ops2.
+          cbn in IHstate_ops2. rewrite IHstate_ops2.        
+
+          specialize (IHstate_ops1 sys_state input var Hnw1). rewrite Heq1 in IHstate_ops1.
+          cbn in IHstate_ops1. apply IHstate_ops1.
         - (* tf_ops_if *)
           cbn in Hnw. set (cond_val := tf_eval_expr (szB:=1) _ _ _) in *.
           destruct cond_val; destruct vtl; cbn.

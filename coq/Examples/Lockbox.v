@@ -95,12 +95,12 @@ Section FunctionalSpecification.
         match act with
         | fs_act_set => 
             tf_ops_cons
-                (tf_assign fs_st_pin (tf_input fs_in_pin))
+                (tf_ops_base (tf_assign fs_st_pin (tf_input fs_in_pin)))
                 (tf_ops_base (tf_assign fs_st_secret (tf_input fs_in_secret)))
         | fs_act_test => tf_ops_if 
             (tf_op2 (tf_cmp sz tf_eq) (tf_var fs_st_pin) (tf_input fs_in_pin)) 
                 (tf_ops_cons 
-                    (tf_output fs_out_secret (tf_var fs_st_secret)) 
+                    (tf_ops_base (tf_output fs_out_secret (tf_var fs_st_secret))) 
                     (tf_ops_base (tf_output fs_out_status (tf_const 1))))
                 (tf_ops_base (tf_output fs_out_status (tf_const 0)))
         end.

@@ -53,7 +53,7 @@ Section TrustformerSyntax.
 
     Inductive tf_ops :=
         | tf_ops_base (op: tf_op)                                              (* Single operation *)
-        | tf_ops_cons (op: tf_op) (op2: tf_ops)                                (* Sequence of operations *)
+        | tf_ops_cons (op: tf_ops) (op2: tf_ops)                               (* Sequence of operations *)
         | tf_ops_if   (cond: tf_expr) (then_ops: tf_ops) (else_ops: tf_ops)    (* Conditional operations *)
         .
 

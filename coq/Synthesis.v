@@ -317,7 +317,7 @@ Section TrustformerSynthesis.
       : uaction reg_t ext_fn_t :=
       match rule_ops with
       | tf_ops_base op => op_to_uaction op code
-      | tf_ops_cons op1 op2 => op_to_uaction op1 (_rule_aux op2 code)
+      | tf_ops_cons ops1 ops2 => _rule_aux ops1 (_rule_aux ops2 code)
       | tf_ops_if cond then_ops else_ops =>
           UIf (expr_to_uaction cond 1)
             (_rule_aux then_ops code)
