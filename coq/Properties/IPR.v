@@ -41,7 +41,7 @@ Section CompositionalCorrectness.
   Local Notation spec_states := (tf_spec_states tf_ctx).
   Local Notation spec_states_fin := (tf_spec_states_fin tf_ctx).
   Local Notation spec_states_size := (tf_spec_states_size tf_ctx).
-  Local Notation spec_states_t := (tf_states_type spec_states spec_states_size).
+  Local Notation spec_states_t := (tf_states_type spec_states_size).
   Local Notation spec_states_init := (tf_spec_states_init tf_ctx).
   Local Notation spec_all_states := (@finite_elements spec_states spec_states_fin).
   Local Notation spec_state_index := (@finite_index spec_states spec_states_fin).
@@ -50,7 +50,7 @@ Section CompositionalCorrectness.
   Local Notation spec_inputs := (tf_spec_inputs tf_ctx).
   Local Notation spec_inputs_fin := (tf_spec_inputs_fin tf_ctx).
   Local Notation spec_inputs_size := (tf_spec_inputs_size tf_ctx).
-  Local Notation spec_inputs_t := (tf_inputs_type spec_inputs spec_inputs_size).
+  Local Notation spec_inputs_t := (tf_inputs_type spec_inputs_size).
   Local Notation spec_all_inputs := (@finite_elements spec_inputs spec_inputs_fin).
   Local Notation spec_input_index := (@finite_index spec_inputs spec_inputs_fin).
   Local Notation spec_input_num := (Datatypes.length spec_all_inputs).
@@ -58,7 +58,7 @@ Section CompositionalCorrectness.
   Local Notation spec_outputs := (tf_spec_outputs tf_ctx).
   Local Notation spec_outputs_fin := (tf_spec_outputs_fin tf_ctx).
   Local Notation spec_outputs_size := (tf_spec_outputs_size tf_ctx).
-  Local Notation spec_outputs_t := (tf_outputs_type spec_outputs spec_outputs_size).
+  Local Notation spec_outputs_t := (tf_outputs_type spec_outputs_size).
   Local Notation spec_all_outputs := (@finite_elements spec_outputs spec_outputs_fin).
   Local Notation spec_output_index := (@finite_index spec_outputs spec_outputs_fin).
   Local Notation spec_output_num := (Datatypes.length spec_all_outputs).
@@ -75,23 +75,24 @@ Section CompositionalCorrectness.
 
   Local Notation spec_action_ops := (tf_spec_action_ops tf_ctx).
 
-  Local Notation spec_var_written := (tf_ops_var_written spec_states spec_states_fin spec_inputs spec_outputs spec_states_size spec_inputs_size spec_outputs_size).
-  Local Notation spec_out_written := (tf_ops_out_written spec_states spec_states_fin spec_inputs spec_outputs spec_states_size spec_inputs_size spec_outputs_size).
-  Local Notation spec_var_written_dec := (tf_ops_var_written_dec spec_states spec_states_fin spec_inputs spec_outputs spec_states_size spec_inputs_size spec_outputs_size).
-  Local Notation spec_out_written_dec := (tf_ops_out_written_dec spec_states spec_states_fin spec_inputs spec_outputs spec_outputs_fin spec_states_size spec_inputs_size spec_outputs_size).
-  Local Notation spec_eval_expr := (tf_eval_expr spec_states spec_states_fin spec_inputs spec_states_size spec_inputs_size).
+  Local Notation spec_var_written := (tf_ops_var_written (states_var_fin:=spec_states_fin) spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation spec_out_written := (tf_ops_out_written (states_var_fin:=spec_states_fin) spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation spec_var_written_dec := (tf_ops_var_written_dec spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation spec_out_written_dec := (tf_ops_out_written_dec spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation spec_eval_expr := (tf_eval_expr spec_states_size spec_inputs_size).
 
-  Local Notation sem_var_not_written_means_ops_run_unchanged := (tf_ops_var_not_written_means_ops_run_unchanged spec_states spec_states_fin spec_inputs spec_outputs spec_outputs_fin spec_states_size spec_inputs_size spec_outputs_size).
-  Local Notation sem_out_not_written_means_ops_run_unchanged := (tf_ops_out_not_written_means_ops_run_unchanged spec_states spec_states_fin spec_inputs spec_outputs spec_outputs_fin spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation sem_var_not_written_means_ops_run_unchanged := (tf_ops_var_not_written_means_ops_run_unchanged spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation sem_out_not_written_means_ops_run_unchanged := (tf_ops_out_not_written_means_ops_run_unchanged spec_states_size spec_inputs_size spec_outputs_size).
 
-  Local Notation sem_op_step_updates := (tf_op_step_updates spec_states spec_states_fin spec_inputs spec_outputs spec_states_size spec_inputs_size spec_outputs_size).
-  Local Notation sem_op_step_commit_state := (tf_op_step_commit_state spec_states spec_states_fin spec_outputs spec_states_size spec_outputs_size).
-  Local Notation sem_op_step_commit_output := (tf_op_step_commit_output spec_states spec_outputs spec_outputs_fin spec_states_size spec_outputs_size).
-  Local Notation sem_op_step_commit := (tf_op_step_commit spec_states spec_states_fin spec_outputs spec_outputs_fin spec_states_size spec_outputs_size).
-  Local Notation sem_update := (tf_update spec_states spec_outputs spec_states_size spec_outputs_size).
+  Local Notation sem_op_step_updates := (tf_op_step_updates spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation sem_op_step_commit_state := (tf_op_step_commit_state spec_states_size spec_outputs_size).
+  Local Notation sem_op_step_commit_output := (tf_op_step_commit_output spec_states_size spec_outputs_size).
+  Local Notation sem_op_step_commit := (tf_op_step_commit spec_states_size spec_outputs_size).
+  Local Notation sem_update := (tf_update spec_states_size spec_outputs_size).
 
-  Local Notation sem_ops_updates := (tf_ops_updates spec_states spec_states_fin spec_inputs spec_outputs spec_outputs_fin spec_states_size spec_inputs_size spec_outputs_size).
-  Local Notation sem_ops_run := (tf_ops_run spec_states spec_states_fin spec_inputs spec_outputs spec_outputs_fin spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation sem_ops_updates := (tf_ops_updates spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation sem_ops_updates_correct2 := (tf_ops_updates_correct2 spec_states_size spec_inputs_size spec_outputs_size).
+  Local Notation sem_ops_run := (tf_ops_run spec_states_size spec_inputs_size spec_outputs_size).
 
   (* Instances, they might require explicit unfolding *)
 
@@ -165,6 +166,13 @@ Section CompositionalCorrectness.
       end.
 
   (* ============ Helper Lemmas on the synthesis results ============= *)
+
+  Lemma list_decidable_eq_string : ListDec.decidable_eq string.
+  Proof.
+    unfold ListDec.decidable_eq.
+    intros. unfold Decidable.decidable.
+    destruct (String.string_dec x y). left; auto. right; auto.
+  Qed.
 
   Lemma list_decidable_eq_spec_states : ListDec.decidable_eq spec_states.
   Proof.
@@ -445,9 +453,6 @@ Section CompositionalCorrectness.
       apply H_subset. exact H_in1.
     Qed.
 
-    Definition has_bits (value : val) :=
-      exists bl : list bool, value = Bits bl.
-
     Definition has_sized_bits (value : val) (sz: nat):=
       exists bl : list bool, value = Bits bl /\ Datatypes.length bl = sz.
 
@@ -494,8 +499,40 @@ Section CompositionalCorrectness.
     Definition Gamma_ok_state (Gamma: list (string * val)) :=
       (forall s, has_sized_bits (lookup_s Gamma s) (spec_states_size s)).
 
+    Lemma Gamma_ok_state_app:
+      forall Gamma1 Gamma2,
+        Gamma_ok_state Gamma1 ->
+        (forall s v, In ((_reg_name tf_ctx s), v) Gamma2 -> has_sized_bits v (spec_states_size s)) ->
+        Gamma_ok_state (Gamma2 ++ Gamma1).
+    Proof.
+      intros Gamma1 Gamma2 H_G1 H_G2. unfold Gamma_ok_state in *.
+      intros s. unfold lookup_s, lookup. 
+      induction Gamma2.
+      - cbn. apply H_G1. 
+      - cbn -[eq_dec]. destruct a as [var_name v].
+        destruct (eq_dec (_reg_name tf_ctx s) var_name).
+        + subst var_name. apply H_G2. left. reflexivity.
+        + apply IHGamma2. clear IHGamma2. intros. apply H_G2. right. exact H.
+    Qed.
+
     Definition Gamma_ok_output (Gamma: list (string * val)) :=
       (forall o, has_sized_bits (lookup_o Gamma o) (spec_outputs_size o)).
+
+    Lemma Gamma_ok_output_app:
+      forall Gamma1 Gamma2,
+        Gamma_ok_output Gamma1 ->
+        (forall o v, In ((_out_name tf_ctx o), v) Gamma2 -> has_sized_bits v (spec_outputs_size o)) ->
+        Gamma_ok_output (Gamma2 ++ Gamma1).
+    Proof.
+      intros Gamma1 Gamma2 H_G1 H_G2. unfold Gamma_ok_output in *.
+      intros o. unfold lookup_o, lookup. 
+      induction Gamma2.
+      - cbn. apply H_G1. 
+      - cbn -[eq_dec]. destruct a as [var_name v].
+        destruct (eq_dec (_out_name tf_ctx o) var_name).
+        + subst var_name. apply H_G2. left. reflexivity.
+        + apply IHGamma2. clear IHGamma2. intros. apply H_G2. right. exact H.
+    Qed.
 
     (* ======== State Relation ======== *)
     Definition StateR (hw_reg_state: hw_env_t) (fs_state: spec_state_env_t) :=
@@ -558,6 +595,17 @@ Section CompositionalCorrectness.
       reflexivity.
     Qed.
 
+    Lemma val_to_bits_equiv:
+      forall sz v1 v2 H1 H2,
+        v1 = v2 ->
+        val_to_bits sz v1 H1 = val_to_bits sz v2 H2.
+    Proof.
+      intros sz v1 v2 H1 H2 H_eq.
+      subst v2. unfold val_to_bits.
+      vect_to_list_t.
+      reflexivity.
+    Qed.
+
     Lemma val_to_bits_of_sized_val_correct:
       forall sz v H,
         val_to_bits sz (val_of_value (tau:=bits_t sz) v) H = v.
@@ -568,17 +616,21 @@ Section CompositionalCorrectness.
 
     Definition SpecStateEnvExt (fs_state: spec_state_env_t) (Gamma: list (string * val)) (PGokS: Gamma_ok_state Gamma) : spec_state_env_t :=
       ContextEnv (FT:=spec_states_fin).(create) (fun s => 
-        match BitsToLists.list_assoc (V:=val) Gamma (_reg_name tf_ctx s) return spec_states_t s with
+        val_to_bits (spec_states_size s) (lookup_s Gamma s) (PGokS s)
+        (* match BitsToLists.list_assoc (V:=val) Gamma (_reg_name tf_ctx s) return spec_states_t s with
         | Some v => val_to_bits (spec_states_size s) (lookup_s Gamma s) (PGokS s)
         | None => fs_state.[s]
-        end).
+        end *)
+        ).
 
     Definition SpecOutputEnvExt (fs_output: spec_output_env_t) (Gamma: list (string * val)) (PGokS: Gamma_ok_output Gamma) : spec_output_env_t :=
       ContextEnv (FT:=spec_outputs_fin).(create) (fun o => 
-        match BitsToLists.list_assoc (V:=val) Gamma (_out_name tf_ctx o) return spec_outputs_t o with
+        val_to_bits (spec_outputs_size o) (lookup_o Gamma o) (PGokS o)
+        (* match BitsToLists.list_assoc (V:=val) Gamma (_out_name tf_ctx o) return spec_outputs_t o with
         | Some v => val_to_bits (spec_outputs_size o) (lookup_o Gamma o) (PGokS o)
         | None => fs_output.[o]
-        end).
+        end *)
+        ).
 
   End HelperStructures.
   
@@ -1113,17 +1165,17 @@ Section CompositionalCorrectness.
       }
     Qed.
         
-    Fixpoint value_of_expr (expr: tf_expr spec_states spec_inputs) (Gamma: list (string * val)) (target_size: nat) : val :=
+    Fixpoint value_of_expr (expr: tf_expr) (Gamma: list (string * val)) (target_size: nat) : val :=
       match expr with
-        | tf_const _ _ value => 
+        | tf_const value => 
             Bits (vect_to_list (Bits.of_nat (target_size) value))
-        | tf_var _ _ v =>
+        | tf_var v =>
             val_convert target_size (spec_states_size v) (lookup_s Gamma v)
-        | tf_input _ _ v =>
+        | tf_input v =>
             val_convert target_size (spec_inputs_size v) (sigma (ext_input tf_ctx v) val_true)
-        | tf_op1 _ _ op src =>
+        | tf_op1 op src =>
             value_of_option_lossy (UntypedSemantics.usigma1 UNot (value_of_expr src Gamma target_size))
-        | tf_op2 _ _ op src1 src2 =>
+        | tf_op2 op src1 src2 =>
             let v1 := (bits_of_value_lossy (value_of_expr src1 Gamma target_size)) in
             let v2 := (bits_of_value_lossy (value_of_expr src2 Gamma target_size)) in
             match op with
@@ -1667,10 +1719,274 @@ Section CompositionalCorrectness.
     Definition sem_updates_to_Gamma_ext (updates: list sem_update) : list (string * val) :=
       flat_map (fun update =>
         match update with
-          | tf_no_update _ _ _ _ => [ ("_unused", val_unreachable ) ]
-          | tf_st_update _ _ _ _ dst value => [ (_reg_name tf_ctx dst, val_of_value value) ]
-          | tf_out_update _ _ _ _ dst value => [ (_out_name tf_ctx dst, val_of_value value) ]
+          | tf_no_update _ _ => [ ("_unused", val_unreachable ) ]
+          | tf_st_update _ _ dst value => [ (_reg_name tf_ctx dst, val_of_value value) ]
+          | tf_out_update _ _ dst value => [ (_out_name tf_ctx dst, val_of_value value) ]
         end) (rev updates).
+
+    Definition sem_updates_to_Gamma_ext_app:
+      forall updates1 updates2,
+        sem_updates_to_Gamma_ext (updates1 ++ updates2) =
+        sem_updates_to_Gamma_ext updates2 ++ sem_updates_to_Gamma_ext updates1.
+    Proof.
+      unfold sem_updates_to_Gamma_ext.
+      intros. rewrite rev_app_distr. rewrite flat_map_app. reflexivity.
+    Qed.
+
+    Lemma sem_updates_to_Gamma_ext_keeps_state_ok:
+      forall updates Gamma,
+        Gamma_ok_state Gamma ->
+        Gamma_ok_state (sem_updates_to_Gamma_ext updates ++ Gamma).
+    Proof.
+      intros. apply Gamma_ok_state_app with (1:=H).
+      intros s v. induction updates; intros.
+      { inversion H0. }
+      {
+        cbn in H0. rewrite flat_map_app in H0. cbn in H0.
+        apply in_app_or in H0. destruct H0.
+        { apply IHupdates. exact H0. }
+        destruct a; cbn in *.
+        - destruct H0; timeout 10 fcrush.
+        - assert (v = (Bits (vect_to_list value))) by (* hammer *) timeout 10 sfirstorder. rewrite H1. clear H1.
+          assert (_reg_name tf_ctx var = _reg_name tf_ctx s) by (* hammer *) timeout 10 sfirstorder. apply reg_name_inj in H1. subst s.
+          unfold has_sized_bits. econstructor. split; try reflexivity. rewrite vect_to_list_length. reflexivity.
+        - destruct H0; timeout 10 fcrush.
+      }
+    Qed.
+
+    Lemma sem_updates_to_Gamma_ext_keeps_output_ok:
+      forall updates Gamma,
+        Gamma_ok_output Gamma ->
+        Gamma_ok_output (sem_updates_to_Gamma_ext updates ++ Gamma).
+    Proof.
+      intros. apply Gamma_ok_output_app with (1:=H).
+      intros s v. induction updates; intros.
+      { inversion H0. }
+      {
+        cbn in H0. rewrite flat_map_app in H0. cbn in H0.
+        apply in_app_or in H0. destruct H0.
+        { apply IHupdates. exact H0. }
+        destruct a; cbn in *.
+        - destruct H0; timeout 10 fcrush.
+        - destruct H0; timeout 10 fcrush.
+        - assert (v = (Bits (vect_to_list value))) by (* hammer *) timeout 10 sfirstorder. rewrite H1. clear H1.
+          assert (_out_name tf_ctx var = _out_name tf_ctx s) by (* hammer *) timeout 10 sfirstorder. apply out_name_inj in H1. subst s.
+          unfold has_sized_bits. econstructor. split; try reflexivity. rewrite vect_to_list_length. reflexivity.
+      }
+    Qed.
+      
+
+    Lemma sem_updates_to_Gamma_ext_correct:
+      forall updates rule_ops fs_state fs_input fs_output Gamma GokS GokO GokS'' GokO'',
+        updates = fst (sem_ops_updates rule_ops (SpecStateEnvExt fs_state Gamma GokS, SpecOutputEnvExt fs_output Gamma GokO) fs_input) ->
+        snd (sem_ops_updates rule_ops (SpecStateEnvExt fs_state Gamma GokS, SpecOutputEnvExt fs_output Gamma GokO) fs_input) =
+        (SpecStateEnvExt fs_state (sem_updates_to_Gamma_ext updates ++ Gamma) GokS'', SpecOutputEnvExt fs_output (sem_updates_to_Gamma_ext updates ++ Gamma) GokO'').
+    Proof.
+      intros. 
+      generalize dependent Gamma.
+      generalize dependent updates.
+
+      induction rule_ops; intros.
+      {
+        apply Common.pair_inj'; cbn [fst snd]; apply equiv_eq; unfold equiv; intros; unfold_getenv_all.
+        {
+          cbn. unfold sem_ops_updates, sem_op_step_commit_state, sem_updates_to_Gamma_ext in *. cbn in H. 
+          set (fun1 := fun _ _ => _) in *. set (fun2 := fun update : sem_update => _) in *.
+          destr; rewrite ?cassoc_ccreate.
+          {
+            generalize dependent (GokS'' k). generalize dependent (GokS k).
+            rewrite H. subst fun1; cbn -[eq_dec].
+            destruct (eq_dec (_reg_name tf_ctx k) "_unused"). { unfold _reg_name in e. contradict e. timeout 10 fcrush. }
+            intros. generalize dependent h. unfold lookup_s.  
+            rewrite (lookup_cons_neq _ (_reg_name tf_ctx k) "_unused"). 2: { unfold _reg_name in *. timeout 10 fcrush. }
+            intros. unfold val_to_bits. vect_to_list_t. reflexivity.
+          }
+          {
+            generalize dependent (GokS'' k). generalize dependent (GokS k).
+            rewrite H. subst fun1; cbn -[eq_dec].
+            destruct (eq_dec (_reg_name tf_ctx k) (_reg_name tf_ctx var)); intros. 
+            {
+              apply reg_name_inj in e. subst k. rewrite Common.cassoc_put_eq. cbn. unfold val_to_bits. vect_to_list_t.
+              generalize dependent h. unfold lookup_s. rewrite lookup_cons_eq. 2: { reflexivity. }
+              unfold bits_of_value_lossy. rewrite Common.bits_of_list_vect_to_list. intros.
+              vect_to_list_t. reflexivity.
+            }
+            {
+              apply reg_name_inj' in n as Hn. rewrite Common.cassoc_put_neq. 2: hauto. rewrite !cassoc_ccreate.
+              generalize (GokS k). unfold lookup_s in *. cbn -[eq_dec].
+              cbn. intros. generalize dependent h.
+              rewrite (lookup_cons_neq _ (_reg_name tf_ctx k) (_reg_name tf_ctx var)). 2: { exact n. }
+              intros. unfold val_to_bits. vect_to_list_t. reflexivity. 
+            }
+          }
+          {
+            generalize dependent (GokS'' k). generalize dependent (GokS k).
+            rewrite H. subst fun1; cbn -[eq_dec].
+            destruct (eq_dec (_reg_name tf_ctx k) (_out_name tf_ctx var)). { unfold _reg_name in e. contradict e. timeout 10 fcrush. }
+            intros. generalize dependent h. unfold lookup_s.  
+            rewrite (lookup_cons_neq _ (_reg_name tf_ctx k) (_out_name tf_ctx var)). 2: { unfold _reg_name in *. timeout 10 fcrush. }
+            intros. unfold val_to_bits. vect_to_list_t. reflexivity.
+          }
+        }
+        {
+          cbn. unfold sem_ops_updates, sem_op_step_commit_output, sem_updates_to_Gamma_ext in *. cbn in H. 
+          set (fun1 := fun _ _ => _) in *. set (fun2 := fun update : sem_update => _) in *.
+          destr; rewrite ?cassoc_ccreate.
+          {
+            generalize dependent (GokO'' k). generalize dependent (GokO k).
+            rewrite H. subst fun1; cbn -[eq_dec].
+            destruct (eq_dec (_out_name tf_ctx k) "_unused"). { unfold _out_name in e. contradict e. timeout 10 fcrush. }
+            intros. generalize dependent h0. unfold lookup_o.  
+            rewrite (lookup_cons_neq _ (_out_name tf_ctx k) "_unused"). 2: { unfold _out_name in *. timeout 10 fcrush. }
+            intros. unfold val_to_bits. vect_to_list_t. reflexivity.
+          }
+          {
+            generalize dependent (GokO'' k). generalize dependent (GokO k).
+            rewrite H. subst fun1; cbn -[eq_dec].
+            destruct (eq_dec (_out_name tf_ctx k) (_reg_name tf_ctx var)). { unfold _out_name in e. contradict e. timeout 10 fcrush. }
+            intros. generalize dependent h0. unfold lookup_o.  
+            rewrite (lookup_cons_neq _ (_out_name tf_ctx k) (_reg_name tf_ctx var)). 2: { unfold _out_name in *. timeout 10 fcrush. }
+            intros. unfold val_to_bits. vect_to_list_t. reflexivity.    
+          }
+          {
+            generalize dependent (GokO'' k). generalize dependent (GokO k).
+            rewrite H. subst fun1; cbn -[eq_dec].
+            destruct (eq_dec (_out_name tf_ctx k) (_out_name tf_ctx var)); intros. 
+            {
+              apply out_name_inj in e. subst k. rewrite Common.cassoc_put_eq. cbn. unfold val_to_bits. vect_to_list_t.
+              generalize dependent h. unfold lookup_o. rewrite lookup_cons_eq. 2: { reflexivity. }
+              unfold bits_of_value_lossy. rewrite Common.bits_of_list_vect_to_list. intros.
+              vect_to_list_t. reflexivity.
+            }
+            {
+              apply out_name_inj' in n as Hn. rewrite Common.cassoc_put_neq. 2: hauto. rewrite !cassoc_ccreate.
+              generalize (GokO k). unfold lookup_o in *. cbn -[eq_dec].
+              cbn. intros. generalize dependent h.
+              rewrite (lookup_cons_neq _ (_out_name tf_ctx k) (_out_name tf_ctx var)). 2: { exact n. }
+              intros. unfold val_to_bits. vect_to_list_t. reflexivity. 
+            }
+          }
+        }
+      }
+      {
+        apply Common.pair_inj'; cbn [fst snd]; apply equiv_eq; unfold equiv; intros; unfold_getenv_all.
+        {
+          cbn -[SpecStateEnvExt SpecOutputEnvExt]. 
+          destruct (sem_ops_updates rule_ops1 _ _ ) as [updates1 state_output1] eqn:H_ops1.
+          pose proof (f_equal fst H_ops1) as H_upd1; pose proof (f_equal snd H_ops1) as H_st1. cbn [fst snd] in H_upd1, H_st1; symmetry in H_upd1, H_st1.
+          clear H_ops1. rewrite H_upd1 in *. clear H_upd1. rewrite H_st1 in *. clear H_st1.
+
+          destruct (sem_ops_updates rule_ops2 _ _ ) as [updates2 state_output2] eqn:H_ops2.
+          pose proof (f_equal fst H_ops2) as H_upd2; pose proof (f_equal snd H_ops2) as H_st2. cbn [fst snd] in H_upd2, H_st2; symmetry in H_upd2, H_st2.
+          clear H_ops2. rewrite H_upd2 in *. clear H_upd2. rewrite H_st2 in *. clear H_st2.
+          cbn -[SpecStateEnvExt SpecOutputEnvExt].
+          
+          clear updates1 updates2 state_output1 state_output2.
+          set (updates1 := fst (sem_ops_updates rule_ops1 (SpecStateEnvExt fs_state Gamma GokS, SpecOutputEnvExt fs_output Gamma GokO) fs_input)).
+          set (updates2 := fst (sem_ops_updates rule_ops2 (SpecStateEnvExt fs_state (sem_updates_to_Gamma_ext updates1 ++ Gamma) (sem_updates_to_Gamma_ext_keeps_state_ok updates1 Gamma GokS), 
+                                                          SpecOutputEnvExt fs_output (sem_updates_to_Gamma_ext updates1 ++ Gamma) (sem_updates_to_Gamma_ext_keeps_output_ok updates1 Gamma GokO)) fs_input)).
+          erewrite IHrule_ops1 with (updates:=updates1). 2: { reflexivity. }
+          erewrite IHrule_ops2 with (updates:=updates2). 2: { reflexivity. }
+
+          cbn. rewrite ?cassoc_ccreate. apply val_to_bits_equiv.
+          rewrite app_assoc. rewrite <- sem_updates_to_Gamma_ext_app. f_equal. f_equal. f_equal. 
+
+          subst updates updates1 updates2. cbn -[SpecStateEnvExt SpecOutputEnvExt].  
+          destruct (sem_ops_updates rule_ops1 _ _ ) as [updatesA1 state_outputA1] eqn:H_ops1.
+          pose proof (f_equal fst H_ops1) as H_upd1; pose proof (f_equal snd H_ops1) as H_st1. cbn [fst snd] in H_upd1, H_st1; symmetry in H_upd1, H_st1.
+          clear H_ops1. rewrite H_upd1 in *. rewrite H_st1 in *. 
+          cbn -[SpecStateEnvExt SpecOutputEnvExt]. 
+
+          set (updates2a := sem_ops_updates rule_ops2 _ _). set (updates2b := sem_ops_updates rule_ops2 _ _).
+          assert (updates2a = updates2b). 
+          2: { rewrite H. clear H. destruct (updates2b) as [updates2 state_output2] eqn:H_ops2. reflexivity. }
+          
+          subst. subst updates2a. subst updates2b. f_equal.
+          set (updates1 := fst (sem_ops_updates rule_ops1 (SpecStateEnvExt fs_state Gamma GokS, SpecOutputEnvExt fs_output Gamma GokO) fs_input)).
+          erewrite IHrule_ops1 with (updates:=updates1). 2: { reflexivity. } reflexivity.
+        }
+        {
+          cbn -[SpecStateEnvExt SpecOutputEnvExt]. 
+          destruct (sem_ops_updates rule_ops1 _ _ ) as [updates1 state_output1] eqn:H_ops1.
+          pose proof (f_equal fst H_ops1) as H_upd1; pose proof (f_equal snd H_ops1) as H_st1. cbn [fst snd] in H_upd1, H_st1; symmetry in H_upd1, H_st1.
+          clear H_ops1. rewrite H_upd1 in *. clear H_upd1. rewrite H_st1 in *. clear H_st1.
+
+          destruct (sem_ops_updates rule_ops2 _ _ ) as [updates2 state_output2] eqn:H_ops2.
+          pose proof (f_equal fst H_ops2) as H_upd2; pose proof (f_equal snd H_ops2) as H_st2. cbn [fst snd] in H_upd2, H_st2; symmetry in H_upd2, H_st2.
+          clear H_ops2. rewrite H_upd2 in *. clear H_upd2. rewrite H_st2 in *. clear H_st2.
+          cbn -[SpecStateEnvExt SpecOutputEnvExt].
+          
+          clear updates1 updates2 state_output1 state_output2.
+          set (updates1 := fst (sem_ops_updates rule_ops1 (SpecStateEnvExt fs_state Gamma GokS, SpecOutputEnvExt fs_output Gamma GokO) fs_input)).
+          set (updates2 := fst (sem_ops_updates rule_ops2 (SpecStateEnvExt fs_state (sem_updates_to_Gamma_ext updates1 ++ Gamma) (sem_updates_to_Gamma_ext_keeps_state_ok updates1 Gamma GokS), 
+                                                          SpecOutputEnvExt fs_output (sem_updates_to_Gamma_ext updates1 ++ Gamma) (sem_updates_to_Gamma_ext_keeps_output_ok updates1 Gamma GokO)) fs_input)).
+          erewrite IHrule_ops1 with (updates:=updates1). 2: { reflexivity. }
+          erewrite IHrule_ops2 with (updates:=updates2). 2: { reflexivity. }
+
+          cbn. rewrite ?cassoc_ccreate. apply val_to_bits_equiv.
+          rewrite app_assoc. rewrite <- sem_updates_to_Gamma_ext_app. f_equal. f_equal. f_equal.
+
+          subst updates updates1 updates2. cbn -[SpecStateEnvExt SpecOutputEnvExt].  
+          destruct (sem_ops_updates rule_ops1 _ _ ) as [updatesA1 state_outputA1] eqn:H_ops1.
+          pose proof (f_equal fst H_ops1) as H_upd1; pose proof (f_equal snd H_ops1) as H_st1. cbn [fst snd] in H_upd1, H_st1; symmetry in H_upd1, H_st1.
+          clear H_ops1. rewrite H_upd1 in *. rewrite H_st1 in *. 
+          cbn -[SpecStateEnvExt SpecOutputEnvExt].
+
+          set (updates2a := sem_ops_updates rule_ops2 _ _). set (updates2b := sem_ops_updates rule_ops2 _ _).
+          assert (updates2a = updates2b). 
+          2: { rewrite H. clear H. destruct (updates2b) as [updates2 state_output2] eqn:H_ops2. reflexivity. }  
+
+          subst. subst updates2a. subst updates2b. f_equal.
+          set (updates1 := fst (sem_ops_updates rule_ops1 (SpecStateEnvExt fs_state Gamma GokS, SpecOutputEnvExt fs_output Gamma GokO) fs_input)).
+          erewrite IHrule_ops1 with (updates:=updates1). 2: { reflexivity. } reflexivity.
+        }
+        Unshelve.
+        all: 
+          (
+            try (apply sem_updates_to_Gamma_ext_keeps_state_ok with (1:=GokS));
+            try (apply sem_updates_to_Gamma_ext_keeps_output_ok with (1:=GokO));
+            try (rewrite app_assoc; rewrite <- sem_updates_to_Gamma_ext_app; apply sem_updates_to_Gamma_ext_keeps_state_ok with (1:=GokS));
+            try (rewrite app_assoc; rewrite <- sem_updates_to_Gamma_ext_app; apply sem_updates_to_Gamma_ext_keeps_output_ok with (1:=GokO))
+          ).
+      }
+      {
+        apply Common.pair_inj'; cbn [fst snd]; apply equiv_eq; unfold equiv; intros; unfold_getenv_all.
+        {
+          cbn -[SpecStateEnvExt SpecOutputEnvExt]. destr; cbn -[SpecStateEnvExt SpecOutputEnvExt].
+          {
+            erewrite IHrule_ops2.
+            { reflexivity. }
+            rewrite H. f_equal. cbn -[SpecStateEnvExt SpecOutputEnvExt]. destr.
+          }
+          {
+            erewrite IHrule_ops1.
+            { reflexivity. }
+            rewrite H. f_equal. cbn -[SpecStateEnvExt SpecOutputEnvExt]. destr.
+          }
+        }
+        {
+          cbn -[SpecStateEnvExt SpecOutputEnvExt]. destr; cbn -[SpecStateEnvExt SpecOutputEnvExt].
+          {
+            erewrite IHrule_ops2.
+            { reflexivity. }
+            rewrite H. f_equal. cbn -[SpecStateEnvExt SpecOutputEnvExt]. destr.
+          }
+          {
+            erewrite IHrule_ops1.
+            { reflexivity. }
+            rewrite H. f_equal. cbn -[SpecStateEnvExt SpecOutputEnvExt]. destr.
+          }
+        }
+        Unshelve.
+        all: 
+          (
+            try (apply sem_updates_to_Gamma_ext_keeps_state_ok with (1:=GokS));
+            try (apply sem_updates_to_Gamma_ext_keeps_output_ok with (1:=GokO));
+            try (rewrite app_assoc; rewrite <- sem_updates_to_Gamma_ext_app; apply sem_updates_to_Gamma_ext_keeps_state_ok with (1:=GokS));
+            try (rewrite app_assoc; rewrite <- sem_updates_to_Gamma_ext_app; apply sem_updates_to_Gamma_ext_keeps_output_ok with (1:=GokO))
+          ).
+      }
+    Qed.
 
     Ltac assert_match_terms_equal :=
       let LM := fresh "LM" in
@@ -1689,7 +2005,7 @@ Section CompositionalCorrectness.
       has_var_all Gamma (map (_register_var_name tf_ctx) (map (tf_reg tf_ctx) spec_all_states)) ->
         let fs_state' := SpecStateEnvExt fs_state Gamma GokS in
         let fs_output' := SpecOutputEnvExt fs_output Gamma GokO in
-        let updates := sem_ops_updates (tf_ops_base spec_states spec_inputs spec_outputs op) (fs_state', fs_output') fs_input in
+        let (updates, fs_state'') := sem_ops_updates (tf_ops_base op) (fs_state', fs_output') fs_input in
         let Gamma' := (sem_updates_to_Gamma_ext updates) ++ Gamma in
           interp_action hw_reg_state sigma Gamma sched_log action_log (op_to_uaction tf_ctx op code) =
           let/opt3 l, v, G := interp_action hw_reg_state sigma Gamma' sched_log action_log code in Some (l, v, tl G).
@@ -1741,7 +2057,7 @@ Section CompositionalCorrectness.
       has_var_all Gamma (map (_register_var_name tf_ctx) (map (tf_reg tf_ctx) spec_all_states)) ->
         let fs_state' := SpecStateEnvExt fs_state Gamma GokS in
         let fs_output' := SpecOutputEnvExt fs_output Gamma GokO in
-        let updates := sem_ops_updates rule_ops (fs_state', fs_output') fs_input in
+        let updates := fst (sem_ops_updates rule_ops (fs_state', fs_output') fs_input) in
         let Gamma' := (sem_updates_to_Gamma_ext updates) ++ Gamma in
           interp_action hw_reg_state sigma Gamma sched_log action_log (_rule_aux tf_ctx rule_ops code) =
           match interp_action hw_reg_state sigma Gamma' sched_log action_log code with
@@ -1759,121 +2075,41 @@ Section CompositionalCorrectness.
       {
         cbn [sem_ops_updates _rule_aux interp_action].
         rewrite (interp_op_to_uaction _ _ _ _ _ _ _ _ _ GokS GokO H_state H_input H_output H_hasvar).
-        unfold opt_bind. assert (Datatypes.length updates = 1) by reflexivity. rewrite H; clear H.
-        reflexivity.
+        unfold opt_bind. cbn [Datatypes.length]. reflexivity.
       } 
       {
         cbn [sem_ops_updates _rule_aux interp_action] in *.
-        rewrite (interp_op_to_uaction _ _ _ _ _ _ _ _ _ GokS GokO H_state H_input H_output H_hasvar).
-        set (Gamma'' := sem_updates_to_Gamma_ext _ ++ Gamma).
-        unfold opt_bind.
+        destruct (sem_ops_updates rule_ops1 (fs_state', fs_output') fs_input) as [updates1 state1] eqn:Heq1.
+        destruct (sem_ops_updates rule_ops2 state1 fs_input) as [updates2 state2] eqn:Heq2.
+        subst fs_state' fs_output'. 
 
+        specialize (IHrule_ops1 Gamma GokS GokO H_hasvar sched_log action_log (_rule_aux tf_ctx rule_ops2 code) H_state H_input H_output).
+        rewrite Heq1 in IHrule_ops1. rewrite IHrule_ops1; clear IHrule_ops1.
+        
+        set (Gamma'' := (sem_updates_to_Gamma_ext updates1) ++ Gamma).
         assert (Gamma_ok_state Gamma'') as GokS''.
-        { 
-          subst Gamma'' Gamma' updates fs_state'.
-          unfold Gamma_ok_state in *; intros; unfold lookup_s in *; cbn; destr.
-          1,3: (rewrite app_nil_r; cbn; rewrite lookup_cons_neq; try exact (GokS s); timeout 10 fcrush).
-
-          rewrite app_nil_r; cbn. destruct (eq_dec s var); subst; try congruence.
-          - rewrite lookup_cons_eq; try reflexivity. econstructor. split; try reflexivity. rewrite vect_to_list_length. reflexivity.
-          - rewrite lookup_cons_neq. exact (GokS s). unfold not in *; intros. apply n. apply reg_name_inj. exact H.
-        }
-
+        { apply sem_updates_to_Gamma_ext_keeps_state_ok. exact GokS. }
         assert (Gamma_ok_output Gamma'') as GokO''.
-        { 
-          subst Gamma'' Gamma' updates fs_output'.
-          unfold Gamma_ok_output in *; intros; unfold lookup_o in *; cbn; destr.
-          1,2: (rewrite app_nil_r; cbn; rewrite lookup_cons_neq; try exact (GokO o); timeout 10 fcrush).
-
-          rewrite app_nil_r; cbn. destruct (eq_dec o var); subst; try congruence.
-          - rewrite lookup_cons_eq; try reflexivity. econstructor. split; try reflexivity. rewrite vect_to_list_length. reflexivity.
-          - rewrite lookup_cons_neq. exact (GokO o). unfold not in *; intros. apply n. apply out_name_inj. exact H.
+        { apply sem_updates_to_Gamma_ext_keeps_output_ok. exact GokO. }
+        assert (has_var_all Gamma'' (map (_register_var_name tf_ctx) (map (tf_reg tf_ctx) spec_all_states))) as H_hasvar''. {
+          subst Gamma''. apply has_var_all_ignore_left. exact H_hasvar.
         }
 
-        rewrite (IHrule_ops Gamma'' GokS'' GokO''); clear IHrule_ops; try exact H_state; try exact H_input; try exact H_output.
+        specialize (IHrule_ops2 Gamma'' GokS'' GokO'' H_hasvar'').
+        replace (SpecStateEnvExt fs_state Gamma'' GokS'', SpecOutputEnvExt fs_output Gamma'' GokO'') with state1 in IHrule_ops2.
         2: {
-          subst Gamma' Gamma'' updates. apply has_var_all_ignore_left. exact H_hasvar.
-        }
+          clear IHrule_ops2. 
+          pose proof (f_equal fst Heq1) as H_upd; pose proof (f_equal snd Heq1) as H_st; cbn [fst snd] in H_upd, H_st; symmetry in H_upd, H_st.
+          subst Gamma''. rewrite H_st. generalize dependent H_upd.
+          apply sem_updates_to_Gamma_ext_correct.
+        } 
+        rewrite Heq2 in IHrule_ops2; clear Heq2.
 
-        assert (
-          sem_op_step_commit (SpecStateEnvExt fs_state Gamma GokS, SpecOutputEnvExt fs_output Gamma GokO) (sem_op_step_updates op (SpecStateEnvExt fs_state Gamma GokS) fs_input) =
-          (SpecStateEnvExt fs_state (sem_updates_to_Gamma_ext [sem_op_step_updates op (SpecStateEnvExt fs_state Gamma GokS) fs_input] ++ Gamma) GokS'',
-          SpecOutputEnvExt fs_output (sem_updates_to_Gamma_ext [sem_op_step_updates op (SpecStateEnvExt fs_state Gamma GokS) fs_input] ++ Gamma) GokO'')
-        ) as H_commit. {
-          cbn -[SpecStateEnvExt] in GokS''.
-          set (fs_state'' := SpecStateEnvExt fs_state Gamma GokS) in *.
-          apply Common.pair_inj'; cbn [fst snd]; apply equiv_eq; unfold equiv; intros; unfold_getenv_all.
-          {
-            unfold sem_op_step_commit, sem_op_step_commit_state.
-            cbn. rewrite !cassoc_ccreate. unfold lookup_s, lookup in *.
-            generalize dependent (GokS''). generalize dependent (GokS). cbn. intro.
-            destruct (sem_op_step_updates op _ _); intros; rewrite ?cassoc_ccreate.
-            {
-              generalize dependent (GokS'' k).  generalize dependent (GokS k). unfold lookup_s, lookup in *. cbn -[eq_dec].
-              destruct (eq_dec (_reg_name tf_ctx k) "_unused"). { unfold _reg_name in e. contradict e. timeout 10 fcrush. }
-              intros. destr. cbn. unfold val_to_bits. vect_to_list_t. reflexivity. 
-            }
-            {
-              generalize dependent (GokS'' k).  generalize dependent (GokS k). unfold lookup_s, lookup in *. cbn -[eq_dec].
-              destruct (eq_dec (_reg_name tf_ctx k) (_reg_name tf_ctx var)); intros. 
-              {
-                apply reg_name_inj in e. subst k. rewrite Common.cassoc_put_eq. cbn. unfold val_to_bits. vect_to_list_t.
-                rewrite Common.bits_of_list_vect_to_list. simpl_eq. reflexivity.
-              }
-              {
-                apply reg_name_inj' in n. rewrite Common.cassoc_put_neq. 2: hauto. rewrite !cassoc_ccreate.
-                generalize (GokS k). unfold lookup_s, lookup in *. cbn -[eq_dec].
-                destr. cbn. intros. unfold val_to_bits. vect_to_list_t. reflexivity. 
-              }
-            }
-            {
-              generalize dependent (GokS'' k).  generalize dependent (GokS k). unfold lookup_s, lookup in *. cbn -[eq_dec].
-              destruct (eq_dec (_reg_name tf_ctx k) (_out_name tf_ctx var)). { unfold _reg_name in e. contradict e. timeout 10 fcrush. }
-              intros. destr. cbn. unfold val_to_bits. vect_to_list_t. reflexivity.  
-            }
-          }
-          {
-            unfold sem_op_step_commit, sem_op_step_commit_output.
-            cbn. unfold lookup_s, lookup_o, lookup in *.
-            generalize dependent (GokO''). generalize dependent (GokO). cbn. intro.
-            destruct (sem_op_step_updates op _ _); intros; rewrite ?cassoc_ccreate.
-            {
-              generalize dependent (GokO'' k).  generalize dependent (GokO k). unfold lookup_o, lookup in *. cbn -[eq_dec].
-              destruct (eq_dec (_out_name tf_ctx k) "_unused"). { unfold _out_name in e. contradict e. timeout 10 fcrush. }
-              intros. destr. cbn. unfold val_to_bits. vect_to_list_t. reflexivity. 
-            }
-            {
-              generalize dependent (GokO'' k).  generalize dependent (GokO k). unfold lookup_o, lookup in *. cbn -[eq_dec].
-              destruct (eq_dec (_out_name tf_ctx k) (_reg_name tf_ctx var)). { unfold _out_name in e. contradict e. timeout 10 fcrush. }
-              intros. destr. cbn. unfold val_to_bits. vect_to_list_t. reflexivity.
-            }
-            {
-              generalize dependent (GokO'' k).  generalize dependent (GokO k). unfold lookup_o, lookup in *. cbn -[eq_dec].
-              destruct (eq_dec (_out_name tf_ctx k) (_out_name tf_ctx var)); intros. 
-              {
-                apply out_name_inj in e. subst k. rewrite Common.cassoc_put_eq. cbn. unfold val_to_bits. vect_to_list_t.
-                rewrite Common.bits_of_list_vect_to_list. simpl_eq. reflexivity.
-              }
-              {
-                apply out_name_inj' in n. rewrite Common.cassoc_put_neq. 2: hauto. rewrite !cassoc_ccreate.
-                generalize (GokO k). unfold lookup_o, lookup in *. cbn -[eq_dec].
-                destr. cbn. intros. unfold val_to_bits. vect_to_list_t. reflexivity. 
-              }
-            }
-          }
-        }
-
-        apply Common.tf_h_match_skipn_cons.
-        {
-          subst updates. cbn [sem_ops_updates Datatypes.length]. repeat f_equal. subst Gamma' Gamma'' fs_state' fs_output'. cbn -[SpecStateEnvExt SpecOutputEnvExt sem_updates_to_Gamma_ext].
-          exact H_commit.
-        }
-        {
-          f_equal. subst Gamma' Gamma'' updates fs_state' fs_output'. cbn -[SpecStateEnvExt SpecOutputEnvExt sem_updates_to_Gamma_ext]. 
-          cbn -[SpecStateEnvExt SpecOutputEnvExt sem_updates_to_Gamma_ext] in H_commit. rewrite H_commit. clear H_commit. 
-          unfold sem_updates_to_Gamma_ext. set(ops_updates := sem_ops_updates rule_ops _ _). cbn [rev]. rewrite app_nil_l.
-          rewrite flat_map_app. rewrite app_assoc. reflexivity.
-        }
+        rewrite IHrule_ops2; clear IHrule_ops2; try exact H_state; try exact H_input; try exact H_output.
+        subst Gamma'' Gamma' updates. cbn [fst]. rewrite (sem_updates_to_Gamma_ext_app updates1 updates2).
+        apply Common.tf_h_match_skipn_app.
+        - rewrite app_length. lia.
+        - rewrite app_assoc. reflexivity.
       }
       {
         assert (H_hasvar': forall s : spec_states, has_var Gamma (_reg_name tf_ctx s)). {
@@ -1919,9 +2155,9 @@ Section CompositionalCorrectness.
                     (map (tf_out tf_ctx) spec_all_outputs) (_register_var_name tf_ctx) in
           latest_write (log_app
               (ActionLog_after_write_vars0
-                (sem_updates_to_Gamma_ext (sem_ops_updates (spec_action_ops cmd) (fs_state, last_fs_output) fs_input) ++ Gamma')
+                (sem_updates_to_Gamma_ext (fst (sem_ops_updates (spec_action_ops cmd) (fs_state, last_fs_output) fs_input)) ++ Gamma')
                 (ActionLog_after_write_vars0
-                  (sem_updates_to_Gamma_ext (sem_ops_updates (spec_action_ops cmd) (fs_state, last_fs_output) fs_input) ++ Gamma')
+                  (sem_updates_to_Gamma_ext (fst (sem_ops_updates (spec_action_ops cmd) (fs_state, last_fs_output) fs_input)) ++ Gamma')
                   (ActionLog_after_read_vars0 (ActionLog_after_read_vars0 log_empty (map (tf_reg tf_ctx) spec_all_states)) (map (tf_out tf_ctx) spec_all_outputs))
                   (map (tf_reg tf_ctx) (_written_states tf_ctx (spec_action_ops cmd)))
                   (_register_var_name tf_ctx)
@@ -2035,20 +2271,21 @@ Section CompositionalCorrectness.
       InputR fs_input ->
       OutputR hw_reg_state last_fs_output -> 
       lookup
-        (sem_updates_to_Gamma_ext (sem_ops_updates (spec_action_ops cmd) (fs_state, last_fs_output) fs_input) ++
+        (sem_updates_to_Gamma_ext (fst (sem_ops_updates (spec_action_ops cmd) (fs_state, last_fs_output) fs_input)) ++
           Gamma_after_read_vars0 hw_reg_state (Gamma_after_read_vars0 hw_reg_state [] (map (tf_reg tf_ctx) spec_all_states) (_register_var_name tf_ctx))
           (map (tf_out tf_ctx) spec_all_outputs) (_register_var_name tf_ctx)) (_register_var_name tf_ctx (tf_reg tf_ctx state_var)) 
       = val_of_value (fst (sem_ops_run (spec_action_ops cmd) (fs_state, last_fs_output) fs_input)).[state_var].
     Proof.
       intros. rename H into H_state. rename H0 into H_input. rename H1 into H_output.
-      unfold lookup, sem_ops_run, sem_op_step_commit, sem_updates_to_Gamma_ext. cbn.
-      set(updates := sem_ops_updates _ _ _) in *. rewrite <- fold_left_rev_right.
+      unfold lookup, sem_ops_run, sem_op_step_commit, sem_updates_to_Gamma_ext. 
+      rewrite (sem_ops_updates_correct2 (spec_action_ops cmd) (fs_state, last_fs_output) fs_input).
+      set(updates := (fst (sem_ops_updates _ _ _))) in *. rewrite <- fold_left_rev_right.
       set (sem_update_fun := fun _ => _). set (sem_commit_fun := fun _ _ => _).
       induction (rev updates). 
       { cbn. rewrite Gamma_after_intro_is_hw_state. cbn. rewrite H_state. reflexivity. }
       {
         destruct a; cbn -[eq_dec].
-        { destr. unfold _reg_name in e. timeout 10 fcrush. }
+        { destr; try exact IHl. unfold _reg_name in e. timeout 10 fcrush. }
         {
           destruct (eq_dec (_reg_name tf_ctx state_var) (_reg_name tf_ctx var)).
           { apply reg_name_inj in e. subst var. rewrite get_put_eq. reflexivity. }
@@ -2068,20 +2305,21 @@ Section CompositionalCorrectness.
       InputR fs_input ->
       OutputR hw_reg_state last_fs_output -> 
       lookup
-        (sem_updates_to_Gamma_ext (sem_ops_updates (spec_action_ops cmd) (fs_state, last_fs_output) fs_input) ++
+        (sem_updates_to_Gamma_ext (fst (sem_ops_updates (spec_action_ops cmd) (fs_state, last_fs_output) fs_input)) ++
           Gamma_after_read_vars0 hw_reg_state (Gamma_after_read_vars0 hw_reg_state [] (map (tf_reg tf_ctx) spec_all_states) (_register_var_name tf_ctx))
           (map (tf_out tf_ctx) spec_all_outputs) (_register_var_name tf_ctx)) (_register_var_name tf_ctx (tf_out tf_ctx output_var)) 
       = val_of_value (snd (sem_ops_run (spec_action_ops cmd) (fs_state, last_fs_output) fs_input)).[output_var].
     Proof.
       intros. rename H into H_state. rename H0 into H_input. rename H1 into H_output.
-      unfold lookup, sem_ops_run, sem_op_step_commit, sem_updates_to_Gamma_ext. cbn.
-      set(updates := sem_ops_updates _ _ _) in *. rewrite <- fold_left_rev_right.
+      unfold lookup, sem_ops_run, sem_op_step_commit, sem_updates_to_Gamma_ext.
+      rewrite (sem_ops_updates_correct2 (spec_action_ops cmd) (fs_state, last_fs_output) fs_input).
+      set(updates := fst (sem_ops_updates _ _ _)) in *. rewrite <- fold_left_rev_right.
       set (sem_update_fun := fun _ => _). set (sem_commit_fun := fun _ _ => _).
       induction (rev updates). 
       { cbn. rewrite Gamma_after_intro_is_hw_output. cbn. rewrite H_output. reflexivity. }
       {
         destruct a; cbn -[eq_dec].
-        { destr. unfold _reg_name in e. unfold _out_name in e. timeout 10 fcrush. }
+        { destr; try exact IHl. unfold _reg_name in e. unfold _out_name in e. timeout 10 fcrush. }
         {
           destruct (eq_dec (_out_name tf_ctx output_var) (_reg_name tf_ctx var)).
           { unfold _reg_name in e. unfold _out_name in e. timeout 10 fcrush. }
@@ -2152,7 +2390,7 @@ Section CompositionalCorrectness.
         2: { unfold isStateReg. left. exists state_var. reflexivity. }
 
         (* 4. Ignore the writes to the output regs *)
-        cbn [latest_write]. rewrite Common.log_app_empty_r. cbn. 
+        cbn [latest_write]. rewrite Common.log_app_empty_r. cbn -[type_denote env_t]. 
         rewrite (latest_write_of_ActionLog_after_write_vars0_not_in).
         2: { induction _written_outputs. auto. cbn. unfold not; intros. destruct H; try congruence. }
 
@@ -2171,6 +2409,7 @@ Section CompositionalCorrectness.
             pose proof (spec_all_states_complete state_var) as H1.
             apply H; clear H. rewrite filter_In. split. exact H1. destr.
           }
+          Set Printing All.
           rewrite (sem_var_not_written_means_ops_run_unchanged); try exact H0.
       
           (* 6a.3 Conclude both sides are equal *)
@@ -2198,7 +2437,7 @@ Section CompositionalCorrectness.
         2: { unfold isOutputReg. right. exists output_var. reflexivity. }
 
         (* 4. Determine whether the output was written to or not *)
-        cbn [latest_write]. rewrite Common.log_app_empty_r. cbn. 
+        cbn [latest_write]. rewrite Common.log_app_empty_r. cbn -[type_denote env_t]. 
         destruct (ListDec.In_decidable list_decidable_eq_spec_outputs output_var (_written_outputs tf_ctx (spec_action_ops cmd))).
         2: {
           (* 5a.1 If the output was not written show the HW step becomes a NOP *)

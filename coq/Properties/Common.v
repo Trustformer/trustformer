@@ -303,6 +303,37 @@ Section BitsToLists.
             + apply IHa; auto.
     Qed.
 
+    Lemma bits_to_list_assoc_app_in:
+        forall {K V: Type} {eq: EqDec K} (l: list (K * V)) (k: K) a,
+        In k (map fst a) ->
+        BitsToLists.list_assoc (a ++ l) k = BitsToLists.list_assoc a k.
+    Proof.
+        intros.
+        induction a; intros; cbn in *.
+        - contradict H.
+        - destruct a as [k1 v1]. destruct (eq_dec k k1).
+            + reflexivity.
+            + destruct H.
+              * subst. cbn in n. congruence.
+              * apply IHa; auto.
+    Qed.
+
+    Lemma bits_to_list_assoc_app3:
+        forall {K V: Type} {eq: EqDec K} (l: list (K * V)) (k: K) a,
+        ListDec.decidable_eq K ->
+        BitsToLists.list_assoc (a ++ a ++ l) k = BitsToLists.list_assoc (a ++ l) k.
+    Proof.
+        intros.
+        induction a; intros; cbn in *.
+        - reflexivity.
+        - destruct a as [k1 v1]. destruct (eq_dec k k1).
+            + reflexivity.
+            + destruct (ListDec.In_decidable H k (map fst a0)).
+              * rewrite !bits_to_list_assoc_app_in with (1:=H0). reflexivity.
+              * rewrite bits_to_list_assoc_app_not_in3 with (1:=H0). cbn. destruct (eq_dec k k1).
+                congruence. reflexivity.
+    Qed.
+
     Lemma bits_to_list_assoc_app_both_none:
         forall {K V: Type} {eq: EqDec K} (l: list (K * V)) (k: K) a,
         BitsToLists.list_assoc l k = None ->
@@ -548,6 +579,34 @@ Section Helper.
     Proof.
         intros. rewrite H, H0. destruct X2 as [[[l v] G]|]; simpl; reflexivity.
     Qed.
+
+    Lemma tf_h_match_skipn_app:
+        forall {T1 T2 T3} (X1 X2: option (T1 * T2 * list T3)) n1 n2 n3,
+        n3 = n1 + n2 ->
+        X1 = X2 ->
+        match
+            match X1 with
+            | Some (l, v, G) => Some (l, v, List.skipn n1 G)
+            | None => None
+            end
+        with
+        | Some (l, v, G) => Some (l, v, List.skipn n2 G)
+        | None => None
+        end = match X2 with
+        | Some (l, v, G) => Some (l, v, List.skipn n3 G)
+        | None => None
+        end.
+    Proof.
+        intros. rewrite H, H0. destruct X2 as [[[l v] G]|]; simpl.
+        - f_equal. f_equal. clear H H0. generalize dependent G.
+            induction n1 as [| n1' IH]; intros.
+            + reflexivity.
+            + cbn. destruct G.
+              * rewrite skipn_nil. reflexivity.
+              * apply IH.
+        - reflexivity.
+    Qed.
+        
 
 End Helper.
 

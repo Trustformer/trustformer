@@ -21,12 +21,14 @@ copy_build:
 
 # --
 
-all: coq copy_build compile
+all: coq copy_build 
+	$(MAKE) compile
 
-test: copy_build compile
+test: copy_build 
+	$(MAKE) compile
 # For now test just builds & compiles
 
 clean:
 	rm -rf build/*
 
-.PHONY: coq all test clean
+.PHONY: coq all test clean copy_build compile
