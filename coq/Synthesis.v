@@ -9,6 +9,7 @@ Require Import Koika.KoikaForm.SimpleVal.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Utils.
+Require Import Trustformer.Scheduler.Scheduler.
 Require Trustformer.Properties.Common.
 From Koika.Utils Require Import Tactics.
 
@@ -93,20 +94,17 @@ Section TrustformerSynthesis.
 
     Local Notation spec_action_ops := (tf_spec_action_ops tf_ctx).
 
-    Local Notation spec_var_written_dec := (tf_ops_var_written_dec spec_states_size spec_inputs_size spec_outputs_size).
-    Local Notation spec_out_written_dec := (tf_ops_out_written_dec spec_states_size spec_inputs_size spec_outputs_size).
-
     (* ====== Instances ====== *)
 
-    
     Hint Extern 0 (FiniteType spec_states) => exact (tf_spec_states_fin tf_ctx) : typeclass_instances.
     Hint Extern 0 (FiniteType spec_inputs) => exact (tf_spec_inputs_fin tf_ctx) : typeclass_instances.
     Hint Extern 0 (FiniteType spec_outputs) => exact (tf_spec_outputs_fin tf_ctx) : typeclass_instances.
+    Hint Extern 0 (FiniteType spec_action) => exact (tf_spec_action_fin tf_ctx) : typeclass_instances.
 
-    Instance show_spec_states : Show spec_states := tf_spec_states_names tf_ctx.
-    Instance show_spec_inputs : Show spec_inputs := tf_spec_inputs_names tf_ctx.
-    Instance show_spec_outputs : Show spec_outputs := tf_spec_outputs_names tf_ctx.
-    Instance show_spec_action : Show spec_action := tf_spec_action_names tf_ctx.
+    Hint Extern 0 (Show spec_states) => exact (tf_spec_states_names tf_ctx) : typeclass_instances.
+    Hint Extern 0 (Show spec_inputs) => exact (tf_spec_inputs_names tf_ctx) : typeclass_instances.
+    Hint Extern 0 (Show spec_outputs) => exact (tf_spec_outputs_names tf_ctx) : typeclass_instances.
+    Hint Extern 0 (Show spec_action) => exact (tf_spec_action_names tf_ctx) : typeclass_instances.
 
     Instance _eq_dec_states : EqDec spec_states.
     Proof. pose spec_states_fin. apply EqDec_FiniteType. Defined.
@@ -114,10 +112,48 @@ Section TrustformerSynthesis.
     Instance _eq_dec_outputs : EqDec spec_outputs.
     Proof. pose spec_outputs_fin. apply EqDec_FiniteType. Defined.
 
+    (* ====== Scheduler ====== *)
+
+    Definition tfs_ctx : TFSchedContext := {|
+      tfs_spec_states := spec_states;
+      tfs_spec_states_fin := _;
+      tfs_spec_states_size := spec_states_size;
+      tfs_spec_states_init := spec_states_init;
+
+      tfs_spec_inputs := spec_inputs;
+      tfs_spec_inputs_fin := _;
+      tfs_spec_inputs_size := spec_inputs_size;
+
+      tfs_spec_outputs := spec_outputs;
+      tfs_spec_outputs_fin := _;
+      tfs_spec_outputs_size := spec_outputs_size;
+
+      tfs_spec_action := spec_action;
+      tfs_spec_action_fin := _;
+      tfs_spec_action_ops := spec_action_ops
+    |}.
+
+    Hint Extern 0 (FiniteType (tfs_states tfs_ctx)) => exact (tfs_states_fin tfs_ctx) : typeclass_instances.
+    Hint Extern 0 (Show (tfs_states tfs_ctx)) => exact (show_tfs_states tfs_ctx) : typeclass_instances.
+
+    Local Notation tfs_states_index := (@finite_index (tfs_states tfs_ctx) _).
+    Local Notation tfs_all_states := (@finite_elements (tfs_states tfs_ctx) _).
+    Local Notation tfs_states_size := (tfs_states_size tfs_ctx).
+    Local Notation tfs_states_t := (tf_states_type tfs_states_size).
+    Local Notation tfs_states_init := (tfs_states_init tfs_ctx).
+    Local Notation tfs_schedule := (tfs_schedule tfs_ctx).
+
+    Local Notation spec_var_written_dec := (tf_ops_var_written_dec tfs_states_size spec_inputs_size spec_outputs_size).
+    Local Notation spec_out_written_dec := (tf_ops_out_written_dec tfs_states_size spec_inputs_size spec_outputs_size).
+
     (* ====== Registers ====== *)
 
     Inductive reg_t := 
-    | tf_reg (x : spec_states)
+    | tf_cmd
+    | tf_cmd_ack
+    | tf_stage
+    | tf_reg (x : tfs_states tfs_ctx)
+    | tf_out_pub (x : spec_outputs)
     | tf_out (x : spec_outputs)
     | tf_out_ack (x : spec_outputs)
     .
@@ -133,8 +169,8 @@ Section TrustformerSynthesis.
       lia.
 
     Instance _reg_t_finite : FiniteType reg_t.
-    Proof.
-      econstructor.
+    Proof. Admitted.
+      (* econstructor.
       instantiate (1 := fun x => 
         match x with
         |  tf_reg y => spec_state_index y
@@ -178,35 +214,52 @@ Section TrustformerSynthesis.
           * solve_bounded_lia H H0 s1 s2 @spec_states_fin @spec_outputs_fin.
           * solve_bounded_lia H H0 s1 s2 @spec_states_fin @spec_outputs_fin.
       }
-    Defined.
+    Defined. *)
 
-    Definition _reg_name (x: spec_states) : string :=
-      "tf_st_" ++ string_id_of_nat (spec_state_index x).
+    Definition _reg_name (x: tfs_states tfs_ctx) : string :=
+      "tf_st_" ++ string_id_of_nat (tfs_states_index x).
 
     Definition _out_name (x: spec_outputs) : string :=
       "tf_out_" ++ string_id_of_nat (spec_output_index x).
 
     Instance reg_names : Show reg_t :=
       { show := fun r => match r with
-          | tf_reg x => String.append "reg_" (show x)
+          | tf_cmd => "cmd"
+          | tf_cmd_ack => "cmd_ack"
+          | tf_stage => "stage"
+          | tf_reg x => String.append "st_" (show x)
           | tf_out x => String.append "out_" (show x)
+          | tf_out_pub x => String.append "out_buf_" (show x)
           | tf_out_ack x => String.append "out_ack_" (show x)
           end
       }.
 
     (* ====== Register Types ====== *)
 
+    Definition max_stage : nat :=
+      List.fold_right (fun act acc => Nat.max acc (Datatypes.length (tfs_schedule act))) 0 spec_all_actions.
+
+    Local Notation tf_stage_reg_size := (Nat.log2_up max_stage).
+
     Definition R (r: reg_t) :=
     match r with
-    | tf_reg x => spec_states_t x
+    | tf_cmd => bits_t spec_action_reg_size
+    | tf_cmd_ack => bits_t 1
+    | tf_stage => bits_t tf_stage_reg_size
+    | tf_reg x => tfs_states_t x
     | tf_out x => spec_outputs_t x
+    | tf_out_pub x => spec_outputs_t x
     | tf_out_ack x => bits_t 1
     end.
 
     Definition r (reg: reg_t) : R reg :=
       match reg with
-      | tf_reg x => spec_states_init x
+      | tf_cmd => Bits.zero
+      | tf_cmd_ack => Bits.zero
+      | tf_stage => Bits.zero
+      | tf_reg x => tfs_states_init x
       | tf_out x => Bits.zero
+      | tf_out_pub x => Bits.zero
       | tf_out_ack x => Bits.zero
       end.
 
@@ -246,24 +299,29 @@ Section TrustformerSynthesis.
     (* ====== Rules ====== *)
 
     Inductive rule_name_t :=
-    | rule_cmd (cmd: spec_action)
+    | rule_cmd (cmd: spec_action) (stage: Vect.index (List.length (tfs_schedule cmd)))
     | rule_out (out: spec_outputs)
+    | rule_busy
     .
 
     Instance rule_names : Show rule_name_t :=
       { show := fun r => match r with
-          | rule_cmd cmd => String.append "rule_cmd_" (show cmd)
+          | rule_cmd cmd stage => String.append "rule_cmd_" (String.append (String.append (string_id_of_nat (Vect.index_to_nat stage)) "_") (show cmd))
           | rule_out out => String.append "rule_out_" (show out)
+          | rule_busy => "rule_busy"
           end
       }.
 
     Definition system_schedule_outputs : scheduler := 
       List.fold_right (fun t acc => rule_out t |> acc) Done spec_all_outputs.
 
-    Definition system_schedule_actions : scheduler  :=
-      List.fold_right (fun t acc => rule_cmd t |> acc) system_schedule_outputs spec_all_actions.
+    Definition system_schedule_stages (cmd: spec_action) (other: scheduler) : scheduler :=
+      List.fold_right (fun t acc => rule_cmd cmd t |> acc) other (@finite_elements (Vect.index (List.length (tfs_schedule cmd))) _).
 
-    Definition system_schedule := system_schedule_actions.
+    Definition system_schedule_actions : scheduler  :=
+      List.fold_right system_schedule_stages system_schedule_outputs spec_all_actions.
+
+    Definition system_schedule := rule_busy |> system_schedule_actions.
     
     Definition synth_convert (out_var_size in_var_size : nat) code : uaction reg_t ext_fn_t :=
       if Nat.eq_dec out_var_size in_var_size then
@@ -278,7 +336,7 @@ Section TrustformerSynthesis.
         | tf_const value =>
             let val := Bits.of_nat target_size value in {{#val}}
         | tf_var v =>
-            synth_convert target_size (spec_states_size v) (UVar (_reg_name v))
+            synth_convert target_size (tfs_states_size v) (UVar (_reg_name v))
         | tf_input v =>
             synth_convert target_size (spec_inputs_size v) (UExternalCall (ext_input v) {{Ob~1}})
         | tf_op1 op src =>
@@ -307,7 +365,7 @@ Section TrustformerSynthesis.
     Definition op_to_uaction (op: tf_op) (code: uaction reg_t ext_fn_t) : uaction reg_t ext_fn_t :=
       match op with
       | tf_nop => UBind "_unused" {{ #Ob }} code 
-      | tf_assign x expr => UBind (_reg_name x) (expr_to_uaction expr (spec_states_size x)) code
+      | tf_assign x expr => UBind (_reg_name x) (expr_to_uaction expr (tfs_states_size x)) code
       | tf_output x expr => UBind (_out_name x) (expr_to_uaction expr (spec_outputs_size x)) code
       end.
 
@@ -340,18 +398,23 @@ Section TrustformerSynthesis.
         List.filter (fun o => if (spec_out_written_dec o state_ops) then true else false) spec_all_outputs.
 
     Definition _written_states (state_ops: tf_ops) := 
-        List.filter (fun s => if (spec_var_written_dec s state_ops) then true else false) spec_all_states.
+        List.filter (fun s => if (spec_var_written_dec s state_ops) then true else false) tfs_all_states.
 
     Definition _register_var_name (r: reg_t) : string :=
       match r with
+      | tf_cmd => "__unused"
+      | tf_cmd_ack => "__unused"
+      | tf_stage => "__unused"
       | tf_reg x => _reg_name x
       | tf_out x => _out_name x
-      | tf_out_ack x => "ack_" ++ _out_name x
+      | tf_out_pub x => "__unused"
+      | tf_out_ack x => "__unused"
       end.
 
-    Definition _rule_cmd cmd : uaction reg_t ext_fn_t :=
-      let rule_ops := spec_action_ops cmd in
-      _rule_read_vars0 _register_var_name (map tf_reg spec_all_states) (
+    Definition _rule_cmd cmd stage : uaction reg_t ext_fn_t :=
+      let cmd_schedule := vect_of_list (tfs_schedule cmd) in
+      let rule_ops := vect_nth cmd_schedule stage in
+      _rule_read_vars0 _register_var_name (map tf_reg tfs_all_states) (
         _rule_read_vars0 _register_var_name (map tf_out spec_all_outputs) (
 
           _rule_aux rule_ops (
@@ -360,14 +423,43 @@ Section TrustformerSynthesis.
               _rule_write_vars0 _register_var_name (map tf_out (_written_outputs rule_ops)) (
                 {{ pass }} ))))).
 
+    Definition _rule_cmd_guard cmd stage : uaction reg_t ext_fn_t :=
+      let stage_idx := index_to_nat (sz:=(List.length (tfs_schedule cmd))) stage in
+      let stage_idx_enc := Bits.of_nat tf_stage_reg_size stage_idx in
+      let stage_max := Datatypes.length (tfs_schedule cmd) - 1 in
+      let stage_idx_inc := if Nat.eq_dec stage_idx stage_max then
+        Bits.zero
+      else
+        Bits.of_nat tf_stage_reg_size (stage_idx + 1) in
+      let cmd_enc := spec_action_encoding cmd in
+      
+      if Nat.eq_dec stage_idx 0 then
+        {{
+          guard(get(extcall ext_in_cmd(Ob~1), valid));
+          guard(get(extcall ext_in_cmd(Ob~1), data) == #cmd_enc);
+          guard(read0(tf_stage) == #stage_idx_enc);
+          write0(tf_cmd, #cmd_enc);
+          write0(tf_stage, #stage_idx_inc)
+        }}
+      else
+        {{
+          guard(read0(tf_cmd) == #cmd_enc);
+          guard(read0(tf_stage) == #stage_idx_enc);
+          write0(tf_stage, #stage_idx_inc)
+        }}.
+
     Definition rules :=
         (fun rl =>  match rl with
-          | rule_cmd cmd => 
-            let cmd_enc := spec_action_encoding cmd in
+          | rule_busy =>
+            let ready_stage := Bits.zero (sz:=tf_stage_reg_size) in
             {{
-                  guard(get(extcall ext_in_cmd(Ob~1), valid));
-                  guard(get(extcall ext_in_cmd(Ob~1), data) == #cmd_enc);
-                  `_rule_cmd cmd`
+              guard(read0(tf_stage) != #ready_stage);
+              write0(tf_cmd_ack, get(extcall ext_in_cmd(Ob~0), valid))
+            }}
+          | rule_cmd cmd stage => 
+            {{
+                  (`_rule_cmd_guard cmd stage`);
+                  `_rule_cmd cmd stage`
             }}
           | rule_out out =>
             UWrite P1 (tf_out_ack out) (UExternalCall (ext_output out) ({{ read1(tf_out out) }} ))
