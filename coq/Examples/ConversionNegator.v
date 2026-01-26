@@ -5,7 +5,9 @@ Require Import Koika.KoikaForm.SimpleVal.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.Synthesis.
+Require Import Trustformer.TypedSynthesis.
+Require Import Trustformer.Scheduler.Contract.
+Require Import Trustformer.Scheduler.VariableScheduler.
 
 Require Import Coq.Logic.EqdepFacts.
 Require Import Coq.Program.Equality.
@@ -89,9 +91,9 @@ Section FunctionalSpecification.
         :=
         match act with
         | fs_act_nop => tf_ops_base (tf_nop)
-        | fs_act_neg => tf_ops_base (tf_assign fs_st_val (tf_op1 (tf_not) (tf_var fs_st_val)))
-        | fs_act_read => tf_ops_base (tf_output fs_out_val (tf_var fs_st_val)) 
-        | fs_act_write => tf_ops_base (tf_assign fs_st_val (tf_input fs_in_val))
+        | fs_act_neg => tf_ops_base (tf_assign fs_st_val (tf_op1 (tf_not) (tf_svar fs_st_val)))
+        | fs_act_read => tf_ops_base (tf_output fs_out_val (tf_svar fs_st_val)) 
+        | fs_act_write => tf_ops_base (tf_assign fs_st_val (tf_ivar fs_in_val))
         end.
 
     Definition fs_step := tf_ops_run fs_states_size fs_inputs_size fs_outputs_size.
@@ -155,52 +157,56 @@ Section FunctionalSpecification.
 End FunctionalSpecification.
 
 
-Section Synthesis.
+Section TypedSynthesis.
 
-    Definition tf_ctx : TFSynthContext := {|
-        tf_spec_states := fs_states;
-        tf_spec_states_fin := _; 
-        tf_spec_states_size := fs_states_size;
-        tf_spec_states_init := fs_states_init;
+    Definition tfs_ctx : TFSchedContext := {|
+        tfs_spec_states := fs_states;
+        tfs_spec_states_fin := _;
+        tfs_spec_states_size := fs_states_size;
+        tfs_spec_states_init := fs_states_init;
 
-        tf_spec_inputs := fs_inputs;
-        tf_spec_inputs_fin := _;
-        tf_spec_inputs_size := fs_inputs_size;
+        tfs_spec_inputs := fs_inputs;
+        tfs_spec_inputs_fin := _;
+        tfs_spec_inputs_size := fs_inputs_size;
 
-        tf_spec_outputs := fs_outputs;
-        tf_spec_outputs_fin := _;
-        tf_spec_outputs_size := fs_outputs_size;
+        tfs_spec_outputs := fs_outputs;
+        tfs_spec_outputs_fin := _;
+        tfs_spec_outputs_size := fs_outputs_size;
 
-        tf_spec_action := fs_action;
-        tf_spec_action_fin := _; 
-        tf_spec_action_encoding := fs_action_encoding;
-        tf_spec_action_encoding_inj := fs_action_encoding_inj;
-        tf_spec_action_ops := fs_transitions
+        tfs_spec_action := fs_action;
+        tfs_spec_action_fin := _;
+        tfs_spec_action_ops := fs_transitions
     |}.
 
-    Definition R := Synthesis.R tf_ctx.
+    Definition tf_schedule := tfs_schedule tfs_ctx 10.
 
-    Definition r := Synthesis.r tf_ctx.
+    Definition tf_ctx : TFSynthContext := {|
+        tf_sched_ctx := tf_schedule;
 
-    Definition Sigma := Synthesis.Sigma tf_ctx.
+        tf_action_encoding := fs_action_encoding;
+        tf_action_encoding_inj := fs_action_encoding_inj;
+    |}.
 
-    Definition rules := Synthesis.rules tf_ctx.
+    Definition R := TypedSynthesis.R tf_ctx.
 
-    Definition system_schedule := Synthesis.system_schedule tf_ctx.
+    Definition r := TypedSynthesis.r tf_ctx.
+
+    Definition Sigma := TypedSynthesis.Sigma tf_ctx.
+
+    Definition system_schedule := TypedSynthesis.system_schedule tf_ctx.
     
-    Definition ext_fn_specs := Synthesis.ext_fn_specs tf_ctx.
+    Definition ext_fn_specs := TypedSynthesis.ext_fn_specs tf_ctx.
 
-    Instance ext_fn_names : Show (ext_fn_t tf_ctx) := Synthesis.ext_fn_names tf_ctx.
-
-    Definition checked_rules := tc_rules R Sigma rules.
+    Instance ext_fn_names : Show _ := TypedSynthesis.ext_fn_names tf_ctx.
 
     Definition package :=
       {| ip_koika := {| koika_reg_types := R;
-                        koika_reg_names := Synthesis.reg_names tf_ctx;
+                        koika_reg_names := TypedSynthesis.reg_names tf_ctx;
                         koika_reg_init := r;
+                        koika_reg_finite := TypedSynthesis._reg_t_finite tf_ctx;
                         koika_ext_fn_types := Sigma;
-                        koika_rules := checked_rules;
-                        koika_rule_names := Synthesis.rule_names tf_ctx;
+                        koika_rules := TypedSynthesis.rules tf_ctx;
+                        koika_rule_names := TypedSynthesis.rule_names tf_ctx;
                         koika_rule_external := (fun _ => false);
                         koika_scheduler := system_schedule;
                         koika_module_name := "Example_ConversionNegator" |};
@@ -211,7 +217,7 @@ Section Synthesis.
       ip_verilog := {| vp_ext_fn_specs := ext_fn_specs |} |}.
     
 
-End Synthesis.
+End TypedSynthesis.
 
 (* Extraction *)
 

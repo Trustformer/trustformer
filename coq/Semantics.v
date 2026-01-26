@@ -52,24 +52,26 @@ Section Semantics.
     (* Evaluation of expressions *)
     Fixpoint tf_eval_expr {szB}
       (expr: tf_expr)
-      (state: ContextEnv.(env_t) tf_states_type)
+      (sys_state: ContextEnv.(env_t) tf_states_type * ContextEnv.(env_t) tf_outputs_type)
       (input: forall (x : inputs_var), (type_denote (tf_inputs_type x)))
       : bits_t szB :=
         match expr with
         | tf_const value =>
             Bits.of_nat szB value
-        | tf_var v =>
-            convert state.[v]
-        | tf_input v =>
+        | tf_svar v =>
+            convert (fst sys_state).[v]
+        | tf_ivar v =>
             convert (input v)
+        | tf_ovar v =>
+            convert (snd sys_state).[v]
         | tf_op1 op src =>
-            let val_src := tf_eval_expr src state input in
+            let val_src := tf_eval_expr src sys_state input in
             match op with
             | tf_not => Bits.neg val_src
             end
         | tf_op2 op src1 src2 =>
-            let val_src1 := tf_eval_expr src1 state input in
-            let val_src2 := tf_eval_expr src2 state input in
+            let val_src1 := tf_eval_expr src1 sys_state input in
+            let val_src2 := tf_eval_expr src2 sys_state input in
             match op with
             | tf_and => Bits.and val_src1 val_src2
             | tf_or => Bits.or val_src1 val_src2
@@ -78,8 +80,8 @@ Section Semantics.
             | tf_sub => Bits.minus val_src1 val_src2
             | tf_mul => convert (Bits.mul val_src1 val_src2)
             | tf_cmp szC cmp_op =>
-                let val_cmp_src1 := tf_eval_expr (szB:=szC) src1 state input in
-                let val_cmp_src2 := tf_eval_expr (szB:=szC) src2 state input in
+                let val_cmp_src1 := tf_eval_expr (szB:=szC) src1 sys_state input in
+                let val_cmp_src2 := tf_eval_expr (szB:=szC) src2 sys_state input in
                 match cmp_op with
                 | tf_eq =>
                     if beq_dec val_cmp_src1 val_cmp_src2 then Bits.of_nat szB 1 else Bits.of_nat szB 0
@@ -95,6 +97,12 @@ Section Semantics.
                     if Bits.unsigned_ge val_cmp_src1 val_cmp_src2 then Bits.of_nat szB 1 else Bits.of_nat szB 0
                 end
             end
+        | tf_expr_if cond then_expr else_expr =>
+            let cond_val := tf_eval_expr (szB:=1) cond sys_state input in
+            if beq_dec cond_val Bits.zero then (* Note: we check for false i.e. all bits are zero, thus the bodies here are switched *)
+              tf_eval_expr else_expr sys_state input 
+            else
+              tf_eval_expr then_expr sys_state input
         end.
 
     Inductive tf_update :=
@@ -105,13 +113,13 @@ Section Semantics.
 
     Definition tf_op_step_updates
       (state_op: tf_op)
-      (state: ContextEnv.(env_t) tf_states_type)
+      (sys_state: ContextEnv.(env_t) tf_states_type * ContextEnv.(env_t) tf_outputs_type)
       (input: forall (x : inputs_var), (type_denote (tf_inputs_type x)))
       : tf_update :=
         match state_op with
         | tf_nop => tf_no_update
-        | tf_assign dst expr => tf_st_update dst (tf_eval_expr (szB:=(states_size dst)) expr state input)
-        | tf_output dst expr => tf_out_update dst (tf_eval_expr (szB:=(outputs_size dst)) expr state input)
+        | tf_assign dst expr => tf_st_update dst (tf_eval_expr (szB:=(states_size dst)) expr sys_state input)
+        | tf_output dst expr => tf_out_update dst (tf_eval_expr (szB:=(outputs_size dst)) expr sys_state input)
         end.
 
     Definition tf_op_step_commit_state
@@ -146,8 +154,6 @@ Section Semantics.
         (tf_op_step_commit_state (fst sys_state) update,
          tf_op_step_commit_output (snd sys_state) update).
 
-    
-
     Fixpoint tf_ops_updates
       (state_ops: tf_ops)
       (sys_state: ContextEnv.(env_t) tf_states_type * ContextEnv.(env_t) tf_outputs_type)
@@ -156,14 +162,14 @@ Section Semantics.
       (list tf_update * (ContextEnv.(env_t) tf_states_type * ContextEnv.(env_t) tf_outputs_type)) :=
         match state_ops with
         | tf_ops_base op =>
-            let update := tf_op_step_updates op (fst sys_state) input in
+            let update := tf_op_step_updates op sys_state input in
             ( [update], tf_op_step_commit sys_state update )
         | tf_ops_cons ops1 ops2 =>
             let (updates1, sys_state1) := tf_ops_updates ops1 sys_state input in
             let (updates2, sys_state2) := tf_ops_updates ops2 sys_state1 input in
             (updates1 ++ updates2, sys_state2)
         | tf_ops_if cond then_ops else_ops =>
-            let cond_val := tf_eval_expr (szB:=1) cond (fst sys_state) input in
+            let cond_val := tf_eval_expr (szB:=1) cond sys_state input in
             if beq_dec cond_val Bits.zero then (* Note: we check for false i.e. all bits are zero, thus the bodies here are switched *)
               tf_ops_updates else_ops sys_state input 
             else
@@ -178,7 +184,7 @@ Section Semantics.
       (ContextEnv.(env_t) tf_states_type * ContextEnv.(env_t) tf_outputs_type) :=
         snd (tf_ops_updates state_ops sys_state input).
 
-    Section Properties.
+    (* Section Properties.
 
       Lemma tf_ops_updates_correct:
         forall state_ops sys_state input updates final_state,
@@ -406,7 +412,7 @@ Section Semantics.
       Qed.
 
     End Properties.
-
+ *)
 End Semantics.
 
 

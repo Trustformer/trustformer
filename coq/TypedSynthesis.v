@@ -1,0 +1,576 @@
+Require Import Koika.Frontend.
+Require Import Koika.Std.
+Require Import Koika.Utils.Common.
+Require Import Koika.Utils.Environments.
+Require Export Koika.Primitives.
+
+Require Koika.Properties.SemanticProperties.
+Require Import Coq.Program.Program.
+
+Require Import Trustformer.Syntax.
+Require Import Trustformer.Semantics.
+Require Import Trustformer.Utils.
+Require Import Trustformer.Scheduler.Contract.
+Require Trustformer.Properties.Common.
+From Koika.Utils Require Import Tactics.
+
+Require Import Streams.
+Require Import Coq.Lists.List.
+Require Import Coq.Strings.String.
+Require Import Coq.Logic.Eqdep_dec.
+Require Import Coq.Init.Tactics.
+Require Import Coq.Setoids.Setoid.
+Require Import Coq.micromega.Lia.
+
+Require Import Hammer.Plugin.Hammer.
+Set Hammer ATPLimit 5.
+Set Hammer GSMode 63.
+
+Record TFSynthContext := {
+  tf_sched_ctx : TFSchedule;
+
+  tf_action_reg_size : nat;
+  tf_action_encoding : (tfs_action tf_sched_ctx) -> bits_t tf_action_reg_size;
+  tf_action_encoding_inj : forall a1 a2, tf_action_encoding a1 = tf_action_encoding a2 -> a1 = a2;
+  tf_action_names : Show (tfs_action tf_sched_ctx);
+}.
+
+Section SynthesisTypes.
+
+  Context {states_var: Type}.
+  Context {inputs_var: Type}.
+  Context {outputs_var: Type}.
+  Context {actions: Type}.
+
+  Inductive _reg_t := 
+    | tf_cmd
+    | tf_cmd_ack
+    | tf_ready
+    | tf_reg (x : states_var)
+    | tf_in (x : inputs_var)
+    | tf_out (x : outputs_var)
+    | tf_out_ack (x : outputs_var)
+    .
+
+  Inductive _rule_name_t :=
+    | rule_cmd (cmd: actions)
+    | rule_out (out: outputs_var)
+    | rule_busy
+    .
+
+  Inductive _ext_fn_t := 
+    | ext_in_cmd
+    | ext_input (x : inputs_var)
+    | ext_output (x : outputs_var)
+    .
+
+End SynthesisTypes.
+
+Section TypedSynthesis.
+
+    Context (tf_ctx: TFSynthContext).
+
+    (* ====== Abbreviations ====== *)
+
+    Local Notation spec_states := (tfs_states (tf_sched_ctx tf_ctx)).
+    Local Notation spec_states_fin := (tfs_states_fin (tf_sched_ctx tf_ctx)).
+    Local Notation spec_states_size := (tfs_states_size (tf_sched_ctx tf_ctx)).
+    Local Notation spec_states_t := (tf_states_type spec_states_size).
+    Local Notation spec_states_init := (tfs_states_init (tf_sched_ctx tf_ctx)).
+    Local Notation spec_all_states := (@finite_elements spec_states spec_states_fin).
+    Local Notation spec_state_index := (@finite_index spec_states spec_states_fin).
+    Local Notation spec_state_num := (Datatypes.length spec_all_states).
+
+    Local Notation spec_inputs := (tfs_inputs (tf_sched_ctx tf_ctx)).
+    Local Notation spec_inputs_fin := (tfs_inputs_fin (tf_sched_ctx tf_ctx)).
+    Local Notation spec_inputs_size := (tfs_inputs_size (tf_sched_ctx tf_ctx)).
+    Local Notation spec_inputs_t := (tf_inputs_type spec_inputs_size).
+    Local Notation spec_all_inputs := (@finite_elements spec_inputs spec_inputs_fin).
+    Local Notation spec_input_index := (@finite_index spec_inputs spec_inputs_fin).
+    Local Notation spec_input_num := (Datatypes.length spec_all_inputs).
+
+    Local Notation spec_outputs := (tfs_outputs (tf_sched_ctx tf_ctx)).
+    Local Notation spec_outputs_fin := (tfs_outputs_fin (tf_sched_ctx tf_ctx)).
+    Local Notation spec_outputs_size := (tfs_outputs_size (tf_sched_ctx tf_ctx)).
+    Local Notation spec_outputs_t := (tf_outputs_type spec_outputs_size).
+    Local Notation spec_all_outputs := (@finite_elements spec_outputs spec_outputs_fin).
+    Local Notation spec_output_index := (@finite_index spec_outputs spec_outputs_fin).
+    Local Notation spec_output_num := (Datatypes.length spec_all_outputs).
+
+    Local Notation spec_action := (tfs_action (tf_sched_ctx tf_ctx)).
+    Local Notation spec_action_fin := (tfs_action_fin (tf_sched_ctx tf_ctx)).
+    Local Notation spec_all_actions := (@finite_elements spec_action spec_action_fin).
+    Local Notation spec_action_index := (@finite_index spec_action spec_action_fin).
+    Local Notation spec_action_num := (Datatypes.length spec_all_actions).
+
+    Local Notation spec_action_reg_size := (tf_action_reg_size tf_ctx).
+    Local Notation spec_action_encoding := (tf_action_encoding tf_ctx).
+    Local Notation spec_action_encoding_inj := (tf_action_encoding_inj tf_ctx).
+
+    Local Notation spec_schedule := (tfs_schedule (tf_sched_ctx tf_ctx)).
+    Local Notation spec_done_state := (tfs_done_signal (tf_sched_ctx tf_ctx)).
+    Local Notation spec_reset_states := (tfs_reset_states (tf_sched_ctx tf_ctx)).
+
+    (* ====== Instances ====== *)
+
+    Hint Extern 0 (FiniteType spec_states) => exact (tfs_states_fin (tf_sched_ctx tf_ctx)) : typeclass_instances.
+    Hint Extern 0 (FiniteType spec_inputs) => exact (tfs_inputs_fin (tf_sched_ctx tf_ctx)) : typeclass_instances.
+    Hint Extern 0 (FiniteType spec_outputs) => exact (tfs_outputs_fin (tf_sched_ctx tf_ctx)) : typeclass_instances.
+    Hint Extern 0 (FiniteType spec_action) => exact (tfs_action_fin (tf_sched_ctx tf_ctx)) : typeclass_instances.
+
+    Hint Extern 0 (Show spec_states) => exact (tfs_states_names (tf_sched_ctx tf_ctx)) : typeclass_instances.
+    Hint Extern 0 (Show spec_inputs) => exact (tfs_inputs_names (tf_sched_ctx tf_ctx)) : typeclass_instances.
+    Hint Extern 0 (Show spec_outputs) => exact (tfs_outputs_names (tf_sched_ctx tf_ctx)) : typeclass_instances.
+    Hint Extern 0 (Show spec_action) => exact (tf_action_names tf_ctx) : typeclass_instances.
+
+
+    Instance _eq_dec_states : EqDec spec_states.
+    Proof. pose spec_states_fin. apply EqDec_FiniteType. Defined.
+
+    Instance _eq_dec_outputs : EqDec spec_outputs.
+    Proof. pose spec_outputs_fin. apply EqDec_FiniteType. Defined.
+
+    (* ====== Registers ====== *)
+
+    Local Notation reg_t := (@_reg_t spec_states spec_inputs spec_outputs).
+
+    Instance _reg_t_fin2 : FiniteType2 reg_t.
+    Proof.  
+      unshelve econstructor.
+      - intro s. destruct s.
+        + exact (0, 0).
+        + exact (1, 0).
+        + exact (2, 0).
+        + exact (3, spec_state_index x). 
+        + exact (4, spec_input_index x). 
+        + exact (5, spec_output_index x).
+        + exact (6, spec_output_index x).
+          
+      - refine ([ [tf_cmd] ] ++ 
+                [ [tf_cmd_ack] ] ++ 
+                [ [tf_ready] ] ++ 
+                [ map tf_reg spec_all_states ] ++ 
+                [ map tf_in spec_all_inputs ] ++ 
+                [ map tf_out spec_all_outputs ] ++ 
+                [ map tf_out_ack spec_all_outputs ]).
+
+      - intros x n m EQ.
+        destruct x; inversion EQ; clear EQ; subst.
+        + (* tf_cmd *)
+          exists [tf_cmd]. split; auto.
+        + (* tf_cmd_ack *)
+          exists [tf_cmd_ack]. split; auto.
+        + (* tf_ready *)
+          exists [tf_ready]. split; auto.
+        + (* tf_reg *)
+          exists (map tf_reg spec_all_states). split; auto.
+          apply map_nth_error. apply finite_surjective.
+        + (* tf_in *)
+          exists (map tf_in spec_all_inputs). split; auto.
+          apply map_nth_error. apply finite_surjective.
+        + (* tf_out *)
+          exists (map tf_out spec_all_outputs). split; auto.
+          apply map_nth_error. apply finite_surjective.
+        + (* tf_out_ack *)
+          exists (map tf_out_ack spec_all_outputs). split; auto.
+          apply map_nth_error. apply finite_surjective.
+
+      - intros n l Hn m x Hm.
+      
+        destruct n as [|n].
+        { inversion Hn. subst. destruct m. inversion Hm. subst; reflexivity. inversion Hm. rewrite nth_error_nil in H0. congruence. }
+        destruct n as [|n].
+        { inversion Hn. subst. destruct m. inversion Hm. subst; reflexivity. inversion Hm. rewrite nth_error_nil in H0. congruence. }
+        destruct n as [|n].
+        { inversion Hn. subst. destruct m. inversion Hm. subst; reflexivity. inversion Hm. rewrite nth_error_nil in H0. congruence. }
+        
+        (* For mapped blocks, we use the injectivity of the map and the underlying finite type *)
+        destruct n as [|n].
+        { inversion Hn; subst. apply nth_error_map_inv in Hm. destruct Hm as [s [Hs ?]]; subst.
+          apply finite_elements_index in Hs. subst. reflexivity. }
+        destruct n as [|n].
+        { inversion Hn; subst. apply nth_error_map_inv in Hm. destruct Hm as [s [Hs ?]]; subst.
+          apply finite_elements_index in Hs. subst. reflexivity. }
+        destruct n as [|n].
+        { inversion Hn; subst. apply nth_error_map_inv in Hm. destruct Hm as [s [Hs ?]]; subst.
+          apply finite_elements_index in Hs. subst. reflexivity. }
+        destruct n as [|n].
+        { inversion Hn; subst. apply nth_error_map_inv in Hm. destruct Hm as [s [Hs ?]]; subst.
+          apply finite_elements_index in Hs. subst. reflexivity. }
+        
+        inversion Hn. rewrite nth_error_nil in H0. congruence. 
+
+      - do 6 (try apply Forall_app; try split).
+        all: constructor; [| constructor].        
+        + apply NoDup_one.
+        + apply NoDup_one.
+        + apply NoDup_one.
+        + cbn [map]. rewrite map_map.
+          apply NoDup_map_pair.
+          apply finite_injective.
+        + cbn [map]. rewrite map_map.
+          apply NoDup_map_pair.
+          apply finite_injective.
+        + cbn [map]. rewrite map_map.
+          apply NoDup_map_pair.
+          apply finite_injective.
+        + cbn [map]. rewrite map_map.
+          apply NoDup_map_pair.
+          apply finite_injective.
+    Defined.
+
+    Instance _reg_t_finite : FiniteType reg_t.
+    Proof.
+      apply FiniteType2_FiniteType.
+    Defined.
+
+    Definition _reg_name (x: spec_states) : string :=
+      "tf_st_" ++ string_id_of_nat (spec_state_index x).
+
+    Definition _in_name (x: spec_inputs) : string :=
+      "tf_in_" ++ string_id_of_nat (spec_input_index x).
+
+    Definition _out_name (x: spec_outputs) : string :=
+      "tf_out_" ++ string_id_of_nat (spec_output_index x).
+
+    Instance reg_names : Show reg_t :=
+      { show := fun r => match r with
+          | tf_cmd => "cmd"
+          | tf_cmd_ack => "cmd_ack"
+          | tf_ready => "ready"
+          | tf_reg x => String.append "st_" (show x)
+          | tf_in x => String.append "in_" (show x)
+          | tf_out x => String.append "out_" (show x)
+          | tf_out_ack x => String.append "out_ack_" (show x)
+          end
+      }.
+
+    (* ====== Register Types ====== *)
+
+    Definition R (r: reg_t) :=
+    match r with
+    | tf_cmd => bits_t spec_action_reg_size
+    | tf_cmd_ack => bits_t 1
+    | tf_ready => bits_t 1
+    | tf_reg x => spec_states_t x
+    | tf_in x => spec_inputs_t x
+    | tf_out x => spec_outputs_t x
+    | tf_out_ack x => bits_t 1
+    end.
+
+    Definition r (reg: reg_t) : R reg :=
+      match reg with
+      | tf_cmd => Bits.zero
+      | tf_cmd_ack => Bits.zero
+      | tf_ready => Bits.of_nat 1 1
+      | tf_reg x => spec_states_init x
+      | tf_in x => Bits.zero
+      | tf_out x => Bits.zero
+      | tf_out_ack x => Bits.zero
+      end.
+
+    (* ====== External Functions ====== *)
+
+    Local Notation ext_fn_t := (@_ext_fn_t spec_inputs spec_outputs).
+
+    Definition Sigma (fn: ext_fn_t) : ExternalSignature :=
+      match fn with
+      | ext_in_cmd => {$ bits_t 1 ~> maybe (bits_t spec_action_reg_size) $}
+      | ext_input x => {$ bits_t 1 ~> spec_inputs_t x $}
+      | ext_output x => {$ spec_outputs_t x ~> bits_t 1 $}
+      end.
+
+    Definition ext_fn_specs (fn : ext_fn_t) := 
+      match fn with
+      | ext_in_cmd => {| efr_name := "in_cmd"; 
+                        efr_internal := false |}
+      | ext_input x => {| efr_name := String.append "in_param_" (show x); 
+                          efr_internal := false |}
+      | ext_output x => {| efr_name := String.append "out_param_" (show x); 
+                           efr_internal := false |}
+      end.
+
+    Instance ext_fn_names : Show ext_fn_t :=
+      { show := fun r => match r with
+          | ext_in_cmd => "in_cmd"
+          | ext_input x => String.append "in_param_" (show x)
+          | ext_output x => String.append "out_param_" (show x)
+          end
+      }.
+    
+    (* ====== Rules ====== *)
+
+    Local Notation rule_name_t := (@_rule_name_t spec_outputs spec_action).
+
+    Instance rule_names : Show rule_name_t :=
+      { show := fun r => match r with
+          | rule_cmd cmd => String.append "rule_cmd_" (show cmd)
+          | rule_out out => String.append "rule_out_" (show out)
+          | rule_busy => "rule_busy"
+          end
+      }.
+
+    Definition system_schedule_outputs : scheduler := 
+      List.fold_right (fun t acc => @rule_out spec_outputs spec_action t |> acc) Done spec_all_outputs.
+
+    Definition system_schedule_actions : scheduler  :=
+      List.fold_right (fun t acc => @rule_cmd spec_outputs spec_action t |> acc) system_schedule_outputs spec_all_actions.
+
+    Definition system_schedule := rule_busy |> system_schedule_actions.
+    
+    Local Notation action := (action R Sigma).
+
+    Definition cast_action {sig} {A B} (Heq : A = B) (a : action sig A) : action sig B :=
+      match Heq in (_ = T) return (action sig T) with
+      | eq_refl => a
+      end.
+
+    Program Definition synth_convert {sig in_var_size} (out_var_size : nat)
+      (code : action sig (bits_t in_var_size))
+      : action sig (bits_t out_var_size) :=
+      match Compare_dec.lt_eq_lt_dec in_var_size out_var_size with
+      | inleft (left H_lt) =>
+          (* Case: Extension (Input < Output) *)
+          (* ZExtL extends input to out_var_size *)
+          let op := PrimTyped.Bits1 (PrimTyped.ZExtL in_var_size out_var_size) in
+          cast_action _ (Unop op code)
+      | inleft (right Heq) =>
+          (* Case: Sizes are equal *)
+          cast_action _ code
+      | inright H_gt =>
+          (* Case: Truncation (Input > Output) *)
+          (* Slice takes offset (0) and new length (out_var_size) *)
+          let op := PrimTyped.Bits1 (PrimTyped.Slice in_var_size 0 out_var_size) in
+          cast_action _ (Unop op code)
+      end.
+    Next Obligation.
+      f_equal. lia.
+    Defined.
+
+    Program Fixpoint expr_to_action {sig} (e: tf_expr) (target_size: nat) 
+      : action sig (bits_t target_size) :=
+      match e with
+      | tf_const value =>
+          Const (tau:=bits_t target_size) (Bits.of_nat target_size value)
+          
+      | tf_svar v =>
+          let act := Read P0 (tf_reg v) in
+          synth_convert target_size act
+          
+      | tf_ivar v =>
+          (* let ready_arg := Const (tau:=bits_t 1) (Bits.of_nat 1 1) in
+          let act := ExternalCall (ext_input v) ready_arg in *)
+          let act := Read P1 (tf_in v) in
+          synth_convert target_size act
+          
+      | tf_ovar v =>
+          let act := Read P0 (tf_out v) in
+          synth_convert target_size act
+          
+      | tf_op1 op src =>
+          let src_act := expr_to_action src target_size in
+          Unop (PrimTyped.Bits1 (PrimTyped.Not target_size)) src_act
+          
+      | tf_op2 op src1 src2 =>
+          match op with
+          | tf_and => 
+              Binop (PrimTyped.Bits2 (PrimTyped.And target_size)) 
+                    (expr_to_action src1 target_size) 
+                    (expr_to_action src2 target_size)
+          | tf_or => 
+              Binop (PrimTyped.Bits2 (PrimTyped.Or target_size)) 
+                    (expr_to_action src1 target_size) 
+                    (expr_to_action src2 target_size)
+          | tf_xor => 
+              Binop (PrimTyped.Bits2 (PrimTyped.Xor target_size)) 
+                    (expr_to_action src1 target_size) 
+                    (expr_to_action src2 target_size)
+          | tf_add => 
+              Binop (PrimTyped.Bits2 (PrimTyped.Plus target_size)) 
+                    (expr_to_action src1 target_size) 
+                    (expr_to_action src2 target_size)
+          | tf_sub => 
+              Binop (PrimTyped.Bits2 (PrimTyped.Minus target_size)) 
+                    (expr_to_action src1 target_size) 
+                    (expr_to_action src2 target_size)
+                    
+          | tf_mul => 
+              let act := Binop (PrimTyped.Bits2 (PrimTyped.Mul target_size target_size)) 
+                              (expr_to_action src1 target_size) 
+                              (expr_to_action src2 target_size) in
+              synth_convert target_size act
+              
+          | tf_cmp cmp_sz cmp_op =>
+              let s1 := expr_to_action src1 cmp_sz in
+              let s2 := expr_to_action src2 cmp_sz in
+              let op_fn := match cmp_op with
+                | tf_eq => PrimTyped.Bits2 (PrimTyped.EqBits cmp_sz false)
+                | tf_neq => PrimTyped.Bits2 (PrimTyped.EqBits cmp_sz true)
+                | tf_lt => PrimTyped.Bits2 (PrimTyped.Compare false cLt cmp_sz)
+                | tf_le => PrimTyped.Bits2 (PrimTyped.Compare false cLe cmp_sz)
+                | tf_gt => PrimTyped.Bits2 (PrimTyped.Compare false cGt cmp_sz)
+                | tf_ge => PrimTyped.Bits2 (PrimTyped.Compare false cGe cmp_sz)
+                end in
+              synth_convert target_size (in_var_size:=1) (Binop op_fn s1 s2)
+          end
+          
+      | tf_expr_if cond then_expr else_expr =>
+          If (expr_to_action cond 1)
+            (expr_to_action then_expr target_size)
+            (expr_to_action else_expr target_size)
+      end.
+    Next Obligation.
+      destruct cmp_op; simpl; reflexivity.
+    Defined.
+    Next Obligation.  
+      destruct cmp_op; simpl; reflexivity.
+    Defined.
+    Next Obligation.
+      destruct cmp_op; simpl; reflexivity.
+    Defined.
+
+    Definition _register_var_name (r: reg_t) : string :=
+      match r with
+      | tf_cmd => "__unused"
+      | tf_cmd_ack => "__unused"
+      | tf_ready => "__unused"
+      | tf_reg x => _reg_name x
+      | tf_in x => "__unused"
+      | tf_out x => _out_name x
+      | tf_out_ack x => "__unused"
+      end.
+
+    Definition op_to_action {sig tau} (op: tf_op) (code: action sig tau) : action sig tau :=
+      match op with
+      | tf_nop => 
+          code
+      | tf_assign x expr => 
+          Seq (Write P0 (tf_reg x) (expr_to_action expr (spec_states_size x))) code
+      | tf_output x expr => 
+          Seq (Write P0 (tf_out x) (expr_to_action expr (spec_outputs_size x))) code
+      end.
+
+    Fixpoint rule_aux {sig tau}
+      (rule_ops: list tf_op)
+      (code: action sig tau)
+      : action sig tau :=
+      match rule_ops with
+      | [] => code
+      | op :: ops => rule_aux ops (op_to_action op code)
+      end.    
+
+    Definition rule_read_var {sig tau} (var_map: reg_t -> string) (r: reg_t) 
+      (code: action ((var_map r, R r) :: sig) tau) : action sig tau :=
+      Bind (var_map r) (Read P0 r) code.
+
+    Program Fixpoint rule_read_vars {sig tau} (var_map: reg_t -> string) (regs: list reg_t) 
+      (code: action (List.rev (List.map (fun r => (var_map r, R r)) regs) ++ sig) tau) 
+      : action sig tau :=
+      match regs as l return action (List.rev (List.map (fun r => (var_map r, R r)) l) ++ sig) tau -> action sig tau with
+      | [] => fun c => c
+      | r :: rs => fun c => rule_read_var var_map r (rule_read_vars var_map rs c)
+      end code.
+    Next Obligation.
+      rewrite <- List.app_assoc.
+      reflexivity.
+    Defined.
+
+    Program Definition rule_write_var {sig tau} (var_map: reg_t -> string) (r: reg_t) 
+      (code: action sig tau) : action sig tau :=
+      let name := var_map r in
+      let target_type := R r in
+      match mem_opt (name, target_type) sig with
+      | Some m => Seq (Write P0 r (Var m)) code
+      | None => Seq (Fail unit_t) code
+      end.
+
+    Fixpoint rule_write_vars {sig tau} (var_map: reg_t -> string) (regs: list reg_t) 
+      (code: action sig tau) : action sig tau :=
+      match regs with
+      | [] => code
+      | r :: rs => rule_write_var var_map r (rule_write_vars var_map rs code)
+      end.
+
+    Fixpoint rule_reset_buffers {sig tau} (regs: list spec_states)
+      (code: action sig tau) : action sig tau :=
+      match regs with
+      | [] => code
+      | r :: rs => Seq (Write P1 (tf_reg r) (Const (tau:=R (tf_reg r)) Bits.zero)) (rule_reset_buffers rs code)
+      end.
+
+    Definition _rule_cmd {sig} (cmd: spec_action)
+      : action sig unit_t :=
+      let always_ops := fst (spec_schedule cmd) in
+      let done_ops := snd (spec_schedule cmd) in
+      rule_read_vars _register_var_name (List.map tf_reg spec_all_states) (
+        rule_read_vars _register_var_name (List.map tf_out spec_all_outputs) (
+          rule_aux always_ops (
+            If (tau:=unit_t) (synth_convert 1 (Read P1 (tf_reg spec_done_state)))
+            (
+              rule_aux done_ops (
+                rule_reset_buffers spec_reset_states (
+                  Write P1 (tf_ready) (Const (tau:=bits_t 1) Ob~1)
+                )
+              )
+            )
+            (
+              Const (tau:=unit_t) (vect_nil)
+            )
+          )
+        )
+      ).
+
+    Definition Guard {sig} (cond: action sig (bits_t 1)) : action sig unit_t :=
+      If cond (Const (tau:=unit_t) (vect_nil)) (Fail unit_t).
+
+    Program Fixpoint rule_buffer_inputs {sig tau} (regs: list spec_inputs)
+      (code: action sig tau) : action sig tau :=
+      match regs with
+      | [] => code
+      | r :: rs => 
+          Seq 
+            (Write P0 (tf_in r) (ExternalCall (ext_input r) (Const (tau:=bits_t 1) Ob~1))) 
+            (rule_buffer_inputs rs code)
+      end.
+
+    Program Definition rule_cmd_guard {sig} (cmd: spec_action) 
+      : action sig unit_t :=
+      let cmd_enc := spec_action_encoding cmd in
+      
+      If (Read P0 tf_ready)
+        (
+          let valid_bit := Unop (R:=R) (PrimTyped.Struct1 PrimTyped.GetField (Maybe (bits_t spec_action_reg_size)) thisone) (ExternalCall ext_in_cmd (Read P0 tf_ready)) in
+          let data_val := Unop (R:=R) (PrimTyped.Struct1 PrimTyped.GetField (Maybe (bits_t spec_action_reg_size)) (anotherone thisone)) (ExternalCall ext_in_cmd (Read P0 tf_ready)) in
+          
+          Seq (Guard valid_bit) (
+            Seq (Guard (Binop (PrimTyped.Bits2 (PrimTyped.EqBits spec_action_reg_size false)) data_val (Const cmd_enc))) (
+              rule_buffer_inputs spec_all_inputs (
+                Seq (Write P0 tf_cmd (Const cmd_enc)) (
+                  Write P0 tf_ready (Const (tau:=bits_t 1) Ob~0)
+                )
+              )
+            )
+          )
+        )
+        (
+          Guard (Binop (PrimTyped.Bits2 (PrimTyped.EqBits spec_action_reg_size false)) (Read P0 tf_cmd) (Const cmd_enc))
+        ).
+
+    Program Definition rules {sig} (rl: rule_name_t) : action sig unit_t :=
+      match rl with
+      | rule_busy =>
+          If (Read P0 tf_ready)
+          ( (Fail unit_t) )
+          (
+            let valid_bit := Unop (R:=R) (PrimTyped.Struct1 PrimTyped.GetField (Maybe (bits_t spec_action_reg_size)) thisone) (ExternalCall ext_in_cmd (Read P0 tf_ready)) in
+            Write P0 tf_cmd_ack valid_bit
+          )
+      | rule_cmd cmd => 
+            Seq (rule_cmd_guard cmd) (_rule_cmd cmd)
+      | rule_out out =>
+            Write P1 (tf_out_ack out) (ExternalCall (ext_output out) (Read P1 (tf_out out)))
+      end.
+
+End TypedSynthesis.
+
+
