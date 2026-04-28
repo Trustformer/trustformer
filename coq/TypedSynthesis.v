@@ -358,8 +358,6 @@ Section TypedSynthesis.
           synth_convert target_size act
           
       | tf_ivar v =>
-          (* let ready_arg := Const (tau:=bits_t 1) (Bits.of_nat 1 1) in
-          let act := ExternalCall (ext_input v) ready_arg in *)
           let act := Read P1 (tf_in v) in
           synth_convert target_size act
           
@@ -456,7 +454,7 @@ Section TypedSynthesis.
       : action sig tau :=
       match rule_ops with
       | [] => code
-      | op :: ops => rule_aux ops (op_to_action op code)
+      | op :: ops => op_to_action op (rule_aux ops code)
       end.    
 
     Definition rule_read_var {sig tau} (var_map: reg_t -> string) (r: reg_t) 
@@ -523,13 +521,26 @@ Section TypedSynthesis.
     Definition Guard {sig} (cond: action sig (bits_t 1)) : action sig unit_t :=
       If cond (Const (tau:=unit_t) (vect_nil)) (Fail unit_t).
 
-    Program Fixpoint rule_buffer_inputs {sig tau} (regs: list spec_inputs)
+    (* Program Fixpoint rule_buffer_inputs {sig tau} (regs: list spec_inputs)
       (code: action sig tau) : action sig tau :=
       match regs with
       | [] => code
       | r :: rs => 
           Seq 
             (Write P0 (tf_in r) (ExternalCall (ext_input r) (Const (tau:=bits_t 1) Ob~1))) 
+            (rule_buffer_inputs rs code)
+      end. *)
+
+    Program Definition write_input_step {sig} (r : spec_inputs) : action sig (spec_inputs_t r) :=
+      ExternalCall (ext_input r) (Const (tau:=bits_t 1) Ob~1).
+    
+    Fixpoint rule_buffer_inputs {sig tau} (regs: list spec_inputs)
+      (code: action sig tau) : action sig tau :=
+      match regs with
+      | [] => code
+      | r :: rs => 
+          Seq 
+            (Write P0 (tf_in r) (write_input_step r)) 
             (rule_buffer_inputs rs code)
       end.
 

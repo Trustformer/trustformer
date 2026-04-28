@@ -339,7 +339,7 @@ Section VariableScheduler.
 
   Definition cost_t := nat.
 
-  Definition cost_fn (d: dfg_op) : cost_t :=
+  Definition cost_fn (d: dfg_op) (sz: nat) : cost_t :=
     match d with
     | DFG_Const _ => 0
     | DFG_Input _ => 0
@@ -379,7 +379,7 @@ Section VariableScheduler.
                   | Some c => c
                   | None => 0
                   end in
-      list_assoc_set_all_max cost_map ((nid node) :: get_args node) (cost + cost_fn (op node))
+      list_assoc_set_all_max cost_map ((nid node) :: get_args node) (cost + cost_fn (op node) (sz node))
     in
     fold_left aux (List.rev (graph dfg)) [].
 
@@ -781,6 +781,10 @@ Section VariableScheduler.
     | tf_dfg_done => Bits.zero
     end.
 
+  Theorem schedule_no_dup: forall a, tfs_ops_no_duplicates (fst (schedule a) ++ snd (schedule a)).
+  Proof.
+  Admitted.
+
   Definition tfs_schedule : TFSchedule :=
     {|
       tfs_ctx := ctx;
@@ -806,6 +810,8 @@ Section VariableScheduler.
       tfs_schedule := schedule;
       tfs_done_signal := done_signal;
       tfs_reset_states := reset_states;
+
+      tfs_schedule_no_duplicates := schedule_no_dup;
     |}.
 
 End VariableScheduler.
