@@ -745,6 +745,46 @@ Section MatchHelpers.
 
 End MatchHelpers.
 
+Lemma fst_let_repackage : forall {A B C} (p : A * B) (f : A -> C),
+  fst (let (v, l) := p in (f v, l)) = f (fst p).
+Proof. destruct p; reflexivity. Qed.
+
+Lemma snd_let_repackage : forall {A B C} (p : A * B) (f : A -> C),
+  snd (let (v, l) := p in (f v, l)) = snd p.
+Proof. destruct p; reflexivity. Qed.
+
+Lemma not_in_app : forall {A: Type} (x: A) (l1 l2: list A),
+  ~ In x l1 ->
+  ~ In x l2 ->
+  ~ In x (l1 ++ l2).
+Proof.
+  intros. intros HIn. apply in_app_iff in HIn. destruct HIn; auto.
+Qed.
+
+Lemma not_in_app_l : forall {A: Type} (x: A) (l1 l2: list A),
+  ~ In x (l1 ++ l2) ->
+  ~ In x l1.
+Proof.
+  intros. intros HIn. apply H; clear H. apply in_or_app. left. exact HIn.
+Qed.
+
+Lemma not_in_app_r : forall {A: Type} (x: A) (l1 l2: list A),
+  ~ In x (l1 ++ l2) ->
+  ~ In x l2.
+Proof.
+  intros. intros HIn. apply H; clear H. apply in_or_app. right. exact HIn.
+Qed.
+
+Lemma not_in_app_iff : forall {A: Type} (x: A) (l1 l2: list A),
+  ~ In x (l1 ++ l2) <-> ~ In x l1 /\ ~ In x l2.
+Proof.
+  intros. split; intros H.
+  - split.
+    + apply not_in_app_l in H. assumption.
+    + apply not_in_app_r in H. assumption.
+  - destruct H as [H1 H2]. apply not_in_app; assumption.
+Qed.
+
 (* Section InterpActionRewritesHelper.
 
   Lemma rew_interp_action_code:

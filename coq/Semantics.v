@@ -30,23 +30,12 @@ Section Semantics.
       bits_t (outputs_size x).
 
     (* Logic for the implicit type conversion *)
-    Lemma __convert_le:
-      forall a b, a <= b -> Nat.max a b = b.
-    Proof. lia. Qed.
-
     Definition convert {szA szB}
       (original : bits_t szA)
       : bits_t szB :=
       match eq_dec szA szB with
       | left e => eq_rect szA (fun sz => bits_t sz) original szB e
-      | right n =>
-          match le_dec szA szB with
-          | left l =>
-            let p := __convert_le _ _ l in
-            eq_rect (Nat.max szA szB) bits_t (Bits.extend_end original szB false) szB p
-          | right r =>
-            Bits.slice 0 szB original
-          end
+      | right n => Bits.slice 0 szB original
       end.
 
     (* Evaluation of expressions *)
@@ -84,17 +73,17 @@ Section Semantics.
                 let val_cmp_src2 := tf_eval_expr (szB:=szC) src2 sys_state input in
                 match cmp_op with
                 | tf_eq =>
-                    if beq_dec val_cmp_src1 val_cmp_src2 then Bits.of_nat szB 1 else Bits.of_nat szB 0
+                    if beq_dec val_cmp_src1 val_cmp_src2 then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
                 | tf_neq =>
-                    if beq_dec val_cmp_src1 val_cmp_src2 then Bits.of_nat szB 0 else Bits.of_nat szB 1
+                    if beq_dec val_cmp_src1 val_cmp_src2 then convert (Bits.of_nat 1 0) else convert (Bits.of_nat 1 1)
                 | tf_lt =>
-                    if Bits.unsigned_lt val_cmp_src1 val_cmp_src2 then Bits.of_nat szB 1 else Bits.of_nat szB 0
+                    if Bits.unsigned_lt val_cmp_src1 val_cmp_src2 then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
                 | tf_le =>
-                    if Bits.unsigned_le val_cmp_src1 val_cmp_src2 then Bits.of_nat szB 1 else Bits.of_nat szB 0
+                    if Bits.unsigned_le val_cmp_src1 val_cmp_src2 then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
                 | tf_gt =>
-                    if Bits.unsigned_gt val_cmp_src1 val_cmp_src2 then Bits.of_nat szB 1 else Bits.of_nat szB 0
+                    if Bits.unsigned_gt val_cmp_src1 val_cmp_src2 then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
                 | tf_ge =>
-                    if Bits.unsigned_ge val_cmp_src1 val_cmp_src2 then Bits.of_nat szB 1 else Bits.of_nat szB 0
+                    if Bits.unsigned_ge val_cmp_src1 val_cmp_src2 then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
                 end
             end
         | tf_expr_if cond then_expr else_expr =>

@@ -320,34 +320,15 @@ Section TypedSynthesis.
     
     Local Notation action := (action R Sigma).
 
-    Definition cast_action {sig} {A B} (Heq : A = B) (a : action sig A) : action sig B :=
-      match Heq in (_ = T) return (action sig T) with
-      | eq_refl => a
-      end.
-
-    Program Definition synth_convert {sig in_var_size} (out_var_size : nat)
+    Definition synth_convert {sig in_var_size} (out_var_size : nat)
       (code : action sig (bits_t in_var_size))
       : action sig (bits_t out_var_size) :=
-      match Compare_dec.lt_eq_lt_dec in_var_size out_var_size with
-      | inleft (left H_lt) =>
-          (* Case: Extension (Input < Output) *)
-          (* ZExtL extends input to out_var_size *)
-          let op := PrimTyped.Bits1 (PrimTyped.ZExtL in_var_size out_var_size) in
-          cast_action _ (Unop op code)
-      | inleft (right Heq) =>
-          (* Case: Sizes are equal *)
-          cast_action _ code
-      | inright H_gt =>
-          (* Case: Truncation (Input > Output) *)
-          (* Slice takes offset (0) and new length (out_var_size) *)
-          let op := PrimTyped.Bits1 (PrimTyped.Slice in_var_size 0 out_var_size) in
-          cast_action _ (Unop op code)
+      match eq_dec in_var_size out_var_size with
+      | left e => eq_rect in_var_size (fun sz => action sig (bits_t sz)) code out_var_size e
+      | right n => (Unop (PrimTyped.Bits1 (PrimTyped.Slice in_var_size 0 out_var_size)) code)
       end.
-    Next Obligation.
-      f_equal. lia.
-    Defined.
 
-    Program Fixpoint expr_to_action {sig} (e: tf_expr) (target_size: nat) 
+    Fixpoint expr_to_action {sig} (e: tf_expr) (target_size: nat) 
       : action sig (bits_t target_size) :=
       match e with
       | tf_const value =>
@@ -401,41 +382,20 @@ Section TypedSynthesis.
           | tf_cmp cmp_sz cmp_op =>
               let s1 := expr_to_action src1 cmp_sz in
               let s2 := expr_to_action src2 cmp_sz in
-              let op_fn := match cmp_op with
-                | tf_eq => PrimTyped.Bits2 (PrimTyped.EqBits cmp_sz false)
-                | tf_neq => PrimTyped.Bits2 (PrimTyped.EqBits cmp_sz true)
-                | tf_lt => PrimTyped.Bits2 (PrimTyped.Compare false cLt cmp_sz)
-                | tf_le => PrimTyped.Bits2 (PrimTyped.Compare false cLe cmp_sz)
-                | tf_gt => PrimTyped.Bits2 (PrimTyped.Compare false cGt cmp_sz)
-                | tf_ge => PrimTyped.Bits2 (PrimTyped.Compare false cGe cmp_sz)
-                end in
-              synth_convert target_size (in_var_size:=1) (Binop op_fn s1 s2)
+              match cmp_op with
+                | tf_eq => synth_convert target_size (in_var_size:=1) (Binop (PrimTyped.Bits2 (PrimTyped.EqBits cmp_sz false)) s1 s2)
+                | tf_neq => synth_convert target_size (in_var_size:=1) (Binop (PrimTyped.Bits2 (PrimTyped.EqBits cmp_sz true)) s1 s2)
+                | tf_lt => synth_convert target_size (in_var_size:=1) (Binop (PrimTyped.Bits2 (PrimTyped.Compare false cLt cmp_sz)) s1 s2)
+                | tf_le => synth_convert target_size (in_var_size:=1) (Binop (PrimTyped.Bits2 (PrimTyped.Compare false cLe cmp_sz)) s1 s2)
+                | tf_gt => synth_convert target_size (in_var_size:=1) (Binop (PrimTyped.Bits2 (PrimTyped.Compare false cGt cmp_sz)) s1 s2)
+                | tf_ge => synth_convert target_size (in_var_size:=1) (Binop (PrimTyped.Bits2 (PrimTyped.Compare false cGe cmp_sz)) s1 s2)
+              end
           end
           
       | tf_expr_if cond then_expr else_expr =>
           If (expr_to_action cond 1)
             (expr_to_action then_expr target_size)
             (expr_to_action else_expr target_size)
-      end.
-    Next Obligation.
-      destruct cmp_op; simpl; reflexivity.
-    Defined.
-    Next Obligation.  
-      destruct cmp_op; simpl; reflexivity.
-    Defined.
-    Next Obligation.
-      destruct cmp_op; simpl; reflexivity.
-    Defined.
-
-    Definition _register_var_name (r: reg_t) : string :=
-      match r with
-      | tf_cmd => "__unused"
-      | tf_cmd_ack => "__unused"
-      | tf_ready => "__unused"
-      | tf_reg x => _reg_name x
-      | tf_in x => "__unused"
-      | tf_out x => _out_name x
-      | tf_out_ack x => "__unused"
       end.
 
     Definition op_to_action {sig tau} (op: tf_op) (code: action sig tau) : action sig tau :=
@@ -457,38 +417,6 @@ Section TypedSynthesis.
       | op :: ops => op_to_action op (rule_aux ops code)
       end.    
 
-    Definition rule_read_var {sig tau} (var_map: reg_t -> string) (r: reg_t) 
-      (code: action ((var_map r, R r) :: sig) tau) : action sig tau :=
-      Bind (var_map r) (Read P0 r) code.
-
-    Program Fixpoint rule_read_vars {sig tau} (var_map: reg_t -> string) (regs: list reg_t) 
-      (code: action (List.rev (List.map (fun r => (var_map r, R r)) regs) ++ sig) tau) 
-      : action sig tau :=
-      match regs as l return action (List.rev (List.map (fun r => (var_map r, R r)) l) ++ sig) tau -> action sig tau with
-      | [] => fun c => c
-      | r :: rs => fun c => rule_read_var var_map r (rule_read_vars var_map rs c)
-      end code.
-    Next Obligation.
-      rewrite <- List.app_assoc.
-      reflexivity.
-    Defined.
-
-    Program Definition rule_write_var {sig tau} (var_map: reg_t -> string) (r: reg_t) 
-      (code: action sig tau) : action sig tau :=
-      let name := var_map r in
-      let target_type := R r in
-      match mem_opt (name, target_type) sig with
-      | Some m => Seq (Write P0 r (Var m)) code
-      | None => Seq (Fail unit_t) code
-      end.
-
-    Fixpoint rule_write_vars {sig tau} (var_map: reg_t -> string) (regs: list reg_t) 
-      (code: action sig tau) : action sig tau :=
-      match regs with
-      | [] => code
-      | r :: rs => rule_write_var var_map r (rule_write_vars var_map rs code)
-      end.
-
     Fixpoint rule_reset_buffers {sig tau} (regs: list spec_states)
       (code: action sig tau) : action sig tau :=
       match regs with
@@ -500,36 +428,23 @@ Section TypedSynthesis.
       : action sig unit_t :=
       let always_ops := fst (spec_schedule cmd) in
       let done_ops := snd (spec_schedule cmd) in
-      rule_read_vars _register_var_name (List.map tf_reg spec_all_states) (
-        rule_read_vars _register_var_name (List.map tf_out spec_all_outputs) (
-          rule_aux always_ops (
-            If (tau:=unit_t) (synth_convert 1 (Read P1 (tf_reg spec_done_state)))
-            (
-              rule_aux done_ops (
-                rule_reset_buffers spec_reset_states (
-                  Write P1 (tf_ready) (Const (tau:=bits_t 1) Ob~1)
-                )
+      rule_aux always_ops (
+        If (tau:=unit_t) (synth_convert 1 (Read P1 (tf_reg spec_done_state)))
+          (
+            rule_aux done_ops (
+              rule_reset_buffers spec_reset_states (
+                Write P1 (tf_ready) (Const (tau:=bits_t 1) Ob~1)
               )
             )
-            (
-              Const (tau:=unit_t) (vect_nil)
-            )
+          )
+          (
+            Const (tau:=unit_t) (vect_nil)
           )
         )
-      ).
+      .
 
     Definition Guard {sig} (cond: action sig (bits_t 1)) : action sig unit_t :=
       If cond (Const (tau:=unit_t) (vect_nil)) (Fail unit_t).
-
-    (* Program Fixpoint rule_buffer_inputs {sig tau} (regs: list spec_inputs)
-      (code: action sig tau) : action sig tau :=
-      match regs with
-      | [] => code
-      | r :: rs => 
-          Seq 
-            (Write P0 (tf_in r) (ExternalCall (ext_input r) (Const (tau:=bits_t 1) Ob~1))) 
-            (rule_buffer_inputs rs code)
-      end. *)
 
     Program Definition write_input_step {sig} (r : spec_inputs) : action sig (spec_inputs_t r) :=
       ExternalCall (ext_input r) (Const (tau:=bits_t 1) Ob~1).
