@@ -488,6 +488,13 @@ Section VariableScheduler.
     in
     fold_left aux (graph dfg) [].
 
+
+  (* TODO: when an if is tainted, then all ifs in its branches should also be tainted, the easy way is to just have a seperate constant time tag
+    after having the taints the constant time tag is computed, and there the children of constant time ifs are also marked as constant time.
+
+    the compile thingy needs to also be updated with that
+  *)
+
   (* ============================== *)
   (* = Step 6: TF Compilations    = *)
   (* ============================== *)
@@ -506,6 +513,7 @@ Section VariableScheduler.
     | tf_const 1, tf_const 1 => tf_const 1
     | _, _ => tf_expr_if cond then_expr else_expr
     end.
+
 
   (* First the expression, then the valid signal *)
   Fixpoint compile_dfg_expr (fuel: nat) (a_idx: Vect.index (length buffer_needs)) (dfg: dfg_state) (nid: nid_t) (buffers: list (nid_t * (nat * sz_t))) 
