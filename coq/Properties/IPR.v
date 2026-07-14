@@ -1,3 +1,10 @@
+(* 
+=================================================
+Outdated old version of an IPR proof, only kept because some 
+insights in what worked previously might still be useful.
+=================================================
+
+
 Require Import Koika.Frontend.
 Require Import Koika.Std.
 Require Import Koika.Utils.Common.
@@ -2467,4 +2474,4 @@ Section CompositionalCorrectness.
       }
   Qed.
 
-End CompositionalCorrectness.
+End CompositionalCorrectness. *)
