@@ -15,4 +15,7 @@
     "vscoq.goals.maxDepth": 64,
     "vscoq.memory.limit": 32,
     "editor.tabSize": 4,
+    "chat.tools.terminal.autoApprove": {
+        "nix": true
+    },
 }

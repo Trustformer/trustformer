@@ -1,2 +1,2 @@
-(dirs :standard)
+(dirs :standard \ vendor)
 (env (dev (flags (:standard -warn-error -A \ -short-paths))))

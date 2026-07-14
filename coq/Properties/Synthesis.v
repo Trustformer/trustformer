@@ -863,9 +863,7 @@ Section SynthesisCorrectness.
         apply Common.not_in_map; try assumption.
         * abstract ( inversion H_nodup_inputs; subst; assumption ).
         * abstract ( intros; inversion H; reflexivity ).
-  (* Timeout 600 Time Qed.  *)
-  Admitted. (* SPEEDUP *)
-  (* 12 seconds *)    
+  Time Qed. (* ca. 9.8 s *)
 
   Lemma may_write_fold_cons_w0_inputs :
     forall log log2 prt x (sigma: forall f, Sig_denote (Sigma f)),
@@ -967,8 +965,9 @@ Section SynthesisCorrectness.
         rewrite may_write_fold_cons_w0_inputs.
         2: { intro. rewrite in_map_iff in H. destruct H as [x [Heq Hin]]. congruence. }
 
-        set (MW := may_write _ _ P0 tf_cmd). assert (MW = true) as HMW.
-        { subst MW. rewrite !may_write_log_cons_neq; try assumption. all: (* hammer *) timeout 10 sauto. } rewrite HMW. clear HMW MW.
+        set (MW := may_write _ _ P0 tf_cmd). assert (MW = true) as HMW
+          by abstract (subst MW; rewrite !may_write_log_cons_neq; try assumption; timeout 10 sauto).
+        rewrite HMW. clear HMW MW.
         cbn.
 
         set (MW := may_write _ _ P0 tf_ready). assert (MW = true) as HMW.
@@ -977,7 +976,7 @@ Section SynthesisCorrectness.
           2: { intro. rewrite in_map_iff in H. destruct H as [x [Heq Hin]]. congruence. }
           rewrite !may_write_log_cons_eq. rewrite Hwr0_ready. ring. 
         } rewrite HMW. clear HMW MW.
-        unfold log_after_cmd_guard_rdy. reflexivity.
+        abstract (unfold log_after_cmd_guard_rdy; reflexivity).
       + exact Hinput.
       + rewrite !may_write_all_log_cons_neq. exact Hwr0_in.
         all: abstract (intro; rewrite in_map_iff in H; destruct H as [x [Heq Hin]]; subst; congruence).
@@ -989,9 +988,7 @@ Section SynthesisCorrectness.
       unfold env_matches in Hinput_rdy. destruct Hinput_nrdy as [Hcmd Hin]; try assumption.
       extract_match_term. rewrite Hcmd in HeqMT. cbn in HeqMT. rewrite beq_dec_refl in HeqMT. subst MT.
       reflexivity.
-  (* Timeout 600 Time Qed.  *)
-  Admitted. (* SPEEDUP *)
-  (* 188 seconds *)
+  Time Qed. (* ca. 0.15 s *)
 
   Definition inputs_are_buffered (input: input_t) (r: ContextEnv.(env_t) R) log :=
     forall v, 
@@ -1444,9 +1441,7 @@ Section SynthesisCorrectness.
     destruct (eq_dec szA szB) as [Heq | Hneq]; subst.
     - sauto.
     - cbn. unfold opt_bind. reflexivity.
-  (* Timeout 600 Time Qed.  *)
-  Admitted. (* SPEEDUP *)
-  (* ??? seconds *)
+  Time Qed. (* ca. 0.1 s *)
 
   Lemma interp_action_expr :
     forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
@@ -1650,9 +1645,7 @@ Section SynthesisCorrectness.
             apply snd_eval_expr_aux_app2.
           -- subst. destruct vtl. reflexivity.
         ++ apply inputs_are_buffered_expr_log. exact Hin_buf.
-  (* Timeout 10 Time Qed. *)
-  Admitted. (* SPEEDUP *)
-  (* 2 seconds *)
+  Time Qed. (* ca. 1.7 s *)
 
   Definition affected_regs (ops: list (@tf_op spec_states spec_inputs spec_outputs)) : list reg_t :=
     fold_right (fun op acc => match op with
@@ -1798,9 +1791,7 @@ Section SynthesisCorrectness.
           -- simpl in HNoDup_aff. inversion HNoDup_aff; subst.
              rewrite may_write_all_log_cons_neq; [|assumption].
              apply may_write_all_expr_log; assumption.
-  (* Timeout 10 Time Qed.  *)
-  Admitted. (* SPEEDUP *)
-  (* > 10 seconds *)
+  Time Qed. (* ca. 23 s *)
 
   Definition construct_log (sys: sys_state_t) (act: spec_action) (input: input_t) ready (log_a: Log R ContextEnv): Log R ContextEnv :=
     let updates := if 

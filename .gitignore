@@ -9,3 +9,9 @@ build/
 .local/
 .nia.cache
 .lia.cache
+
+# Vendored read-only reference sources (not part of the build)
+vendor/
+
+# Long-term agent memory (untracked)
+agents/
