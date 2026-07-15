@@ -823,6 +823,18 @@ Section SynthesisCorrectness.
         Some (log_cons idx {| kind := LogRead; port := P0; val := tt |} log_a, r.[idx], ctx).
     Proof. intros; simpl. rewrite H; try auto. Qed.
 
+    Lemma interp_action_read1 :
+      forall r sigma sig (ctx: tcontext sig) log_r log_a idx,
+        may_read log_r P1 idx = true ->
+        interp_action (tau:=R idx) r sigma ctx log_r log_a (Read P1 idx) =
+        Some (log_cons idx {| kind := LogRead; port := P1; val := tt |} log_a,
+              match latest_write0 (log_app log_a log_r) idx with
+              | Some v => v
+              | None => r.[idx]
+              end,
+              ctx).
+    Proof. intros; simpl. rewrite H; try auto. Qed.
+
     Lemma interp_action_buffer_inputs_cons :
       forall r_env sigma log1 log2 i inputs rest,
         may_write log1 log2 P0 (tf_in i) = true ->
@@ -833,6 +845,50 @@ Section SynthesisCorrectness.
         .
     Proof.
       intros. simpl. rewrite H. reflexivity.
+    Qed.
+
+    Lemma interp_action_write_const :
+      forall r sigma sig (ctx: tcontext sig) log_r log_a prt idx (v: R idx),
+        may_write log_r log_a prt idx = true ->
+        interp_action (tau:=unit_t) r sigma ctx log_r log_a (Write prt idx (Const (tau:=R idx) v)) =
+        Some (log_cons idx {| kind := LogWrite; port := prt; val := v |} log_a, Bits.nil, ctx).
+    Proof. intros; simpl. rewrite H. reflexivity. Qed.
+
+    Lemma interp_action_reset_buffers_cons :
+      forall r sigma log_r log_a s rest code,
+        may_write log_r log_a P1 (tf_reg s) = true ->
+        interp_action (tau:=unit_t) r sigma CtxEmpty log_r log_a (rule_reset_buffers tf_ctx (s :: rest) code) =
+        interp_action r sigma CtxEmpty log_r
+            (log_cons (tf_reg s) (Write1 Bits.zero) log_a)
+            (rule_reset_buffers tf_ctx rest code).
+    Proof.
+      intros. simpl. rewrite H. reflexivity.
+    Qed.
+
+    (* Concrete result log of folding all the P1 buffer-reset writes onto log_a. *)
+    Definition reset_log (regs: list spec_states) (log_a: Log R ContextEnv) : Log R ContextEnv :=
+      fold_left (fun acc s => log_cons (R:=R) (REnv:=REnv) (tf_reg s) (Write1 Bits.zero) acc) regs log_a.
+
+    (* Full stepper: peel the entire reset_buffers prologue, leaving `code` to run on
+       the reset_log. Distinctness (NoDup) keeps the write-validity hypothesis alive
+       across the fold. *)
+    Lemma interp_action_reset_buffers :
+      forall r sigma log_r regs code log_a,
+        NoDup (map tf_reg regs : list reg_t) ->
+        may_write_all log_r log_a P1 (map tf_reg regs) = true ->
+        interp_action (tau:=unit_t) r sigma CtxEmpty log_r log_a (rule_reset_buffers tf_ctx regs code) =
+        interp_action r sigma CtxEmpty log_r (reset_log regs log_a) code.
+    Proof.
+      intros r sigma log_r regs code.
+      induction regs as [| s rest IH]; intros log_a Hnd Hwr.
+      - reflexivity.
+      - simpl in Hnd. apply NoDup_cons_iff in Hnd. destruct Hnd as [Hnotin_s Hnd_rest].
+        simpl in Hwr. apply may_write_all_cons in Hwr. destruct Hwr as [Hwr_s Hwr_rest].
+        rewrite interp_action_reset_buffers_cons by exact Hwr_s.
+        rewrite IH.
+        + reflexivity.
+        + exact Hnd_rest.
+        + rewrite may_write_all_log_cons_neq by exact Hnotin_s. exact Hwr_rest.
     Qed.
 
   End Interpreting.
@@ -1414,6 +1470,23 @@ Section SynthesisCorrectness.
       + simpl. rewrite SemanticProperties.latest_write0_cons_neq; try assumption.
   Qed.
 
+  (* expr_log only appends LogRead entries, so latest_write0 ignores it for ANY
+     register (generalizes latest_write0_expr_log beyond tf_in). Building block for
+     the aux_log <-> updates bridge (Phase D). *)
+  Lemma latest_write0_expr_log_any :
+    forall expr szB sys input log_a reg,
+      latest_write0 (expr_log expr szB sys input log_a) reg =
+      latest_write0 log_a reg.
+  Proof.
+    intros expr szB sys input log_a reg.
+    unfold expr_log.
+    induction ((snd (eval_expr_aux expr [] sys input))).
+    - reflexivity.
+    - destruct (eq_dec reg a) as [Heq | Hneq]; subst.
+      + simpl. rewrite SemanticProperties.latest_write0_cons_eq. exact IHl.
+      + simpl. rewrite SemanticProperties.latest_write0_cons_neq; try assumption.
+  Qed.
+
   Lemma inputs_are_buffered_expr_log :
     forall input r log_a log_r expr szB sys,
       inputs_are_buffered input r (log_app log_a log_r) ->
@@ -1793,19 +1866,223 @@ Section SynthesisCorrectness.
              apply may_write_all_expr_log; assumption.
   Time Qed. (* ca. 23 s *)
 
-  Definition construct_log (sys: sys_state_t) (act: spec_action) (input: input_t) ready (log_a: Log R ContextEnv): Log R ContextEnv :=
-    let updates := if 
-                    beq_dec (find_st_val sched_ctx spec_done_state (tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input) sys) Bits.zero
-                  then 
-                    tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input
-                  else 
-                    tfs_reset_updates sched_ctx spec_reset_states 
-                    ++ tfs_get_updates sched_ctx (snd (spec_schedule act)) sys input 
-                    ++ tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input in
-    match eq_dec ready Ob~1 with
-    | left Hready => log_a (* TODO: update while working on the proof below *)
-    | right Hnotready => log_a (* TODO: update while working on the proof below *)
-    end.
+  (* --- aux_log <-> abstract-updates bridge (Phase D building blocks) --- *)
+
+  Lemma tfs_get_updates_cons :
+    forall op ops sys input,
+      tfs_get_updates sched_ctx (op :: ops) sys input =
+      tf_op_step_updates (tfs_states_size sched_ctx) (tfs_inputs_size sched_ctx)
+        (tfs_outputs_size sched_ctx) op sys input
+        :: tfs_get_updates sched_ctx ops sys input.
+  Proof. reflexivity. Qed.
+
+  (* If a register is not written by any op, find_st_update yields None. *)
+  Lemma find_st_update_not_affected :
+    forall ops sys input x,
+      ~ In (tf_reg x) (affected_regs ops) ->
+      find_st_update sched_ctx x (tfs_get_updates sched_ctx ops sys input) = None.
+  Proof.
+    induction ops as [| op ops IH]; intros sys input x Hnotin.
+    - reflexivity.
+    - rewrite tfs_get_updates_cons.
+      destruct op; simpl affected_regs in Hnotin; cbn [find_st_update tf_op_step_updates].
+      + apply IH. exact Hnotin.
+      + apply Decidable.not_or in Hnotin. destruct Hnotin as [Hneq Hnotin].
+        destruct (eq_dec dst x) as [Heq | Hneq'].
+        * subst. contradiction Hneq. reflexivity.
+        * apply IH. exact Hnotin.
+      + apply Decidable.not_or in Hnotin. destruct Hnotin as [_ Hnotin].
+        apply IH. exact Hnotin.
+  Qed.
+
+  (* Symmetric helper for outputs. *)
+  Lemma find_out_update_not_affected :
+    forall ops sys input x,
+      ~ In (tf_out x) (affected_regs ops) ->
+      find_out_update sched_ctx x (tfs_get_updates sched_ctx ops sys input) = None.
+  Proof.
+    induction ops as [| op ops IH]; intros sys input x Hnotin.
+    - reflexivity.
+    - rewrite tfs_get_updates_cons.
+      destruct op; simpl affected_regs in Hnotin; cbn [find_out_update tf_op_step_updates].
+      + apply IH. exact Hnotin.
+      + apply Decidable.not_or in Hnotin. destruct Hnotin as [_ Hnotin].
+        apply IH. exact Hnotin.
+      + apply Decidable.not_or in Hnotin. destruct Hnotin as [Hneq Hnotin].
+        destruct (eq_dec dst x) as [Heq | Hneq'].
+        * subst. contradiction Hneq. reflexivity.
+        * apply IH. exact Hnotin.
+  Qed.
+
+  (* One-step unfolding of the aux_log fold_left. *)
+  Lemma aux_log_cons :
+    forall op ops sys input log_a,
+      aux_log sys input (op :: ops) log_a =
+      aux_log sys input ops
+        (match op with
+         | tf_assign dst expr =>
+             log_cons (R:=R) (REnv:=REnv) (tf_reg dst)
+               (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size expr sys input))
+               (expr_log expr (spec_states_size dst) sys input log_a)
+         | tf_output dst expr =>
+             log_cons (R:=R) (REnv:=REnv) (tf_out dst)
+               (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size expr sys input))
+               (expr_log expr (spec_outputs_size dst) sys input log_a)
+         | _ => log_a
+         end).
+  Proof. reflexivity. Qed.
+
+  (* CRUX BRIDGE (registers): under NoDup, latest_write0 over aux_log agrees with
+     find_st_update over the abstract updates, falling back to log_a. *)
+  Lemma latest_write0_aux_log_reg :
+    forall ops sys input log_a x,
+      NoDup (affected_regs ops) ->
+      latest_write0 (aux_log sys input ops log_a) (tf_reg x) =
+      match find_st_update sched_ctx x (tfs_get_updates sched_ctx ops sys input) with
+      | Some v => Some v
+      | None => latest_write0 log_a (tf_reg x)
+      end.
+  Proof.
+    induction ops as [| op ops IH]; intros sys input log_a x Hnd.
+    - reflexivity.
+    - rewrite aux_log_cons, tfs_get_updates_cons.
+      destruct op; simpl affected_regs in Hnd;
+        cbn [find_st_update tf_op_step_updates].
+      + (* tf_nop *) apply IH. exact Hnd.
+      + (* tf_assign dst expr *)
+        apply NoDup_cons_iff in Hnd. destruct Hnd as [Hnotin Hnd].
+        destruct (eq_dec dst x) as [Heq | Hneq].
+        * subst dst.
+          rewrite IH by exact Hnd.
+          rewrite (find_st_update_not_affected ops sys input x Hnotin).
+          rewrite SemanticProperties.latest_write0_cons_eq. reflexivity.
+        * rewrite IH by exact Hnd.
+          destruct (find_st_update sched_ctx x (tfs_get_updates sched_ctx ops sys input)); try reflexivity.
+          rewrite SemanticProperties.latest_write0_cons_neq.
+          -- apply latest_write0_expr_log_any.
+          -- intro Hc. apply Hneq. injection Hc. auto.
+      + (* tf_output dst expr *)
+        apply NoDup_cons_iff in Hnd. destruct Hnd as [_ Hnd].
+        rewrite IH by exact Hnd.
+        destruct (find_st_update sched_ctx x (tfs_get_updates sched_ctx ops sys input)); try reflexivity.
+        rewrite SemanticProperties.latest_write0_cons_neq.
+        * apply latest_write0_expr_log_any.
+        * intro Hc. discriminate Hc.
+  Qed.
+
+  (* CRUX BRIDGE (outputs): symmetric to the register version. *)
+  Lemma latest_write0_aux_log_out :
+    forall ops sys input log_a x,
+      NoDup (affected_regs ops) ->
+      latest_write0 (aux_log sys input ops log_a) (tf_out x) =
+      match find_out_update sched_ctx x (tfs_get_updates sched_ctx ops sys input) with
+      | Some v => Some v
+      | None => latest_write0 log_a (tf_out x)
+      end.
+  Proof.
+    induction ops as [| op ops IH]; intros sys input log_a x Hnd.
+    - reflexivity.
+    - rewrite aux_log_cons, tfs_get_updates_cons.
+      destruct op; simpl affected_regs in Hnd;
+        cbn [find_out_update tf_op_step_updates].
+      + (* tf_nop *) apply IH. exact Hnd.
+      + (* tf_assign dst expr *)
+        apply NoDup_cons_iff in Hnd. destruct Hnd as [_ Hnd].
+        rewrite IH by exact Hnd.
+        destruct (find_out_update sched_ctx x (tfs_get_updates sched_ctx ops sys input)); try reflexivity.
+        rewrite SemanticProperties.latest_write0_cons_neq.
+        * apply latest_write0_expr_log_any.
+        * intro Hc. discriminate Hc.
+      + (* tf_output dst expr *)
+        apply NoDup_cons_iff in Hnd. destruct Hnd as [Hnotin Hnd].
+        destruct (eq_dec dst x) as [Heq | Hneq].
+        * subst dst.
+          rewrite IH by exact Hnd.
+          rewrite (find_out_update_not_affected ops sys input x Hnotin).
+          rewrite SemanticProperties.latest_write0_cons_eq. reflexivity.
+        * rewrite IH by exact Hnd.
+          destruct (find_out_update sched_ctx x (tfs_get_updates sched_ctx ops sys input)); try reflexivity.
+          rewrite SemanticProperties.latest_write0_cons_neq.
+          -- apply latest_write0_expr_log_any.
+          -- intro Hc. apply Hneq. injection Hc. auto.
+  Qed.
+
+  (* may_write at P0 means no write0 exists in either log, so latest_write0 is None. *)
+  Lemma may_write0_latest_write0_None :
+    forall (log_r log_a : Log R ContextEnv) (idx : reg_t),
+      may_write log_r log_a P0 idx = true ->
+      latest_write0 log_a idx = None /\ latest_write0 log_r idx = None.
+  Proof.
+    intros log_r log_a idx H.
+    Local Transparent may_write.
+    unfold may_write in H.
+    Local Opaque may_write.
+    apply andb_prop in H. destruct H as [H01 _].
+    apply andb_prop in H01. destruct H01 as [_ Hw0].
+    apply negb_true_iff in Hw0.
+    rewrite SemanticProperties.log_existsb_app in Hw0.
+    apply orb_false_iff in Hw0. destruct Hw0 as [Hw0a Hw0r].
+    split.
+    - exact (SemanticProperties.latest_write0_None (R:=R) (REnv:=REnv) log_a idx Hw0a).
+    - exact (SemanticProperties.latest_write0_None (R:=R) (REnv:=REnv) log_r idx Hw0r).
+  Qed.
+
+  (* Value-level bridge: the HW value read at P1 for tf_reg x from the always-ops log
+     (falling back to r) equals the abstract find_st_val over tfs_get_updates.
+     The may_write hypothesis guarantees the pre-existing logs don't write tf_reg x,
+     so the fallback threads through to r.[tf_reg x] = (fst sys).[x]. *)
+  Lemma read_aux_log_reg_val :
+    forall sys r ops input log_r log_a x,
+      state_matches sys r ->
+      NoDup (affected_regs ops) ->
+      may_write_all log_r log_a P0 (map tf_reg spec_all_states) = true ->
+      match latest_write0 (log_app (aux_log sys input ops log_a) log_r) (tf_reg x) with
+      | Some v => v
+      | None => r.[tf_reg x]
+      end =
+      find_st_val sched_ctx x (tfs_get_updates sched_ctx ops sys input) sys.
+  Proof.
+    intros sys r ops input log_r log_a x Hstate Hnd Hwr.
+    unfold find_st_val.
+    rewrite SemanticProperties.latest_write0_app.
+    rewrite (latest_write0_aux_log_reg ops sys input log_a x Hnd).
+    destruct (find_st_update sched_ctx x (tfs_get_updates sched_ctx ops sys input)) eqn:Hfind.
+    - reflexivity.
+    - pose proof (may_write_all_one_state log_r log_a P0 x Hwr) as Hw1.
+      apply may_write0_latest_write0_None in Hw1. destruct Hw1 as [Hla Hlr].
+      rewrite Hla, Hlr. destruct Hstate as [Hst _]. rewrite Hst. reflexivity.
+  Qed.
+
+  (* When the done-signal register has width 1, the HW gate `Bits.single (convert 1 v)`
+     agrees with the abstract gate `negb (beq_dec v 0)`. *)
+  Lemma convert1_single_beq :
+    forall sz (v : bits_t sz),
+      sz = 1 ->
+      Bits.single (convert (szA:=sz) (szB:=1) v) = negb (beq_dec v Bits.zero).
+  Proof.
+    intros sz v Hsz. subst sz.
+    unfold convert. destruct (eq_dec 1 1) as [e | n]; [| congruence].
+    assert (e = eq_refl) as He by (apply Eqdep_dec.UIP_dec; exact PeanoNat.Nat.eq_dec).
+    subst e. simpl.
+    rewrite Common.bits_single_is_neg_beq_dec. rewrite negb_involutive. reflexivity.
+  Qed.
+
+  Definition construct_log (sys: sys_state_t) (act: spec_action) (input: input_t) (ready: bits_t 1) (log_a: Log R ContextEnv): Log R ContextEnv :=
+    (* base = the log after running the always-ops on the guard log log_a. *)
+    let base := aux_log sys input (fst (spec_schedule act)) log_a in
+    (* read_log = base plus the P1 read of the done-state register that the
+       done-gate `If`'s condition performs. *)
+    let read_log := log_cons (R:=R) (REnv:=REnv) (tf_reg spec_done_state) Read1 base in
+    (* The done-state gate mirrors tfs_next_cycle's `if beq_dec done_val 0`.
+       done == 0  ->  not-done  ->  If's false branch (Const vect_nil): only the read.
+       done != 0  ->  done      ->  run done-ops, reset the buffer regs at P1, set ready. *)
+    if beq_dec (find_st_val sched_ctx spec_done_state
+                  (tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input) sys) Bits.zero
+    then read_log
+    else
+      log_cons (R:=R) (REnv:=REnv) tf_ready (Write1 Ob~1)
+        (reset_log spec_reset_states
+           (aux_log sys input (snd (spec_schedule act)) read_log)).
 
   Lemma nodup_affected_regs_fst:
     forall act,
@@ -1905,6 +2182,264 @@ Section SynthesisCorrectness.
       -> ~ In reg (affected_regs (snd (spec_schedule act))).
   Proof. *)
 
+  (* The StOp/OutOp flat_map used by tfs_ops_no_duplicates. *)
+  Local Notation ops_tags ops :=
+    (flat_map (fun op =>
+       match op with
+       | tf_assign dst _ => [StOp dst]
+       | tf_output dst _ => [OutOp dst]
+       | _ => []
+       end) ops).
+
+  (* A state register appearing in affected_regs shows up as a StOp tag. *)
+  Lemma affected_reg_in_ops_tags :
+    forall ops x,
+      In (tf_reg x) (affected_regs ops) -> In (StOp x) (ops_tags ops).
+  Proof.
+    induction ops as [| op ops IH]; intros x Hin; [ contradiction |].
+    destruct op; simpl in *.
+    - apply IH; assumption.
+    - destruct Hin as [Heq | Hin].
+      + left. injection Heq as ->. reflexivity.
+      + right. apply IH; assumption.
+    - (* tf_output: affected head is tf_out, cannot equal tf_reg x *)
+      destruct Hin as [Heq | Hin]; [ discriminate Heq |].
+      right. apply IH; assumption.
+  Qed.
+
+  (* The done register is not written by the done-ops (snd): it is assigned by the
+     always-ops (fst), and NoDup over fst++snd forbids it appearing again in snd. *)
+  Lemma done_not_in_affected_snd :
+    forall act,
+      ~ In (tf_reg spec_done_state) (affected_regs (snd (spec_schedule act))).
+  Proof.
+    intros act Hin.
+    apply affected_reg_in_ops_tags in Hin.
+    pose proof (tfs_done_signal_assigned_by_always (tf_sched_ctx tf_ctx) act) as Hfst.
+    pose proof (spec_schedule_ops_nodup act) as Hnd.
+    unfold tfs_ops_no_duplicates in Hnd.
+    rewrite flat_map_app in Hnd.
+    apply in_split in Hfst. destruct Hfst as [l1 [l2 Hsplit]].
+    rewrite Hsplit in Hnd.
+    rewrite <- app_assoc in Hnd. simpl in Hnd.
+    apply NoDup_remove_2 in Hnd.
+    apply Hnd. apply in_or_app. right. apply in_or_app. right. exact Hin.
+  Qed.
+
+  (* ---- Preservation helpers for the done-branch side-conditions ---- *)
+
+  (* Generic: consing an entry that is not a P1 write preserves may_write at P1. *)
+  Lemma may_write_log_cons_P1_not_w1 :
+    forall log_r log_a idx k entry,
+      is_write1 (kind entry) (port entry) = false ->
+      may_write log_r (log_cons (R:=R) (REnv:=REnv) k entry log_a) P1 idx
+      = may_write log_r log_a P1 idx.
+  Proof.
+    intros log_r log_a idx k entry Hw1.
+    destruct (eq_dec idx k) as [Heq | Hneq].
+    - subst k. rewrite may_write_log_cons_eq, Hw1. simpl.
+      destruct (may_write log_r log_a P1 idx); reflexivity.
+    - rewrite may_write_log_cons_neq by assumption. reflexivity.
+  Qed.
+
+  (* may_write_all version of the above. *)
+  Lemma may_write_all_log_cons_P1_not_w1 :
+    forall log_r log_a regs k entry,
+      is_write1 (kind entry) (port entry) = false ->
+      may_write_all log_r (log_cons (R:=R) (REnv:=REnv) k entry log_a) P1 regs
+      = may_write_all log_r log_a P1 regs.
+  Proof.
+    intros log_r log_a regs k entry Hw1.
+    unfold may_write_all. apply forallb_pointwise. intros idx Hin.
+    apply may_write_log_cons_P1_not_w1. assumption.
+  Qed.
+
+  (* expr_log only conses LogRead entries, so it preserves may_write at P1. *)
+  Lemma may_write_expr_log_P1 :
+    forall log_r log_a sys input expr szB idx,
+      may_write log_r (expr_log expr szB sys input log_a) P1 idx
+      = may_write log_r log_a P1 idx.
+  Proof.
+    intros log_r log_a sys input expr szB idx.
+    unfold expr_log.
+    induction (snd (eval_expr_aux expr [] sys input)) as [| a l IH].
+    - reflexivity.
+    - simpl. rewrite may_write_log_cons_P1_not_w1 by reflexivity. exact IH.
+  Qed.
+
+  (* aux_log only conses Write0/LogRead entries, so it preserves may_write at P1. *)
+  Lemma may_write_aux_log_P1 :
+    forall ops sys input log_r idx log_a,
+      may_write log_r (aux_log sys input ops log_a) P1 idx
+      = may_write log_r log_a P1 idx.
+  Proof.
+    induction ops as [| op ops IH]; intros sys input log_r idx log_a.
+    - reflexivity.
+    - rewrite aux_log_cons. rewrite IH. destruct op.
+      + reflexivity.
+      + rewrite may_write_log_cons_P1_not_w1 by reflexivity.
+        rewrite may_write_expr_log_P1. reflexivity.
+      + rewrite may_write_log_cons_P1_not_w1 by reflexivity.
+        rewrite may_write_expr_log_P1. reflexivity.
+  Qed.
+
+  Lemma may_write_all_aux_log_P1 :
+    forall ops sys input log_r regs log_a,
+      may_write_all log_r (aux_log sys input ops log_a) P1 regs
+      = may_write_all log_r log_a P1 regs.
+  Proof.
+    intros ops sys input log_r regs log_a.
+    unfold may_write_all. apply forallb_pointwise. intros idx Hin.
+    apply may_write_aux_log_P1.
+  Qed.
+
+  (* One-step unfolding of the reset_log fold_left. *)
+  Lemma reset_log_cons :
+    forall s regs log_a,
+      reset_log (s :: regs) log_a
+      = reset_log regs (log_cons (R:=R) (REnv:=REnv) (tf_reg s) (Write1 Bits.zero) log_a).
+  Proof. reflexivity. Qed.
+
+  (* reset_log conses Write1 only on reset registers, so it preserves may_write on
+     any register outside that set (any port). *)
+  Lemma may_write_reset_log_neq :
+    forall regs log_r prt idx log_a,
+      ~ In idx (map tf_reg regs) ->
+      may_write log_r (reset_log regs log_a) prt idx = may_write log_r log_a prt idx.
+  Proof.
+    induction regs as [| s regs IH]; intros log_r prt idx log_a Hnotin.
+    - reflexivity.
+    - rewrite reset_log_cons. simpl in Hnotin. apply Decidable.not_or in Hnotin.
+      destruct Hnotin as [Hne Hnotin].
+      rewrite IH by exact Hnotin.
+      rewrite may_write_log_cons_neq by exact (not_eq_sym Hne). reflexivity.
+  Qed.
+
+  (* aux_log preserves inputs_are_buffered (it never writes tf_in registers). *)
+  Lemma inputs_are_buffered_aux_log :
+    forall ops sys input r log_a log_r,
+      inputs_are_buffered input r (log_app log_a log_r) ->
+      inputs_are_buffered input r (log_app (aux_log sys input ops log_a) log_r).
+  Proof.
+    induction ops as [| op ops IH]; intros sys input r log_a log_r Hbuf.
+    - exact Hbuf.
+    - rewrite aux_log_cons. apply IH. destruct op.
+      + exact Hbuf.
+      + apply inputs_are_buffered_log_app_log_cons_neq.
+        * apply not_in_reg_reg_all_inputs.
+        * apply inputs_are_buffered_expr_log. exact Hbuf.
+      + apply inputs_are_buffered_log_app_log_cons_neq.
+        * apply not_in_reg_out_all_inputs.
+        * apply inputs_are_buffered_expr_log. exact Hbuf.
+  Qed.
+
+  (* Generalized version of may_write_all_expr_log to an arbitrary register list that
+     contains no input register. *)
+  Lemma may_write_all_expr_log_gen :
+    forall log_r log_a sys input expr szB regs,
+      (forall i, ~ In (tf_in i) regs) ->
+      may_write_all log_r log_a P0 regs = true ->
+      may_write_all log_r (expr_log expr szB sys input log_a) P0 regs = true.
+  Proof.
+    intros log_r log_a sys input expr szB regs Hnoin Hwr.
+    unfold may_write_all in *. rewrite forallb_forall in *.
+    intros reg Hin. apply may_write_expr_log.
+    - intros i Heq. apply (Hnoin i). rewrite Heq. exact Hin.
+    - apply Hwr. exact Hin.
+  Qed.
+
+  (* aux_log preserves may_write at P0 on a register list disjoint from the ops'
+     affected registers (and containing no input register). *)
+  Lemma may_write_all_aux_log_P0 :
+    forall ops sys input log_r regs log_a,
+      (forall reg, In reg regs -> ~ In reg (affected_regs ops)) ->
+      (forall i, ~ In (tf_in i) regs) ->
+      may_write_all log_r log_a P0 regs = true ->
+      may_write_all log_r (aux_log sys input ops log_a) P0 regs = true.
+  Proof.
+    induction ops as [| op ops IH]; intros sys input log_r regs log_a Hdisj Hnoin Hwr.
+    - exact Hwr.
+    - rewrite aux_log_cons. apply IH.
+      + intros reg Hin Hin2. apply (Hdisj reg Hin).
+        destruct op; simpl; (exact Hin2 || (right; exact Hin2)).
+      + exact Hnoin.
+      + destruct op.
+        * exact Hwr.
+        * rewrite may_write_all_log_cons_neq.
+          -- apply may_write_all_expr_log_gen; assumption.
+          -- intro Hin. apply (Hdisj (tf_reg dst) Hin). simpl. left. reflexivity.
+        * rewrite may_write_all_log_cons_neq.
+          -- apply may_write_all_expr_log_gen; assumption.
+          -- intro Hin. apply (Hdisj (tf_out dst) Hin). simpl. left. reflexivity.
+  Qed.
+
+  (* An output register appearing in affected_regs shows up as an OutOp tag. *)
+  Lemma affected_out_in_ops_tags :
+    forall ops x,
+      In (tf_out x) (affected_regs ops) -> In (OutOp x) (ops_tags ops).
+  Proof.
+    induction ops as [| op ops IH]; intros x Hin; [ contradiction |].
+    destruct op; simpl in *.
+    - apply IH; assumption.
+    - destruct Hin as [Heq | Hin]; [ discriminate Heq | right; apply IH; assumption ].
+    - destruct Hin as [Heq | Hin];
+        [ left; injection Heq as ->; reflexivity | right; apply IH; assumption ].
+  Qed.
+
+  (* Every affected register is a state (tf_reg) or an output (tf_out). *)
+  Lemma affected_regs_shape :
+    forall ops reg,
+      In reg (affected_regs ops) ->
+      (exists x, reg = tf_reg x) \/ (exists x, reg = tf_out x).
+  Proof.
+    induction ops as [| op ops IH]; intros reg Hin; [ contradiction |].
+    destruct op; simpl in *.
+    - apply IH; assumption.
+    - destruct Hin as [<- | Hin]; [ left; eexists; reflexivity | apply IH; assumption ].
+    - destruct Hin as [<- | Hin]; [ right; eexists; reflexivity | apply IH; assumption ].
+  Qed.
+
+  Lemma NoDup_app_disjoint {A: Type} :
+    forall (l1 l2 : list A) x,
+      NoDup (l1 ++ l2) -> In x l1 -> In x l2 -> False.
+  Proof.
+    intros l1 l2 x Hnd H1 H2.
+    apply in_split in H1. destruct H1 as [a [b Heq]]. subst l1.
+    rewrite <- app_assoc in Hnd. simpl in Hnd.
+    apply NoDup_remove_2 in Hnd. apply Hnd.
+    apply in_or_app. right. apply in_or_app. right. exact H2.
+  Qed.
+
+  Lemma NoDup_map_inj {A B: Type} (f: A -> B) :
+    (forall a b, f a = f b -> a = b) ->
+    forall l, NoDup l -> NoDup (map f l).
+  Proof.
+    intros Hinj l. induction l as [| a l IH]; simpl; intros Hnd.
+    - constructor.
+    - inversion Hnd; subst. constructor.
+      + intro Hin. apply in_map_iff in Hin.
+        destruct Hin as [b [Heq Hin]]. apply Hinj in Heq. subst. contradiction.
+      + apply IH; assumption.
+  Qed.
+
+  (* The always-ops (fst) and done-ops (snd) affect disjoint register sets. *)
+  Lemma affected_fst_snd_disjoint :
+    forall act reg,
+      In reg (affected_regs (fst (spec_schedule act))) ->
+      ~ In reg (affected_regs (snd (spec_schedule act))).
+  Proof.
+    intros act reg Hfst Hsnd.
+    pose proof (spec_schedule_ops_nodup act) as Hnd.
+    unfold tfs_ops_no_duplicates in Hnd. rewrite flat_map_app in Hnd.
+    destruct (affected_regs_shape _ _ Hfst) as [[x ->] | [x ->]].
+    - eapply NoDup_app_disjoint;
+        [ exact Hnd | apply affected_reg_in_ops_tags; exact Hfst
+        | apply affected_reg_in_ops_tags; exact Hsnd ].
+    - eapply NoDup_app_disjoint;
+        [ exact Hnd | apply affected_out_in_ops_tags; exact Hfst
+        | apply affected_out_in_ops_tags; exact Hsnd ].
+  Qed.
+
   Lemma interp_action_cmd :
     forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
            (act: spec_action) (input: input_t)
@@ -1916,6 +2451,7 @@ Section SynthesisCorrectness.
       may_read_all log_r P1 (map tf_in spec_all_inputs) = true ->
       may_read_all log_r P0 (map tf_out spec_all_outputs) = true ->
       may_write_all log_r log_a P0 (map tf_out spec_all_outputs) = true ->
+      may_write log_r log_a P1 tf_ready = true ->
       inputs_are_buffered input r (log_app log_a log_r) ->
       match interp_action r sigma CtxEmpty log_r log_a (_rule_cmd tf_ctx act) with
       | Some (l, v, _) => Some (l)
@@ -1924,7 +2460,7 @@ Section SynthesisCorrectness.
       Some ( construct_log sys act input r.[tf_ready] log_a ).
   Proof.
     intros sys r act input sigma log_r log_a.
-    intros Hstate Hrd0_st Hwr0_st Hrd1_in Hrd0_out Hwr0_out Hin_buf.
+    intros Hstate Hrd0_st Hwr0_st Hrd1_in Hrd0_out Hwr0_out Hwr1_ready Hin_buf.
     
     unfold _rule_cmd. 
     rewrite (interp_action_aux sys r act input sigma log_r log_a); try timeout 1 assumption.
@@ -1944,8 +2480,87 @@ Section SynthesisCorrectness.
             * apply IHl. apply H.
     }
 
-    admit.
-  Admitted.
+    (* Step the done-gate `If`: evaluate its P1 read of the done-state register,
+       reduce the guard `Bits.single (convert 1 done)` to `negb (beq_dec done 0)`. *)
+    rewrite interp_action_if.
+    rewrite interp_synth_convert.
+    (* Reduce the done-state P1 read directly (its interp carries tau := bits_t (size done)
+       from synth_convert, so an interp_action_read1 rewrite won't match the implicit tau). *)
+    assert (Hmr : may_read log_r P1 (tf_reg spec_done_state) = true)
+      by (apply may_read0_implies_may_read1; apply (may_read_all_one_state _ _ _ Hrd0_st)).
+    cbn [interp_action]. rewrite Hmr. clear Hmr.
+    cbn [opt_bind].
+    rewrite (convert1_single_beq _ _ (tfs_done_signal_size sched_ctx)).
+    rewrite (read_aux_log_reg_val sys r (fst (spec_schedule act)) input log_r log_a
+               spec_done_state Hstate (nodup_affected_regs_fst act) Hwr0_st).
+    unfold construct_log.
+    destruct (beq_dec (find_st_val sched_ctx spec_done_state
+                (tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input) sys) Bits.zero) eqn:Hdv.
+    - (* done = 0: not-done, take the If's false branch (Const vect_nil). *)
+      cbn [interp_action]. reflexivity.
+    - (* done <> 0: run the done-ops, reset buffers, set ready. *)
+      cbn [negb].
+      (* Auxiliary facts shared by several side-conditions. *)
+      assert (Hwr1_reset : may_write_all log_r log_a P1 (map tf_reg spec_reset_states) = true).
+      { unfold may_write_all. rewrite forallb_forall. intros reg Hreg.
+        rewrite in_map_iff in Hreg. destruct Hreg as [s [Heq Hin]]. subst reg.
+        apply may_write0_implies_may_write1.
+        unfold may_write_all in Hwr0_st. rewrite forallb_forall in Hwr0_st.
+        apply Hwr0_st. apply in_map. exact (in_spec_all_states s). }
+      assert (Hwr0_snd : may_write_all log_r log_a P0 (affected_regs (snd (spec_schedule act))) = true).
+      { unfold may_write_all. rewrite forallb_forall. intros reg Hin.
+        destruct (affected_regs_shape _ _ Hin) as [[x ->] | [x ->]].
+        - unfold may_write_all in Hwr0_st. rewrite forallb_forall in Hwr0_st.
+          apply Hwr0_st. apply in_map. exact (in_spec_all_states x).
+        - unfold may_write_all in Hwr0_out. rewrite forallb_forall in Hwr0_out.
+          apply Hwr0_out. apply in_map. exact (in_spec_all_outputs x). }
+      (* Step the done-ops (snd) via interp_action_aux onto read_log. *)
+      set (read_log := log_cons (R:=R) (REnv:=REnv) (tf_reg spec_done_state) Read1
+                         (aux_log sys input (fst (spec_schedule act)) log_a)) in *.
+      rewrite (interp_action_aux sys r act input sigma log_r read_log
+                 (snd (spec_schedule act))
+                 (rule_reset_buffers tf_ctx spec_reset_states
+                    (Write P1 tf_ready (Const (tau:=bits_t 1) Ob~1)))).
+      + (* after aux_log(snd): step reset buffers then the ready write *)
+        rewrite (interp_action_reset_buffers r sigma log_r spec_reset_states
+                   (Write P1 tf_ready (Const (tau:=bits_t 1) Ob~1))
+                   (aux_log sys input (snd (spec_schedule act)) read_log)).
+        * rewrite interp_action_write_const.
+          -- reflexivity.
+          -- (* may_write log_r (reset_log …) P1 tf_ready *)
+             rewrite may_write_reset_log_neq.
+             2:{ intro H. rewrite in_map_iff in H.
+                 destruct H as [s [Heq _]]. discriminate Heq. }
+             rewrite may_write_aux_log_P1. unfold read_log.
+             rewrite may_write_log_cons_P1_not_w1 by reflexivity.
+             rewrite may_write_aux_log_P1.
+             exact Hwr1_ready.
+        * (* NoDup (map tf_reg spec_reset_states) *)
+          apply NoDup_map_inj.
+          -- intros a b Heq. congruence.
+          -- exact (tfs_reset_states_nodup sched_ctx).
+        * (* may_write_all log_r (aux_log … (snd) read_log) P1 (map tf_reg spec_reset_states) *)
+          rewrite may_write_all_aux_log_P1. unfold read_log.
+          rewrite may_write_all_log_cons_P1_not_w1 by reflexivity.
+          rewrite may_write_all_aux_log_P1. exact Hwr1_reset.
+      + exact Hstate.
+      + exact Hrd0_st.
+      + exact Hrd1_in.
+      + exact Hrd0_out.
+      + (* inputs_are_buffered input r (log_app read_log log_r) *)
+        unfold read_log.
+        apply inputs_are_buffered_log_app_log_cons_neq.
+        * apply not_in_reg_reg_all_inputs.
+        * apply inputs_are_buffered_aux_log. exact Hin_buf.
+      + exact (nodup_affected_regs_snd act).
+      + (* may_write_all log_r read_log P0 (affected_regs (snd)) *)
+        unfold read_log.
+        rewrite may_write_all_log_cons_neq by (apply done_not_in_affected_snd).
+        apply may_write_all_aux_log_P0.
+        * intros reg Hin Hin2. exact (affected_fst_snd_disjoint act reg Hin2 Hin).
+        * intros i. apply (inputs_not_affected (snd (spec_schedule act)) i).
+        * exact Hwr0_snd.
+  Qed.
 
   (*
   Lemma interp_rule_correct :
@@ -2028,8 +2643,79 @@ Section SynthesisCorrectness.
     may_read log P0 (tf_cmd) = true /\
     may_write log log_empty P0 (tf_cmd) = true.
 
-  (* Lemma interp_rule_correct :
-    forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
+  (* Folding the input-buffer writes leaves latest_write0 untouched on a register
+     whose input is not in the folded list. *)
+  Lemma latest_write0_input_fold_neq :
+    forall (inputs: list spec_inputs) (sigma: forall f, Sig_denote (Sigma f)) log2 a,
+      ~ In a inputs ->
+      latest_write0
+        (fold_left (fun log x => log_cons (R:=R) (REnv:=REnv) (tf_in x)
+                     (Write0 (sigma (ext_input x) Ob~1)) log) inputs log2) (tf_in a)
+      = latest_write0 log2 (tf_in a).
+  Proof.
+    induction inputs as [| b inputs IH]; intros sigma log2 a Hnotin.
+    - reflexivity.
+    - simpl. rewrite IH by (intro; apply Hnotin; right; assumption).
+      rewrite SemanticProperties.latest_write0_cons_neq. reflexivity.
+      intro Heq. apply Hnotin. left. injection Heq as ->. reflexivity.
+  Qed.
+
+  (* For an input in the folded (NoDup) list, latest_write0 returns its buffered value. *)
+  Lemma latest_write0_input_fold_eq :
+    forall (inputs: list spec_inputs) (sigma: forall f, Sig_denote (Sigma f)) log2 v,
+      In v inputs -> NoDup inputs ->
+      latest_write0
+        (fold_left (fun log x => log_cons (R:=R) (REnv:=REnv) (tf_in x)
+                     (Write0 (sigma (ext_input x) Ob~1)) log) inputs log2) (tf_in v)
+      = Some (sigma (ext_input v) Ob~1).
+  Proof.
+    induction inputs as [| b inputs IH]; intros sigma log2 v Hin Hnd.
+    - contradiction.
+    - simpl. inversion Hnd as [| ? ? Hnotin Hnd']; subst.
+      destruct Hin as [-> | Hin].
+      + rewrite latest_write0_input_fold_neq by exact Hnotin.
+        rewrite SemanticProperties.latest_write0_cons_eq. reflexivity.
+      + apply IH; assumption.
+  Qed.
+
+  (* The command-guard log buffers all inputs: whichever branch runs, the resulting
+     log satisfies inputs_are_buffered (needed to feed interp_action_cmd). *)
+  Lemma inputs_are_buffered_guard_log :
+    forall (r: ContextEnv.(env_t) R) (act: spec_action) (input: input_t)
+           (sigma: forall f, Sig_denote (Sigma f)) log,
+      ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
+      ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
+      may_write_all log log_empty P0 (map tf_in spec_all_inputs) = true ->
+      inputs_are_buffered input r
+        (log_app (if Bits.single r.[tf_ready]
+                  then log_after_cmd_guard_rdy act sigma
+                  else log_cons tf_cmd Read0 (log_cons tf_ready Read0 log_empty)) log).
+  Proof.
+    intros r act input sigma log Hrdy Hnrdy Hwr0_in.
+    unfold inputs_are_buffered. intros v.
+    destruct (reg_ready_or_not r) as [Hready | Hnotready].
+    - rewrite Hready. replace (Bits.single Ob~1) with true by reflexivity. cbv iota.
+      left. unfold log_after_cmd_guard_rdy.
+      rewrite SemanticProperties.latest_write0_app.
+      rewrite SemanticProperties.latest_write0_cons_neq by discriminate.
+      rewrite SemanticProperties.latest_write0_cons_neq by discriminate.
+      rewrite latest_write0_input_fold_eq by (apply in_spec_all_inputs || apply nodup_spec_all_inputs).
+      destruct (Hrdy Hready) as [_ [_ Hin]]. rewrite (Hin v). reflexivity.
+    - rewrite Hnotready. replace (Bits.single Ob~0) with false by reflexivity. cbv iota.
+      rewrite SemanticProperties.latest_write0_app.
+      rewrite SemanticProperties.latest_write0_cons_neq by discriminate.
+      rewrite SemanticProperties.latest_write0_cons_neq by discriminate.
+      rewrite SemanticProperties.latest_write0_empty.
+      assert (Hmw : may_write log log_empty P0 (tf_in v) = true).
+      { unfold may_write_all in Hwr0_in. rewrite forallb_forall in Hwr0_in.
+        apply Hwr0_in. apply in_map. apply in_spec_all_inputs. }
+      apply may_write0_latest_write0_None in Hmw. destruct Hmw as [_ Hlr].
+      right. rewrite Hlr. split; [ reflexivity |].
+      destruct (Hnrdy Hnotready) as [_ Hin]. exact (Hin v).
+  Qed.
+
+  Lemma interp_rule_correct :
+    forall (sys: sys_state_t) (r: ContextEnv.(env_t) R)
            (act: spec_action) (input: input_t)
            (sigma: forall f, Sig_denote (Sigma f))
            log,
@@ -2040,57 +2726,180 @@ Section SynthesisCorrectness.
       let guard_log := if Bits.single r.[tf_ready] then log_after_cmd_guard_rdy act sigma else log_cons tf_cmd Read0 (log_cons tf_ready Read0 log_empty) in
       interp_rule r sigma log (rules (rule_cmd act)) = Some (construct_log sys act input r.[tf_ready] guard_log).
   Proof.
-    intros sys r act input sigma log Hstate Hinput_rdy Hinput_nrdy.
-    intros Hrd0_st Hwr0_st Hrd0_in Hwr0_in Hrd0_out Hwr0_out Hrd0_rdy Hwr0_ready Hrd0_cmd Hwr0_cmd.
+    intros sys r act input sigma log Hstate Hinput_rdy Hinput_nrdy Hgood.
+    cbv zeta.
+    unfold good_log in Hgood.
+    destruct Hgood as [Hrd0_st [Hwr0_st [Hrd0_in [Hwr0_in [Hrd0_out
+                       [Hwr0_out [Hrd0_rdy [Hwr0_ready [Hrd0_cmd Hwr0_cmd]]]]]]]]].
     unfold interp_rule, rules.
 
     rewrite interp_action_seq. unfold opt_bind.
     rewrite (interp_action_cmd_guard sys r act input sigma log); try assumption.
 
-    setoid_rewrite (interp_action_cmd sys r act input sigma log 
-              (if Bits.single r.[tf_ready] 
-                then log_after_cmd_guard_rdy act sigma 
+    setoid_rewrite (interp_action_cmd sys r act input sigma log
+              (if Bits.single r.[tf_ready]
+                then log_after_cmd_guard_rdy act sigma
                 else log_cons tf_cmd Read0 (log_cons tf_ready Read0 log_empty))).
     - reflexivity.
-    - assumption.
-    - assumption.
-    - assumption.
-    - assumption.
-    - destruct (reg_ready_or_not r) as [Hready | Hnotready].
-      + rewrite Hready. cbn. unfold log_after_cmd_guard_rdy. 
-        rewrite !may_write_all_log_cons_neq. rewrite may_write_all_fold_cons_w0_inputs. rewrite !may_write_all_log_cons_neq. assumption.
+    - exact Hstate.
+    - exact Hrd0_st.
+    - (* may_write_all log guard_log P0 states *)
+      destruct (reg_ready_or_not r) as [Hready | Hnotready].
+      + rewrite Hready. cbn. unfold log_after_cmd_guard_rdy.
+        rewrite !may_write_all_log_cons_neq. rewrite may_write_all_fold_cons_w0_inputs. rewrite !may_write_all_log_cons_neq. exact Hwr0_st.
         all: (try exact not_in_reg_ready_all_states); (try exact not_in_reg_cmd_all_states).
         intros. rewrite in_map_iff in H. destruct H as [x0 [Heq Hin]]. subst. exact (not_in_reg_reg_all_inputs x0).
-      + rewrite Hnotready. cbn. rewrite !may_write_all_log_cons_neq. assumption.
+      + rewrite Hnotready. cbn. rewrite !may_write_all_log_cons_neq. exact Hwr0_st.
         all: (try exact not_in_reg_ready_all_states); (try exact not_in_reg_cmd_all_states).
-    - apply may_read_all0_implies_may_read_all1. assumption.  
-    - assumption.
-    - destruct (reg_ready_or_not r) as [Hready | Hnotready].
-      + rewrite Hready. cbn. unfold log_after_cmd_guard_rdy. 
-        rewrite !may_write_all_log_cons_neq. rewrite may_write_all_fold_cons_w0_inputs. rewrite !may_write_all_log_cons_neq. assumption.
+    - (* may_read_all log P1 inputs *)
+      apply may_read_all0_implies_may_read_all1. exact Hrd0_in.
+    - exact Hrd0_out.
+    - (* may_write_all log guard_log P0 outputs *)
+      destruct (reg_ready_or_not r) as [Hready | Hnotready].
+      + rewrite Hready. cbn. unfold log_after_cmd_guard_rdy.
+        rewrite !may_write_all_log_cons_neq. rewrite may_write_all_fold_cons_w0_inputs. rewrite !may_write_all_log_cons_neq. exact Hwr0_out.
         all: (try exact not_in_reg_ready_all_outputs); (try exact not_in_reg_cmd_all_outputs).
         intros. rewrite in_map_iff in H. destruct H as [x0 [Heq Hin]]. subst. exact (not_in_reg_out_all_inputs x0).
-      + rewrite Hnotready. cbn. rewrite !may_write_all_log_cons_neq. assumption.
+      + rewrite Hnotready. cbn. rewrite !may_write_all_log_cons_neq. exact Hwr0_out.
         all: (try exact not_in_reg_ready_all_outputs); (try exact not_in_reg_cmd_all_outputs).
-    - destruct (reg_ready_or_not r) as [Hready | Hnotready].
+    - (* may_write log guard_log P1 tf_ready *)
+      destruct (reg_ready_or_not r) as [Hready | Hnotready].
       + rewrite Hready. cbn. unfold log_after_cmd_guard_rdy.
-        rewrite may_write_log_cons_eq. rewrite may_write_log_cons_neq. 
+        rewrite may_write_log_cons_eq. rewrite may_write_log_cons_neq.
         rewrite may_write_fold_cons_w0_inputs. rewrite !may_write_log_cons_eq. simpl. rewrite !andb_true_r.
-        * apply may_write0_implies_may_write1. assumption. 
-        * exact not_in_reg_ready_all_inputs. 
+        * apply may_write0_implies_may_write1. exact Hwr0_ready.
+        * exact not_in_reg_ready_all_inputs.
         * intro. congruence.
       + rewrite Hnotready. cbn. rewrite may_write_log_cons_neq. rewrite may_write_log_cons_eq. simpl. rewrite !andb_true_r.
-        * apply may_write0_implies_may_write1. assumption.
+        * apply may_write0_implies_may_write1. exact Hwr0_ready.
         * intro. congruence.
-  (* Time Qed. *)
-  Admitted. (* SPEEDUP *)
-  (* ??? seconds *)
+    - (* inputs_are_buffered input r (log_app guard_log log) *)
+      apply inputs_are_buffered_guard_log; assumption.
+  Qed.
 
-  (* 
-    Once we can substitue the expensive HW interpretation with a contructed log, we should be able to work on the lemmas below
-    until then we do not wish to proceed past this point
-  *)
-Abort. *)
+  (* ---- latest_write (combined-port) transport lemmas for reading off construct_log ---- *)
+
+  (* may_write P0 forbids BOTH write0 and write1, so latest_write is None. *)
+  Lemma may_write0_latest_write_None :
+    forall (log : Log R ContextEnv) (idx : reg_t),
+      may_write log log_empty P0 idx = true ->
+      latest_write log idx = None.
+  Proof.
+    intros log idx H.
+    Local Transparent may_write.
+    unfold may_write in H.
+    Local Opaque may_write.
+    apply andb_prop in H. destruct H as [H01 Hw1].
+    apply andb_prop in H01. destruct H01 as [_ Hw0].
+    apply negb_true_iff in Hw0. apply negb_true_iff in Hw1.
+    rewrite SemanticProperties.log_existsb_app in Hw0.
+    rewrite SemanticProperties.log_existsb_app in Hw1.
+    apply orb_false_iff in Hw0. destruct Hw0 as [_ Hw0log].
+    apply orb_false_iff in Hw1. destruct Hw1 as [_ Hw1log].
+    exact (SemanticProperties.latest_write_None (R:=R) (REnv:=REnv) log idx Hw0log Hw1log).
+  Qed.
+
+  (* expr_log only conses LogRead entries, so latest_write ignores it (any reg). *)
+  Lemma latest_write_expr_log_any :
+    forall expr szB sys input log_a reg,
+      latest_write (expr_log expr szB sys input log_a) reg =
+      latest_write log_a reg.
+  Proof.
+    intros expr szB sys input log_a reg.
+    unfold expr_log.
+    induction ((snd (eval_expr_aux expr [] sys input))).
+    - reflexivity.
+    - destruct (eq_dec reg a) as [Heq | Hneq]; subst.
+      + simpl. rewrite SemanticProperties.latest_write_cons_eq. exact IHl.
+      + simpl. rewrite SemanticProperties.latest_write_cons_neq; assumption.
+  Qed.
+
+  (* aux_log conses Write0 only on tf_reg/tf_out of affected ops; latest_write
+     is unchanged on any register outside those constructors. *)
+  Lemma latest_write_aux_log_neq :
+    forall ops sys input log_a idx,
+      (forall dst, idx <> tf_reg dst) ->
+      (forall dst, idx <> tf_out dst) ->
+      latest_write (aux_log sys input ops log_a) idx = latest_write log_a idx.
+  Proof.
+    induction ops as [| op ops IH]; intros sys input log_a idx Hreg Hout.
+    - reflexivity.
+    - rewrite aux_log_cons. rewrite IH by assumption. destruct op.
+      + reflexivity.
+      + rewrite SemanticProperties.latest_write_cons_neq by (apply Hreg).
+        apply latest_write_expr_log_any.
+      + rewrite SemanticProperties.latest_write_cons_neq by (apply Hout).
+        apply latest_write_expr_log_any.
+  Qed.
+
+  (* reset_log conses Write1 only on tf_reg of reset states; latest_write is
+     unchanged on any register outside that set. *)
+  Lemma latest_write_reset_log_neq :
+    forall regs log_a idx,
+      (forall s, idx <> tf_reg s) ->
+      latest_write (reset_log regs log_a) idx = latest_write log_a idx.
+  Proof.
+    induction regs as [| s regs IH]; intros log_a idx Hreg.
+    - reflexivity.
+    - rewrite reset_log_cons. rewrite IH by assumption.
+      rewrite SemanticProperties.latest_write_cons_neq by (apply Hreg).
+      reflexivity.
+  Qed.
+
+  (* construct_log only writes tf_reg/tf_out registers and tf_ready; on any other
+     register it agrees with the guard log it is built from. *)
+  Lemma latest_write_construct_log_neq :
+    forall sys act input ready guard_log idx,
+      (forall dst, idx <> tf_reg dst) ->
+      (forall dst, idx <> tf_out dst) ->
+      idx <> tf_ready ->
+      latest_write (construct_log sys act input ready guard_log) idx =
+      latest_write guard_log idx.
+  Proof.
+    intros sys act input ready guard_log idx Hreg Hout Hrdy.
+    unfold construct_log.
+    destruct (beq_dec _ _).
+    - rewrite SemanticProperties.latest_write_cons_neq by (apply Hreg).
+      apply latest_write_aux_log_neq; assumption.
+    - rewrite SemanticProperties.latest_write_cons_neq by exact Hrdy.
+      rewrite latest_write_reset_log_neq by (intros s; apply Hreg).
+      rewrite latest_write_aux_log_neq by assumption.
+      rewrite SemanticProperties.latest_write_cons_neq by (apply Hreg).
+      apply latest_write_aux_log_neq; assumption.
+  Qed.
+
+  (* Folding the input-buffer writes: latest_write matches latest_write0 shape. *)
+  Lemma latest_write_input_fold_neq :
+    forall (inputs: list spec_inputs) (sigma: forall f, Sig_denote (Sigma f)) log2 a,
+      ~ In a inputs ->
+      latest_write
+        (fold_left (fun log x => log_cons (R:=R) (REnv:=REnv) (tf_in x)
+                     (Write0 (sigma (ext_input x) Ob~1)) log) inputs log2) (tf_in a)
+      = latest_write log2 (tf_in a).
+  Proof.
+    induction inputs as [| b inputs IH]; intros sigma log2 a Hnotin.
+    - reflexivity.
+    - simpl. rewrite IH by (intro; apply Hnotin; right; assumption).
+      rewrite SemanticProperties.latest_write_cons_neq. reflexivity.
+      intro Heq. apply Hnotin. left. injection Heq as ->. reflexivity.
+  Qed.
+
+  Lemma latest_write_input_fold_eq :
+    forall (inputs: list spec_inputs) (sigma: forall f, Sig_denote (Sigma f)) log2 v,
+      In v inputs -> NoDup inputs ->
+      latest_write
+        (fold_left (fun log x => log_cons (R:=R) (REnv:=REnv) (tf_in x)
+                     (Write0 (sigma (ext_input x) Ob~1)) log) inputs log2) (tf_in v)
+      = Some (sigma (ext_input v) Ob~1).
+  Proof.
+    induction inputs as [| b inputs IH]; intros sigma log2 v Hin Hnd.
+    - contradiction.
+    - simpl. inversion Hnd as [| ? ? Hnotin Hnd']; subst.
+      destruct Hin as [-> | Hin].
+      + rewrite latest_write_input_fold_neq by exact Hnotin.
+        rewrite SemanticProperties.latest_write_cons_eq. reflexivity.
+      + apply IH; assumption.
+  Qed.
 
   Lemma latest_write_cmd_rdy :
     forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
@@ -2107,7 +2916,16 @@ Abort. *)
         | None => log
         end tf_cmd = Some (spec_action_encoding act).
   Proof.
-  Admitted.
+    intros sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hgood Hrdy.
+    rewrite (interp_rule_correct sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hgood).
+    cbv zeta.
+    rewrite Hrdy. replace (Bits.single Ob~1) with true by reflexivity. cbv iota.
+    rewrite SemanticProperties.latest_write_app.
+    rewrite latest_write_construct_log_neq by (intros; discriminate).
+    unfold log_after_cmd_guard_rdy.
+    rewrite SemanticProperties.latest_write_cons_neq by discriminate.
+    rewrite SemanticProperties.latest_write_cons_eq. reflexivity.
+  Qed.
 
   Lemma latest_write_cmd_nrdy :
     forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
@@ -2124,7 +2942,21 @@ Abort. *)
         | None => log
         end tf_cmd = None.
   Proof.
-  Admitted.
+    intros sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hgood Hnrdy.
+    assert (Hcmd : may_write log log_empty P0 tf_cmd = true).
+    { unfold good_log in Hgood.
+      destruct Hgood as [_ [_ [_ [_ [_ [_ [_ [_ [_ Hwr0_cmd]]]]]]]]]. exact Hwr0_cmd. }
+    pose proof (may_write0_latest_write_None log tf_cmd Hcmd) as Hnone.
+    rewrite (interp_rule_correct sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hgood).
+    cbv zeta.
+    rewrite Hnrdy. replace (Bits.single Ob~0) with false by reflexivity. cbv iota.
+    rewrite SemanticProperties.latest_write_app.
+    rewrite latest_write_construct_log_neq by (intros; discriminate).
+    rewrite SemanticProperties.latest_write_cons_eq.
+    rewrite SemanticProperties.latest_write_cons_neq by discriminate.
+    rewrite SemanticProperties.latest_write_empty.
+    exact Hnone.
+  Qed.
 
   Lemma latest_write_input_rdy :
     forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
@@ -2141,7 +2973,18 @@ Abort. *)
         | None => log
         end (tf_in x) = Some (input x).
   Proof.
-  Admitted.
+    intros sys r act input sigma log x Hstate Hin_rdy Hin_nrdy Hgood Hrdy.
+    rewrite (interp_rule_correct sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hgood).
+    cbv zeta.
+    rewrite Hrdy. replace (Bits.single Ob~1) with true by reflexivity. cbv iota.
+    rewrite SemanticProperties.latest_write_app.
+    rewrite latest_write_construct_log_neq by (intros; discriminate).
+    unfold log_after_cmd_guard_rdy.
+    rewrite SemanticProperties.latest_write_cons_neq by discriminate.
+    rewrite SemanticProperties.latest_write_cons_neq by discriminate.
+    rewrite latest_write_input_fold_eq by (apply in_spec_all_inputs || apply nodup_spec_all_inputs).
+    destruct (Hin_rdy Hrdy) as [_ [_ Hin]]. rewrite (Hin x). reflexivity.
+  Qed.
 
   Lemma latest_write_input_nrdy :
     forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
@@ -2158,7 +3001,303 @@ Abort. *)
         | None => log
         end (tf_in x) = None.
   Proof.
-  Admitted.
+    intros sys r act input sigma log x Hstate Hin_rdy Hin_nrdy Hgood Hnrdy.
+    assert (Hin_none : may_write log log_empty P0 (tf_in x) = true).
+    { unfold good_log in Hgood.
+      destruct Hgood as [_ [_ [_ [Hwr0_in [_ [_ [_ [_ [_ _]]]]]]]]].
+      unfold may_write_all in Hwr0_in. rewrite forallb_forall in Hwr0_in.
+      apply Hwr0_in. apply in_map. apply in_spec_all_inputs. }
+    pose proof (may_write0_latest_write_None log (tf_in x) Hin_none) as Hnone.
+    rewrite (interp_rule_correct sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hgood).
+    cbv zeta.
+    rewrite Hnrdy. replace (Bits.single Ob~0) with false by reflexivity. cbv iota.
+    rewrite SemanticProperties.latest_write_app.
+    rewrite latest_write_construct_log_neq by (intros; discriminate).
+    rewrite SemanticProperties.latest_write_cons_neq by discriminate.
+    rewrite SemanticProperties.latest_write_cons_neq by discriminate.
+    rewrite SemanticProperties.latest_write_empty.
+    exact Hnone.
+  Qed.
+
+  (* ---- value-bridge lemmas for tf_reg / tf_out over construct_log ---- *)
+
+  Lemma tfs_reset_updates_cons :
+    forall a regs,
+      tfs_reset_updates sched_ctx (a :: regs) =
+      tf_st_update _ _ a (tfs_states_init sched_ctx a) :: tfs_reset_updates sched_ctx regs.
+  Proof. reflexivity. Qed.
+
+  Lemma find_st_update_app :
+    forall x a b,
+      find_st_update sched_ctx x (a ++ b) =
+      match find_st_update sched_ctx x a with
+      | Some v => Some v
+      | None => find_st_update sched_ctx x b
+      end.
+  Proof.
+    intros x a b. induction a as [| u a IH].
+    - reflexivity.
+    - rewrite <- app_comm_cons. destruct u as [| var val | var val]; cbn [find_st_update].
+      + apply IH.
+      + destruct (eq_dec var x) as [e | n]; [ subst x; reflexivity | apply IH ].
+      + apply IH.
+  Qed.
+
+  Lemma find_out_update_app :
+    forall x a b,
+      find_out_update sched_ctx x (a ++ b) =
+      match find_out_update sched_ctx x a with
+      | Some v => Some v
+      | None => find_out_update sched_ctx x b
+      end.
+  Proof.
+    intros x a b. induction a as [| u a IH].
+    - reflexivity.
+    - rewrite <- app_comm_cons. destruct u as [| var val | var val]; cbn [find_out_update].
+      + apply IH.
+      + apply IH.
+      + destruct (eq_dec var x) as [e | n]; [ subst x; reflexivity | apply IH ].
+  Qed.
+
+  Lemma find_st_update_reset_None :
+    forall regs x, ~ In x regs ->
+      find_st_update sched_ctx x (tfs_reset_updates sched_ctx regs) = None.
+  Proof.
+    induction regs as [| a regs IH]; intros x Hnotin.
+    - reflexivity.
+    - apply Decidable.not_or in Hnotin. destruct Hnotin as [Hne Hnotin].
+      rewrite tfs_reset_updates_cons. cbn [find_st_update].
+      destruct (eq_dec a x) as [Heq | Hneq].
+      + subst. contradiction Hne. reflexivity.
+      + apply IH. exact Hnotin.
+  Qed.
+
+  Lemma find_out_update_reset_None :
+    forall regs x,
+      find_out_update sched_ctx x (tfs_reset_updates sched_ctx regs) = None.
+  Proof.
+    induction regs as [| a regs IH]; intros x.
+    - reflexivity.
+    - rewrite tfs_reset_updates_cons. cbn [find_out_update]. apply IH.
+  Qed.
+
+  (* Combined-port aux_log register bridge (mirrors latest_write0_aux_log_reg). *)
+  Lemma latest_write_aux_log_reg :
+    forall ops sys input log_a x,
+      NoDup (affected_regs ops) ->
+      latest_write (aux_log sys input ops log_a) (tf_reg x) =
+      match find_st_update sched_ctx x (tfs_get_updates sched_ctx ops sys input) with
+      | Some v => Some v
+      | None => latest_write log_a (tf_reg x)
+      end.
+  Proof.
+    induction ops as [| op ops IH]; intros sys input log_a x Hnd.
+    - reflexivity.
+    - rewrite aux_log_cons, tfs_get_updates_cons.
+      destruct op; simpl affected_regs in Hnd;
+        cbn [find_st_update tf_op_step_updates].
+      + apply IH. exact Hnd.
+      + apply NoDup_cons_iff in Hnd. destruct Hnd as [Hnotin Hnd].
+        destruct (eq_dec dst x) as [Heq | Hneq].
+        * subst dst.
+          rewrite IH by exact Hnd.
+          rewrite (find_st_update_not_affected ops sys input x Hnotin).
+          rewrite SemanticProperties.latest_write_cons_eq. reflexivity.
+        * rewrite IH by exact Hnd.
+          destruct (find_st_update sched_ctx x (tfs_get_updates sched_ctx ops sys input)); try reflexivity.
+          rewrite SemanticProperties.latest_write_cons_neq.
+          -- apply latest_write_expr_log_any.
+          -- intro Hc. apply Hneq. injection Hc. auto.
+      + apply NoDup_cons_iff in Hnd. destruct Hnd as [_ Hnd].
+        rewrite IH by exact Hnd.
+        destruct (find_st_update sched_ctx x (tfs_get_updates sched_ctx ops sys input)); try reflexivity.
+        rewrite SemanticProperties.latest_write_cons_neq.
+        * apply latest_write_expr_log_any.
+        * intro Hc. discriminate Hc.
+  Qed.
+
+  Lemma latest_write_aux_log_out :
+    forall ops sys input log_a x,
+      NoDup (affected_regs ops) ->
+      latest_write (aux_log sys input ops log_a) (tf_out x) =
+      match find_out_update sched_ctx x (tfs_get_updates sched_ctx ops sys input) with
+      | Some v => Some v
+      | None => latest_write log_a (tf_out x)
+      end.
+  Proof.
+    induction ops as [| op ops IH]; intros sys input log_a x Hnd.
+    - reflexivity.
+    - rewrite aux_log_cons, tfs_get_updates_cons.
+      destruct op; simpl affected_regs in Hnd;
+        cbn [find_out_update tf_op_step_updates].
+      + apply IH. exact Hnd.
+      + apply NoDup_cons_iff in Hnd. destruct Hnd as [_ Hnd].
+        rewrite IH by exact Hnd.
+        destruct (find_out_update sched_ctx x (tfs_get_updates sched_ctx ops sys input)); try reflexivity.
+        rewrite SemanticProperties.latest_write_cons_neq.
+        * apply latest_write_expr_log_any.
+        * intro Hc. discriminate Hc.
+      + apply NoDup_cons_iff in Hnd. destruct Hnd as [Hnotin Hnd].
+        destruct (eq_dec dst x) as [Heq | Hneq].
+        * subst dst.
+          rewrite IH by exact Hnd.
+          rewrite (find_out_update_not_affected ops sys input x Hnotin).
+          rewrite SemanticProperties.latest_write_cons_eq. reflexivity.
+        * rewrite IH by exact Hnd.
+          destruct (find_out_update sched_ctx x (tfs_get_updates sched_ctx ops sys input)); try reflexivity.
+          rewrite SemanticProperties.latest_write_cons_neq.
+          -- apply latest_write_expr_log_any.
+          -- intro Hc. apply Hneq. injection Hc. auto.
+  Qed.
+
+  (* A P1 read entry never counts as a write. *)
+  Lemma latest_write_cons_read1 :
+    forall (log: Log R ContextEnv) idx idx',
+      latest_write (log_cons idx' Read1 log) idx = latest_write log idx.
+  Proof.
+    intros log idx idx'. destruct (eq_dec idx idx') as [Heq | Hneq].
+    - subst. rewrite SemanticProperties.latest_write_cons_eq. reflexivity.
+    - rewrite SemanticProperties.latest_write_cons_neq by exact Hneq. reflexivity.
+  Qed.
+
+  (* Combined-port reset_log register bridge: reset writes Bits.zero at P1. *)
+  Lemma latest_write_reset_log_reg :
+    forall regs log_a x,
+      NoDup regs ->
+      (forall v, In v regs -> tfs_states_init sched_ctx v = Bits.zero) ->
+      latest_write (reset_log regs log_a) (tf_reg x) =
+      match find_st_update sched_ctx x (tfs_reset_updates sched_ctx regs) with
+      | Some v => Some v
+      | None => latest_write log_a (tf_reg x)
+      end.
+  Proof.
+    induction regs as [| a regs IH]; intros log_a x Hnd Hinit.
+    - reflexivity.
+    - rewrite reset_log_cons.
+      apply NoDup_cons_iff in Hnd. destruct Hnd as [Hnotin Hnd].
+      rewrite IH by (assumption || (intros v Hv; apply Hinit; right; exact Hv)).
+      rewrite tfs_reset_updates_cons. cbn [find_st_update].
+      destruct (eq_dec a x) as [Heq | Hneq].
+      + destruct Heq.
+        rewrite (find_st_update_reset_None regs a Hnotin).
+        rewrite SemanticProperties.latest_write_cons_eq.
+        rewrite (Hinit a (or_introl eq_refl)). reflexivity.
+      + destruct (find_st_update sched_ctx x (tfs_reset_updates sched_ctx regs)); try reflexivity.
+        rewrite SemanticProperties.latest_write_cons_neq. reflexivity.
+        intro Hc. apply Hneq. injection Hc. auto.
+  Qed.
+
+  (* Folding the input-buffer writes leaves latest_write untouched on non-tf_in regs. *)
+  Lemma latest_write_input_fold_other :
+    forall (inputs: list spec_inputs) (sigma: forall f, Sig_denote (Sigma f)) log2 idx,
+      (forall v, idx <> tf_in v) ->
+      latest_write
+        (fold_left (fun log x => log_cons (R:=R) (REnv:=REnv) (tf_in x)
+                     (Write0 (sigma (ext_input x) Ob~1)) log) inputs log2) idx
+      = latest_write log2 idx.
+  Proof.
+    induction inputs as [| b inputs IH]; intros sigma log2 idx Hneq.
+    - reflexivity.
+    - simpl. rewrite IH by exact Hneq.
+      rewrite SemanticProperties.latest_write_cons_neq by (apply Hneq). reflexivity.
+  Qed.
+
+  (* The command-guard log never writes any register other than tf_ready/tf_cmd/tf_in. *)
+  Lemma latest_write_guard_log_other :
+    forall (r: ContextEnv.(env_t) R) act sigma idx,
+      idx <> tf_ready -> idx <> tf_cmd -> (forall v, idx <> tf_in v) ->
+      latest_write (if Bits.single r.[tf_ready]
+                    then log_after_cmd_guard_rdy act sigma
+                    else log_cons tf_cmd Read0 (log_cons tf_ready Read0 log_empty)) idx = None.
+  Proof.
+    intros r act sigma idx Hrdy Hcmd Hin.
+    destruct (reg_ready_or_not r) as [Hready | Hnotready].
+    - rewrite Hready. replace (Bits.single Ob~1) with true by reflexivity. cbv iota.
+      unfold log_after_cmd_guard_rdy.
+      rewrite (SemanticProperties.latest_write_cons_neq (R:=R) (REnv:=REnv)) by exact Hrdy.
+      rewrite (SemanticProperties.latest_write_cons_neq (R:=R) (REnv:=REnv)) by exact Hcmd.
+      rewrite latest_write_input_fold_other by exact Hin.
+      rewrite (SemanticProperties.latest_write_cons_neq (R:=R) (REnv:=REnv)) by exact Hrdy.
+      rewrite (SemanticProperties.latest_write_cons_neq (R:=R) (REnv:=REnv)) by exact Hrdy.
+      rewrite (SemanticProperties.latest_write_cons_neq (R:=R) (REnv:=REnv)) by exact Hrdy.
+      apply (SemanticProperties.latest_write_empty (R:=R) (REnv:=REnv)).
+    - rewrite Hnotready. replace (Bits.single Ob~0) with false by reflexivity. cbv iota.
+      rewrite (SemanticProperties.latest_write_cons_neq (R:=R) (REnv:=REnv)) by exact Hcmd.
+      rewrite (SemanticProperties.latest_write_cons_neq (R:=R) (REnv:=REnv)) by exact Hrdy.
+      apply (SemanticProperties.latest_write_empty (R:=R) (REnv:=REnv)).
+  Qed.
+
+  (* The main register bridge over construct_log, assuming the guard log has no
+     write on tf_reg x. Mirrors the abstract done-gate. *)
+  Lemma latest_write_construct_log_reg :
+    forall sys act input ready guard_log x,
+      latest_write guard_log (tf_reg x) = None ->
+      latest_write (construct_log sys act input ready guard_log) (tf_reg x) =
+      find_st_update sched_ctx x
+        (if beq_dec (find_st_val sched_ctx spec_done_state (tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input) sys) Bits.zero
+         then tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input
+         else tfs_reset_updates sched_ctx spec_reset_states
+              ++ tfs_get_updates sched_ctx (snd (spec_schedule act)) sys input
+              ++ tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input).
+  Proof.
+    intros sys act input ready guard_log x Hguard.
+    unfold construct_log.
+    destruct (beq_dec _ _) eqn:Hdone.
+    - (* not-done: only the always-ops (fst) run *)
+      rewrite latest_write_cons_read1.
+      rewrite (latest_write_aux_log_reg (fst (spec_schedule act)) sys input guard_log x
+                 (nodup_affected_regs_fst act)).
+      rewrite Hguard.
+      destruct (find_st_update sched_ctx x (tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input)); reflexivity.
+    - (* done: reset ++ done-ops (snd) ++ always-ops (fst) *)
+      rewrite SemanticProperties.latest_write_cons_neq by discriminate.
+      rewrite (latest_write_reset_log_reg spec_reset_states _ x
+                 (tfs_reset_states_nodup sched_ctx)
+                 (tfs_reset_states_init_zero sched_ctx)).
+      rewrite (latest_write_aux_log_reg (snd (spec_schedule act)) sys input _ x
+                 (nodup_affected_regs_snd act)).
+      rewrite latest_write_cons_read1.
+      rewrite (latest_write_aux_log_reg (fst (spec_schedule act)) sys input guard_log x
+                 (nodup_affected_regs_fst act)).
+      rewrite Hguard.
+      rewrite !find_st_update_app.
+      destruct (find_st_update sched_ctx x (tfs_reset_updates sched_ctx spec_reset_states)); try reflexivity.
+      destruct (find_st_update sched_ctx x (tfs_get_updates sched_ctx (snd (spec_schedule act)) sys input)); try reflexivity.
+      destruct (find_st_update sched_ctx x (tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input)); reflexivity.
+  Qed.
+
+  Lemma latest_write_construct_log_out :
+    forall sys act input ready guard_log x,
+      latest_write guard_log (tf_out x) = None ->
+      latest_write (construct_log sys act input ready guard_log) (tf_out x) =
+      find_out_update sched_ctx x
+        (if beq_dec (find_st_val sched_ctx spec_done_state (tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input) sys) Bits.zero
+         then tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input
+         else tfs_reset_updates sched_ctx spec_reset_states
+              ++ tfs_get_updates sched_ctx (snd (spec_schedule act)) sys input
+              ++ tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input).
+  Proof.
+    intros sys act input ready guard_log x Hguard.
+    unfold construct_log.
+    destruct (beq_dec _ _) eqn:Hdone.
+    - rewrite latest_write_cons_read1.
+      rewrite (latest_write_aux_log_out (fst (spec_schedule act)) sys input guard_log x
+                 (nodup_affected_regs_fst act)).
+      rewrite Hguard.
+      destruct (find_out_update sched_ctx x (tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input)); reflexivity.
+    - rewrite SemanticProperties.latest_write_cons_neq by discriminate.
+      rewrite latest_write_reset_log_neq by (intros s; discriminate).
+      rewrite (latest_write_aux_log_out (snd (spec_schedule act)) sys input _ x
+                 (nodup_affected_regs_snd act)).
+      rewrite latest_write_cons_read1.
+      rewrite (latest_write_aux_log_out (fst (spec_schedule act)) sys input guard_log x
+                 (nodup_affected_regs_fst act)).
+      rewrite Hguard.
+      rewrite !find_out_update_app.
+      rewrite (find_out_update_reset_None spec_reset_states x).
+      destruct (find_out_update sched_ctx x (tfs_get_updates sched_ctx (snd (spec_schedule act)) sys input)); try reflexivity.
+      destruct (find_out_update sched_ctx x (tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input)); reflexivity.
+  Qed.
 
   Lemma latest_write_reg :
     forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
@@ -2183,7 +3322,21 @@ Abort. *)
             ++ tfs_get_updates sched_ctx (snd (spec_schedule act)) sys input 
             ++ tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input).
   Proof.
-  Admitted.
+    intros sys r act input sigma log x Hstate Hin_rdy Hin_nrdy Hgood.
+    assert (Hlog : latest_write log (tf_reg x) = None).
+    { unfold good_log in Hgood.
+      destruct Hgood as [_ [Hwr0_st _]].
+      apply may_write0_latest_write_None.
+      unfold may_write_all in Hwr0_st. rewrite forallb_forall in Hwr0_st.
+      apply Hwr0_st. apply in_map. apply in_spec_all_states. }
+    rewrite (interp_rule_correct sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hgood).
+    cbv zeta.
+    rewrite SemanticProperties.latest_write_app.
+    rewrite latest_write_construct_log_reg
+      by (apply latest_write_guard_log_other; discriminate).
+    rewrite Hlog.
+    destruct (find_st_update sched_ctx x _); reflexivity.
+  Qed.
 
   Lemma latest_write_out :
     forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
@@ -2208,7 +3361,21 @@ Abort. *)
             ++ tfs_get_updates sched_ctx (snd (spec_schedule act)) sys input 
             ++ tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input).
   Proof.
-  Admitted.
+    intros sys r act input sigma log x Hstate Hin_rdy Hin_nrdy Hgood.
+    assert (Hlog : latest_write log (tf_out x) = None).
+    { unfold good_log in Hgood.
+      destruct Hgood as [_ [_ [_ [_ [_ [Hwr0_out _]]]]]].
+      apply may_write0_latest_write_None.
+      unfold may_write_all in Hwr0_out. rewrite forallb_forall in Hwr0_out.
+      apply Hwr0_out. apply in_map. apply in_spec_all_outputs. }
+    rewrite (interp_rule_correct sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hgood).
+    cbv zeta.
+    rewrite SemanticProperties.latest_write_app.
+    rewrite latest_write_construct_log_out
+      by (apply latest_write_guard_log_other; discriminate).
+    rewrite Hlog.
+    destruct (find_out_update sched_ctx x _); reflexivity.
+  Qed.
 
   (* Below is done *)
 
@@ -2516,5 +3683,9 @@ Abort. *)
         * sauto.
         * sauto.
   Qed.
+
+  (* Tracks which axioms / Admitted lemmas `synthesis_correct` still depends on.
+     Goal: shrink this to "Closed under the global context" (no admits). *)
+  Print Assumptions synthesis_correct.
 
 End SynthesisCorrectness.

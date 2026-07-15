@@ -79,6 +79,31 @@ Record TFSchedule := {
   tfs_reset_states: list tfs_states;
 
   tfs_schedule_no_duplicates: forall a, tfs_ops_no_duplicates (fst (tfs_schedule a) ++ snd (tfs_schedule a));
+
+  (* the done signal is a single bit; the HW gates the done-branch on its low bit
+     while the spec gates on `done_val <> 0`, so they must coincide *)
+  tfs_done_signal_size: tfs_states_size tfs_done_signal = 1;
+
+  (* the done signal is (re)computed every cycle by the always-ops (fst); combined
+     with tfs_schedule_no_duplicates this guarantees the done register is NOT written
+     by the done-ops (snd), which the HW requires since it reads the done register at
+     P1 in the done-gate before the done-ops run their P0 writes *)
+  tfs_done_signal_assigned_by_always: forall a,
+    In (StOp tfs_done_signal)
+       (flat_map (fun op =>
+          match op with
+          | tf_assign dst _ => [StOp dst]
+          | tf_output dst _ => [OutOp dst]
+          | _ => []
+          end) (fst (tfs_schedule a)));
+
+  (* the buffer-reset registers are pairwise distinct; the HW resets them with a
+     fold of P1 writes, whose validity requires no register is written twice *)
+  tfs_reset_states_nodup: NoDup tfs_reset_states;
+
+  (* the buffer-reset registers are reset to Bits.zero by the HW; the spec resets
+     them to their init value, so those must coincide for the reset states *)
+  tfs_reset_states_init_zero: forall v, In v tfs_reset_states -> tfs_states_init v = Bits.zero;
 }.
 
 Section SchedulerSpec.

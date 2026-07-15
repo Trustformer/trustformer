@@ -793,6 +793,26 @@ Section VariableScheduler.
   Proof.
   Admitted.
 
+  Theorem schedule_done_assigned: forall a,    In (StOp done_signal)
+       (flat_map (fun op =>
+          match op with
+          | tf_assign dst _ => [StOp dst]
+          | tf_output dst _ => [OutOp dst]
+          | _ => []
+          end) (fst (schedule a))).
+  Proof.
+    intros a. unfold schedule, done_signal, compile_dfg_valid. cbn [fst flat_map app].
+    left. reflexivity.
+  Qed.
+
+  Theorem reset_states_nodup: NoDup reset_states.
+  Proof.
+  Admitted.
+
+  Theorem reset_states_init_zero: forall v, In v reset_states -> tf_dfg_states_init v = Bits.zero.
+  Proof.
+  Admitted.
+
   Definition tfs_schedule : TFSchedule :=
     {|
       tfs_ctx := ctx;
@@ -818,8 +838,11 @@ Section VariableScheduler.
       tfs_schedule := schedule;
       tfs_done_signal := done_signal;
       tfs_reset_states := reset_states;
-
       tfs_schedule_no_duplicates := schedule_no_dup;
+      tfs_done_signal_size := eq_refl;
+      tfs_done_signal_assigned_by_always := schedule_done_assigned;
+      tfs_reset_states_nodup := reset_states_nodup;
+      tfs_reset_states_init_zero := reset_states_init_zero;
     |}.
 
 End VariableScheduler.
