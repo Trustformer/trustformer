@@ -652,8 +652,12 @@ Section SchedulerSimulation.
       (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) : Prop :=
     index_to_nat a_idx = @finite_index _ (tfs_action_fin sched) act.
 
-  (* The buffer/validity invariant after k cycles of running [act].
-     [a_idx] is the action's index into buffer_needs. *)
+  (* RETRACTED (superseded by [buffers_settled] / [buffers_settled_run]).
+     This cycle-ranked invariant is kept only for reference: ranking buffer
+     saturation by [node_cycle] is UNSOUND, because [require_buffer] also
+     buffers same-cycle nodes, so a buffer chain can be deeper than
+     [max_cycle].  Saturation is now ranked by NODE ID instead (args have
+     strictly smaller ids, so depth n <= n).  Unused. *)
   Definition buffer_inv
       (act: tfs_action sched)
       (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
@@ -799,6 +803,23 @@ Section SchedulerSimulation.
         + exact (Hacc _ _ _ Hin0). }
     unfold get_sizes_and_idx. rewrite <- in_rev.
     intro Hin. exact (gen nodes [] 0 ltac:(intros ? ? ? []) Hin).
+  Qed.
+
+  (* An entry carrying slot index [m] sits at position [m] of the slot list
+     (each entry is numbered by its own position, so membership pins it). *)
+  Lemma gsi_entry_at
+        (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var) (outputs_var := o_var))
+        (nodes: list nat) (n m szv: nat) :
+    In (n, (m, szv)) (get_sizes_and_idx ctx dfg nodes) ->
+    nth m (get_sizes_and_idx ctx dfg nodes) (0, (0, 0)) = (n, (m, szv)).
+  Proof.
+    intro Hin.
+    destruct (In_nth _ _ (0, (0, 0)) Hin) as [p [Hp Hnth]].
+    assert (Hm : m = p).
+    { assert (Hf := f_equal (fun x => fst (snd x)) Hnth). cbn [fst snd] in Hf.
+      rewrite <- Hf. apply gsi_idx_at.
+      rewrite <- (gsi_length dfg nodes). exact Hp. }
+    subst m. exact Hnth.
   Qed.
 
   (* buffer_needs is (up to defeq) a single map over the finite action list. *)
@@ -2970,6 +2991,25 @@ Section SchedulerSimulation.
     rewrite Hnidn in Hnid0. lia.
   Qed.
 
+  (* A [wsz] fact about the exported graph pins the node sitting at that
+     position: ids are exactly the positions, so the witness node IS the node
+     at position [n], and its declared size is the recorded one. *)
+  Lemma wsz_node_sz (act: tfs_action sched) (n size: nat) :
+    wsz (build_dfg ctx act) n size ->
+    n < length (graph (build_dfg ctx act))
+    /\ sz (nth n (graph (build_dfg ctx act))
+             {| nid := 0; op := DFG_Empty; sz := 0 |}) = size.
+  Proof.
+    intros [node [Hin [Hnid Hsz]]].
+    destruct (In_nth _ _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hin)
+      as [p [Hp Hnth]].
+    assert (Hpn : p = n).
+    { pose proof (node_nid_at act p Hp) as Hp_nid.
+      rewrite Hnth in Hp_nid. congruence. }
+    rewrite <- Hpn.
+    split; [ exact Hp | rewrite Hnth; exact Hsz ].
+  Qed.
+
   (* args_lt holds on the forward graph too (it is permutation-invariant). *)
   Lemma args_lt_fwd :
     forall (act: tfs_action sched),
@@ -3795,9 +3835,57 @@ Section SchedulerSimulation.
       intro H; discriminate H.
   Qed.
 
+  (* Every buffered nid is a REAL node of the forward graph.  The arg-part of
+     require_buffer holds args of graph nodes (positive, below their consumer);
+     the out-part holds var_map values (positive by build_dfg_args_pos, and a
+     graph nid by var_map_snd_is_graph_nid). *)
+  Lemma require_buffer_node_range :
+    forall (act: tfs_action sched) n,
+      In n (require_buffer ctx (build_dfg ctx act)
+              (calc_target_cycle cost_limit
+                 (calc_backward_cost ctx (build_dfg ctx act)))) ->
+      1 <= n /\ n < length (graph (build_dfg ctx act)).
+  Proof.
+    intros act n Hin.
+    assert (Hnid_lt : forall node, In node (graph (build_dfg ctx act)) ->
+              nid node < length (graph (build_dfg ctx act))).
+    { intros node Hnode.
+      destruct (In_nth _ _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hnode)
+        as [p [Hp Hnth]].
+      pose proof (node_nid_at act p Hp) as Hp_nid.
+      rewrite Hnth in Hp_nid. rewrite Hp_nid. exact Hp. }
+    unfold require_buffer in Hin.
+    apply nodup_In, in_app_iff in Hin.
+    destruct Hin as [HA | HB].
+    - apply fold_left_prepend_In in HA.
+      destruct HA as [node [Hnode Hn]].
+      apply filter_In in Hn. destruct Hn as [Hn _].
+      pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
+      split; [ exact (Hargpos node Hnode n Hn) | ].
+      pose proof (args_lt_fwd act node Hnode n Hn) as Hlt.
+      pose proof (Hnid_lt node Hnode). lia.
+    - apply filter_In in HB. destruct HB as [Hmem _].
+      split.
+      + apply in_map_iff in Hmem. destruct Hmem as [[k id] [Hsnd Hkin]].
+        cbn in Hsnd. subst id.
+        pose proof (build_dfg_args_pos act) as [Hvm _]. exact (Hvm k n Hkin).
+      + destruct (var_map_snd_is_graph_nid act n Hmem) as [node [Hnode Hnid]].
+        rewrite <- Hnid. exact (Hnid_lt node Hnode).
+  Qed.
+
+  Lemma vreg_nid_node_range :
+    forall (act: tfs_action sched) a_idx n_idx,
+      act_idx_aligned act a_idx ->
+      1 <= vreg_nid a_idx n_idx
+      /\ vreg_nid a_idx n_idx < length (graph (build_dfg ctx act)).
+  Proof.
+    intros act a_idx n_idx Halign.
+    apply require_buffer_node_range.
+    apply vreg_nid_in_require_buffer. exact Halign.
+  Qed.
+
   (* Hence every register nid has node_cycle >= 1, so its validity bit
-     starts (correctly) at 0. *)
-  Lemma buffered_node_cycle_pos :
+     starts (correctly) at 0. *)  Lemma buffered_node_cycle_pos :
     forall (act: tfs_action sched) a_idx n_idx,
       act_idx_aligned act a_idx ->
       node_cycle act (vreg_nid a_idx n_idx) <> 0.
@@ -3808,8 +3896,9 @@ Section SchedulerSimulation.
   Qed.
 
 
-  (* I(0): established by start_rel (all validity bits zero at the start;
-     only nodes with target cycle 0 are immediately valid). *)
+  (* I(0) for the RETRACTED cycle-ranked [buffer_inv]: established by start_rel
+     (all validity bits zero at the start; only nodes with target cycle 0 are
+     immediately valid).  Unused; see the note on [buffer_inv]. *)
   Lemma buffer_inv_init :
     forall (act: tfs_action sched) a_idx (sp0: src_sys_state)
            (ss0: sched_sys_state) (input: input_t),
@@ -3902,6 +3991,136 @@ Section SchedulerSimulation.
     reflexivity.
   Qed.
 
+  (* Every op emitted by compile_dfg_buffers is a tf_assign, never a tf_output. *)
+  Lemma compile_dfg_buffers_no_out
+    (a_idx: nat)
+    (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var) (outputs_var := o_var))
+    (buffers: list (nat * (nat * nat))) (o: o_var)
+    (op: @tf_op (tfs_states sched) i_var o_var) :
+    In op (compile_dfg_buffers ctx cost_limit a_idx dfg buffers) ->
+    ~ op_writes_out o op.
+  Proof.
+    unfold compile_dfg_buffers.
+    destruct (index_of_nat _ a_idx) as [a' |]; [| intros []].
+    intro Hin. apply in_flat_map in Hin.
+    destruct Hin as [[bnid x] [_ Hop]].
+    destruct (index_of_nat _ (fst x)) as [n' |]; [| destruct Hop].
+    destruct (compile_dfg_expr _ _ _ _ _ _) as [expr valid].
+    cbn [In] in Hop.
+    destruct Hop as [Heq | [Heq | []]]; subst op; intros [e He]; discriminate He.
+  Qed.
+
+  (* No op in the always-ops list writes an output: the head assigns the done
+     flag and the tail is compile_dfg_buffers (only tf_dfg_b / tf_dfg_v writes).
+     Outputs are produced exclusively by the DONE branch of tfs_next_cycle. *)
+  Lemma always_ops_no_out (act: tfs_action sched) (o: o_var)
+    (op: @tf_op (tfs_states sched) i_var o_var) :
+    In op (fst (Contract.tfs_schedule sched act)) ->
+    ~ op_writes_out o op.
+  Proof.
+    unfold sched, tfs_schedule, Contract.tfs_schedule, schedule. cbv zeta. cbn [fst].
+    intro Hin. cbn [In] in Hin. destruct Hin as [Heq | Hin].
+    - subst op. unfold compile_dfg_valid. cbv zeta.
+      intros [e He]. discriminate He.
+    - exact (compile_dfg_buffers_no_out _ _ _ o op Hin).
+  Qed.
+
+  (* A non-done cycle leaves every output unchanged. *)
+  Lemma sched_step_preserves_ovar (act: tfs_action sched) (ss: sched_sys_state)
+    (input: input_t) (o: o_var) :
+    ~ done_set (sched_step act ss input) ->
+    (snd (sched_step act ss input)).[o] = (snd ss).[o].
+  Proof.
+    intro Hnd. rewrite sched_step_getout. rewrite (cycle_updates_not_done _ _ _ Hnd).
+    unfold find_out_val.
+    rewrite (find_out_update_not_in o _ ss input
+               (fun op Hin => always_ops_no_out act o op Hin)).
+    reflexivity.
+  Qed.
+
+  (* A BUFFER-FREE compiled expression reads only base state vars (tf_dfg_s),
+     outputs and the input, so its value only depends on those.  This is what
+     makes a settled value stable across further pre-done cycles. *)
+  Lemma compile_nobuf_state_indep
+        (act: tfs_action sched) a_idx (input: input_t) (ss1 ss2: sched_sys_state) :
+    (forall s, (fst ss1).[tf_dfg_s s] = (fst ss2).[tf_dfg_s s]) ->
+    (forall o, (snd ss1).[o] = (snd ss2).[o]) ->
+    forall fuel n szB,
+      tf_eval_expr ss_sz i_sz oo_sz (szB := szB)
+        (fst (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act) n []))
+        ss1 input
+      = tf_eval_expr ss_sz i_sz oo_sz (szB := szB)
+        (fst (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act) n []))
+        ss2 input.
+  Proof.
+    intros Hs Ho fuel.
+    induction fuel as [| fuel IH]; intros n szB; [ reflexivity | ].
+    cbn [compile_dfg_expr BitsToLists.list_assoc]. cbv beta iota.
+    destruct (op (nth n (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | ].
+    - reflexivity.
+    - reflexivity.
+    - destruct v; cbn [fst tf_eval_expr]; [ rewrite Hs | rewrite Ho ]; reflexivity.
+    - destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                  arg []) as [ae ve] eqn:E1.
+      cbn [fst]. destruct op1 as [| src];
+        cbn [tf_eval_expr];
+        [ specialize (IH arg szB) | specialize (IH arg src) ];
+        rewrite E1 in IH; cbn [fst] in IH; rewrite IH; reflexivity.
+    - destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                  arg1 []) as [a1e v1e] eqn:E1.
+      destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                  arg2 []) as [a2e v2e] eqn:E2.
+      cbn [fst].
+      pose proof (IH arg1 szB) as Hc1. pose proof (IH arg2 szB) as Hc2.
+      rewrite E1 in Hc1. rewrite E2 in Hc2. cbn [fst] in Hc1, Hc2.
+      destruct op1 as [ | | | | | | szC cop ];
+        cbn [tf_eval_expr]; try (rewrite Hc1, Hc2; reflexivity).
+      pose proof (IH arg1 szC) as Hd1. pose proof (IH arg2 szC) as Hd2.
+      rewrite E1 in Hd1. rewrite E2 in Hd2. cbn [fst] in Hd1, Hd2.
+      rewrite Hd1, Hd2. destruct cop; reflexivity.
+    - destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                  arg []) as [ae ve] eqn:E1.
+      cbn [fst tf_eval_expr].
+      specialize (IH arg (sz (nth arg (graph (build_dfg ctx act))
+                                {| nid := 0; op := DFG_Empty; sz := 0 |}))).
+      rewrite E1 in IH. cbn [fst] in IH. rewrite IH. reflexivity.
+    - destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                  cnd []) as [ce cv] eqn:Ec.
+      destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                  tid []) as [te tv] eqn:Et.
+      destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                  eid []) as [ee ev] eqn:Ee.
+      cbn [fst tf_eval_expr].
+      pose proof (IH cnd 1) as Hcc.
+      pose proof (IH tid szB) as Hct.
+      pose proof (IH eid szB) as Hce.
+      rewrite Ec in Hcc. rewrite Et in Hct. rewrite Ee in Hce.
+      cbn [fst] in Hcc, Hct, Hce.
+      rewrite Hcc, Hct, Hce. reflexivity.
+    - reflexivity.
+  Qed.
+
+  (* Specialisation: a buffer-free compiled expression is unchanged by a pre-done
+     cycle (which touches neither tf_dfg_s nor the outputs). *)
+  Lemma compile_nobuf_step_stable
+        (act: tfs_action sched) a_idx (ss: sched_sys_state) (input: input_t) :
+    ~ done_set (sched_step act ss input) ->
+    forall fuel n szB,
+      tf_eval_expr ss_sz i_sz oo_sz (szB := szB)
+        (fst (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act) n []))
+        (sched_step act ss input) input
+      = tf_eval_expr ss_sz i_sz oo_sz (szB := szB)
+        (fst (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act) n []))
+        ss input.
+  Proof.
+    intro Hnd.
+    apply compile_nobuf_state_indep.
+    - intro s. exact (sched_step_preserves_svar act ss input s Hnd).
+    - intro o. exact (sched_step_preserves_ovar act ss input o Hnd).
+  Qed.
+
   (* compile_dfg_expr is fuel-invariant above the structural bound: for the
      forward build_dfg graph, any two fuels strictly above a node's position
      produce the same compiled (expr, valid) pair.  The recursion only descends
@@ -3963,38 +4182,260 @@ Section SchedulerSimulation.
       + exfalso. apply (node_op_not_empty act n Hn1 Hnlen). exact Hop.
   Qed.
 
-  (* ENDPOINT SATURATION (Phase 2 core).  At the full max cycle, the buffer
-     invariant holds for every register of the aligned action, PROVIDED no cycle
-     up to max_cycle fired the done flag (pre-done regime — a done cycle takes the
-     reset branch and zeroes the registers).
+  (* Every buffer register of [act]'s slot whose cached node id is BELOW [bound]
+     holds its SETTLED value, i.e. the fully-inlined buffer-free reference
+     expression of the node it caches.  This is the guard-free form of
+     buffer_inv's value conjunct, relativized by NODE ID: a buffer's compiled
+     expression only ever reaches strictly smaller node ids, so the id is the
+     rank along which saturation is proved (the target cycle is NOT a valid
+     rank — [require_buffer] also buffers same-cycle nodes). *)
+  Definition buffers_settled
+      (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (ss: sched_sys_state) (input: input_t) (bound: nat) : Prop :=
+    forall n_idx,
+      vreg_nid a_idx n_idx < bound ->
+      (fst ss).[tf_dfg_b a_idx n_idx]
+      = eval_st (tf_dfg_b a_idx n_idx)
+          (node_ref_expr act a_idx (vreg_nid a_idx n_idx)) ss input.
 
-     WHY NOT a per-cycle step lemma:  buffer_inv is NOT monotone in k.  The buffer
-     settle order is INVERTED relative to node_cycle: calc_backward_cost propagates
-     cost output->input, so target_cycle=node_cycle is HIGH near inputs and LOW at
-     outputs (backward_cycle_monotone: arg cycle >= consumer cycle), yet a buffer
-     that READS another buffer settles one cycle LATER than the buffer it reads.
-     Hence an output buffer (low node_cycle) reading an input-side buffer (high
-     node_cycle) is only correct AFTER that input buffer has settled — which can be
-     a LATER cycle than its own node_cycle.  So the VALUE conjunct can be FALSE at
-     an intermediate k (e.g. SimpleLockbox fs_act_test @cost_limit=1: node 6, cycle
-     1, reads buffered node 1, cycle 2, so b(node6) is garbage at k=1).  Only the
-     ENDPOINT k=max_cycle is uniformly true (every buffer has settled by then).
+  (* SUBSTITUTION (2b).  Once every buffer register holds its settled value,
+     compiling a node WITH buffers evaluates exactly like compiling it
+     buffer-free: each buffered leaf reads a register that, by hypothesis,
+     already equals the inlined expression it replaced.
 
-     The proof is the saturation argument (a buffer at buffer-DAG depth d holds its
-     settled value from cycle d onward, and max_cycle >= max buffer depth); it is
-     left Admitted (TRUE) until that argument is mechanized.  The sound green
-     sublemmas above (sched_step_preserves_svar, cycle_updates_not_done,
-     buffer_ops_concrete) are the entry points for it. *)
-  Lemma buffer_inv_at_max :
-    forall (act: tfs_action sched) a_idx (sp0: src_sys_state)
-           (ss0: sched_sys_state) (input: input_t),
-      act_idx_aligned act a_idx ->
-      start_rel sp0 ss0 ->
-      (forall i, 1 <= i <= max_cycle act -> ~ done_set (run_n i act input ss0)) ->
-      buffer_inv act a_idx (run_n (max_cycle act) act input ss0) input (max_cycle act).
+     SIZE DISCIPLINE.  The only hypothesis needed on the demanded size is
+     [szB = sz node]: every operand slot of a compiled expression demands its
+     argument at that argument's OWN declared size — [tf_not]/binary/Phi via
+     [wfg_build_dfg], [tf_cmp szC] via the operator's own width (which [wfg]
+     also pins on the args), and [DFG_Resize] definitionally (the compiler emits
+     [tf_resize (sz arg_node)]).  At a buffered leaf the register width matches
+     by [buffer_register_node_size], so the [convert] cast is the identity.
+
+     BOUND DISCIPLINE.  Settledness is only assumed for buffers caching a node
+     id below [bound].  The recursion descends to strictly smaller ids, so a
+     child of a node [n <= bound] satisfies [x < bound]; the TOP-level caller
+     (compiling buffer [n] itself, whose entry [compile_dfg_buffers] removed
+     from the slot) instead supplies the left disjunct [list_assoc bufs n = None]
+     and therefore need not assume that [n]'s own register is already settled. *)
+  Lemma compile_subst
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+        (ss: sched_sys_state) (input: input_t) :
+    act_idx_aligned act a_idx ->
+    forall bound,
+    buffers_settled act a_idx ss input bound ->
+    forall bufs,
+      (forall e, In e bufs ->
+         In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
+      forall fuel n szB,
+        1 <= n ->
+        n < length (graph (build_dfg ctx act)) ->
+        n < fuel ->
+        n <= bound ->
+        (BitsToLists.list_assoc bufs n = None \/ n < bound) ->
+        szB = sz (nth n (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}) ->
+        tf_eval_expr ss_sz i_sz oo_sz (szB := szB)
+          (fst (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act) n bufs))
+          ss input
+        = tf_eval_expr ss_sz i_sz oo_sz (szB := szB)
+          (fst (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act) n []))
+          ss input.
   Proof.
-  Admitted.
+    intros Halign bound Hsettled bufs Hsub fuel.
+    induction fuel as [| fuel IH];
+      intros n szB Hn1 Hnlen Hnfuel Hnb Hself HszB; [ lia | ].
+    destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:Hla.
+    - (* buffered leaf: the register already holds the inlined value *)
+      assert (Hnlt : n < bound)
+        by (destruct Hself as [Hnone | Hlt']; [ congruence | exact Hlt' ]).
+      (* canonicalize the buffer-free side to node_ref_expr's fuel *)
+      rewrite (compile_fuel_irrel act a_idx [] n Hn1 Hnlen (S fuel)
+                 (length (graph (build_dfg ctx act))) Hnfuel Hnlen).
+      cbn [compile_dfg_expr]. rewrite Hla. cbv beta iota.
+      assert (Hin_slot : In (n, (m, msz))
+                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
+        by (apply Hsub, wla_in, Hla).
+      assert (Hin_gsi : In (n, (m, msz))
+                (get_sizes_and_idx ctx (build_dfg ctx act)
+                   (require_buffer ctx (build_dfg ctx act)
+                      (calc_target_cycle cost_limit
+                         (calc_backward_cost ctx (build_dfg ctx act))))))
+        by (rewrite <- (buffer_slot_eq act a_idx Halign); exact Hin_slot).
+      assert (Hlt : m < length
+                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
+      { rewrite (buffer_slot_eq act a_idx Halign), gsi_length.
+        exact (gsi_idx_bound _ _ n m msz Hin_gsi). }
+      destruct (index_of_nat_bounded Hlt) as [n_idx' Hn_idx'].
+      rewrite Hn_idx'. cbv beta iota. cbn [fst].
+      assert (Hmi : index_to_nat n_idx' = m)
+        by (apply index_to_nat_of_nat; exact Hn_idx').
+      assert (Hvn : vreg_nid a_idx n_idx' = n).
+      { unfold vreg_nid. rewrite Hmi, (buffer_slot_eq act a_idx Halign).
+        rewrite (gsi_entry_at _ _ n m msz Hin_gsi). reflexivity. }
+      assert (Hsz : ss_sz (tf_dfg_b a_idx n_idx') = szB).
+      { rewrite (buffer_register_node_size act a_idx n_idx' Halign), Hvn.
+        symmetry; exact HszB. }
+      assert (Hset := Hsettled n_idx' ltac:(rewrite Hvn; exact Hnlt)).
+      rewrite <- Hsz, eval_svar_same, Hset, Hvn.
+      unfold node_ref_expr. reflexivity.
+    - (* not buffered: both sides take the same op branch *)
+      cbn [compile_dfg_expr BitsToLists.list_assoc].
+      rewrite Hla. cbv beta iota.
+      set (node := nth n (graph (build_dfg ctx act))
+                     {| nid := 0; op := DFG_Empty; sz := 0 |}) in *.
+      subst szB.
+      assert (Hnode_in : In node (graph (build_dfg ctx act)))
+        by (unfold node; apply nth_In; exact Hnlen).
+      pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
+      pose proof (node_nid_at act n Hnlen) as Hnid. fold node in Hnid.
+      assert (Harg : forall x, In x (get_args ctx node) -> 1 <= x /\ x < n).
+      { intros x Hx. split.
+        - exact (Hargpos node Hnode_in x Hx).
+        - pose proof (args_lt_fwd act node) as Hlt2.
+          specialize (Hlt2 Hnode_in x Hx). rewrite Hnid in Hlt2. exact Hlt2. }
+      (* recursion at a child, demanded at a size pinned by [wsz] *)
+      assert (Hchild : forall x sx, In x (get_args ctx node) ->
+                wsz (build_dfg ctx act) x sx ->
+                tf_eval_expr ss_sz i_sz oo_sz (szB := sx)
+                  (fst (compile_dfg_expr ctx cost_limit fuel a_idx
+                          (build_dfg ctx act) x bufs)) ss input
+                = tf_eval_expr ss_sz i_sz oo_sz (szB := sx)
+                  (fst (compile_dfg_expr ctx cost_limit fuel a_idx
+                          (build_dfg ctx act) x [])) ss input).
+      { intros x sx Hx Hwsz.
+        destruct (Harg x Hx) as [Hx1 Hx2].
+        destruct (wsz_node_sz act x sx Hwsz) as [Hxlen Hxsz].
+        apply (IH x sx Hx1 Hxlen);
+          [ lia | lia | right; lia | symmetry; exact Hxsz ]. }
+      pose proof (wfg_build_dfg act node Hnode_in) as Hfg.
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | ]
+        eqn:Hop.
+      + (* Const *) reflexivity.
+      + (* Input *) reflexivity.
+      + (* Var *) destruct v; reflexivity.
+      + (* Unary *)
+        assert (Hain : In arg (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    arg bufs) as [ae ve] eqn:E1.
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    arg []) as [ae' ve'] eqn:E2.
+        cbn [fst].
+        unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+        destruct op1 as [| src].
+        * (* tf_not: child demanded at the node's own size *)
+          pose proof (Hchild arg (sz node) Hain Hfg) as Hc.
+          rewrite E1, E2 in Hc. cbn [fst] in Hc.
+          cbn [tf_eval_expr]. rewrite Hc. reflexivity.
+        * (* tf_resize src: child demanded at [src], which [wfg] pins *)
+          pose proof (Hchild arg src Hain Hfg) as Hc.
+          rewrite E1, E2 in Hc. cbn [fst] in Hc.
+          cbn [tf_eval_expr]. rewrite Hc. reflexivity.
+      + (* Binary *)
+        assert (Ha1in : In arg1 (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        assert (Ha2in : In arg2 (get_args ctx node))
+          by (unfold get_args; rewrite Hop; right; left; reflexivity).
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    arg1 bufs) as [a1e v1e] eqn:E1.
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    arg2 bufs) as [a2e v2e] eqn:E2.
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    arg1 []) as [a1e' v1e'] eqn:E3.
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    arg2 []) as [a2e' v2e'] eqn:E4.
+        cbn [fst].
+        unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+        destruct op1 as [ | | | | | | szC cop ];
+          [ destruct Hfg as [Hf1 Hf2];
+            pose proof (Hchild arg1 (sz node) Ha1in Hf1) as Hc1;
+            pose proof (Hchild arg2 (sz node) Ha2in Hf2) as Hc2;
+            rewrite E1, E3 in Hc1; rewrite E2, E4 in Hc2;
+            cbn [fst] in Hc1, Hc2;
+            cbn [tf_eval_expr]; rewrite Hc1, Hc2; reflexivity .. | ].
+        destruct Hfg as [Hf1 Hf2].
+        pose proof (Hchild arg1 szC Ha1in Hf1) as Hc1.
+        pose proof (Hchild arg2 szC Ha2in Hf2) as Hc2.
+        rewrite E1, E3 in Hc1. rewrite E2, E4 in Hc2.
+        cbn [fst] in Hc1, Hc2.
+        cbn [tf_eval_expr]. rewrite Hc1, Hc2. reflexivity.
+      + (* Resize: the demanded size is the arg node's own size, definitionally *)
+        assert (Hain : In arg (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    arg bufs) as [ae ve] eqn:E1.
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    arg []) as [ae' ve'] eqn:E2.
+        cbn [fst].
+        destruct (Harg arg Hain) as [Hx1 Hx2].
+        assert (Hself' : BitsToLists.list_assoc bufs arg = None \/ arg < bound)
+          by (right; lia).
+        pose proof (IH arg (sz (nth arg (graph (build_dfg ctx act))
+                                  {| nid := 0; op := DFG_Empty; sz := 0 |}))
+                      Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen)
+                      ltac:(lia) ltac:(lia) Hself' eq_refl) as Hc.
+        rewrite E1, E2 in Hc. cbn [fst] in Hc.
+        cbn [tf_eval_expr]. rewrite Hc. reflexivity.
+      + (* Phi *)
+        assert (Hcin : In cnd (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        assert (Htin : In tid (get_args ctx node))
+          by (unfold get_args; rewrite Hop; right; left; reflexivity).
+        assert (Hein : In eid (get_args ctx node))
+          by (unfold get_args; rewrite Hop; right; right; left; reflexivity).
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    cnd bufs) as [ce cv] eqn:Ec.
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    tid bufs) as [te tv] eqn:Et.
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    eid bufs) as [ee ev] eqn:Ee.
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    cnd []) as [ce' cv'] eqn:Ec'.
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    tid []) as [te' tv'] eqn:Et'.
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    eid []) as [ee' ev'] eqn:Ee'.
+        cbn [fst].
+        unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+        destruct Hfg as [Hf1 [Hf2 Hf3]].
+        pose proof (Hchild cnd 1 Hcin Hf1) as Hcc.
+        pose proof (Hchild tid (sz node) Htin Hf2) as Hct.
+        pose proof (Hchild eid (sz node) Hein Hf3) as Hce.
+        rewrite Ec, Ec' in Hcc. rewrite Et, Et' in Hct. rewrite Ee, Ee' in Hce.
+        cbn [fst] in Hcc, Hct, Hce.
+        cbn [tf_eval_expr]. rewrite Hcc, Hct, Hce. reflexivity.
+      + (* Empty: impossible for a real node *)
+        exfalso. apply (node_op_not_empty act n Hn1 Hnlen).
+        unfold node in Hop. exact Hop.
+  Qed.
 
+  (* A key filtered OUT of an association list is absent from it.  This is what
+     lets a buffer's own compiled expression avoid depending on its own
+     register: compile_dfg_buffers removes the entry before compiling it. *)
+  Lemma list_assoc_filter_out (l: list (nat * (nat * nat))) (n: nat) :
+    BitsToLists.list_assoc
+      (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid n)) l) n = None.
+  Proof.
+    induction l as [| [b x] l IH]; cbn [filter]; [ reflexivity | ].
+    destruct (Nat.eqb b n) eqn:Hb; cbn [negb].
+    - exact IH.
+    - cbn [BitsToLists.list_assoc].
+      destruct (eq_dec n b) as [He | Hne].
+      + subst b. rewrite Nat.eqb_refl in Hb. discriminate.
+      + exact IH.
+  Qed.
+
+  (* SETTLE BOUND.  Buffers are ranked by NODE ID, not by target cycle: a
+     buffer's compiled expression only reaches strictly smaller ids
+     (args_lt_fwd), so a buffer caching node [n] settles by cycle [n].  Note the
+     target cycle is NOT a valid rank — require_buffer's out-part buffers every
+     var_map output with a nonzero cycle, so a buffer can read another buffer at
+     the SAME target cycle (see agents/scheduler-simulation for the
+     counterexample), which is why the whole run is bounded by the graph size. *)
+  Definition settle_bound (act: tfs_action sched) : nat :=
+    length (graph (build_dfg ctx act)).
 
   (* ==================================================================== *)
   (* Phase 2/3 decomposition of the top-level theorem.                    *)
@@ -4018,9 +4459,17 @@ Section SchedulerSimulation.
   (* node_cycle (backward cost / cost_limit, a MAX over both branches) is  *)
   (* later.  Hence the [validity set -> node_cycle <= k] direction fails.  *)
   (* We therefore keep only the SOUND one-directional fact                 *)
-  (* [done_by_max_cycle] (all leaves are valid at the full max cycle,      *)
-  (* regardless of any branch selection) and recover the "first done"      *)
-  (* witness by well-ordering, which needs no sharp lower bound.           *)
+  (* [done_by_settle_bound] (all leaves are valid once every buffer has    *)
+  (* saturated) and recover the "first done" witness by well-ordering,     *)
+  (* which needs no sharp lower bound.                                     *)
+  (*                                                                      *)
+  (* NOTE (soundness, 2nd): the saturation bound is NOT [max_cycle].       *)
+  (* [require_buffer] buffers cycle-crossing args AND every var_map output *)
+  (* with a non-zero target cycle, and [compile_dfg_buffers] removes only  *)
+  (* the buffer ITSELF from its slot, so a buffer may read same-cycle      *)
+  (* buffers and the resulting chain can be deeper than [max_cycle].       *)
+  (* Saturation is therefore ranked by NODE ID (args are strictly smaller, *)
+  (* [args_lt_fwd]), giving the bound [settle_bound = |graph|].            *)
   (* ==================================================================== *)
 
   (* --- well-ordering: a decidable predicate true at some bound B has a
@@ -4258,162 +4707,220 @@ Section SchedulerSimulation.
       reflexivity.
   Qed.
 
-  (* Buffered leaf: at the full max cycle, every validity register reads all-ones.
-     Its node's target cycle is <= max_cycle (node_cycle_le_max_cycle), so the
-     buffer invariant's iff forces the (size-1) register non-zero, hence ones. *)
-  Lemma out_valid_buffered
-    (act: tfs_action sched)
-    (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
-    (n_idx : Vect.index (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
-    (sp0: src_sys_state) (ss0: sched_sys_state) (input: input_t) :
-    act_idx_aligned act a_idx ->
-    start_rel sp0 ss0 ->
-    (forall i, 1 <= i <= max_cycle act -> ~ done_set (run_n i act input ss0)) ->
-    eval1 (tf_svar (tf_dfg_v a_idx n_idx))
-      (run_n (max_cycle act) act input ss0) input = Bits.ones 1.
+  (* SATURATION (value).  After k cycles without a done flag, every buffer
+     caching a node id BELOW k holds its settled (buffer-free) value.  Induction
+     on k: the cycle recomputes the buffer from its slot minus itself, all the
+     buffers it can read cache strictly smaller ids and are settled by the IH
+     (compile_subst), and a pre-done cycle does not disturb the settled value
+     itself (compile_nobuf_step_stable). *)
+  Lemma buffers_settled_run :
+    forall (act: tfs_action sched) a_idx (input: input_t)
+           (ss0: sched_sys_state) (k: nat),
+      act_idx_aligned act a_idx ->
+      (forall i, 1 <= i <= k -> ~ done_set (run_n i act input ss0)) ->
+      buffers_settled act a_idx (run_n k act input ss0) input k.
   Proof.
-    intros Halign Hstart Hnd.
-    rewrite eval1_svar_v.
-    pose proof (buffer_inv_at_max act a_idx sp0 ss0 input Halign Hstart Hnd) as Hinv.
-    destruct (Hinv n_idx) as [Himpl _].
-    apply bits1_nonzero_ones. apply Himpl.
-    apply node_cycle_le_max_cycle.
+    intros act a_idx input ss0 k Halign.
+    induction k as [| k IH]; intros Hnd n_idx Hlt; [ lia | ].
+    assert (Hndk : forall i, 1 <= i <= k -> ~ done_set (run_n i act input ss0))
+      by (intros i Hi; apply Hnd; lia).
+    specialize (IH Hndk).
+    set (ssk := run_n k act input ss0) in *.
+    assert (Hstep : ~ done_set (sched_step act ssk input))
+      by (apply (Hnd (S k)); lia).
+    destruct (vreg_nid_node_range act a_idx n_idx Halign) as [Hn1 Hnlen].
+    pose proof (buffer_after_cycle act a_idx n_idx ssk input Halign Hstep) as Hba.
+    cbv zeta in Hba. destruct Hba as [Hval _].
+    unfold vreg_nid in Hlt, Hn1, Hnlen.
+    change (run_n (S k) act input ss0) with (sched_step act ssk input).
+    unfold vreg_nid. rewrite Hval. unfold node_ref_expr.
+    rewrite (compile_nobuf_step_stable act a_idx ssk input Hstep).
+    apply (compile_subst act a_idx ssk input Halign k IH).
+    - intros e He. exact (proj1 (proj1 (filter_In _ e _) He)).
+    - exact Hn1.
+    - exact Hnlen.
+    - exact Hnlen.
+    - lia.
+    - left. apply list_assoc_filter_out.
+    - apply buffer_register_node_size. exact Halign.
   Qed.
 
-  (* Core Phase-2 fact: at the full max cycle, the compiled VALIDITY expression of
-     every real DFG node evaluates to all-ones.  Strong induction on fuel; the
-     recursion descends only real nodes (args are >= 1 and < the current nid, so
-     the DFG_Empty placeholder at position 0 is never reached), and each leaf is
-     either a buffered register (valid via buffer_inv_at_max) or a const/var (validity
-     = tf_const 1).  Works for BOTH Phi taint cases at the full max cycle. *)
-  Lemma out_valid_ones :
-    forall (act: tfs_action sched) a_idx (sp0: src_sys_state)
-           (ss0: sched_sys_state) (input: input_t),
-      act_idx_aligned act a_idx ->
-      start_rel sp0 ss0 ->
-      (forall i, 1 <= i <= max_cycle act -> ~ done_set (run_n i act input ss0)) ->
+  (* VALIDITY substitution: if every buffer register caching an id below [bound]
+     reads all-ones, then so does the compiled validity expression of any node
+     at or below [bound].  Same rank discipline as compile_subst. *)
+  Lemma compile_valid_ones
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+        (ss: sched_sys_state) (input: input_t) :
+    act_idx_aligned act a_idx ->
+    forall bound,
+    (forall n_idx, vreg_nid a_idx n_idx < bound ->
+       (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1) ->
+    forall bufs,
+      (forall e, In e bufs ->
+         In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
       forall fuel n,
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
         n < fuel ->
-        eval1 (snd (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act) n
-                      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
-              (run_n (max_cycle act) act input ss0) input = Bits.ones 1.
+        n <= bound ->
+        (BitsToLists.list_assoc bufs n = None \/ n < bound) ->
+        eval1 (snd (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                      n bufs)) ss input = Bits.ones 1.
   Proof.
-    intros act a_idx sp0 ss0 input Halign Hstart Hnd fuel.
-    induction fuel as [| fuel IH]; intros n Hn1 Hnlen Hnfuel; [ lia | ].
-    set (dfg := build_dfg ctx act) in *.
-    set (buffers := nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []).
-    cbn [compile_dfg_expr].
-    destruct (BitsToLists.list_assoc buffers n) as [[n_idx n_sz] |] eqn:Hla.
-    - (* buffered node: index_of_nat succeeds (n_idx < length buffers), giving
-         a tf_dfg_v register that is valid at the full max cycle *)
-      assert (Hlen_buf : length buffers
-                = length (require_buffer ctx dfg
-                    (calc_target_cycle cost_limit (calc_backward_cost ctx dfg)))).
-      { unfold buffers, dfg. rewrite (buffer_slot_eq act a_idx Halign). apply gsi_length. }
-      assert (Hin_gsi : In (n, (n_idx, n_sz))
-                (get_sizes_and_idx ctx dfg
-                   (require_buffer ctx dfg
-                      (calc_target_cycle cost_limit (calc_backward_cost ctx dfg))))).
-      { unfold dfg. rewrite <- (buffer_slot_eq act a_idx Halign).
-        apply wla_in. exact Hla. }
-      pose proof (gsi_idx_bound dfg _ n n_idx n_sz Hin_gsi) as Hlt.
-      assert (Hlt' : n_idx < length buffers) by (rewrite Hlen_buf; exact Hlt).
-      destruct (index_of_nat_bounded Hlt') as [n_idx' Hn_idx'].
-      unfold buffers in Hn_idx'. rewrite Hn_idx'.
-      cbn [snd]. apply (out_valid_buffered act a_idx n_idx' sp0 ss0 input Halign Hstart Hnd).
-    - (* non-buffered: case on the node's op *)
-      set (node := nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}).
-      assert (Hnode_in : In node (graph dfg)) by (unfold node; apply nth_In; exact Hnlen).
+    intros Halign bound Hvalid bufs Hsub fuel.
+    induction fuel as [| fuel IH]; intros n Hn1 Hnlen Hnfuel Hnb Hself; [ lia | ].
+    destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:Hla.
+    - (* buffered leaf: read the validity register, valid by hypothesis *)
+      assert (Hnlt : n < bound)
+        by (destruct Hself as [Hnone | Hlt']; [ congruence | exact Hlt' ]).
+      cbn [compile_dfg_expr]. rewrite Hla. cbv beta iota.
+      assert (Hin_slot : In (n, (m, msz))
+                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
+        by (apply Hsub, wla_in, Hla).
+      assert (Hin_gsi : In (n, (m, msz))
+                (get_sizes_and_idx ctx (build_dfg ctx act)
+                   (require_buffer ctx (build_dfg ctx act)
+                      (calc_target_cycle cost_limit
+                         (calc_backward_cost ctx (build_dfg ctx act))))))
+        by (rewrite <- (buffer_slot_eq act a_idx Halign); exact Hin_slot).
+      assert (Hlt : m < length
+                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
+      { rewrite (buffer_slot_eq act a_idx Halign), gsi_length.
+        exact (gsi_idx_bound _ _ n m msz Hin_gsi). }
+      destruct (index_of_nat_bounded Hlt) as [n_idx' Hn_idx'].
+      rewrite Hn_idx'. cbv beta iota. cbn [snd].
+      assert (Hmi : index_to_nat n_idx' = m)
+        by (apply index_to_nat_of_nat; exact Hn_idx').
+      assert (Hvn : vreg_nid a_idx n_idx' = n).
+      { unfold vreg_nid. rewrite Hmi, (buffer_slot_eq act a_idx Halign).
+        rewrite (gsi_entry_at _ _ n m msz Hin_gsi). reflexivity. }
+      rewrite eval1_svar_v. apply Hvalid. rewrite Hvn. exact Hnlt.
+    - (* not buffered: the validity is built from the args' validities *)
+      cbn [compile_dfg_expr]. rewrite Hla. cbv beta iota.
+      set (node := nth n (graph (build_dfg ctx act))
+                     {| nid := 0; op := DFG_Empty; sz := 0 |}) in *.
+      assert (Hnode_in : In node (graph (build_dfg ctx act)))
+        by (unfold node; apply nth_In; exact Hnlen).
       pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
-      pose proof (node_nid_at act n Hnlen) as Hnid.
-      fold dfg in Hnid. fold node in Hnid.
-      (* helper: every arg of node is >= 1 and < n *)
+      pose proof (node_nid_at act n Hnlen) as Hnid. fold node in Hnid.
       assert (Harg : forall x, In x (get_args ctx node) -> 1 <= x /\ x < n).
       { intros x Hx. split.
         - exact (Hargpos node Hnode_in x Hx).
         - pose proof (args_lt_fwd act node) as Hlt2.
-          fold dfg in Hlt2. specialize (Hlt2 Hnode_in x Hx).
-          rewrite Hnid in Hlt2. exact Hlt2. }
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | ] eqn:Hop.
-      + (* Const *) cbn [snd]. apply eval1_const1.
-      + (* Input *) cbn [snd]. apply eval1_const1.
-      + (* Var *) destruct v; cbn [snd]; apply eval1_const1.
-      + (* Unary *)
-        assert (Hain : In arg (get_args ctx node))
+          specialize (Hlt2 Hnode_in x Hx). rewrite Hnid in Hlt2. exact Hlt2. }
+      assert (Hchild : forall x, In x (get_args ctx node) ->
+                eval1 (snd (compile_dfg_expr ctx cost_limit fuel a_idx
+                              (build_dfg ctx act) x bufs)) ss input = Bits.ones 1).
+      { intros x Hx. destruct (Harg x Hx) as [Hx1 Hx2].
+        apply (IH x Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen));
+          [ lia | lia | right; lia ]. }
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | ]
+        eqn:Hop.
+      + cbn [snd]. apply eval1_const1.
+      + cbn [snd]. apply eval1_const1.
+      + destruct v; cbn [snd]; apply eval1_const1.
+      + assert (Hain : In arg (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
-        destruct (Harg arg Hain) as [Ha1 Ha2].
-        destruct (compile_dfg_expr ctx cost_limit fuel a_idx dfg arg buffers) as [ae ve] eqn:E1.
-        cbn [snd].
-        pose proof (IH arg Ha1 (Nat.lt_trans _ _ _ Ha2 Hnlen) (Nat.lt_le_trans _ _ _ Ha2 (proj1 (Nat.lt_succ_r _ _) Hnfuel))) as Ha.
-        fold buffers in Ha. rewrite E1 in Ha. cbn [snd] in Ha. exact Ha.
-      + (* Binary *)
-        assert (Ha1in : In arg1 (get_args ctx node))
+        pose proof (Hchild arg Hain) as Ha.
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    arg bufs) as [ae ve] eqn:E1.
+        cbn [snd] in Ha |- *. exact Ha.
+      + assert (Ha1in : In arg1 (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
         assert (Ha2in : In arg2 (get_args ctx node))
           by (unfold get_args; rewrite Hop; right; left; reflexivity).
-        destruct (Harg arg1 Ha1in) as [Hb1 Hb2].
-        destruct (Harg arg2 Ha2in) as [Hc1 Hc2].
-        destruct (compile_dfg_expr ctx cost_limit fuel a_idx dfg arg1 buffers) as [a1e v1e] eqn:E1.
-        destruct (compile_dfg_expr ctx cost_limit fuel a_idx dfg arg2 buffers) as [a2e v2e] eqn:E2.
-        cbn [snd]. rewrite valid_and_eval.
-        pose proof (IH arg1 Hb1 (Nat.lt_trans _ _ _ Hb2 Hnlen) (Nat.lt_le_trans _ _ _ Hb2 (proj1 (Nat.lt_succ_r _ _) Hnfuel))) as Hv1.
-        pose proof (IH arg2 Hc1 (Nat.lt_trans _ _ _ Hc2 Hnlen) (Nat.lt_le_trans _ _ _ Hc2 (proj1 (Nat.lt_succ_r _ _) Hnfuel))) as Hv2.
-        fold buffers in Hv1, Hv2. rewrite E1 in Hv1. rewrite E2 in Hv2.
-        cbn [snd] in Hv1, Hv2. rewrite Hv1, Hv2. apply Bits.and_ones_l.
-      + (* Resize *)
-        assert (Hain : In arg (get_args ctx node))
+        pose proof (Hchild arg1 Ha1in) as Hv1.
+        pose proof (Hchild arg2 Ha2in) as Hv2.
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    arg1 bufs) as [a1e v1e] eqn:E1.
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    arg2 bufs) as [a2e v2e] eqn:E2.
+        cbn [snd] in Hv1, Hv2 |- *.
+        rewrite valid_and_eval, Hv1, Hv2. apply Bits.and_ones_l.
+      + assert (Hain : In arg (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
-        destruct (Harg arg Hain) as [Ha1 Ha2].
-        destruct (compile_dfg_expr ctx cost_limit fuel a_idx dfg arg buffers) as [ae ve] eqn:E1.
-        cbn [snd].
-        pose proof (IH arg Ha1 (Nat.lt_trans _ _ _ Ha2 Hnlen) (Nat.lt_le_trans _ _ _ Ha2 (proj1 (Nat.lt_succ_r _ _) Hnfuel))) as Ha.
-        fold buffers in Ha. rewrite E1 in Ha. cbn [snd] in Ha. exact Ha.
-      + (* Phi *)
-        assert (Hcin : In cnd (get_args ctx node))
+        pose proof (Hchild arg Hain) as Ha.
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    arg bufs) as [ae ve] eqn:E1.
+        cbn [snd] in Ha |- *. exact Ha.
+      + assert (Hcin : In cnd (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
         assert (Htin : In tid (get_args ctx node))
           by (unfold get_args; rewrite Hop; right; left; reflexivity).
         assert (Hein : In eid (get_args ctx node))
           by (unfold get_args; rewrite Hop; right; right; left; reflexivity).
-        destruct (Harg cnd Hcin) as [Hcc1 Hcc2].
-        destruct (Harg tid Htin) as [Htt1 Htt2].
-        destruct (Harg eid Hein) as [Hee1 Hee2].
-        destruct (compile_dfg_expr ctx cost_limit fuel a_idx dfg cnd buffers) as [ce cv] eqn:Ec.
-        destruct (compile_dfg_expr ctx cost_limit fuel a_idx dfg tid buffers) as [te tv] eqn:Et.
-        destruct (compile_dfg_expr ctx cost_limit fuel a_idx dfg eid buffers) as [ee ev] eqn:Ee.
-        pose proof (IH cnd Hcc1 (Nat.lt_trans _ _ _ Hcc2 Hnlen) (Nat.lt_le_trans _ _ _ Hcc2 (proj1 (Nat.lt_succ_r _ _) Hnfuel))) as Hcv.
-        pose proof (IH tid Htt1 (Nat.lt_trans _ _ _ Htt2 Hnlen) (Nat.lt_le_trans _ _ _ Htt2 (proj1 (Nat.lt_succ_r _ _) Hnfuel))) as Htv.
-        pose proof (IH eid Hee1 (Nat.lt_trans _ _ _ Hee2 Hnlen) (Nat.lt_le_trans _ _ _ Hee2 (proj1 (Nat.lt_succ_r _ _) Hnfuel))) as Hev.
-        fold buffers in Hcv, Htv, Hev.
-        rewrite Ec in Hcv. rewrite Et in Htv. rewrite Ee in Hev.
-        cbn [snd] in Hcv, Htv, Hev.
-        cbn [snd]. destruct (mem cnd (get_tainted ctx dfg)).
+        pose proof (Hchild cnd Hcin) as Hcv.
+        pose proof (Hchild tid Htin) as Htv.
+        pose proof (Hchild eid Hein) as Hev.
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    cnd bufs) as [ce cv] eqn:Ec.
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    tid bufs) as [te tv] eqn:Et.
+        destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
+                    eid bufs) as [ee ev] eqn:Ee.
+        cbn [snd] in Hcv, Htv, Hev |- *.
+        destruct (mem cnd (get_tainted ctx (build_dfg ctx act))).
         * rewrite valid_and_eval, valid_and_eval, Htv, Hev, Hcv.
           rewrite Bits.and_ones_l. apply Bits.and_ones_l.
         * rewrite valid_and_eval, Hcv, Bits.and_ones_l.
           apply (valid_if_eval ce tv ev _ input Htv Hev).
-      + (* Empty: impossible for a real node (n >= 1) *)
-        exfalso. apply (node_op_not_empty act n Hn1 Hnlen). unfold node in Hop. exact Hop.
+      + exfalso. apply (node_op_not_empty act n Hn1 Hnlen).
+        unfold node in Hop. exact Hop.
   Qed.
 
+  (* SATURATION (validity).  After k pre-done cycles, every buffer caching a
+     node id below k reads all-ones. *)
+  Lemma valids_ones_run :
+    forall (act: tfs_action sched) a_idx (input: input_t)
+           (ss0: sched_sys_state) (k: nat),
+      act_idx_aligned act a_idx ->
+      (forall i, 1 <= i <= k -> ~ done_set (run_n i act input ss0)) ->
+      forall n_idx,
+        vreg_nid a_idx n_idx < k ->
+        (fst (run_n k act input ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1.
+  Proof.
+    intros act a_idx input ss0 k Halign.
+    induction k as [| k IH]; intros Hnd n_idx Hlt; [ lia | ].
+    assert (Hndk : forall i, 1 <= i <= k -> ~ done_set (run_n i act input ss0))
+      by (intros i Hi; apply Hnd; lia).
+    specialize (IH Hndk).
+    set (ssk := run_n k act input ss0) in *.
+    assert (Hstep : ~ done_set (sched_step act ssk input))
+      by (apply (Hnd (S k)); lia).
+    destruct (vreg_nid_node_range act a_idx n_idx Halign) as [Hn1 Hnlen].
+    pose proof (buffer_after_cycle act a_idx n_idx ssk input Halign Hstep) as Hba.
+    cbv zeta in Hba. destruct Hba as [_ Hval].
+    unfold vreg_nid in Hlt, Hn1, Hnlen.
+    change (run_n (S k) act input ss0) with (sched_step act ssk input).
+    rewrite Hval.
+    apply (compile_valid_ones act a_idx ssk input Halign k IH).
+    - intros e He. exact (proj1 (proj1 (filter_In _ e _) He)).
+    - exact Hn1.
+    - exact Hnlen.
+    - exact Hnlen.
+    - lia.
+    - left. apply list_assoc_filter_out.
+  Qed.
+
+
   (* SOUND semantic core (Phase 2): a done cycle exists no later than
-     S (max_cycle).  Either the done flag already fired at some cycle <=
-     max_cycle (early done — harmless, yields an earlier witness), or it did not,
-     in which case the pre-done buffer invariant holds up to max_cycle and the
-     done flag fires at S (max_cycle). *)
-  Lemma done_by_max_cycle :
+     S (settle_bound).  Either the done flag already fired at some cycle <=
+     settle_bound (early done — harmless, yields an earlier witness), or it did
+     not, in which case every buffer has settled and validated by cycle
+     settle_bound (its node id is < settle_bound = the graph size), so the
+     combined validity — hence the done flag — fires at S (settle_bound). *)
+  Lemma done_by_settle_bound :
     forall (act: tfs_action sched) (sp0: src_sys_state)
            (ss0: sched_sys_state) (input: input_t),
       start_rel sp0 ss0 ->
-      exists N, N <= S (max_cycle act) /\ done_set (run_n N act input ss0).
+      exists N, N <= S (settle_bound act) /\ done_set (run_n N act input ss0).
   Proof.
     intros act sp0 ss0 input Hstart.
     destruct (bounded_dec (fun k => done_set (run_n k act input ss0))
-                (fun k => done_set_dec _) (max_cycle act)) as [Hearly | Hno].
+                (fun k => done_set_dec _) (settle_bound act)) as [Hearly | Hno].
     - destruct Hearly as [j [Hjle Hjdone]]. exists j. split; [ lia | exact Hjdone ].
-    - exists (S (max_cycle act)). split; [ apply Nat.le_refl | ].
+    - exists (S (settle_bound act)). split; [ apply Nat.le_refl | ].
       destruct (exists_act_idx act) as [a_idx Halign].
       unfold done_set. cbn [run_n]. rewrite sched_step_done.
       destruct (done_exprs_concrete act a_idx Halign) as [rest Hsched].
@@ -4441,13 +4948,16 @@ Section SchedulerSimulation.
         assert (Hinm : In (nid node) (map nid (graph (build_dfg ctx act))))
           by (apply in_map; exact Hin).
         rewrite Hseq in Hinm. rewrite in_seq in Hinm. rewrite Hnid in Hinm. lia. }
-      apply (out_valid_ones act a_idx sp0 ss0 input Halign Hstart
-               (fun i Hi => Hno i (proj2 Hi))
-               (length (graph (build_dfg ctx act))) nd Hnd1 Hndlt Hndlt).
+      apply (compile_valid_ones act a_idx _ input Halign (settle_bound act)
+               (valids_ones_run act a_idx input ss0 (settle_bound act) Halign
+                  (fun i Hi => Hno i (proj2 Hi)))
+               _ (fun e He => He)
+               (length (graph (build_dfg ctx act))) nd Hnd1 Hndlt Hndlt);
+        [ unfold settle_bound; lia | right; unfold settle_bound; lia ].
   Qed.
 
   (* PHASE 2 (progress): a FIRST done cycle exists.  Obtained as the least
-     cycle N <= S (max_cycle act) at which the done flag fires (well-ordering
+     cycle N <= S (settle_bound act) at which the done flag fires (well-ordering
      over the decidable predicate [done_set (run_n k …)]), so "not done before
      N" holds by construction. *)
   Lemma scheduler_reaches_done :
@@ -4460,9 +4970,9 @@ Section SchedulerSimulation.
   Proof.
     intros act sp0 ss0 input Hstart.
     destruct (least_witness (fun k => done_set (run_n k act input ss0))
-                (fun k => done_set_dec _) (S (max_cycle act)))
+                (fun k => done_set_dec _) (S (settle_bound act)))
       as [N [Hdone Hbefore]].
-    - apply (done_by_max_cycle act sp0 ss0 input Hstart).
+    - apply (done_by_settle_bound act sp0 ss0 input Hstart).
     - exists N. split; [ exact Hbefore | exact Hdone ].
   Qed.
 
