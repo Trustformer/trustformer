@@ -15,3 +15,4 @@ vendor/
 
 # Long-term agent memory (untracked)
 agents/
+paper/
