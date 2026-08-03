@@ -54,9 +54,10 @@ Section Semantics.
         | tf_ovar v =>
             convert (snd sys_state).[v]
         | tf_op1 op src =>
-            let val_src := tf_eval_expr src sys_state input in
             match op with
-            | tf_not => Bits.neg val_src
+          | tf_not => Bits.neg (tf_eval_expr src sys_state input)
+          | tf_resize source_size =>
+            convert (tf_eval_expr (szB:=source_size) src sys_state input)
             end
         | tf_op2 op src1 src2 =>
             let val_src1 := tf_eval_expr src1 sys_state input in

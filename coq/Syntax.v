@@ -18,6 +18,7 @@ Section TrustformerSyntax.
 
     Inductive tf_unary_ops :=
         | tf_not                                (* Bitwise NOT *)
+        | tf_resize (source_size: nat)          (* Evaluate at source_size, then convert *)
         .
 
     Inductive tf_comparison_ops :=
@@ -65,7 +66,7 @@ Section TrustformerSyntax.
     Instance tf_unary_ops_eqdec: EqDec tf_unary_ops.
     Proof.
         constructor. intros.
-        decide equality.
+        decide equality; apply Nat.eq_dec.
     Qed.
 
     Instance tf_comparison_ops_eqdec: EqDec tf_comparison_ops.

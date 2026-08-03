@@ -37,6 +37,27 @@ written more than a few tactics without checking, stop and check.
   dune build coq/<Path>/<File>.vo
   ```
   Fix the first error before moving on; later errors are often cascades.
+
+### Fast build loop (avoid paying `nix develop` startup every time)
+
+Builds MUST run inside the nix devshell, but spawning `nix develop --command …`
+per build pays a multi-second shell-startup cost each time — that startup, NOT
+Coq compilation, is usually the bottleneck (an incremental single-file rebuild is
+typically <0.1s). Open **one persistent devshell** and reuse it:
+
+```bash
+nix develop --command bash --norc --noprofile
+# then, inside that same shell, repeatedly:
+dune build coq/<Path>/<File>.vo
+```
+
+- `--norc --noprofile` is **required**: without it the interactive bash rc files
+  re-activate conda (`(base)`) and reset `PATH` to `~/.nix-profile`, giving the
+  WRONG `coqc`. The symptom is:
+  `Compiled library Koika.Frontend makes inconsistent assumptions over library
+Coq.Init.Ltac`. Verify with `which coqc` → it must point into `/nix/store/...`,
+  not `~/.nix-profile/bin/coqc`.
+- Keep this shell alive across the whole session; only the first command is slow.
 - **Beware Kôika implicit types.** Kôika has many implicit arguments (`R`, `REnv`,
   `bits_t` sizes, `reg_t`, ports). A mismatch shows up as errors where both sides
   print the same (e.g. `x is not equal to x`). Enable `Set Printing Implicit.`
@@ -52,6 +73,15 @@ written more than a few tactics without checking, stop and check.
 - **Small definitions first.** When a proof is hard, consider whether the
   definition can be reshaped to make it provable, and verify that reshape compiles
   before building on it.
+- **Guide conversion; never `reflexivity` over a big opaque term.** A bare
+  `reflexivity` (or `cbn`/`simpl` with no target) can force Rocq to normalize a
+  large opaque definition (e.g. a compiled scheduler/DFG instance), turning a
+  supposedly definitional proof into minutes of `reflexivity` + `Qed`. If the two
+  sides are structurally identical once their wrapper definitions are unfolded,
+  `unfold f, g, h. reflexivity.` keeps the comparison syntactic and runs in
+  milliseconds. When a single file compile is unexpectedly slow, profile with
+  `coqc … -time` (find the exact command via `dune build --verbose`) — it prints
+  per-sentence timings so you can pinpoint the offending tactic/`Qed`.
 
 ## Reference: vendored Kôika source (read-only)
 

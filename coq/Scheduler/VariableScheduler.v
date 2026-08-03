@@ -189,8 +189,14 @@ Section VariableScheduler.
       else
         emit (DFG_Resize src_id) sz
     | tf_op1 op src =>
-      let! src_id := dataflow_expr src sz in
-      emit (DFG_Unary op src_id) sz
+      match op with
+      | tf_not =>
+        let! src_id := dataflow_expr src sz in
+        emit (DFG_Unary op src_id) sz
+      | tf_resize source_size =>
+        let! src_id := dataflow_expr src source_size in
+        emit (DFG_Unary op src_id) sz
+      end
     | tf_op2 op src1 src2 =>
       match op with
       | tf_cmp szC _ =>
@@ -345,7 +351,8 @@ Section VariableScheduler.
     | DFG_Input _ => 0
     | DFG_Var _ => 0
     | DFG_Unary op _ => match op with
-                      | tf_not => 1
+                        | tf_not => 1
+                        | tf_resize _ => 0
                       end
     | DFG_Binary op _ _ => match op with
                         | tf_and => 1
@@ -545,7 +552,8 @@ Section VariableScheduler.
               (tf_op2 op arg1_expr arg2_expr, valid_expr_and val1_expr val2_expr)
           | DFG_Resize arg1 =>
               let '(arg_expr, val_expr) := compile_dfg_expr fuel' a_idx dfg arg1 buffers in
-              (arg_expr, val_expr)
+              let arg_node := nth arg1 (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0; |} in
+              (tf_op1 (tf_resize (sz arg_node)) arg_expr, val_expr)
           | DFG_Phi cond_id then_id else_id =>
               let '(cond_expr, cond_val) := compile_dfg_expr fuel' a_idx dfg cond_id buffers in
               let '(then_expr, then_val) := compile_dfg_expr fuel' a_idx dfg then_id buffers in
@@ -894,7 +902,10 @@ Section VariableScheduler.
       destruct (Nat.eqb (inputs_var_size iv) sz); [apply preserves_ret | apply emit_vm].
     - apply preserves_bind; [apply get_var_vm|]. intro x.
       destruct (Nat.eqb (dfg_var_size (DFG_OVar ov)) sz); [apply preserves_ret | apply emit_vm].
-    - apply preserves_bind; [apply IHe|]. intro x. apply emit_vm.
+    - destruct uop as [| source_size].
+      + apply preserves_bind; [apply IHe|]. intro x. apply emit_vm.
+      + apply preserves_bind; [apply IHe|]. intro x.
+        apply emit_vm.
     - destruct bop;
         (apply preserves_bind; [apply IHe1| intro x1;
          apply preserves_bind; [apply IHe2| intro x2; apply emit_vm]]).

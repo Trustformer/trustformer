@@ -1181,7 +1181,13 @@ Section CompositionalCorrectness.
         | tf_input v =>
             val_convert target_size (spec_inputs_size v) (sigma (ext_input tf_ctx v) val_true)
         | tf_op1 op src =>
-            value_of_option_lossy (UntypedSemantics.usigma1 UNot (value_of_expr src Gamma target_size))
+          match op with
+          | tf_not =>
+            value_of_option_lossy
+              (UntypedSemantics.usigma1 UNot (value_of_expr src Gamma target_size))
+          | tf_resize source_size =>
+            val_convert target_size source_size (value_of_expr src Gamma source_size)
+          end
         | tf_op2 op src1 src2 =>
             let v1 := (bits_of_value_lossy (value_of_expr src1 Gamma target_size)) in
             let v2 := (bits_of_value_lossy (value_of_expr src2 Gamma target_size)) in

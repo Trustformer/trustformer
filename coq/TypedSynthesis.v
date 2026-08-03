@@ -134,27 +134,36 @@ Section TypedSynthesis.
 
     Local Notation reg_t := (@_reg_t spec_states spec_inputs spec_outputs).
 
-    Instance _reg_t_fin2 : FiniteType2 reg_t.
-    Proof.  
-      unshelve econstructor.
-      - intro s. destruct s.
-        + exact (0, 0).
-        + exact (1, 0).
-        + exact (2, 0).
-        + exact (3, spec_state_index x). 
-        + exact (4, spec_input_index x). 
-        + exact (5, spec_output_index x).
-        + exact (6, spec_output_index x).
-          
-      - refine ([ [tf_cmd] ] ++ 
-                [ [tf_cmd_ack] ] ++ 
-                [ [tf_ready] ] ++ 
-                [ map tf_reg spec_all_states ] ++ 
-                [ map tf_in spec_all_inputs ] ++ 
-                [ map tf_out spec_all_outputs ] ++ 
-                [ map tf_out_ack spec_all_outputs ]).
+    Definition _reg_t_index2 (s: reg_t) : nat * nat :=
+      match s with
+      | tf_cmd => (0, 0)
+      | tf_cmd_ack => (1, 0)
+      | tf_ready => (2, 0)
+      | tf_reg x => (3, spec_state_index x)
+      | tf_in x => (4, spec_input_index x)
+      | tf_out x => (5, spec_output_index x)
+      | tf_out_ack x => (6, spec_output_index x)
+      end.
 
-      - intros x n m EQ.
+    Definition _reg_t_elements2 : list (list reg_t) :=
+      [ [tf_cmd] ] ++
+      [ [tf_cmd_ack] ] ++
+      [ [tf_ready] ] ++
+      [ map tf_reg spec_all_states ] ++
+      [ map tf_in spec_all_inputs ] ++
+      [ map tf_out spec_all_outputs ] ++
+      [ map tf_out_ack spec_all_outputs ].
+
+    (* These three must stay Qed-opaque: a transparent proof inside the FiniteType2
+       record forces the kernel to rebuild a huge term on every conversion that goes
+       through ContextEnv, which costs seconds per Qed in the downstream proofs. *)
+    Lemma _reg_t_surjective2 :
+      forall a : reg_t, forall n m,
+        _reg_t_index2 a = (n, m) ->
+        exists l, nth_error _reg_t_elements2 n = Some l /\ nth_error l m = Some a.
+    Proof.
+        unfold _reg_t_index2, _reg_t_elements2.
+        intros x n m EQ.
         destruct x; inversion EQ; clear EQ; subst.
         + (* tf_cmd *)
           exists [tf_cmd]. split; auto.
@@ -174,8 +183,15 @@ Section TypedSynthesis.
         + (* tf_out_ack *)
           exists (map tf_out_ack spec_all_outputs). split; auto.
           apply map_nth_error. apply finite_surjective.
+    Qed.
 
-      - intros n l Hn m x Hm.
+    Lemma _reg_t_index_of2 :
+      forall n l,
+        nth_error _reg_t_elements2 n = Some l ->
+        forall m x, nth_error l m = Some x -> _reg_t_index2 x = (n, m).
+    Proof.
+        unfold _reg_t_index2, _reg_t_elements2.
+        intros n l Hn m x Hm.
       
         destruct n as [|n].
         { inversion Hn. subst. destruct m. inversion Hm. subst; reflexivity. inversion Hm. rewrite nth_error_nil in H0. congruence. }
@@ -199,8 +215,13 @@ Section TypedSynthesis.
           apply finite_elements_index in Hs. subst. reflexivity. }
         
         inversion Hn. rewrite nth_error_nil in H0. congruence. 
+    Qed.
 
-      - do 6 (try apply Forall_app; try split).
+    Lemma _reg_t_injective2 :
+      Forall (fun l => NoDup (map _reg_t_index2 l)) _reg_t_elements2.
+    Proof.
+        unfold _reg_t_index2, _reg_t_elements2.
+        do 6 (try apply Forall_app; try split).
         all: constructor; [| constructor].        
         + apply NoDup_one.
         + apply NoDup_one.
@@ -217,7 +238,14 @@ Section TypedSynthesis.
         + cbn [map]. rewrite map_map.
           apply NoDup_map_pair.
           apply finite_injective.
-    Defined.
+    Qed.
+
+    Instance _reg_t_fin2 : FiniteType2 reg_t :=
+      {| finite2_index := _reg_t_index2;
+         finite2_elements := _reg_t_elements2;
+         finite2_surjective := _reg_t_surjective2;
+         finite2_ := _reg_t_index_of2;
+         finite2_injective2 := _reg_t_injective2 |}.
 
     Instance _reg_t_finite : FiniteType reg_t.
     Proof.
@@ -347,8 +375,13 @@ Section TypedSynthesis.
           synth_convert target_size act
           
       | tf_op1 op src =>
-          let src_act := expr_to_action src target_size in
-          Unop (PrimTyped.Bits1 (PrimTyped.Not target_size)) src_act
+          match op with
+          | tf_not =>
+            let src_act := expr_to_action src target_size in
+            Unop (PrimTyped.Bits1 (PrimTyped.Not target_size)) src_act
+          | tf_resize source_size =>
+            synth_convert target_size (expr_to_action src source_size)
+          end
           
       | tf_op2 op src1 src2 =>
           match op with

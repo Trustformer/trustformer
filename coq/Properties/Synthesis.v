@@ -919,7 +919,7 @@ Section SynthesisCorrectness.
         apply Common.not_in_map; try assumption.
         * abstract ( inversion H_nodup_inputs; subst; assumption ).
         * abstract ( intros; inversion H; reflexivity ).
-  Time Qed. (* ca. 9.8 s *)
+  Time Qed. (* ca. 0.05 s *)
 
   Lemma may_write_fold_cons_w0_inputs :
     forall log log2 prt x (sigma: forall f, Sig_denote (Sigma f)),
@@ -1067,13 +1067,15 @@ Section SynthesisCorrectness.
         | tf_ovar v =>
             (convert (snd sys_state).[v], tf_out v :: log)
         | tf_op1 op src =>
-            let (val_src, log_src) := (eval_expr_aux src log sys_state input) in
-            (
-              match op with
-              | tf_not => Bits.neg val_src
-              end,
-              log_src
-            )
+            match op with
+            | tf_not =>
+                let (val_src, log_src) := (eval_expr_aux src log sys_state input) in
+                (Bits.neg val_src, log_src)
+            | tf_resize source_size =>
+                let (val_src, log_src) :=
+                  (eval_expr_aux (szB:=source_size) src log sys_state input) in
+                (convert val_src, log_src)
+            end
         | tf_op2 op src1 src2 =>
             let (val_src1, log_src1) := (eval_expr_aux src1 log sys_state input) in
             let (val_src2, log_src2) := (eval_expr_aux src2 log_src1 sys_state input) in
@@ -1122,8 +1124,11 @@ Section SynthesisCorrectness.
     generalize dependent szB.
     generalize dependent log1.
     induction expr; intros log1 szB; try reflexivity.
-    - cbn. destruct op. rewrite Common.fst_let_repackage. f_equal.
-      apply IHexpr.
+    - destruct op.
+      + cbn. rewrite Common.fst_let_repackage. f_equal.
+        apply IHexpr.
+      + cbn. rewrite Common.fst_let_repackage. f_equal.
+        apply (IHexpr log1 source_size).
     - cbn. destruct op.
       + let_to_projs. f_equal. f_equal. 
         * apply IHexpr1.
@@ -1159,11 +1164,17 @@ Section SynthesisCorrectness.
     generalize dependent log2.
     generalize dependent log1.
     induction expr; intros log1 log2 szB; try reflexivity.
-    - cbn.
-      pose proof (IHexpr log1 log2 szB). 
-      destruct (eval_expr_aux expr log1 sys input).
-      destruct (eval_expr_aux expr log2 sys input).
-      cbn in *. subst. reflexivity.
+    - destruct op.
+      + cbn.
+        pose proof (IHexpr log1 log2 szB).
+        destruct (eval_expr_aux expr log1 sys input).
+        destruct (eval_expr_aux expr log2 sys input).
+        cbn in *. subst. reflexivity.
+      + cbn.
+        pose proof (IHexpr log1 log2 source_size).
+        destruct (eval_expr_aux (szB:=source_size) expr log1 sys input).
+        destruct (eval_expr_aux (szB:=source_size) expr log2 sys input).
+        cbn in *. subst. reflexivity.
     - destruct op.
       + cbn.
         pose proof (IHexpr1 log1 log2 szB).
@@ -1239,11 +1250,17 @@ Section SynthesisCorrectness.
     generalize dependent log2.
     generalize dependent log1.
     induction expr; intros log1 log2 szB; try reflexivity.
-    - cbn.
-      pose proof (IHexpr log1 log2 szB). 
-      destruct (eval_expr_aux expr log1 sys input).
-      destruct (eval_expr_aux expr (log1 ++ log2) sys input).
-      cbn in *. subst. reflexivity.
+    - destruct op.
+      + cbn.
+        pose proof (IHexpr log1 log2 szB).
+        destruct (eval_expr_aux expr log1 sys input).
+        destruct (eval_expr_aux expr (log1 ++ log2) sys input).
+        cbn in *. subst. reflexivity.
+      + cbn.
+        pose proof (IHexpr log1 log2 source_size).
+        destruct (eval_expr_aux (szB:=source_size) expr log1 sys input).
+        destruct (eval_expr_aux (szB:=source_size) expr (log1 ++ log2) sys input).
+        cbn in *. subst. reflexivity.
     - destruct op.
       + cbn.
         pose proof (IHexpr1 log1 log2 szB).
@@ -1319,12 +1336,19 @@ Section SynthesisCorrectness.
     generalize dependent szB2.
     generalize dependent szB1.
     induction expr2; intros szB1 szB2; try (destruct (eval_expr_aux expr1 [] sys input) as [val1 log1] eqn:Heval1; reflexivity).
-    - destruct op. cbn.
-      pose proof (IHexpr2 szB1 szB2).
-      destruct (eval_expr_aux expr1 [] sys input).
-      destruct (eval_expr_aux expr2 [] sys input).
-      destruct (eval_expr_aux expr2 l sys input).
-      cbn in *. subst. reflexivity.
+    - destruct op.
+      + cbn.
+        pose proof (IHexpr2 szB1 szB2).
+        destruct (eval_expr_aux expr1 [] sys input).
+        destruct (eval_expr_aux expr2 [] sys input).
+        destruct (eval_expr_aux expr2 l sys input).
+        cbn in *. subst. reflexivity.
+      + cbn.
+        pose proof (IHexpr2 szB1 source_size).
+        destruct (eval_expr_aux expr1 [] sys input).
+        destruct (eval_expr_aux (szB:=source_size) expr2 [] sys input).
+        destruct (eval_expr_aux (szB:=source_size) expr2 l sys input).
+        cbn in *. subst. reflexivity.
     - destruct op.
       + cbn in *. 
         pose proof (IHexpr2_1 szB1 szB2).
@@ -1561,9 +1585,14 @@ Section SynthesisCorrectness.
       * rewrite Hstate_out. reflexivity.
       * apply may_read_all_one_output. exact Hrd0_out.
     + (* Op1 *)
-      cbn. unfold opt_bind. rewrite IHexpr; try assumption.
-      destruct op; simpl. unfold Bits.neg. f_equal. f_equal. f_equal.
-      unfold expr_log. simpl. destruct (eval_expr_aux expr [] sys input) as [val log_expr]. reflexivity.
+      destruct op.
+      * cbn. unfold opt_bind. rewrite IHexpr; try assumption.
+        simpl. unfold Bits.neg. f_equal. f_equal. f_equal.
+        unfold expr_log. simpl. destruct (eval_expr_aux expr [] sys input) as [val log_expr]. reflexivity.
+      * cbn. rewrite interp_synth_convert. rewrite IHexpr; try assumption.
+        unfold expr_log. cbn.
+        destruct (eval_expr_aux (szB:=source_size) expr [] sys input).
+        reflexivity.
     + (* Op2 *)
       destruct op.
       - cbn. unfold opt_bind. rewrite IHexpr1; clear IHexpr1; try assumption. rewrite IHexpr2; clear IHexpr2.
@@ -1864,7 +1893,7 @@ Section SynthesisCorrectness.
           -- simpl in HNoDup_aff. inversion HNoDup_aff; subst.
              rewrite may_write_all_log_cons_neq; [|assumption].
              apply may_write_all_expr_log; assumption.
-  Time Qed. (* ca. 23 s *)
+  Time Qed. (* ca. 0.3 s *)
 
   (* --- aux_log <-> abstract-updates bridge (Phase D building blocks) --- *)
 
@@ -2014,9 +2043,10 @@ Section SynthesisCorrectness.
       latest_write0 log_a idx = None /\ latest_write0 log_r idx = None.
   Proof.
     intros log_r log_a idx H.
+    (* Keep may_write transparent through Qed: with it opaque the kernel refuses to
+       unfold it and normalises the whole log/ContextEnv tower instead (~70 s). *)
     Local Transparent may_write.
     unfold may_write in H.
-    Local Opaque may_write.
     apply andb_prop in H. destruct H as [H01 _].
     apply andb_prop in H01. destruct H01 as [_ Hw0].
     apply negb_true_iff in Hw0.
@@ -2026,6 +2056,7 @@ Section SynthesisCorrectness.
     - exact (SemanticProperties.latest_write0_None (R:=R) (REnv:=REnv) log_a idx Hw0a).
     - exact (SemanticProperties.latest_write0_None (R:=R) (REnv:=REnv) log_r idx Hw0r).
   Qed.
+  Local Opaque may_write.
 
   (* Value-level bridge: the HW value read at P1 for tf_reg x from the always-ops log
      (falling back to r) equals the abstract find_st_val over tfs_get_updates.
@@ -2786,9 +2817,9 @@ Section SynthesisCorrectness.
       latest_write log idx = None.
   Proof.
     intros log idx H.
+    (* Keep may_write transparent through Qed: see may_write0_latest_write0_None. *)
     Local Transparent may_write.
     unfold may_write in H.
-    Local Opaque may_write.
     apply andb_prop in H. destruct H as [H01 Hw1].
     apply andb_prop in H01. destruct H01 as [_ Hw0].
     apply negb_true_iff in Hw0. apply negb_true_iff in Hw1.
@@ -2798,6 +2829,7 @@ Section SynthesisCorrectness.
     apply orb_false_iff in Hw1. destruct Hw1 as [_ Hw1log].
     exact (SemanticProperties.latest_write_None (R:=R) (REnv:=REnv) log idx Hw0log Hw1log).
   Qed.
+  Local Opaque may_write.
 
   (* expr_log only conses LogRead entries, so latest_write ignores it (any reg). *)
   Lemma latest_write_expr_log_any :
