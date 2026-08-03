@@ -472,12 +472,27 @@ Section VariableScheduler.
   (* = Step 5: Taint Analysis     = *)
   (* ============================== *)
 
+  Definition public_dsts (dfg: dfg_state) : list (nid_t) :=
+    map snd (filter (fun '(v, _) =>
+      match v with
+      | DFG_OVar _ => true
+      | DFG_SVar _ => false
+      end) (var_map dfg)).
+
+  (* Every node the attacker can derive a value for. Whitebox untainting is added
+     here; it must stay computable without the taint set, since the fold below
+     consumes this as a seed. *)
+  Definition untainted_roots (dfg: dfg_state) : list (nid_t) :=
+    public_dsts dfg.
+
   Definition get_tainted (dfg: dfg_state) : list (nid_t) :=
+    let untainted := untainted_roots dfg in
     let aux (taint_map: list (nid_t)) (node : dfg_node) : list (nid_t) :=
       let args := get_args node in
-      (* Secrets are tainted *)
+      (* Only a read of pre-action secret state is a taint source: inputs and reads of
+         the pre-action output state are both visible to the attacker. *)
       let self_tainted := match op node with
-        | DFG_Var _ => true
+        | DFG_Var (DFG_SVar _) => true
         | _ => false
         end in
       (* If node depends on secrets it is tainted *)
@@ -488,7 +503,7 @@ Section VariableScheduler.
         end) args 
       in
       (* If this node is output, then its no longer tainted *)
-      match mem (nid node) (map snd (var_map dfg)) with
+      match mem (nid node) untainted with
         | inl m => taint_map
         | inr _ => if is_tainted then (nid node) :: taint_map else taint_map
       end
@@ -496,11 +511,9 @@ Section VariableScheduler.
     fold_left aux (graph dfg) [].
 
 
-  (* TODO: when an if is tainted, then all ifs in its branches should also be tainted, the easy way is to just have a seperate constant time tag
-    after having the taints the constant time tag is computed, and there the children of constant time ifs are also marked as constant time.
-
-    the compile thingy needs to also be updated with that
-  *)
+  (* Transitive constant-time tagging is deliberately absent: only a *derivable*
+     latency is required, and a critical phi already waits for both branches.
+     See agents/taint-tagging-soundness/PLAN.md issue E. *)
 
   (* ============================== *)
   (* = Step 6: TF Compilations    = *)
