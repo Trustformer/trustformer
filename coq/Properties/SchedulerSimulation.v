@@ -4038,9 +4038,185 @@ Section SchedulerSimulation.
     reflexivity.
   Qed.
 
+  (* The path only decides criticality, which lives in the VALIDITY component,
+     so the value expression is the same under any path. *)
+  Lemma compile_fst_pi_irrel (tainted: list nid_t)
+        (dguard: nid_t -> option (list lit)) a_idx
+        (dfg: @dfg_state_t s_var i_var o_var)
+        (bufs: list (nid_t * (nat * sz_t))) :
+    forall fuel n pi pi',
+      fst (compile_dfg_expr_aux ctx cost_limit tainted dguard pi  fuel a_idx dfg n bufs)
+      = fst (compile_dfg_expr_aux ctx cost_limit tainted dguard pi' fuel a_idx dfg n bufs).
+  Proof.
+    induction fuel as [| fuel IH]; intros n pi pi'; [ reflexivity | ].
+    cbn [compile_dfg_expr_aux].
+    destruct (BitsToLists.list_assoc bufs n) as [[m msz] |]; [ reflexivity | ].
+    cbv beta iota zeta.
+    destruct (op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | ];
+      cbv beta iota zeta; try reflexivity.
+    - destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard pi fuel a_idx
+                  dfg arg bufs) as [ae ve] eqn:E1.
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard pi' fuel a_idx
+                  dfg arg bufs) as [ae' ve'] eqn:E1'.
+      pose proof (IH arg pi pi') as Ha. rewrite E1, E1' in Ha. cbn [fst] in Ha.
+      cbn [fst]. rewrite Ha. reflexivity.
+    - destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard pi fuel a_idx
+                  dfg a1 bufs) as [a1e v1e] eqn:E1.
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard pi fuel a_idx
+                  dfg a2 bufs) as [a2e v2e] eqn:E2.
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard pi' fuel a_idx
+                  dfg a1 bufs) as [a1e' v1e'] eqn:E1'.
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard pi' fuel a_idx
+                  dfg a2 bufs) as [a2e' v2e'] eqn:E2'.
+      pose proof (IH a1 pi pi') as Ha. rewrite E1, E1' in Ha. cbn [fst] in Ha.
+      pose proof (IH a2 pi pi') as Hb. rewrite E2, E2' in Hb. cbn [fst] in Hb.
+      cbn [fst]. rewrite Ha, Hb. reflexivity.
+    - destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard pi fuel a_idx
+                  dfg arg bufs) as [ae ve] eqn:E1.
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard pi' fuel a_idx
+                  dfg arg bufs) as [ae' ve'] eqn:E1'.
+      pose proof (IH arg pi pi') as Ha. rewrite E1, E1' in Ha. cbn [fst] in Ha.
+      cbn [fst]. rewrite Ha. reflexivity.
+    - destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard pi fuel a_idx
+                  dfg cnd bufs) as [ce cv] eqn:Ec.
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard
+                  ((cnd, true) :: pi) fuel a_idx dfg tid bufs) as [te tv] eqn:Et.
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard
+                  ((cnd, false) :: pi) fuel a_idx dfg eid bufs) as [ee ev] eqn:Ee.
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard pi' fuel a_idx
+                  dfg cnd bufs) as [ce' cv'] eqn:Ec'.
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard
+                  ((cnd, true) :: pi') fuel a_idx dfg tid bufs) as [te' tv'] eqn:Et'.
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard
+                  ((cnd, false) :: pi') fuel a_idx dfg eid bufs) as [ee' ev'] eqn:Ee'.
+      pose proof (IH cnd pi pi') as Hc. rewrite Ec, Ec' in Hc. cbn [fst] in Hc.
+      pose proof (IH tid ((cnd, true) :: pi) ((cnd, true) :: pi')) as Ht.
+      rewrite Et, Et' in Ht. cbn [fst] in Ht.
+      pose proof (IH eid ((cnd, false) :: pi) ((cnd, false) :: pi')) as He.
+      rewrite Ee, Ee' in He. cbn [fst] in He.
+      cbn [fst]. rewrite Hc, Ht, He. reflexivity.
+  Qed.
+
+  (* Packages the phi step of the VALUE component in one equation, so proofs
+     never have to destructure the three branch compiles themselves.  Stated
+     over variables: writing the concrete analysis arguments out makes the
+     destructs miss (implicit/notation mismatches). *)
+  Lemma compile_fst_phi_gen (tainted: list nid_t)
+        (dguard: nid_t -> option (list lit)) (pi: list lit) a_idx
+        (dfg: @dfg_state_t s_var i_var o_var)
+        (bufs: list (nid_t * (nat * sz_t))) fuel n cnd tid eid :
+    BitsToLists.list_assoc bufs n = None ->
+    op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |})
+      = DFG_Phi cnd tid eid ->
+    fst (compile_dfg_expr_aux ctx cost_limit tainted dguard pi (S fuel) a_idx dfg n bufs)
+    = tf_expr_if
+        (fst (compile_dfg_expr_aux ctx cost_limit tainted dguard pi fuel a_idx dfg cnd bufs))
+        (fst (compile_dfg_expr_aux ctx cost_limit tainted dguard ((cnd, true) :: pi)
+                fuel a_idx dfg tid bufs))
+        (fst (compile_dfg_expr_aux ctx cost_limit tainted dguard ((cnd, false) :: pi)
+                fuel a_idx dfg eid bufs)).
+  Proof.
+    intros Hla Hop.
+    cbn [compile_dfg_expr_aux]. rewrite Hla. cbv beta iota zeta.
+    rewrite Hop. cbv beta iota zeta.
+    destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard pi fuel a_idx
+                dfg cnd bufs) as [ce cv].
+    destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard ((cnd, true) :: pi)
+                fuel a_idx dfg tid bufs) as [te tv].
+    destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard ((cnd, false) :: pi)
+                fuel a_idx dfg eid bufs) as [ee ev].
+    cbn [fst]. reflexivity.
+  Qed.
+
+  (* The same at the empty path, with the branches normalised back to it. *)
+  Lemma compile_fst_phi (act: tfs_action sched) a_idx
+        (bufs: list (nid_t * (nat * sz_t))) fuel n cnd tid eid :
+    BitsToLists.list_assoc bufs n = None ->
+    op (nth n (graph (build_dfg ctx act))
+          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Phi cnd tid eid ->
+    fst (compile_dfg_expr ctx cost_limit (S fuel) a_idx (build_dfg ctx act) n bufs)
+    = tf_expr_if
+        (fst (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act) cnd bufs))
+        (fst (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act) tid bufs))
+        (fst (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act) eid bufs)).
+  Proof.
+    intros Hla Hop.
+    rewrite (compile_fst_phi_gen _ _ _ a_idx _ bufs fuel n cnd tid eid Hla Hop).
+    rewrite (compile_fst_pi_irrel _ _ a_idx _ bufs fuel tid ((cnd, true) :: []) []).
+    rewrite (compile_fst_pi_irrel _ _ a_idx _ bufs fuel eid ((cnd, false) :: []) []).
+    reflexivity.
+  Qed.
+
   (* A BUFFER-FREE compiled expression reads only base state vars (tf_dfg_s),
      outputs and the input, so its value only depends on those.  This is what
      makes a settled value stable across further pre-done cycles. *)
+  Lemma compile_nobuf_state_indep_gen
+        (act: tfs_action sched) a_idx (input: input_t) (ss1 ss2: sched_sys_state)
+        (tainted: list nid_t) (dguard: nid_t -> option (list lit)) :
+    (forall s, (fst ss1).[tf_dfg_s s] = (fst ss2).[tf_dfg_s s]) ->
+    (forall o, (snd ss1).[o] = (snd ss2).[o]) ->
+    forall fuel n szB (pi: list lit),
+      tf_eval_expr ss_sz i_sz oo_sz (szB := szB)
+        (fst (compile_dfg_expr_aux ctx cost_limit tainted dguard pi fuel a_idx
+                (build_dfg ctx act) n []))
+        ss1 input
+      = tf_eval_expr ss_sz i_sz oo_sz (szB := szB)
+        (fst (compile_dfg_expr_aux ctx cost_limit tainted dguard pi fuel a_idx
+                (build_dfg ctx act) n []))
+        ss2 input.
+  Proof.
+    intros Hs Ho fuel.
+    induction fuel as [| fuel IH]; intros n szB pi; [ reflexivity | ].
+    cbn [compile_dfg_expr_aux BitsToLists.list_assoc]. cbv beta iota.
+    destruct (op (nth n (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | ].
+    - reflexivity.
+    - reflexivity.
+    - destruct v; cbn [fst tf_eval_expr]; [ rewrite Hs | rewrite Ho ]; reflexivity.
+    - destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard pi fuel a_idx
+                  (build_dfg ctx act) arg []) as [ae ve] eqn:E1.
+      cbn [fst]. destruct op1 as [| src];
+        cbn [tf_eval_expr];
+        [ specialize (IH arg szB pi) | specialize (IH arg src pi) ];
+        rewrite E1 in IH; cbn [fst] in IH; rewrite IH; reflexivity.
+    - destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard pi fuel a_idx
+                  (build_dfg ctx act) arg1 []) as [a1e v1e] eqn:E1.
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard pi fuel a_idx
+                  (build_dfg ctx act) arg2 []) as [a2e v2e] eqn:E2.
+      cbn [fst].
+      pose proof (IH arg1 szB pi) as Hc1. pose proof (IH arg2 szB pi) as Hc2.
+      rewrite E1 in Hc1. rewrite E2 in Hc2. cbn [fst] in Hc1, Hc2.
+      destruct op1 as [ | | | | | | szC cop ];
+        cbn [tf_eval_expr]; try (rewrite Hc1, Hc2; reflexivity).
+      pose proof (IH arg1 szC pi) as Hd1. pose proof (IH arg2 szC pi) as Hd2.
+      rewrite E1 in Hd1. rewrite E2 in Hd2. cbn [fst] in Hd1, Hd2.
+      rewrite Hd1, Hd2. destruct cop; reflexivity.
+    - destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard pi fuel a_idx
+                  (build_dfg ctx act) arg []) as [ae ve] eqn:E1.
+      cbn [fst tf_eval_expr].
+      specialize (IH arg (sz (nth arg (graph (build_dfg ctx act))
+                                {| nid := 0; op := DFG_Empty; sz := 0 |})) pi).
+      rewrite E1 in IH. cbn [fst] in IH. rewrite IH. reflexivity.
+    - destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard pi fuel a_idx
+                  (build_dfg ctx act) cnd []) as [ce cv] eqn:Ec.
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard
+                  ((cnd, true) :: pi) fuel a_idx
+                  (build_dfg ctx act) tid []) as [te tv] eqn:Et.
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dguard
+                  ((cnd, false) :: pi) fuel a_idx
+                  (build_dfg ctx act) eid []) as [ee ev] eqn:Ee.
+      cbn [fst tf_eval_expr].
+      pose proof (IH cnd 1 pi) as Hcc.
+      pose proof (IH tid szB ((cnd, true) :: pi)) as Hct.
+      pose proof (IH eid szB ((cnd, false) :: pi)) as Hce.
+      rewrite Ec in Hcc. rewrite Et in Hct. rewrite Ee in Hce.
+      cbn [fst] in Hcc, Hct, Hce.
+      rewrite Hcc, Hct, Hce. reflexivity.
+    - reflexivity.
+  Qed.
+
   Lemma compile_nobuf_state_indep
         (act: tfs_action sched) a_idx (input: input_t) (ss1 ss2: sched_sys_state) :
     (forall s, (fst ss1).[tf_dfg_s s] = (fst ss2).[tf_dfg_s s]) ->
@@ -4053,53 +4229,9 @@ Section SchedulerSimulation.
         (fst (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act) n []))
         ss2 input.
   Proof.
-    intros Hs Ho fuel.
-    induction fuel as [| fuel IH]; intros n szB; [ reflexivity | ].
-    cbn [compile_dfg_expr BitsToLists.list_assoc]. cbv beta iota.
-    destruct (op (nth n (graph (build_dfg ctx act))
-                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | ].
-    - reflexivity.
-    - reflexivity.
-    - destruct v; cbn [fst tf_eval_expr]; [ rewrite Hs | rewrite Ho ]; reflexivity.
-    - destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
-                  arg []) as [ae ve] eqn:E1.
-      cbn [fst]. destruct op1 as [| src];
-        cbn [tf_eval_expr];
-        [ specialize (IH arg szB) | specialize (IH arg src) ];
-        rewrite E1 in IH; cbn [fst] in IH; rewrite IH; reflexivity.
-    - destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
-                  arg1 []) as [a1e v1e] eqn:E1.
-      destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
-                  arg2 []) as [a2e v2e] eqn:E2.
-      cbn [fst].
-      pose proof (IH arg1 szB) as Hc1. pose proof (IH arg2 szB) as Hc2.
-      rewrite E1 in Hc1. rewrite E2 in Hc2. cbn [fst] in Hc1, Hc2.
-      destruct op1 as [ | | | | | | szC cop ];
-        cbn [tf_eval_expr]; try (rewrite Hc1, Hc2; reflexivity).
-      pose proof (IH arg1 szC) as Hd1. pose proof (IH arg2 szC) as Hd2.
-      rewrite E1 in Hd1. rewrite E2 in Hd2. cbn [fst] in Hd1, Hd2.
-      rewrite Hd1, Hd2. destruct cop; reflexivity.
-    - destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
-                  arg []) as [ae ve] eqn:E1.
-      cbn [fst tf_eval_expr].
-      specialize (IH arg (sz (nth arg (graph (build_dfg ctx act))
-                                {| nid := 0; op := DFG_Empty; sz := 0 |}))).
-      rewrite E1 in IH. cbn [fst] in IH. rewrite IH. reflexivity.
-    - destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
-                  cnd []) as [ce cv] eqn:Ec.
-      destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
-                  tid []) as [te tv] eqn:Et.
-      destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
-                  eid []) as [ee ev] eqn:Ee.
-      cbn [fst tf_eval_expr].
-      pose proof (IH cnd 1) as Hcc.
-      pose proof (IH tid szB) as Hct.
-      pose proof (IH eid szB) as Hce.
-      rewrite Ec in Hcc. rewrite Et in Hct. rewrite Ee in Hce.
-      cbn [fst] in Hcc, Hct, Hce.
-      rewrite Hcc, Hct, Hce. reflexivity.
-    - reflexivity.
+    intros Hs Ho fuel n szB.
+    exact (compile_nobuf_state_indep_gen act a_idx input ss1 ss2 _ _ Hs Ho
+             fuel n szB []).
   Qed.
 
   (* Specialisation: a buffer-free compiled expression is unchanged by a pre-done
@@ -4126,21 +4258,24 @@ Section SchedulerSimulation.
      produce the same compiled (expr, valid) pair.  The recursion only descends
      into strictly-smaller arg positions, so fuel beyond [n] is never consumed.
      This lets us canonicalize node_ref_expr / compile calls to a single fuel. *)
-  Lemma compile_fuel_irrel (act: tfs_action sched) a_idx buffers :
+  Lemma compile_fuel_irrel_gen (act: tfs_action sched) a_idx buffers
+        (tainted: list nid_t) (dguard: nid_t -> option (list lit)) :
     forall n,
       1 <= n ->
       n < length (graph (build_dfg ctx act)) ->
-      forall f1 f2,
+      forall f1 f2 (pi: list lit),
         n < f1 -> n < f2 ->
-        compile_dfg_expr ctx cost_limit f1 a_idx (build_dfg ctx act) n buffers
-        = compile_dfg_expr ctx cost_limit f2 a_idx (build_dfg ctx act) n buffers.
+        compile_dfg_expr_aux ctx cost_limit tainted dguard pi f1 a_idx
+          (build_dfg ctx act) n buffers
+        = compile_dfg_expr_aux ctx cost_limit tainted dguard pi f2 a_idx
+          (build_dfg ctx act) n buffers.
   Proof.
     intros n. induction n as [n IH] using (well_founded_induction lt_wf).
-    intros Hn1 Hnlen f1 f2 Hf1 Hf2.
+    intros Hn1 Hnlen f1 f2 pi Hf1 Hf2.
     destruct f1 as [| f1']; [ lia | ].
     destruct f2 as [| f2']; [ lia | ].
     set (dfg := build_dfg ctx act) in *.
-    cbn [compile_dfg_expr].
+    cbn [compile_dfg_expr_aux].
     destruct (BitsToLists.list_assoc buffers n) as [[n_idx n_sz] |] eqn:Hla.
     - reflexivity.
     - set (node := nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}) in *.
@@ -4152,10 +4287,10 @@ Section SchedulerSimulation.
         - exact (Hargpos node Hnode_in x Hx).
         - pose proof (args_lt_fwd act node) as Hlt2. fold dfg in Hlt2.
           specialize (Hlt2 Hnode_in x Hx). rewrite Hnid in Hlt2. exact Hlt2. }
-      assert (Hrec : forall x, In x (get_args ctx node) ->
-                compile_dfg_expr ctx cost_limit f1' a_idx dfg x buffers
-                = compile_dfg_expr ctx cost_limit f2' a_idx dfg x buffers).
-      { intros x Hx. destruct (Harg x Hx) as [Hx1 Hx2].
+      assert (Hrec : forall x (p: list lit), In x (get_args ctx node) ->
+                compile_dfg_expr_aux ctx cost_limit tainted dguard p f1' a_idx dfg x buffers
+                = compile_dfg_expr_aux ctx cost_limit tainted dguard p f2' a_idx dfg x buffers).
+      { intros x p Hx. destruct (Harg x Hx) as [Hx1 Hx2].
         apply (IH x Hx2 Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen)); lia. }
       destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | ] eqn:Hop.
       + reflexivity.
@@ -4163,23 +4298,37 @@ Section SchedulerSimulation.
       + destruct v; reflexivity.
       + assert (Hain : In arg (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
-        rewrite (Hrec arg Hain). reflexivity.
+        rewrite (Hrec arg pi Hain). reflexivity.
       + assert (Ha1 : In arg1 (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
         assert (Ha2 : In arg2 (get_args ctx node))
           by (unfold get_args; rewrite Hop; right; left; reflexivity).
-        rewrite (Hrec arg1 Ha1), (Hrec arg2 Ha2). reflexivity.
+        rewrite (Hrec arg1 pi Ha1), (Hrec arg2 pi Ha2). reflexivity.
       + assert (Hain : In arg (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
-        rewrite (Hrec arg Hain). reflexivity.
+        rewrite (Hrec arg pi Hain). reflexivity.
       + assert (Hcin : In cnd (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
         assert (Htin : In tid (get_args ctx node))
           by (unfold get_args; rewrite Hop; right; left; reflexivity).
         assert (Hein : In eid (get_args ctx node))
           by (unfold get_args; rewrite Hop; right; right; left; reflexivity).
-        rewrite (Hrec cnd Hcin), (Hrec tid Htin), (Hrec eid Hein). reflexivity.
+        rewrite (Hrec cnd pi Hcin), (Hrec tid ((cnd, true) :: pi) Htin),
+                (Hrec eid ((cnd, false) :: pi) Hein). reflexivity.
       + exfalso. apply (node_op_not_empty act n Hn1 Hnlen). exact Hop.
+  Qed.
+
+  Lemma compile_fuel_irrel (act: tfs_action sched) a_idx buffers :
+    forall n,
+      1 <= n ->
+      n < length (graph (build_dfg ctx act)) ->
+      forall f1 f2,
+        n < f1 -> n < f2 ->
+        compile_dfg_expr ctx cost_limit f1 a_idx (build_dfg ctx act) n buffers
+        = compile_dfg_expr ctx cost_limit f2 a_idx (build_dfg ctx act) n buffers.
+  Proof.
+    intros n Hn1 Hnlen f1 f2 Hf1 Hf2.
+    exact (compile_fuel_irrel_gen act a_idx buffers _ _ n Hn1 Hnlen f1 f2 [] Hf1 Hf2).
   Qed.
 
   (* Every buffer register of [act]'s slot whose cached node id is BELOW [bound]
