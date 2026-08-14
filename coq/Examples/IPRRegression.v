@@ -88,7 +88,8 @@ Section Context.
 
     tfs_spec_action     := fs_action;
     tfs_spec_action_fin := _;
-    tfs_spec_action_ops := fs_transitions
+    tfs_spec_action_ops := fs_transitions;
+    tfs_spec_decls := []
   |}.
 
   Definition cost := 5.
@@ -152,7 +153,11 @@ Section TheoremInstantiation.
       check_latency fs_check input ss0 = check_latency fs_check input ss0'.
   Proof.
     intros a_idx input sp0 sp0' ss0 ss0' Halign Hst Hst' Hpre Hpost.
-    exact (L_public tfs_ctx cost fs_check a_idx input sp0 sp0' ss0 ss0'
+    (* this context supplies no declassification rules *)
+    assert (Hdecls : forall act a_idx' input',
+              uncond_sound tfs_ctx cost act a_idx' input').
+    { intros act a_idx' input' i Hi. cbn in Hi. destruct Hi. }
+    exact (L_public tfs_ctx cost Hdecls fs_check a_idx input sp0 sp0' ss0 ss0'
              Halign Hst Hst' Hpre Hpost).
   Qed.
 

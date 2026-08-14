@@ -8,6 +8,7 @@ Require Import Coq.Logic.FunctionalExtensionality.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
+Require Export Trustformer.Scheduler.DFG.
 Require Import Trustformer.Scheduler.Contract.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
@@ -18,52 +19,6 @@ Require Import Coq.Init.Nat.
 Require Import Coq.Program.Wf.
 
 Import ListNotations.
-
-Section SchedulerTypes.
-
-  Context {states_var: Type}.
-  Context {inputs_var: Type}.
-  Context {outputs_var: Type}.
-
-  Definition nid_t := nat.
-  Definition sz_t := nat.
-
-  Inductive dfg_vars_t := 
-    | DFG_SVar (v: states_var)
-    | DFG_OVar (v: outputs_var).
-
-  Inductive dfg_op_t :=
-    | DFG_Const (n: nat)
-    | DFG_Input (v: inputs_var)
-    | DFG_Var (v: dfg_vars_t)
-    | DFG_Unary (op: tf_unary_ops) (arg: nid_t)
-    | DFG_Binary (op: tf_binary_ops) (arg1: nid_t) (arg2: nid_t)
-    | DFG_Resize (arg: nid_t)
-    | DFG_Phi (cond: nid_t) (then_id: nid_t) (else_id: nid_t)
-    | DFG_Empty                
-    .
-
-  Record dfg_node_t := {
-    nid : nid_t;
-    op : dfg_op_t;
-    sz : sz_t;
-  }.
-
-  Record dfg_state_t := {
-    graph : list dfg_node_t;
-    var_map : list (dfg_vars_t * nid_t);
-  }.
-
-  Context {A} {buffer_needs: list (list A)}.
-
-  Inductive tf_dfg_states_t :=
-    | tf_dfg_done
-    | tf_dfg_s (state: states_var)
-    | tf_dfg_b (a_idx: Vect.index (length buffer_needs)) (n_idx: Vect.index (length (nth (index_to_nat a_idx) buffer_needs [])))
-    | tf_dfg_v (a_idx: Vect.index (length buffer_needs)) (n_idx: Vect.index (length (nth (index_to_nat a_idx) buffer_needs [])))
-    .
-        
-End SchedulerTypes.
 
 Section VariableScheduler.
 
@@ -479,11 +434,90 @@ Section VariableScheduler.
       | DFG_SVar _ => false
       end) (var_map dfg)).
 
-  (* Every node the attacker can derive a value for. Whitebox untainting is added
-     here; it must stay computable without the taint set, since the fold below
-     consumes this as a seed. *)
+  (* Every declassification instance the user's rules emit for this DFG.
+     Instances are generated from the current graph, so node ids can never go
+     stale across a re-elaboration. *)
+  Definition decl_instances (dfg: dfg_state) : list decl_instance :=
+    flat_map (fun r => r dfg) (tfs_spec_decls ctx).
+
+  (* Only unconditional instances may seed the taint fold: a node that is
+     derivable merely on some path is not unconditionally untainted. *)
+  Definition uncond_instances (dfg: dfg_state) : list decl_instance :=
+    filter (fun i => match di_guard i with [] => true | _ => false end)
+           (decl_instances dfg).
+
+  Definition mem_nid (n: nid_t) (l: list nid_t) : bool := existsb (Nat.eqb n) l.
+
+  (* Re-adding a target already in [acc] would let the accumulator grow by
+     [|instances|] on every one of the [length (graph dfg)] iterations. *)
+  Definition saturate_step (dfg: dfg_state) (acc: list nid_t) : list nid_t :=
+    fold_left
+      (fun acc i =>
+         if forallb (fun s => mem_nid s acc) (di_sources i)
+            && negb (mem_nid (di_target i) acc)
+         then di_target i :: acc
+         else acc)
+      (uncond_instances dfg) acc.
+
+  Fixpoint saturate (fuel: nat) (dfg: dfg_state) (acc: list nid_t) : list nid_t :=
+    match fuel with
+    | 0 => acc
+    | S f => saturate f dfg (saturate_step dfg acc)
+    end.
+
+  (* Every node the attacker can derive a value for. Whitebox untainting is the
+     saturation below; it must stay computable without the taint set, since the
+     fold below consumes this as a seed. *)
   Definition untainted_roots (dfg: dfg_state) : list (nid_t) :=
-    public_dsts dfg.
+    saturate (length (graph dfg)) dfg (public_dsts dfg).
+
+  (* ============================== *)
+  (* = Guards and their checker   = *)
+  (* ============================== *)
+
+  (* A path guard is a conjunction of selector literals: [(c, true)] means the
+     then-branch of the phi with condition [c] was taken. *)
+  Definition lit := (nid_t * bool)%type.
+
+  Definition lit_eqb (x y: lit) : bool :=
+    Nat.eqb (fst x) (fst y) && Bool.eqb (snd x) (snd y).
+
+  Definition guard_incl (g pi: list lit) : bool :=
+    forallb (fun a => existsb (lit_eqb a) pi) g.
+
+  (* Validates an untrusted analysis: walking [n]'s cone under path [pi], every
+     phi compiled non-critically has its declassification guard covered by the
+     path, and every buffer cut has the register's guard covered.  Mirrors
+     [compile_dfg_expr]'s recursion, including the buffer cut.  Its soundness is
+     [valid_public_guarded] in coq/Properties/IPR_Guarded.v. *)
+  Fixpoint path_ok (critb: nid_t -> bool) (guard_of: nid_t -> list lit)
+      (buf_guard: nat -> list lit) (fuel: nat) (dfg: dfg_state) (n: nid_t)
+      (bufs: list (nid_t * (nat * sz_t))) (pi: list lit) : bool :=
+    match fuel with
+    | 0 => false
+    | S fuel' =>
+        match BitsToLists.list_assoc bufs n with
+        | Some (m, _) => guard_incl (buf_guard m) pi
+        | None =>
+            let node := nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |} in
+            match op node with
+            | DFG_Unary _ a => path_ok critb guard_of buf_guard fuel' dfg a bufs pi
+            | DFG_Resize a => path_ok critb guard_of buf_guard fuel' dfg a bufs pi
+            | DFG_Binary _ a1 a2 =>
+                path_ok critb guard_of buf_guard fuel' dfg a1 bufs pi
+                && path_ok critb guard_of buf_guard fuel' dfg a2 bufs pi
+            | DFG_Phi c t e =>
+                path_ok critb guard_of buf_guard fuel' dfg c bufs pi
+                && (if critb c
+                    then path_ok critb guard_of buf_guard fuel' dfg t bufs pi
+                         && path_ok critb guard_of buf_guard fuel' dfg e bufs pi
+                    else guard_incl (guard_of c) pi
+                         && path_ok critb guard_of buf_guard fuel' dfg t bufs ((c, true) :: pi)
+                         && path_ok critb guard_of buf_guard fuel' dfg e bufs ((c, false) :: pi))
+            | _ => true
+            end
+        end
+    end.
 
   Definition get_tainted (dfg: dfg_state) : list (nid_t) :=
     let untainted := untainted_roots dfg in
@@ -1383,6 +1417,7 @@ Module Examples.
             let $out_A := $x + #1
         ]}
         end;
+      tfs_spec_decls := [];
     |}. 
 
   Goal True. 
@@ -1430,6 +1465,7 @@ Module Examples.
             let $out_A := $y 
         ]}
         end;
+      tfs_spec_decls := [];
     |}.
 
   Goal True. 
@@ -1483,6 +1519,7 @@ Module Examples.
             let $z := $x
         ]}
         end;
+      tfs_spec_decls := [];
     |}.
 
   Goal True. 

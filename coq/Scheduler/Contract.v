@@ -5,6 +5,7 @@ Require Import Koika.Utils.Environments.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
+Require Export Trustformer.Scheduler.DFG.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
@@ -31,7 +32,10 @@ Record TFSchedContext := {
   tfs_spec_action : Type;
   tfs_spec_action_eq_dec : EqDec tfs_spec_action;
   tfs_spec_action_fin : FiniteType tfs_spec_action;
-  tfs_spec_action_ops : tfs_spec_action -> @tf_ops tfs_spec_states tfs_spec_inputs tfs_spec_outputs
+  tfs_spec_action_ops : tfs_spec_action -> @tf_ops tfs_spec_states tfs_spec_inputs tfs_spec_outputs;
+
+  (* whitebox untainting: [] reproduces the blackbox behaviour *)
+  tfs_spec_decls : list (decl_rule tfs_spec_states tfs_spec_inputs tfs_spec_outputs)
 }.
 
 Inductive _tfs_ops_t {s_t o_t} :=

@@ -149,7 +149,8 @@ Section TaintAnalysis.
 
         tfs_spec_action := fs_action;
         tfs_spec_action_fin := _;
-        tfs_spec_action_ops := fs_transitions
+        tfs_spec_action_ops := fs_transitions;
+        tfs_spec_decls := []
     |}.
 
     Definition dfg_of (a: fs_action) := build_dfg tfs_ctx a.

@@ -324,11 +324,86 @@ Section IPR.
     exact (public_dst_derivable act a_idx input ov n Hvm).
   Qed.
 
+  (* ------------------------------------------------------------------- *)
+  (* The user's obligation for the unconditional declassification          *)
+  (* instances their rules emit: derivable sources give a derivable        *)
+  (* target.  [instance_sound] in IPR_Guarded.v is its guarded form, which *)
+  (* implies this one because [pi_holds []] is trivial.                    *)
+  (* ------------------------------------------------------------------- *)
+
+  Definition uncond_sound (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) : Prop :=
+    forall i,
+      List.In i (uncond_instances ctx (build_dfg ctx act)) ->
+      (forall s, List.In s (di_sources i) -> derivable act a_idx input s) ->
+      derivable act a_idx input (di_target i).
+
+  (* Discharged by the user, per context; the rule library in coq/Rules/ proves
+     it for the rules it ships. *)
+  Context (Hdecls : forall act a_idx input, uncond_sound act a_idx input).
+
+  Lemma mem_nid_In (n: nid_t) (l: list nid_t) : mem_nid n l = true -> List.In n l.
+  Proof.
+    unfold mem_nid. intro H. apply existsb_exists in H.
+    destruct H as [x [Hin Heq]]. apply Nat.eqb_eq in Heq. subst x. exact Hin.
+  Qed.
+
+  Lemma saturate_step_derivable (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) (acc: list nid_t) :
+    (forall x, List.In x acc -> derivable act a_idx input x) ->
+    forall n, List.In n (saturate_step ctx (build_dfg ctx act) acc) ->
+      derivable act a_idx input n.
+  Proof.
+    unfold saturate_step.
+    assert (Hgen : forall l acc,
+              (forall i, List.In i l ->
+                 List.In i (uncond_instances ctx (build_dfg ctx act))) ->
+              (forall x, List.In x acc -> derivable act a_idx input x) ->
+              forall n, List.In n
+                (fold_left (fun acc i =>
+                              if forallb (fun s => mem_nid s acc) (di_sources i)
+                                 && negb (mem_nid (di_target i) acc)
+                              then di_target i :: acc else acc) l acc) ->
+                derivable act a_idx input n).
+    { induction l as [| i l IH]; intros acc0 Hsub Hacc n Hin;
+        [ exact (Hacc n Hin) | ].
+      cbn [fold_left] in Hin.
+      destruct (forallb (fun s => mem_nid s acc0) (di_sources i)
+                && negb (mem_nid (di_target i) acc0)) eqn:Hf.
+      - apply andb_prop in Hf. destruct Hf as [Hf _].
+        assert (Hacc' : forall x, List.In x (di_target i :: acc0) ->
+                          derivable act a_idx input x).
+        { intros x Hx. destruct Hx as [Hx | Hx]; [ | exact (Hacc x Hx) ].
+          subst x.
+          apply (Hdecls act a_idx input i (Hsub i (or_introl eq_refl))).
+          intros s Hs. apply Hacc.
+          rewrite forallb_forall in Hf. exact (mem_nid_In s acc0 (Hf s Hs)). }
+        exact (IH _ (fun j Hj => Hsub j (or_intror Hj)) Hacc' n Hin).
+      - exact (IH _ (fun j Hj => Hsub j (or_intror Hj)) Hacc n Hin). }
+    intro Hacc. exact (Hgen _ acc (fun i Hi => Hi) Hacc).
+  Qed.
+
+  Lemma saturate_derivable (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) (fuel: nat) (acc: list nid_t) :
+    (forall x, List.In x acc -> derivable act a_idx input x) ->
+    forall n, List.In n (saturate ctx fuel (build_dfg ctx act) acc) ->
+      derivable act a_idx input n.
+  Proof.
+    revert acc. induction fuel as [| fuel IH]; intros acc Hacc n Hin;
+      [ exact (Hacc n Hin) | ].
+    cbn [saturate] in Hin.
+    exact (IH _ (saturate_step_derivable act a_idx input acc Hacc) n Hin).
+  Qed.
+
   Lemma untainted_roots_derivable (act: tfs_action sched) (a_idx: a_index)
       (input: input_t) (n: nid_t) :
     List.In n (untainted_roots ctx (build_dfg ctx act)) ->
     derivable act a_idx input n.
-  Proof. apply public_dsts_derivable. Qed.
+  Proof.
+    unfold untainted_roots.
+    apply (saturate_derivable act a_idx input).
+    exact (public_dsts_derivable act a_idx input).
+  Qed.
 
   (* The width in [pub_eq]'s second conjunct is the output variable's own width,
      so that conjunct really is "the two states publish the same values" -- which

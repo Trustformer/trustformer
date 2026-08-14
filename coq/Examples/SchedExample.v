@@ -121,7 +121,8 @@ Section TypedSynthesis.
 
         tfs_spec_action := fs_action;
         tfs_spec_action_fin := _;
-        tfs_spec_action_ops := fs_transitions
+        tfs_spec_action_ops := fs_transitions;
+        tfs_spec_decls := []
     |}.
 
     Definition tf_schedule := tfs_schedule tfs_ctx 5.
