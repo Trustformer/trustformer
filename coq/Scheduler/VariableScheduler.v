@@ -459,10 +459,14 @@ Section VariableScheduler.
          else acc)
       (uncond_instances dfg) acc.
 
+  (* [saturate_step] only ever adds nodes, so an unchanged length means the
+     fixpoint is reached and the remaining rounds would be idle. *)
   Fixpoint saturate (fuel: nat) (dfg: dfg_state) (acc: list nid_t) : list nid_t :=
     match fuel with
     | 0 => acc
-    | S f => saturate f dfg (saturate_step dfg acc)
+    | S f =>
+        let acc' := saturate_step dfg acc in
+        if Nat.eqb (length acc') (length acc) then acc else saturate f dfg acc'
     end.
 
   (* Every node the attacker can derive a value for. Whitebox untainting is the
@@ -549,6 +553,19 @@ Section VariableScheduler.
      latency is required, and a critical phi already waits for both branches.
      See agents/taint-tagging-soundness/PLAN.md issue E. *)
 
+  (* Producer v1.  A condition is declassified when some instance targets it and
+     all of that instance's sources are already unconditionally derivable; the
+     instance's guard says on which paths the fact holds.  Chained *guarded*
+     facts need [decl_compose] and a fact base, and are not attempted here. *)
+  Definition decl_guard (dfg: dfg_state) (c: nid_t) : option (list lit) :=
+    let roots := untainted_roots dfg in
+    match find (fun i => Nat.eqb (di_target i) c
+                         && forallb (fun s => mem_nid s roots) (di_sources i))
+               (decl_instances dfg) with
+    | Some i => Some (di_guard i)
+    | None => None
+    end.
+
   (* ============================== *)
   (* = Step 6: TF Compilations    = *)
   (* ============================== *)
@@ -569,8 +586,12 @@ Section VariableScheduler.
     end.
 
 
-  (* First the expression, then the valid signal *)
-  Fixpoint compile_dfg_expr (fuel: nat) (a_idx: Vect.index (length buffer_needs)) (dfg: dfg_state) (nid: nid_t) (buffers: list (nid_t * (nat * sz_t))) 
+  (* First the expression, then the valid signal.  [tainted] is threaded rather
+     than recomputed: it used to be [get_tainted dfg] inside the phi case, which
+     re-ran the whole analysis at every phi occurrence.
+     TODO (agents/whitebox-untainting/PLAN.md, Phase D): also thread the path
+     [pi] and decide criticality per occurrence via [decl_guard]. *)
+  Fixpoint compile_dfg_expr_aux (tainted: list nid_t) (fuel: nat) (a_idx: Vect.index (length buffer_needs)) (dfg: dfg_state) (nid: nid_t) (buffers: list (nid_t * (nat * sz_t))) 
     : (expr_t * expr_t)
     :=
     match fuel with
@@ -591,23 +612,23 @@ Section VariableScheduler.
                         | DFG_OVar o_var => (tf_ovar o_var, tf_const 1)
                         end
           | DFG_Unary op arg1 =>
-              let '(arg_expr, val_expr) := compile_dfg_expr fuel' a_idx dfg arg1 buffers in
+              let '(arg_expr, val_expr) := compile_dfg_expr_aux tainted fuel' a_idx dfg arg1 buffers in
               (tf_op1 op arg_expr, val_expr)
           | DFG_Binary op arg1 arg2 =>
-              let '(arg1_expr, val1_expr) := compile_dfg_expr fuel' a_idx dfg arg1 buffers in
-              let '(arg2_expr, val2_expr) := compile_dfg_expr fuel' a_idx dfg arg2 buffers in
+              let '(arg1_expr, val1_expr) := compile_dfg_expr_aux tainted fuel' a_idx dfg arg1 buffers in
+              let '(arg2_expr, val2_expr) := compile_dfg_expr_aux tainted fuel' a_idx dfg arg2 buffers in
               (tf_op2 op arg1_expr arg2_expr, valid_expr_and val1_expr val2_expr)
           | DFG_Resize arg1 =>
-              let '(arg_expr, val_expr) := compile_dfg_expr fuel' a_idx dfg arg1 buffers in
+              let '(arg_expr, val_expr) := compile_dfg_expr_aux tainted fuel' a_idx dfg arg1 buffers in
               let arg_node := nth arg1 (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0; |} in
               (tf_op1 (tf_resize (sz arg_node)) arg_expr, val_expr)
           | DFG_Phi cond_id then_id else_id =>
-              let '(cond_expr, cond_val) := compile_dfg_expr fuel' a_idx dfg cond_id buffers in
-              let '(then_expr, then_val) := compile_dfg_expr fuel' a_idx dfg then_id buffers in
-              let '(else_expr, else_val) := compile_dfg_expr fuel' a_idx dfg else_id buffers in
+              let '(cond_expr, cond_val) := compile_dfg_expr_aux tainted fuel' a_idx dfg cond_id buffers in
+              let '(then_expr, then_val) := compile_dfg_expr_aux tainted fuel' a_idx dfg then_id buffers in
+              let '(else_expr, else_val) := compile_dfg_expr_aux tainted fuel' a_idx dfg else_id buffers in
               (
                 tf_expr_if cond_expr then_expr else_expr, 
-                if mem cond_id (get_tainted dfg) then
+                if mem cond_id tainted then
                   valid_expr_and (valid_expr_and then_val else_val) cond_val
                 else
                   valid_expr_and cond_val (valid_expr_if cond_expr then_val else_val)
@@ -616,6 +637,10 @@ Section VariableScheduler.
           end
         end
     end.
+
+  (* The taint set is evaluated once here, then passed down. *)
+  Local Notation compile_dfg_expr fuel a_idx dfg n bufs :=
+    (compile_dfg_expr_aux (get_tainted dfg) fuel a_idx dfg n bufs).
 
   Definition compile_dfg_buffers (a_idx: nat) (dfg: dfg_state) (buffers: list (nid_t * (nat * sz_t)))
     := 
@@ -1383,6 +1408,11 @@ Section VariableScheduler.
     |}.
 
 End VariableScheduler.
+
+(* Keeps every existing use site unchanged while the taint set is computed once
+   per top-level call rather than at every phi. *)
+Notation compile_dfg_expr ctx cost_limit fuel a_idx dfg n bufs :=
+  (compile_dfg_expr_aux ctx cost_limit (get_tainted ctx dfg) fuel a_idx dfg n bufs).
 
 Module Examples.
 

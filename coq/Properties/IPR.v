@@ -391,8 +391,11 @@ Section IPR.
   Proof.
     revert acc. induction fuel as [| fuel IH]; intros acc Hacc n Hin;
       [ exact (Hacc n Hin) | ].
-    cbn [saturate] in Hin.
-    exact (IH _ (saturate_step_derivable act a_idx input acc Hacc) n Hin).
+    cbn [saturate] in Hin. cbv zeta in Hin.
+    destruct (Nat.eqb (length (saturate_step ctx (build_dfg ctx act) acc))
+                      (length acc)) eqn:Hstop.
+    - exact (Hacc n Hin).
+    - exact (IH _ (saturate_step_derivable act a_idx input acc Hacc) n Hin).
   Qed.
 
   Lemma untainted_roots_derivable (act: tfs_action sched) (a_idx: a_index)

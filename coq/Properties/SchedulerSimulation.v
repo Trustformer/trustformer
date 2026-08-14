@@ -335,7 +335,7 @@ Section SchedulerSimulation.
     cbv zeta. cbn [snd]. unfold compile_dfg_aux. cbv zeta.
     destruct (index_of_nat _ _) as [a' |]; [| intros []].
     rewrite in_map_iff. intros [[var nid] [Hop _]].
-    destruct (compile_dfg_expr _ _ _ _ _) as [expr valid].
+    destruct (compile_dfg_expr _ _ _ _ _ _ _) as [expr valid].
     destruct var as [sv | ov]; inversion Hop.
   Qed.
 
@@ -3956,7 +3956,7 @@ Section SchedulerSimulation.
     intro Hin. apply in_flat_map in Hin.
     destruct Hin as [[bnid x] [_ Hop]].
     destruct (index_of_nat _ (fst x)) as [n' |]; [| destruct Hop].
-    destruct (compile_dfg_expr _ _ _ _ _ _) as [expr valid].
+    destruct (compile_dfg_expr _ _ _ _ _ _ _) as [expr valid].
     cbn [In] in Hop.
     destruct Hop as [Heq | [Heq | []]]; subst op; intros [e He]; discriminate He.
   Qed.
@@ -4005,7 +4005,7 @@ Section SchedulerSimulation.
     intro Hin. apply in_flat_map in Hin.
     destruct Hin as [[bnid x] [_ Hop]].
     destruct (index_of_nat _ (fst x)) as [n' |]; [| destruct Hop].
-    destruct (compile_dfg_expr _ _ _ _ _ _) as [expr valid].
+    destruct (compile_dfg_expr _ _ _ _ _ _ _) as [expr valid].
     cbn [In] in Hop.
     destruct Hop as [Heq | [Heq | []]]; subst op; intros [e He]; discriminate He.
   Qed.
