@@ -459,8 +459,10 @@ Section TypedSynthesis.
 
     Definition _rule_cmd {sig} (cmd: spec_action)
       : action sig unit_t :=
-      let always_ops := fst (spec_schedule cmd) in
-      let done_ops := snd (spec_schedule cmd) in
+      (* Bound once: [spec_schedule] runs the whole scheduler. *)
+      let sched_ops := spec_schedule cmd in
+      let always_ops := fst sched_ops in
+      let done_ops := snd sched_ops in
       rule_aux always_ops (
         If (tau:=unit_t) (synth_convert 1 (Read P1 (tf_reg spec_done_state)))
           (

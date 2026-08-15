@@ -649,11 +649,11 @@ Section VariableScheduler.
   Definition guard_missing (g pi: list lit) : list lit :=
     filter (fun a => negb (existsb (lit_eqb a) pi)) g.
 
-  Definition phi_crit_reason (dfg: dfg_state) (c: nid_t) (pi: list lit)
+  Definition phi_crit_reason (dfg: dfg_state) (tainted: list nid_t) (base: list gfact)
+      (c: nid_t) (pi: list lit)
     : option crit_reason :=
-    if negb (mem_nid c (get_tainted dfg)) then None
+    if negb (mem_nid c tainted) then None
     else
-      let base := decl_facts dfg in
       match gfacts_of base c with
       | [] =>
           match find (fun i => Nat.eqb (di_target i) c) (decl_instances dfg) with
@@ -673,22 +673,25 @@ Section VariableScheduler.
 
   (* The diagnostic never disagrees with the compiler about WHETHER a phi
      occurrence is critical; it only adds the reason. *)
-  Lemma phi_crit_reason_none (dfg: dfg_state) (c: nid_t) (pi: list lit) :
-    phi_crit_reason dfg c pi = None
-    <-> phi_crit (get_tainted dfg) (decl_facts dfg) c pi = false.
+  Lemma phi_crit_reason_none (dfg: dfg_state) (tainted: list nid_t) (base: list gfact)
+      (c: nid_t) (pi: list lit) :
+    phi_crit_reason dfg tainted base c pi = None
+    <-> phi_crit tainted base c pi = false.
   Proof.
     unfold phi_crit_reason, phi_crit, declassified_at. cbv zeta.
-    destruct (mem_nid c (get_tainted dfg)) eqn:Hm; cbn [negb andb];
+    destruct (mem_nid c tainted) eqn:Hm; cbn [negb andb];
       [ | split; intro H; reflexivity ].
-    destruct (gfacts_of (decl_facts dfg) c) as [| g0 gs] eqn:Hgs;
+    destruct (gfacts_of base c) as [| g0 gs] eqn:Hgs;
       cbn [existsb negb].
     - destruct (find _ (decl_instances dfg)); split; intro H; discriminate.
     - destruct (guard_incl g0 pi || existsb (fun g => guard_incl g pi) gs);
         cbn [negb]; split; intro H; (reflexivity || discriminate).
   Qed.
 
-  (* Walks the same cone [compile_dfg_expr_aux] does, under the same paths. *)
-  Fixpoint crit_report_aux (dfg: dfg_state) (pi: list lit) (fuel: nat)
+  (* Walks the same cone [compile_dfg_expr_aux] does, under the same paths.
+     [tainted] and [dfacts] are threaded for the same reason they are there. *)
+  Fixpoint crit_report_aux (dfg: dfg_state) (tainted: list nid_t) (dfacts: list gfact)
+      (pi: list lit) (fuel: nat)
       (n: nid_t) (bufs: list (nid_t * (nat * sz_t))) : list crit_reason :=
     match fuel with
     | 0 => []
@@ -698,16 +701,17 @@ Section VariableScheduler.
         | None =>
             let node := nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |} in
             match op node with
-            | DFG_Unary _ a => crit_report_aux dfg pi fuel' a bufs
-            | DFG_Resize a => crit_report_aux dfg pi fuel' a bufs
+            | DFG_Unary _ a => crit_report_aux dfg tainted dfacts pi fuel' a bufs
+            | DFG_Resize a => crit_report_aux dfg tainted dfacts pi fuel' a bufs
             | DFG_Binary _ a1 a2 =>
-                crit_report_aux dfg pi fuel' a1 bufs ++ crit_report_aux dfg pi fuel' a2 bufs
+                crit_report_aux dfg tainted dfacts pi fuel' a1 bufs
+                ++ crit_report_aux dfg tainted dfacts pi fuel' a2 bufs
             | DFG_Phi c t e =>
-                let crit := phi_crit (get_tainted dfg) (decl_facts dfg) c pi in
-                (match phi_crit_reason dfg c pi with Some r => [r] | None => [] end)
-                ++ crit_report_aux dfg pi fuel' c bufs
-                ++ crit_report_aux dfg (phi_path crit c true pi) fuel' t bufs
-                ++ crit_report_aux dfg (phi_path crit c false pi) fuel' e bufs
+                let crit := phi_crit tainted dfacts c pi in
+                (match phi_crit_reason dfg tainted dfacts c pi with Some r => [r] | None => [] end)
+                ++ crit_report_aux dfg tainted dfacts pi fuel' c bufs
+                ++ crit_report_aux dfg tainted dfacts (phi_path crit c true pi) fuel' t bufs
+                ++ crit_report_aux dfg tainted dfacts (phi_path crit c false pi) fuel' e bufs
             | _ => []
             end
         end
@@ -715,11 +719,14 @@ Section VariableScheduler.
 
   (* Entry point mirroring [compile_dfg_expr]: empty path, no buffer cuts. *)
   Definition crit_report (dfg: dfg_state) (n: nid_t) : list crit_reason :=
-    crit_report_aux dfg [] (length (graph dfg)) n [].
+    crit_report_aux dfg (get_tainted dfg) (decl_facts dfg) [] (length (graph dfg)) n [].
 
   (* Everything the scheduler compiles for an action, in one list. *)
   Definition crit_report_all (dfg: dfg_state) : list crit_reason :=
-    flat_map (fun v => crit_report dfg (snd v)) (var_map dfg).
+    let tainted := get_tainted dfg in
+    let dfacts := decl_facts dfg in
+    flat_map (fun v => crit_report_aux dfg tainted dfacts [] (length (graph dfg)) (snd v) [])
+             (var_map dfg).
 
   Fixpoint compile_dfg_expr_aux (tainted: list nid_t)
     (dfacts: list gfact) (pi: list lit)
@@ -778,6 +785,10 @@ Section VariableScheduler.
 
   Definition compile_dfg_buffers (a_idx: nat) (dfg: dfg_state) (buffers: list (nid_t * (nat * sz_t)))
     := 
+    (* Bound outside the [flat_map]: inlining these would re-run the whole taint
+       and declassification analysis once per buffer. *)
+    let tainted := get_tainted dfg in
+    let dfacts := decl_facts dfg in
     let fuel := length (graph dfg) in
     match index_of_nat (length buffer_needs) a_idx with
     | None => []
@@ -787,7 +798,7 @@ Section VariableScheduler.
           match index_of_nat (length (nth (index_to_nat a_idx') buffer_needs [])) (fst x) with
             | Some n_idx' => 
               let buffers' := filter (fun '(b_nid, _) => negb (Nat.eqb b_nid nid)) buffers in
-              let '(expr, valid) := compile_dfg_expr fuel a_idx' dfg nid buffers' in
+              let '(expr, valid) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg nid buffers' in
               [ tf_assign (tf_dfg_b a_idx' n_idx') expr; tf_assign (tf_dfg_v a_idx' n_idx') valid ]
             | None => [] (* should not happen *)
             end ) buffers
@@ -821,13 +832,15 @@ Section VariableScheduler.
     end. 
 
   Definition compile_dfg_aux (a_idx: nat) (dfg: dfg_state) (buffers: list (nid_t * (nat * sz_t))) :=
+    let tainted := get_tainted dfg in
+    let dfacts := decl_facts dfg in
     let fuel := length (graph dfg) in
     match index_of_nat (length buffer_needs) a_idx with
       | None => []
       | Some a_idx' => 
         map 
           ( fun '(var, nid) => 
-            let '(expr, valid) := compile_dfg_expr fuel a_idx' dfg nid buffers in
+            let '(expr, valid) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg nid buffers in
             match var with
             | DFG_SVar sv =>
               tf_assign (tf_dfg_s sv) expr
@@ -838,11 +851,13 @@ Section VariableScheduler.
       end.
 
   Definition compile_dfg_valid (a_idx: nat) (dfg: dfg_state) (buffers: list (nid_t * (nat * sz_t))) :=
+    let tainted := get_tainted dfg in
+    let dfacts := decl_facts dfg in
     let fuel := length (graph dfg) in
     let nids := nodup Nat.eq_dec (map snd (var_map dfg)) in
     let exprs := match index_of_nat (length buffer_needs) a_idx with
       | None => []
-      | Some a_idx' => map ( fun nid => snd (compile_dfg_expr fuel a_idx' dfg nid buffers)) nids
+      | Some a_idx' => map ( fun nid => snd (compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg nid buffers)) nids
     end in
     tf_assign tf_dfg_done (combine_valid_exprs exprs).
 
