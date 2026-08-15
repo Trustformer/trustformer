@@ -489,40 +489,6 @@ Section VariableScheduler.
   Definition guard_incl (g pi: list lit) : bool :=
     forallb (fun a => existsb (lit_eqb a) pi) g.
 
-  (* Validates an untrusted analysis: walking [n]'s cone under path [pi], every
-     phi compiled non-critically has its declassification guard covered by the
-     path, and every buffer cut has the register's guard covered.  Mirrors
-     [compile_dfg_expr]'s recursion, including the buffer cut.  Its soundness is
-     [valid_public_guarded] in coq/Properties/IPR_Guarded.v. *)
-  Fixpoint path_ok (critb: nid_t -> bool) (guard_of: nid_t -> list lit)
-      (buf_guard: nat -> list lit) (fuel: nat) (dfg: dfg_state) (n: nid_t)
-      (bufs: list (nid_t * (nat * sz_t))) (pi: list lit) : bool :=
-    match fuel with
-    | 0 => false
-    | S fuel' =>
-        match BitsToLists.list_assoc bufs n with
-        | Some (m, _) => guard_incl (buf_guard m) pi
-        | None =>
-            let node := nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |} in
-            match op node with
-            | DFG_Unary _ a => path_ok critb guard_of buf_guard fuel' dfg a bufs pi
-            | DFG_Resize a => path_ok critb guard_of buf_guard fuel' dfg a bufs pi
-            | DFG_Binary _ a1 a2 =>
-                path_ok critb guard_of buf_guard fuel' dfg a1 bufs pi
-                && path_ok critb guard_of buf_guard fuel' dfg a2 bufs pi
-            | DFG_Phi c t e =>
-                path_ok critb guard_of buf_guard fuel' dfg c bufs pi
-                && (if critb c
-                    then path_ok critb guard_of buf_guard fuel' dfg t bufs pi
-                         && path_ok critb guard_of buf_guard fuel' dfg e bufs pi
-                    else guard_incl (guard_of c) pi
-                         && path_ok critb guard_of buf_guard fuel' dfg t bufs ((c, true) :: pi)
-                         && path_ok critb guard_of buf_guard fuel' dfg e bufs ((c, false) :: pi))
-            | _ => true
-            end
-        end
-    end.
-
   Definition get_tainted (dfg: dfg_state) : list (nid_t) :=
     let untainted := untainted_roots dfg in
     let aux (taint_map: list (nid_t)) (node : dfg_node) : list (nid_t) :=
@@ -553,18 +519,64 @@ Section VariableScheduler.
      latency is required, and a critical phi already waits for both branches.
      See agents/taint-tagging-soundness/PLAN.md issue E. *)
 
-  (* Producer v1.  A condition is declassified when some instance targets it and
-     all of that instance's sources are already unconditionally derivable; the
-     instance's guard says on which paths the fact holds.  Chained *guarded*
-     facts need [decl_compose] and a fact base, and are not attempted here. *)
-  Definition decl_guard (dfg: dfg_state) (c: nid_t) : option (list lit) :=
-    let roots := untainted_roots dfg in
-    match find (fun i => Nat.eqb (di_target i) c
-                         && forallb (fun s => mem_nid s roots) (di_sources i))
-               (decl_instances dfg) with
-    | Some i => Some (di_guard i)
-    | None => None
+  (* Producer v2.  A base of facts "node [c] is derivable whenever guard [g]
+     holds", seeded from [untainted_roots] at the empty guard and saturated by
+     [decl_compose]: an instance fires once every one of its sources has some
+     fact, and its target's guard is the instance's own guard conjoined with
+     the chosen source guards.  A declassification may therefore rest on other
+     *guarded* facts -- which is what the paper's lockbox needs, since PhiCUT's
+     source is a phi node that is itself only guarded-derivable.
+
+     DISJUNCTION is expressed by several entries for the same node, not by a
+     disjunctive guard: "derivable under (A or B)" is not a provable statement
+     (the two runs could satisfy different disjuncts and genuinely differ),
+     whereas "derivable under A" and "derivable under B" separately are, and
+     the consumer only ever needs the clause the current path implies.  Hence
+     the Cartesian product below: one combined guard per way of picking a fact
+     for each source. *)
+  Definition gfact := (nid_t * list lit)%type.
+
+  Definition gfacts_of (base: list gfact) (c: nid_t) : list (list lit) :=
+    map snd (filter (fun f => Nat.eqb (fst f) c) base).
+
+  Definition declassified_at (base: list gfact) (c: nid_t) (pi: list lit) : bool :=
+    existsb (fun g => guard_incl g pi) (gfacts_of base c).
+
+  (* A fact already known under a weaker guard makes the new one redundant. *)
+  Definition gsubsumed (base: list gfact) (c: nid_t) (g: list lit) : bool :=
+    existsb (fun g0 => guard_incl g0 g) (gfacts_of base c).
+
+  (* Empty when some source has no fact at all. *)
+  Fixpoint gcombine (base: list gfact) (ss: list nid_t) : list (list lit) :=
+    match ss with
+    | [] => [[]]
+    | s :: rest =>
+        flat_map (fun g => map (fun gr => g ++ gr) (gcombine base rest))
+                 (gfacts_of base s)
     end.
+
+  Definition gadd_of (i: decl_instance) (acc: list gfact) (gs: list lit)
+    : list gfact :=
+    if gsubsumed acc (di_target i) (di_guard i ++ gs) then acc
+    else acc ++ [(di_target i, di_guard i ++ gs)].
+
+  Definition gstep1 (acc: list gfact) (i: decl_instance) : list gfact :=
+    fold_left (gadd_of i) (gcombine acc (di_sources i)) acc.
+
+  Definition gsaturate_step (dfg: dfg_state) (base: list gfact) : list gfact :=
+    fold_left gstep1 (decl_instances dfg) base.
+
+  Fixpoint gsaturate (fuel: nat) (dfg: dfg_state) (base: list gfact) : list gfact :=
+    match fuel with
+    | 0 => base
+    | S f =>
+        let base' := gsaturate_step dfg base in
+        if Nat.eqb (length base') (length base) then base else gsaturate f dfg base'
+    end.
+
+  Definition decl_facts (dfg: dfg_state) : list gfact :=
+    gsaturate (length (graph dfg)) dfg
+      (map (fun n => (n, [])) (untainted_roots dfg)).
 
   (* ============================== *)
   (* = Step 6: TF Compilations    = *)
@@ -586,12 +598,117 @@ Section VariableScheduler.
     end.
 
 
-  (* First the expression, then the valid signal.  [tainted] and [dguard] are
+  (* First the expression, then the valid signal.  [tainted] and [dfacts] are
      threaded rather than recomputed, and [pi] is the path of selector literals
      under which this occurrence is compiled: criticality is per *occurrence*,
      since a declassification is only valid where its guard holds. *)
+
+  (* A phi is critical at this occurrence when its condition is tainted and NO
+     recorded guard for it is implied by the path. *)
+  Definition phi_crit (tainted: list nid_t) (dfacts: list gfact)
+      (c: nid_t) (pi: list lit) : bool :=
+    mem_nid c tainted && negb (declassified_at dfacts c pi).
+
+  (* A CRITICAL phi reads both branch validities unconditionally, so its
+     branches must not be compiled under an extended path: a declassification
+     that only holds on the selected side would leak through the AND.  A
+     non-critical phi selects, so its branches do learn the selector. *)
+  Definition phi_path (crit: bool) (c: nid_t) (b: bool) (pi: list lit) : list lit :=
+    if crit then pi else (c, b) :: pi.
+
+  (* ---------------------------------------------------------------- *)
+  (* DIAGNOSTICS.  Staying critical is a silent pessimisation, so the   *)
+  (* compiler also reports, per phi occurrence, WHY it could not use a  *)
+  (* declassification.                                                  *)
+  (* ---------------------------------------------------------------- *)
+
+  Inductive crit_reason :=
+  (* the condition is tainted and no rule instance targets it *)
+  | CR_no_rule (c: nid_t)
+  (* an instance targets it, but these of its sources have no fact at all, so
+     the composition could not fire *)
+  | CR_sources_unknown (c: nid_t) (unknown_sources: list nid_t)
+  (* it IS declassified, but no recorded guard is implied by this occurrence's
+     path; one entry per recorded guard, listing the literals the path lacks *)
+  | CR_guard_unmet (c: nid_t) (missing: list (list lit)).
+
+  Definition guard_missing (g pi: list lit) : list lit :=
+    filter (fun a => negb (existsb (lit_eqb a) pi)) g.
+
+  Definition phi_crit_reason (dfg: dfg_state) (c: nid_t) (pi: list lit)
+    : option crit_reason :=
+    if negb (mem_nid c (get_tainted dfg)) then None
+    else
+      let base := decl_facts dfg in
+      match gfacts_of base c with
+      | [] =>
+          match find (fun i => Nat.eqb (di_target i) c) (decl_instances dfg) with
+          | Some i =>
+              Some (CR_sources_unknown c
+                      (filter (fun s => match gfacts_of base s with
+                                        | [] => true
+                                        | _ => false
+                                        end)
+                              (di_sources i)))
+          | None => Some (CR_no_rule c)
+          end
+      | gs =>
+          if declassified_at base c pi then None
+          else Some (CR_guard_unmet c (map (fun g => guard_missing g pi) gs))
+      end.
+
+  (* The diagnostic never disagrees with the compiler about WHETHER a phi
+     occurrence is critical; it only adds the reason. *)
+  Lemma phi_crit_reason_none (dfg: dfg_state) (c: nid_t) (pi: list lit) :
+    phi_crit_reason dfg c pi = None
+    <-> phi_crit (get_tainted dfg) (decl_facts dfg) c pi = false.
+  Proof.
+    unfold phi_crit_reason, phi_crit, declassified_at. cbv zeta.
+    destruct (mem_nid c (get_tainted dfg)) eqn:Hm; cbn [negb andb];
+      [ | split; intro H; reflexivity ].
+    destruct (gfacts_of (decl_facts dfg) c) as [| g0 gs] eqn:Hgs;
+      cbn [existsb negb].
+    - destruct (find _ (decl_instances dfg)); split; intro H; discriminate.
+    - destruct (guard_incl g0 pi || existsb (fun g => guard_incl g pi) gs);
+        cbn [negb]; split; intro H; (reflexivity || discriminate).
+  Qed.
+
+  (* Walks the same cone [compile_dfg_expr_aux] does, under the same paths. *)
+  Fixpoint crit_report_aux (dfg: dfg_state) (pi: list lit) (fuel: nat)
+      (n: nid_t) (bufs: list (nid_t * (nat * sz_t))) : list crit_reason :=
+    match fuel with
+    | 0 => []
+    | S fuel' =>
+        match BitsToLists.list_assoc bufs n with
+        | Some _ => []
+        | None =>
+            let node := nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |} in
+            match op node with
+            | DFG_Unary _ a => crit_report_aux dfg pi fuel' a bufs
+            | DFG_Resize a => crit_report_aux dfg pi fuel' a bufs
+            | DFG_Binary _ a1 a2 =>
+                crit_report_aux dfg pi fuel' a1 bufs ++ crit_report_aux dfg pi fuel' a2 bufs
+            | DFG_Phi c t e =>
+                let crit := phi_crit (get_tainted dfg) (decl_facts dfg) c pi in
+                (match phi_crit_reason dfg c pi with Some r => [r] | None => [] end)
+                ++ crit_report_aux dfg pi fuel' c bufs
+                ++ crit_report_aux dfg (phi_path crit c true pi) fuel' t bufs
+                ++ crit_report_aux dfg (phi_path crit c false pi) fuel' e bufs
+            | _ => []
+            end
+        end
+    end.
+
+  (* Entry point mirroring [compile_dfg_expr]: empty path, no buffer cuts. *)
+  Definition crit_report (dfg: dfg_state) (n: nid_t) : list crit_reason :=
+    crit_report_aux dfg [] (length (graph dfg)) n [].
+
+  (* Everything the scheduler compiles for an action, in one list. *)
+  Definition crit_report_all (dfg: dfg_state) : list crit_reason :=
+    flat_map (fun v => crit_report dfg (snd v)) (var_map dfg).
+
   Fixpoint compile_dfg_expr_aux (tainted: list nid_t)
-    (dguard: nid_t -> option (list lit)) (pi: list lit)
+    (dfacts: list gfact) (pi: list lit)
     (fuel: nat) (a_idx: Vect.index (length buffer_needs)) (dfg: dfg_state) (nid: nid_t) (buffers: list (nid_t * (nat * sz_t))) 
     : (expr_t * expr_t)
     :=
@@ -613,28 +730,25 @@ Section VariableScheduler.
                         | DFG_OVar o_var => (tf_ovar o_var, tf_const 1)
                         end
           | DFG_Unary op arg1 =>
-              let '(arg_expr, val_expr) := compile_dfg_expr_aux tainted dguard pi fuel' a_idx dfg arg1 buffers in
+              let '(arg_expr, val_expr) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers in
               (tf_op1 op arg_expr, val_expr)
           | DFG_Binary op arg1 arg2 =>
-              let '(arg1_expr, val1_expr) := compile_dfg_expr_aux tainted dguard pi fuel' a_idx dfg arg1 buffers in
-              let '(arg2_expr, val2_expr) := compile_dfg_expr_aux tainted dguard pi fuel' a_idx dfg arg2 buffers in
+              let '(arg1_expr, val1_expr) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers in
+              let '(arg2_expr, val2_expr) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg2 buffers in
               (tf_op2 op arg1_expr arg2_expr, valid_expr_and val1_expr val2_expr)
           | DFG_Resize arg1 =>
-              let '(arg_expr, val_expr) := compile_dfg_expr_aux tainted dguard pi fuel' a_idx dfg arg1 buffers in
+              let '(arg_expr, val_expr) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers in
               let arg_node := nth arg1 (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0; |} in
               (tf_op1 (tf_resize (sz arg_node)) arg_expr, val_expr)
           | DFG_Phi cond_id then_id else_id =>
-              let '(cond_expr, cond_val) := compile_dfg_expr_aux tainted dguard pi fuel' a_idx dfg cond_id buffers in
-              let '(then_expr, then_val) := compile_dfg_expr_aux tainted dguard ((cond_id, true) :: pi) fuel' a_idx dfg then_id buffers in
-              let '(else_expr, else_val) := compile_dfg_expr_aux tainted dguard ((cond_id, false) :: pi) fuel' a_idx dfg else_id buffers in
-              let declassified :=
-                match dguard cond_id with
-                | Some g => guard_incl g pi
-                | None => false
-                end in
+              let '(cond_expr, cond_val) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg cond_id buffers in
+              let '(then_expr, then_val) := compile_dfg_expr_aux tainted dfacts
+                (phi_path (phi_crit tainted dfacts cond_id pi) cond_id true pi) fuel' a_idx dfg then_id buffers in
+              let '(else_expr, else_val) := compile_dfg_expr_aux tainted dfacts
+                (phi_path (phi_crit tainted dfacts cond_id pi) cond_id false pi) fuel' a_idx dfg else_id buffers in
               (
                 tf_expr_if cond_expr then_expr else_expr, 
-                if mem_nid cond_id tainted && negb declassified then
+                if phi_crit tainted dfacts cond_id pi then
                   valid_expr_and (valid_expr_and then_val else_val) cond_val
                 else
                   valid_expr_and cond_val (valid_expr_if cond_expr then_val else_val)
@@ -646,7 +760,7 @@ Section VariableScheduler.
 
   (* The analysis is evaluated once here; compilation starts at the empty path. *)
   Local Notation compile_dfg_expr fuel a_idx dfg n bufs :=
-    (compile_dfg_expr_aux (get_tainted dfg) (decl_guard dfg) [] fuel a_idx dfg n bufs).
+    (compile_dfg_expr_aux (get_tainted dfg) (decl_facts dfg) [] fuel a_idx dfg n bufs).
 
   Definition compile_dfg_buffers (a_idx: nat) (dfg: dfg_state) (buffers: list (nid_t * (nat * sz_t)))
     := 
@@ -1418,12 +1532,12 @@ End VariableScheduler.
 (* Keeps every existing use site unchanged while the taint set is computed once
    per top-level call rather than at every phi. *)
 Notation compile_dfg_expr ctx cost_limit fuel a_idx dfg n bufs :=
-  (compile_dfg_expr_aux ctx cost_limit (get_tainted ctx dfg) (decl_guard ctx dfg) []
+  (compile_dfg_expr_aux ctx cost_limit (get_tainted ctx dfg) (decl_facts ctx dfg) []
      fuel a_idx dfg n bufs).
 
 (* Same, at an explicit path: proofs that recurse into phi branches need it. *)
 Notation compile_dfg_expr_at ctx cost_limit pi fuel a_idx dfg n bufs :=
-  (compile_dfg_expr_aux ctx cost_limit (get_tainted ctx dfg) (decl_guard ctx dfg) pi
+  (compile_dfg_expr_aux ctx cost_limit (get_tainted ctx dfg) (decl_facts ctx dfg) pi
      fuel a_idx dfg n bufs).
 
 Module Examples.

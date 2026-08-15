@@ -157,8 +157,13 @@ Section TheoremInstantiation.
     assert (Hdecls : forall act a_idx' input',
               uncond_sound tfs_ctx cost act a_idx' input').
     { intros act a_idx' input' i Hi. cbn in Hi. destruct Hi. }
-    exact (L_public tfs_ctx cost Hdecls fs_check a_idx input sp0 sp0' ss0 ss0'
-             Halign Hst Hst' Hpre Hpost).
+    assert (Hdguard : forall act a_idx' input',
+              decl_sound tfs_ctx cost act a_idx' input').
+    { intros act a_idx' input'.
+      apply (decl_sound_of_instances tfs_ctx cost Hdecls).
+      intros i Hi. cbn in Hi. destruct Hi. }
+    exact (L_public tfs_ctx cost Hdecls Hdguard fs_check a_idx input
+             sp0 sp0' ss0 ss0' Halign Hst Hst' Hpre Hpost).
   Qed.
 
 End TheoremInstantiation.

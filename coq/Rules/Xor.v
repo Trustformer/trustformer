@@ -15,7 +15,6 @@ Require Import Trustformer.Scheduler.Contract.
 Require Import Trustformer.Scheduler.VariableScheduler.
 Require Import Trustformer.Properties.SchedulerSimulation.
 Require Import Trustformer.Properties.IPR.
-Require Import Trustformer.Properties.IPR_Guarded.
 
 Require Import Coq.Lists.List.
 Require Import Lia.

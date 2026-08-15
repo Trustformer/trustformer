@@ -327,8 +327,8 @@ Section IPR.
   (* ------------------------------------------------------------------- *)
   (* The user's obligation for the unconditional declassification          *)
   (* instances their rules emit: derivable sources give a derivable        *)
-  (* target.  [instance_sound] in IPR_Guarded.v is its guarded form, which *)
-  (* implies this one because [pi_holds []] is trivial.                    *)
+  (* target.  [instance_sound] below is its guarded form, which implies    *)
+  (* this one because [pi_holds []] is trivial.                            *)
   (* ------------------------------------------------------------------- *)
 
   Definition uncond_sound (act: tfs_action sched) (a_idx: a_index)
@@ -650,6 +650,329 @@ Section IPR.
   Qed.
 
   (* ------------------------------------------------------------------- *)
+  (* GUARDED DERIVABILITY.  A whitebox rule usually only declassifies a    *)
+  (* condition on some paths (the lock is open only when the guess was      *)
+  (* right), so the compiler decides criticality per phi OCCURRENCE from    *)
+  (* the path of selector literals it is under.  [lit] / [guard_incl] are  *)
+  (* the scheduler's (coq/Scheduler/VariableScheduler.v); only their       *)
+  (* semantics live here.                                                  *)
+  (* ------------------------------------------------------------------- *)
+
+  Definition bit_of (b: bool) : bits_t 1 := if b then Bits.ones 1 else Bits.zero.
+
+  Definition pi_holds (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+      (pi: list lit) (ss: sched_sys_state) : Prop :=
+    forall c b, List.In (c, b) pi ->
+      nval ctx cost_limit act a_idx ss input 1 c = bit_of b.
+
+  Lemma pi_holds_nil (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+      (ss: sched_sys_state) : pi_holds act a_idx input [] ss.
+  Proof. intros c b Hin; destruct Hin. Qed.
+
+  Lemma guard_incl_holds (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+      (g pi: list lit) (ss: sched_sys_state) :
+    guard_incl g pi = true -> pi_holds act a_idx input pi ss ->
+    pi_holds act a_idx input g ss.
+  Proof.
+    unfold guard_incl, pi_holds. intros Hincl Hpi c b Hin.
+    rewrite forallb_forall in Hincl.
+    specialize (Hincl _ Hin). rewrite existsb_exists in Hincl.
+    destruct Hincl as [[c' b'] [Hin' Heq]].
+    unfold lit_eqb in Heq. cbn [fst snd] in Heq.
+    apply andb_prop in Heq. destruct Heq as [Hc Hb].
+    apply Nat.eqb_eq in Hc. apply Bool.eqb_prop in Hb. subst c' b'.
+    exact (Hpi _ _ Hin').
+  Qed.
+
+  Lemma pi_holds_app (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+      (g1 g2: list lit) (ss: sched_sys_state) :
+    pi_holds act a_idx input (g1 ++ g2) ss ->
+    pi_holds act a_idx input g1 ss /\ pi_holds act a_idx input g2 ss.
+  Proof.
+    intro H. split; intros c b Hin; apply H; apply in_or_app;
+      [ left | right ]; exact Hin.
+  Qed.
+
+  Definition gderivable (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) (g: list lit) (n: nid_t) : Prop :=
+    forall ss ss',
+      pub_eq act a_idx input ss ss' ->
+      pi_holds act a_idx input g ss ->
+      pi_holds act a_idx input g ss' ->
+      nval ctx cost_limit act a_idx ss  input (nsz act n) n
+      = nval ctx cost_limit act a_idx ss' input (nsz act n) n.
+
+  (* A fact learned under fewer conditions still holds under more. *)
+  Lemma gderivable_weaken (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) (g g': list lit) (n: nid_t) :
+    guard_incl g g' = true ->
+    gderivable act a_idx input g n ->
+    gderivable act a_idx input g' n.
+  Proof.
+    intros Hincl Hg ss ss' Hpub Hp Hp'.
+    exact (Hg ss ss' Hpub
+             (guard_incl_holds act a_idx input g g' ss  Hincl Hp)
+             (guard_incl_holds act a_idx input g g' ss' Hincl Hp')).
+  Qed.
+
+  Lemma derivable_gderivable (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) (g: list lit) (n: nid_t) :
+    derivable act a_idx input n -> gderivable act a_idx input g n.
+  Proof. intros Hd ss ss' Hpub _ _. exact (Hd ss ss' Hpub). Qed.
+
+  (* An unconditionally derivable node is derivable under any guard. *)
+  Lemma untainted_gderivable (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) (g: list lit) (n: nid_t) :
+    1 <= n ->
+    n < length (graph (build_dfg ctx act)) ->
+    ~ List.In n (get_tainted ctx (build_dfg ctx act)) ->
+    gderivable act a_idx input g n.
+  Proof.
+    intros Hn1 Hnlen Hnt.
+    exact (derivable_gderivable act a_idx input g n
+             (untainted_derivable act a_idx input n Hn1 Hnlen Hnt)).
+  Qed.
+
+  (* The uniform user obligation on a single declassification instance: it is
+     [uncond_sound]'s premise plus the instance's own guard. *)
+  Definition instance_sound (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) (i: decl_instance) : Prop :=
+    forall ss ss',
+      pub_eq act a_idx input ss ss' ->
+      pi_holds act a_idx input (di_guard i) ss ->
+      pi_holds act a_idx input (di_guard i) ss' ->
+      (forall s, List.In s (di_sources i) ->
+         nval ctx cost_limit act a_idx ss  input (nsz act s) s
+         = nval ctx cost_limit act a_idx ss' input (nsz act s) s) ->
+      nval ctx cost_limit act a_idx ss  input (nsz act (di_target i)) (di_target i)
+      = nval ctx cost_limit act a_idx ss' input (nsz act (di_target i)) (di_target i).
+
+  (* CHAINING.  A rule whose sources are themselves only known under [g]
+     yields its target under both guards. *)
+  Theorem decl_compose (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) (i: decl_instance) (g: list lit) :
+    instance_sound act a_idx input i ->
+    (forall s, List.In s (di_sources i) -> gderivable act a_idx input g s) ->
+    gderivable act a_idx input (di_guard i ++ g) (di_target i).
+  Proof.
+    intros Hi Hsrc ss ss' Hpub Hp Hp'.
+    destruct (pi_holds_app act a_idx input _ _ ss  Hp)  as [Hp1  Hp2 ].
+    destruct (pi_holds_app act a_idx input _ _ ss' Hp') as [Hp1' Hp2'].
+    exact (Hi ss ss' Hpub Hp1 Hp1'
+             (fun s Hs => Hsrc s Hs ss ss' Hpub Hp2 Hp2')).
+  Qed.
+
+  Lemma guard_incl_refl (g: list lit) : guard_incl g g = true.
+  Proof.
+    unfold guard_incl. apply forallb_forall. intros a Ha.
+    apply existsb_exists. exists a. split; [ exact Ha | ].
+    unfold lit_eqb. rewrite Nat.eqb_refl, Bool.eqb_reflx. reflexivity.
+  Qed.
+
+  Corollary decl_direct (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) (i: decl_instance) :
+    instance_sound act a_idx input i ->
+    (forall s, List.In s (di_sources i) ->
+       1 <= s /\ s < length (graph (build_dfg ctx act))
+       /\ ~ List.In s (get_tainted ctx (build_dfg ctx act))) ->
+    gderivable act a_idx input (di_guard i) (di_target i).
+  Proof.
+    intros Hi Hsrc.
+    apply (gderivable_weaken act a_idx input (di_guard i ++ []) (di_guard i));
+      [ rewrite app_nil_r; apply guard_incl_refl | ].
+    apply (decl_compose act a_idx input i []); [ exact Hi | ].
+    intros s Hs. destruct (Hsrc s Hs) as [Hs1 [Hs2 Hs3]].
+    exact (untainted_gderivable act a_idx input [] s Hs1 Hs2 Hs3).
+  Qed.
+
+  (* What the compiler's own producer owes the proof: every fact it records is
+     really a guarded derivability.  Note there is no disjunctive [gderivable]:
+     "derivable under (A or B)" is not provable -- the two runs could satisfy
+     different disjuncts and genuinely differ -- so a node derivable on several
+     paths gets several entries, each with its own conjunctive guard, and the
+     compiler only ever uses the entry its current path implies. *)
+  Definition base_sound (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) (base: list gfact) : Prop :=
+    forall c g, List.In (c, g) base -> gderivable act a_idx input g c.
+
+  Definition decl_sound (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) : Prop :=
+    base_sound act a_idx input (decl_facts ctx (build_dfg ctx act)).
+
+  (* Bridge to the unconditional obligation, so the rules in coq/Rules/ can
+     discharge [Hdecls] from the same [instance_sound] proof. *)
+  Lemma uncond_guard_nil (dfg: @dfg_state_t s_var i_var o_var) (i: decl_instance) :
+    List.In i (uncond_instances ctx dfg) -> di_guard i = [].
+  Proof.
+    unfold uncond_instances. intro Hin.
+    apply filter_In in Hin. destruct Hin as [_ Hg].
+    destruct (di_guard i); [ reflexivity | discriminate ].
+  Qed.
+
+  Theorem uncond_sound_of_instances (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) :
+    (forall i, List.In i (uncond_instances ctx (build_dfg ctx act)) ->
+       instance_sound act a_idx input i) ->
+    uncond_sound act a_idx input.
+  Proof.
+    intros Hall i Hi Hsrc ss ss' Hpub.
+    pose proof (uncond_guard_nil (build_dfg ctx act) i Hi) as Hg.
+    apply (Hall i Hi ss ss' Hpub);
+      [ rewrite Hg; intros c b Hin; destruct Hin
+      | rewrite Hg; intros c b Hin; destruct Hin
+      | intros s Hs; exact (Hsrc s Hs ss ss' Hpub) ].
+  Qed.
+
+  (* And to the guarded one, which is what the compiler's producer emits.
+     [decl_facts] is a saturated base, so soundness is an induction over the
+     saturation: every entry is [gderivable] under the guard recorded with it. *)
+  Lemma guard_incl_app_l (g pi pi': list lit) :
+    guard_incl g pi = true -> guard_incl g (pi ++ pi') = true.
+  Proof.
+    unfold guard_incl. rewrite !forallb_forall. intros H a Ha.
+    rewrite existsb_app, (H a Ha). reflexivity.
+  Qed.
+
+  Lemma guard_incl_app_r (g pi pi': list lit) :
+    guard_incl g pi' = true -> guard_incl g (pi ++ pi') = true.
+  Proof.
+    unfold guard_incl. rewrite !forallb_forall. intros H a Ha.
+    rewrite existsb_app, (H a Ha), Bool.orb_true_r. reflexivity.
+  Qed.
+
+  Lemma gfacts_of_In (base: list gfact) (c: nid_t) (g: list lit) :
+    List.In g (gfacts_of base c) -> List.In (c, g) base.
+  Proof.
+    unfold gfacts_of. intro H. apply in_map_iff in H.
+    destruct H as [[n g'] [Hsnd Hfil]]. cbn in Hsnd. subst g'.
+    apply filter_In in Hfil. destruct Hfil as [Hin Heq].
+    cbn in Heq. apply Nat.eqb_eq in Heq. subst n. exact Hin.
+  Qed.
+
+  (* One combined guard per way of picking a fact for each source; each source
+     is derivable under its own guard, hence under the (stronger) combination. *)
+  Lemma gcombine_sound (base: list gfact) (ss: list nid_t) (gs: list lit) :
+    List.In gs (gcombine base ss) ->
+    forall s, List.In s ss ->
+      exists g, List.In (s, g) base /\ guard_incl g gs = true.
+  Proof.
+    revert gs. induction ss as [| s0 ss IH]; intros gs Hgs x Hx; [ destruct Hx | ].
+    cbn [gcombine] in Hgs. apply in_flat_map in Hgs.
+    destruct Hgs as [g0 [Hg0 Hmap]]. apply in_map_iff in Hmap.
+    destruct Hmap as [gr [Heq Hgr]]. subst gs.
+    destruct Hx as [Hxeq | Hx].
+    - subst x. exists g0. split; [ apply gfacts_of_In; exact Hg0 | ].
+      apply guard_incl_app_l, guard_incl_refl.
+    - destruct (IH gr Hgr x Hx) as [g [Hg Hincl]].
+      exists g. split; [ exact Hg | apply guard_incl_app_r, Hincl ].
+  Qed.
+
+  Lemma gadd_of_sound (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+      (i: decl_instance) (acc: list gfact) (gs: list lit) :
+    gderivable act a_idx input (di_guard i ++ gs) (di_target i) ->
+    base_sound act a_idx input acc ->
+    base_sound act a_idx input (gadd_of i acc gs).
+  Proof.
+    intros Hg Hacc. unfold gadd_of.
+    destruct (gsubsumed acc (di_target i) (di_guard i ++ gs)); [ exact Hacc | ].
+    intros c g Hin. apply in_app_or in Hin. destruct Hin as [Hin | Hin].
+    - exact (Hacc c g Hin).
+    - destruct Hin as [Heq | []]. injection Heq as Ht Hgg. subst c g. exact Hg.
+  Qed.
+
+  Lemma gfold_sound (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+      (i: decl_instance) :
+    forall combos acc,
+      (forall gs, List.In gs combos ->
+         gderivable act a_idx input (di_guard i ++ gs) (di_target i)) ->
+      base_sound act a_idx input acc ->
+      base_sound act a_idx input (fold_left (gadd_of i) combos acc).
+  Proof.
+    induction combos as [| gs combos IH]; intros acc Hnew Hacc; cbn [fold_left];
+      [ exact Hacc | ].
+    apply IH; [ intros x Hx; apply Hnew; right; exact Hx | ].
+    exact (gadd_of_sound act a_idx input i acc gs
+             (Hnew gs (or_introl eq_refl)) Hacc).
+  Qed.
+
+  Lemma gstep1_sound (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+      (i: decl_instance) (acc: list gfact) :
+    instance_sound act a_idx input i ->
+    base_sound act a_idx input acc ->
+    base_sound act a_idx input (gstep1 acc i).
+  Proof.
+    intros Hi Hacc. unfold gstep1.
+    apply gfold_sound; [ | exact Hacc ].
+    intros gs Hgs. apply (decl_compose act a_idx input i gs); [ exact Hi | ].
+    intros s Hsrc.
+    destruct (gcombine_sound acc (di_sources i) gs Hgs s Hsrc) as [g [Hg Hincl]].
+    exact (gderivable_weaken act a_idx input g gs s Hincl (Hacc s g Hg)).
+  Qed.
+
+  Lemma gfold_instances_sound (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) :
+    forall l base,
+      (forall i, List.In i l -> instance_sound act a_idx input i) ->
+      base_sound act a_idx input base ->
+      base_sound act a_idx input (fold_left gstep1 l base).
+  Proof.
+    induction l as [| i l IH]; intros base Hl Hbase; cbn [fold_left];
+      [ exact Hbase | ].
+    apply IH; [ intros j Hj; apply Hl; right; exact Hj | ].
+    exact (gstep1_sound act a_idx input i base (Hl i (or_introl eq_refl)) Hbase).
+  Qed.
+
+  Lemma gsaturate_step_sound (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) :
+    (forall i, List.In i (decl_instances ctx (build_dfg ctx act)) ->
+       instance_sound act a_idx input i) ->
+    forall base, base_sound act a_idx input base ->
+      base_sound act a_idx input
+        (gsaturate_step ctx (build_dfg ctx act) base).
+  Proof.
+    intros Hall base Hbase.
+    exact (gfold_instances_sound act a_idx input _ base Hall Hbase).
+  Qed.
+
+  Lemma gsaturate_sound (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) :
+    (forall i, List.In i (decl_instances ctx (build_dfg ctx act)) ->
+       instance_sound act a_idx input i) ->
+    forall fuel base, base_sound act a_idx input base ->
+      base_sound act a_idx input (gsaturate ctx fuel (build_dfg ctx act) base).
+  Proof.
+    intros Hall fuel. induction fuel as [| fuel IH]; intros base Hbase;
+      cbn [gsaturate]; [ exact Hbase | ].
+    destruct (Nat.eqb (length (gsaturate_step ctx (build_dfg ctx act) base))
+                      (length base));
+      [ exact Hbase | ].
+    exact (IH _ (gsaturate_step_sound act a_idx input Hall base Hbase)).
+  Qed.
+
+  Lemma seed_sound (act: tfs_action sched) (a_idx: a_index) (input: input_t) :
+    base_sound act a_idx input
+      (map (fun n => (n, [])) (untainted_roots ctx (build_dfg ctx act))).
+  Proof.
+    intros c g Hin. apply in_map_iff in Hin.
+    destruct Hin as [n [Heq Hn]]. injection Heq as Hc Hg. subst c g.
+    exact (derivable_gderivable act a_idx input [] n
+             (untainted_roots_derivable act a_idx input n Hn)).
+  Qed.
+
+  Theorem decl_sound_of_instances (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) :
+    (forall i, List.In i (decl_instances ctx (build_dfg ctx act)) ->
+       instance_sound act a_idx input i) ->
+    decl_sound act a_idx input.
+  Proof.
+    intros Hall c g Hg.
+    exact (gsaturate_sound act a_idx input Hall _ _
+             (seed_sound act a_idx input) c g Hg).
+  Qed.
+
+  Context (Hdguard : forall act a_idx input, decl_sound act a_idx input).
+
+  (* ------------------------------------------------------------------- *)
   (* PHASE 2, step 1: the public view survives a pre-done cycle.           *)
   (* [nval] reads only [tf_dfg_s] and the outputs, and a non-done cycle    *)
   (* writes neither, so both conjuncts of [pub_eq] are stable.            *)
@@ -733,6 +1056,217 @@ Section IPR.
   Lemma and1_zero_l (x: bits_t 1) : Bits.and Bits.zero x = Bits.zero.
   Proof. destruct (bits1_cases x) as [Hx | Hx]; subst; reflexivity. Qed.
 
+  Lemma mem_nid_not_In (n: nid_t) (l: list nid_t) :
+    mem_nid n l = false -> ~ List.In n l.
+  Proof.
+    unfold mem_nid. intros H Hin.
+    assert (Hex : existsb (Nat.eqb n) l = true)
+      by (apply existsb_exists; exists n; split; [ exact Hin | apply Nat.eqb_refl ]).
+    rewrite H in Hex. discriminate.
+  Qed.
+
+  Lemma valid_public_gen (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+      (ss ss': sched_sys_state) :
+    act_idx_aligned ctx cost_limit act a_idx ->
+    valid_settled ctx cost_limit act a_idx ss input ->
+    valid_settled ctx cost_limit act a_idx ss' input ->
+    pub_eq act a_idx input ss ss' ->
+    (forall n_idx, (fst ss).[tf_dfg_v a_idx n_idx]
+                 = (fst ss').[tf_dfg_v a_idx n_idx]) ->
+    forall bufs,
+      (forall e, List.In e bufs ->
+         List.In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
+      forall fuel n (pi: list lit),
+        1 <= n ->
+        n < length (graph (build_dfg ctx act)) ->
+        n < fuel ->
+        pi_holds act a_idx input pi ss ->
+        pi_holds act a_idx input pi ss' ->
+        eval1 (snd (compile_dfg_expr_at ctx cost_limit pi fuel a_idx
+                      (build_dfg ctx act) n bufs)) ss input
+        = eval1 (snd (compile_dfg_expr_at ctx cost_limit pi fuel a_idx
+                      (build_dfg ctx act) n bufs)) ss' input.
+  Proof.
+    intros Halign Hvs Hvs' Hpub Hveq bufs Hsub fuel.
+    induction fuel as [| fuel IH]; intros n pi Hn1 Hnlen Hnfuel Hpi Hpi'; [ lia | ].
+    destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:Hla.
+    { cbn [compile_dfg_expr_aux]. rewrite Hla. cbv beta iota.
+      destruct (index_of_nat
+                  (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
+                  m) as [n_idx' |]; cbn [snd]; [ | reflexivity ].
+      rewrite !eval1_svar_v. apply Hveq. }
+    cbn [compile_dfg_expr_aux]. rewrite Hla. cbv beta iota.
+    set (node := nth n (graph (build_dfg ctx act))
+                   {| nid := 0; op := DFG_Empty; sz := 0 |}) in *.
+    assert (Hnode_in : List.In node (graph (build_dfg ctx act)))
+      by (unfold node; apply nth_In; exact Hnlen).
+    assert (Hrange : forall x, List.In x (get_args ctx node) -> 1 <= x /\ x < n)
+      by (intros x Hx; exact (node_args_range ctx cost_limit act n Hn1 Hnlen x Hx)).
+    pose proof (wfg_build_dfg ctx cost_limit act node Hnode_in) as Hfg.
+    destruct (op node) as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | ]
+      eqn:Hop.
+    - reflexivity.
+    - reflexivity.
+    - destruct v; reflexivity.
+    - assert (Hain : List.In arg (get_args ctx node))
+        by (unfold get_args; rewrite Hop; left; reflexivity).
+      destruct (Hrange arg Hain) as [Ha1 Ha2].
+      destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                  arg bufs) as [ae ve] eqn:E1.
+      pose proof (IH arg pi Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
+      rewrite E1 in Ha. cbn [snd] in Ha |- *. exact Ha.
+    - assert (Ha1in : List.In a1 (get_args ctx node))
+        by (unfold get_args; rewrite Hop; left; reflexivity).
+      assert (Ha2in : List.In a2 (get_args ctx node))
+        by (unfold get_args; rewrite Hop; right; left; reflexivity).
+      destruct (Hrange a1 Ha1in) as [Hb1 Hb2].
+      destruct (Hrange a2 Ha2in) as [Hd1 Hd2].
+      destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                  a1 bufs) as [a1e v1e] eqn:E1.
+      destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                  a2 bufs) as [a2e v2e] eqn:E2.
+      pose proof (IH a1 pi Hb1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hx1.
+      pose proof (IH a2 pi Hd1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hx2.
+      rewrite E1 in Hx1. rewrite E2 in Hx2. cbn [snd] in Hx1, Hx2 |- *.
+      rewrite !valid_and_eval. rewrite Hx1, Hx2. reflexivity.
+    - assert (Hain : List.In arg (get_args ctx node))
+        by (unfold get_args; rewrite Hop; left; reflexivity).
+      destruct (Hrange arg Hain) as [Ha1 Ha2].
+      destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                  arg bufs) as [ae ve] eqn:E1.
+      pose proof (IH arg pi Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
+      rewrite E1 in Ha. cbn [snd] in Ha |- *. exact Ha.
+    - assert (Hcin : List.In cnd (get_args ctx node))
+        by (unfold get_args; rewrite Hop; left; reflexivity).
+      assert (Htin : List.In tid (get_args ctx node))
+        by (unfold get_args; rewrite Hop; right; left; reflexivity).
+      assert (Hein : List.In eid (get_args ctx node))
+        by (unfold get_args; rewrite Hop; right; right; left; reflexivity).
+      destruct (Hrange cnd Hcin) as [Hc1 Hc2].
+      destruct (Hrange tid Htin) as [Ht1 Ht2].
+      destruct (Hrange eid Hein) as [He1 He2].
+      unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+      destruct Hfg as [Hf1 [Hf2 Hf3]].
+      destruct (wsz_node_sz ctx cost_limit act cnd 1 Hf1) as [Hclen Hcsz].
+      destruct (phi_crit (get_tainted ctx (build_dfg ctx act))
+                  (decl_facts ctx (build_dfg ctx act)) cnd pi) eqn:Hcrit;
+        cbn [phi_path]; cbv beta iota.
+      + (* critical HERE: both branch validities are read, so the branches are
+           compiled under the SAME path and no declassification is admitted *)
+        destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                    cnd bufs) as [ce cv] eqn:Ec.
+        destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                    tid bufs) as [te tv] eqn:Et.
+        destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                    eid bufs) as [ee ev] eqn:Ee.
+        pose proof (IH cnd pi Hc1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hcc.
+        pose proof (IH tid pi Ht1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hct.
+        pose proof (IH eid pi He1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hce.
+        rewrite Ec in Hcc. rewrite Et in Hct. rewrite Ee in Hce.
+        cbn [snd] in Hcc, Hct, Hce |- *.
+        rewrite !valid_and_eval. rewrite Hcc, Hct, Hce. reflexivity.
+      + (* non-critical HERE: either the condition is untainted, or the analysis
+           declassified it under a guard this path implies *)
+        destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                    cnd bufs) as [ce cv] eqn:Ec.
+        destruct (compile_dfg_expr_at ctx cost_limit ((cnd, true) :: pi) fuel a_idx
+                    (build_dfg ctx act) tid bufs) as [te tv] eqn:Et.
+        destruct (compile_dfg_expr_at ctx cost_limit ((cnd, false) :: pi) fuel a_idx
+                    (build_dfg ctx act) eid bufs) as [ee ev] eqn:Ee.
+        pose proof (IH cnd pi Hc1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hcc.
+        rewrite Ec in Hcc. cbn [snd] in Hcc |- *.
+        assert (Hcder : gderivable act a_idx input pi cnd).
+        { unfold phi_crit in Hcrit. apply andb_false_iff in Hcrit.
+          destruct Hcrit as [Hmt | Hdg].
+          - exact (untainted_gderivable act a_idx input pi cnd Hc1 Hclen
+                     (mem_nid_not_In cnd _ Hmt)).
+          - apply Bool.negb_false_iff in Hdg.
+            unfold declassified_at in Hdg. apply existsb_exists in Hdg.
+            destruct Hdg as [g [Hg Hincl]].
+            exact (gderivable_weaken act a_idx input g pi cnd Hincl
+                     (Hdguard act a_idx input cnd g (gfacts_of_In _ _ _ Hg))). }
+        rewrite !valid_and_eval. rewrite Hcc.
+        destruct (bits1_cases (eval1 cv ss' input)) as [Hones | Hzero];
+          [ | rewrite Hzero, !and1_zero_l; reflexivity ].
+        f_equal.
+        assert (Hvalc : eval1 (snd (compile_dfg_expr_at ctx cost_limit pi fuel a_idx
+                          (build_dfg ctx act) cnd bufs)) ss input = Bits.ones 1)
+          by (rewrite Ec; cbn [snd]; rewrite Hcc; exact Hones).
+        assert (Hvalc' : eval1 (snd (compile_dfg_expr_at ctx cost_limit pi fuel a_idx
+                          (build_dfg ctx act) cnd bufs)) ss' input = Bits.ones 1)
+          by (rewrite Ec; cbn [snd]; exact Hones).
+        pose proof (compile_subst_valid_gen ctx cost_limit act a_idx ss input
+                      Halign Hvs bufs Hsub fuel cnd 1 pi Hc1 Hclen ltac:(lia)
+                      (eq_sym Hcsz) Hvalc) as S1.
+        pose proof (compile_subst_valid_gen ctx cost_limit act a_idx ss' input
+                      Halign Hvs' bufs Hsub fuel cnd 1 pi Hc1 Hclen ltac:(lia)
+                      (eq_sym Hcsz) Hvalc') as S2.
+        rewrite Ec in S1, S2. cbn [fst] in S1, S2.
+        rewrite (compile_fst_pi_irrel ctx cost_limit _ _ a_idx _ [] fuel cnd pi [])
+          in S1, S2.
+        rewrite (compile_fuel_irrel ctx cost_limit act a_idx [] cnd Hc1 Hclen
+                   fuel (length (graph (build_dfg ctx act))) ltac:(lia) Hclen)
+          in S1, S2.
+        assert (Href : eval1 ce ss input
+                       = nval ctx cost_limit act a_idx ss input 1 cnd)
+          by (rewrite S1; unfold nval, node_ref_expr; reflexivity).
+        assert (Href' : eval1 ce ss' input
+                        = nval ctx cost_limit act a_idx ss' input 1 cnd)
+          by (rewrite S2; unfold nval, node_ref_expr; reflexivity).
+        assert (Hcev : eval1 ce ss input = eval1 ce ss' input).
+        { rewrite Href, Href'.
+          pose proof (Hcder ss ss' Hpub Hpi Hpi') as Hcd.
+          rewrite Hcsz in Hcd. exact Hcd. }
+        assert (Hcase : (tv = tf_const 1 /\ ev = tf_const 1)
+                        \/ valid_expr_if ctx cost_limit ce tv ev
+                           = tf_expr_if ce tv ev).
+        { unfold valid_expr_if.
+          destruct tv as [vt| | | | | |]; try (right; reflexivity).
+          destruct vt as [|[|vt]]; try (right; reflexivity).
+          destruct ev as [vee| | | | | |]; try (right; reflexivity).
+          destruct vee as [|[|vee]]; try (right; reflexivity).
+          left; split; reflexivity. }
+        destruct Hcase as [[Htc Hec] | Hcs].
+        * subst tv ev. reflexivity.
+        * rewrite Hcs. cbn [tf_eval_expr]. rewrite Hcev.
+          destruct (beq_dec (eval1 ce ss' input) Bits.zero) eqn:Hb.
+          -- (* else branch selected: extend the path with [cnd = 0] *)
+             assert (Hz : eval1 ce ss' input = Bits.zero)
+               by (apply beq_dec_iff in Hb; exact Hb).
+             assert (Hp0 : pi_holds act a_idx input ((cnd, false) :: pi) ss).
+             { intros c b Hin. destruct Hin as [Heq | Hin].
+               - injection Heq as Hc Hbv. subst c b. unfold bit_of.
+                 rewrite <- Href, Hcev. exact Hz.
+               - exact (Hpi _ _ Hin). }
+             assert (Hp0' : pi_holds act a_idx input ((cnd, false) :: pi) ss').
+             { intros c b Hin. destruct Hin as [Heq | Hin].
+               - injection Heq as Hc Hbv. subst c b. unfold bit_of.
+                 rewrite <- Href'. exact Hz.
+               - exact (Hpi' _ _ Hin). }
+             pose proof (IH eid ((cnd, false) :: pi) He1 ltac:(lia) ltac:(lia)
+                           Hp0 Hp0') as Hce.
+             rewrite Ee in Hce. cbn [snd] in Hce. exact Hce.
+          -- (* then branch selected: extend the path with [cnd = 1] *)
+             assert (Hz : eval1 ce ss' input = Bits.ones 1).
+             { destruct (bits1_cases (eval1 ce ss' input)) as [Ho | Hzz];
+                 [ exact Ho | ].
+               rewrite Hzz, beq_dec_refl in Hb. discriminate. }
+             assert (Hp1 : pi_holds act a_idx input ((cnd, true) :: pi) ss).
+             { intros c b Hin. destruct Hin as [Heq | Hin].
+               - injection Heq as Hc Hbv. subst c b. unfold bit_of.
+                 rewrite <- Href, Hcev. exact Hz.
+               - exact (Hpi _ _ Hin). }
+             assert (Hp1' : pi_holds act a_idx input ((cnd, true) :: pi) ss').
+             { intros c b Hin. destruct Hin as [Heq | Hin].
+               - injection Heq as Hc Hbv. subst c b. unfold bit_of.
+                 rewrite <- Href'. exact Hz.
+               - exact (Hpi' _ _ Hin). }
+             pose proof (IH tid ((cnd, true) :: pi) Ht1 ltac:(lia) ltac:(lia)
+                           Hp1 Hp1') as Hct.
+             rewrite Et in Hct. cbn [snd] in Hct. exact Hct.
+    - reflexivity.
+  Qed.
+
   Lemma valid_public (act: tfs_action sched) (a_idx: a_index) (input: input_t)
       (ss ss': sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
@@ -753,121 +1287,10 @@ Section IPR.
         = eval1 (snd (compile_dfg_expr ctx cost_limit fuel a_idx
                       (build_dfg ctx act) n bufs)) ss' input.
   Proof.
-    intros Halign Hvs Hvs' Hpub Hveq bufs Hsub fuel.
-    induction fuel as [| fuel IH]; intros n Hn1 Hnlen Hnfuel; [ lia | ].
-    destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:Hla.
-    { cbn [compile_dfg_expr]. rewrite Hla. cbv beta iota.
-      destruct (index_of_nat
-                  (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
-                  m) as [n_idx' |]; cbn [snd]; [ | reflexivity ].
-      rewrite !eval1_svar_v. apply Hveq. }
-    cbn [compile_dfg_expr]. rewrite Hla. cbv beta iota.
-    set (node := nth n (graph (build_dfg ctx act))
-                   {| nid := 0; op := DFG_Empty; sz := 0 |}) in *.
-    assert (Hnode_in : List.In node (graph (build_dfg ctx act)))
-      by (unfold node; apply nth_In; exact Hnlen).
-    assert (Hchild : forall x, List.In x (get_args ctx node) ->
-              1 <= x /\ x < n /\
-              eval1 (snd (compile_dfg_expr ctx cost_limit fuel a_idx
-                            (build_dfg ctx act) x bufs)) ss input
-              = eval1 (snd (compile_dfg_expr ctx cost_limit fuel a_idx
-                            (build_dfg ctx act) x bufs)) ss' input).
-    { intros x Hx.
-      destruct (node_args_range ctx cost_limit act n Hn1 Hnlen x Hx) as [Hx1 Hx2].
-      split; [ exact Hx1 | split; [ exact Hx2 | ] ].
-      apply IH; [ exact Hx1 | lia | lia ]. }
-    pose proof (wfg_build_dfg ctx cost_limit act node Hnode_in) as Hfg.
-    destruct (op node) as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | ]
-      eqn:Hop.
-    - reflexivity.
-    - reflexivity.
-    - destruct v; reflexivity.
-    - assert (Hain : List.In arg (get_args ctx node))
-        by (unfold get_args; rewrite Hop; left; reflexivity).
-      destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
-                  arg bufs) as [ae ve] eqn:E1.
-      destruct (Hchild arg Hain) as [_ [_ Ha]].
-      rewrite E1 in Ha. cbn [snd] in Ha |- *. exact Ha.
-    - assert (Ha1in : List.In a1 (get_args ctx node))
-        by (unfold get_args; rewrite Hop; left; reflexivity).
-      assert (Ha2in : List.In a2 (get_args ctx node))
-        by (unfold get_args; rewrite Hop; right; left; reflexivity).
-      destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
-                  a1 bufs) as [a1e v1e] eqn:E1.
-      destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
-                  a2 bufs) as [a2e v2e] eqn:E2.
-      destruct (Hchild a1 Ha1in) as [_ [_ Hb1]].
-      destruct (Hchild a2 Ha2in) as [_ [_ Hb2]].
-      rewrite E1 in Hb1. rewrite E2 in Hb2. cbn [snd] in Hb1, Hb2 |- *.
-      rewrite !valid_and_eval. rewrite Hb1, Hb2. reflexivity.
-    - assert (Hain : List.In arg (get_args ctx node))
-        by (unfold get_args; rewrite Hop; left; reflexivity).
-      destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
-                  arg bufs) as [ae ve] eqn:E1.
-      destruct (Hchild arg Hain) as [_ [_ Ha]].
-      rewrite E1 in Ha. cbn [snd] in Ha |- *. exact Ha.
-    - assert (Hcin : List.In cnd (get_args ctx node))
-        by (unfold get_args; rewrite Hop; left; reflexivity).
-      assert (Htin : List.In tid (get_args ctx node))
-        by (unfold get_args; rewrite Hop; right; left; reflexivity).
-      assert (Hein : List.In eid (get_args ctx node))
-        by (unfold get_args; rewrite Hop; right; right; left; reflexivity).
-      destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
-                  cnd bufs) as [ce cv] eqn:Ec.
-      destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
-                  tid bufs) as [te tv] eqn:Et.
-      destruct (compile_dfg_expr ctx cost_limit fuel a_idx (build_dfg ctx act)
-                  eid bufs) as [ee ev] eqn:Ee.
-      destruct (Hchild cnd Hcin) as [Hc1 [Hc2 Hcc]].
-      destruct (Hchild tid Htin) as [_ [_ Hct]].
-      destruct (Hchild eid Hein) as [_ [_ Hce]].
-      rewrite Ec in Hcc. rewrite Et in Hct. rewrite Ee in Hce.
-      cbn [snd] in Hcc, Hct, Hce |- *.
-      destruct (mem cnd (get_tainted ctx (build_dfg ctx act))) as [Hm | Hnm].
-      + rewrite !valid_and_eval. rewrite Hcc, Hct, Hce. reflexivity.
-      + rewrite !valid_and_eval. rewrite Hcc.
-        destruct (bits1_cases (eval1 cv ss' input)) as [Hones | Hzero];
-          [ | rewrite Hzero, !and1_zero_l; reflexivity ].
-        f_equal.
-        assert (Hcnt : ~ List.In cnd (get_tainted ctx (build_dfg ctx act)))
-          by (intro Hin; exact (Hnm (In_member _ _ Hin))).
-        unfold node_args_sz in Hfg. rewrite Hop in Hfg.
-        destruct Hfg as [Hf1 _].
-        destruct (wsz_node_sz ctx cost_limit act cnd 1 Hf1) as [Hclen Hcsz].
-        assert (Hvalc : eval1 (snd (compile_dfg_expr ctx cost_limit fuel a_idx
-                          (build_dfg ctx act) cnd bufs)) ss input = Bits.ones 1)
-          by (rewrite Ec; cbn [snd]; rewrite Hcc; exact Hones).
-        assert (Hvalc' : eval1 (snd (compile_dfg_expr ctx cost_limit fuel a_idx
-                          (build_dfg ctx act) cnd bufs)) ss' input = Bits.ones 1)
-          by (rewrite Ec; cbn [snd]; exact Hones).
-        pose proof (compile_subst_valid ctx cost_limit act a_idx ss input
-                      Halign Hvs bufs Hsub fuel cnd 1 Hc1 Hclen ltac:(lia)
-                      (eq_sym Hcsz) Hvalc) as S1.
-        pose proof (compile_subst_valid ctx cost_limit act a_idx ss' input
-                      Halign Hvs' bufs Hsub fuel cnd 1 Hc1 Hclen ltac:(lia)
-                      (eq_sym Hcsz) Hvalc') as S2.
-        rewrite Ec in S1, S2. cbn [fst] in S1, S2.
-        assert (Hcev : eval1 ce ss input = eval1 ce ss' input).
-        { rewrite S1, S2.
-          rewrite (compile_fuel_irrel ctx cost_limit act a_idx [] cnd Hc1 Hclen
-                     fuel (length (graph (build_dfg ctx act))) ltac:(lia) Hclen).
-          pose proof (untainted_derivable act a_idx input cnd Hc1 Hclen Hcnt
-                        ss ss' Hpub) as Hcd.
-          rewrite Hcsz in Hcd. exact Hcd. }
-        assert (Hcase : (tv = tf_const 1 /\ ev = tf_const 1)
-                        \/ valid_expr_if ctx cost_limit ce tv ev
-                           = tf_expr_if ce tv ev).
-        { unfold valid_expr_if.
-          destruct tv as [vt| | | | | |]; try (right; reflexivity).
-          destruct vt as [|[|vt]]; try (right; reflexivity).
-          destruct ev as [ve| | | | | |]; try (right; reflexivity).
-          destruct ve as [|[|ve]]; try (right; reflexivity).
-          left; split; reflexivity. }
-        destruct Hcase as [[Ht He] | Hcs].
-        * subst tv ev. reflexivity.
-        * rewrite Hcs. cbn [tf_eval_expr].
-          rewrite Hcev, Hct, Hce. reflexivity.
-    - reflexivity.
+    intros Halign Hvs Hvs' Hpub Hveq bufs Hsub fuel n Hn1 Hnlen Hnfuel.
+    exact (valid_public_gen act a_idx input ss ss' Halign Hvs Hvs' Hpub Hveq
+             bufs Hsub fuel n [] Hn1 Hnlen Hnfuel
+             (pi_holds_nil act a_idx input ss) (pi_holds_nil act a_idx input ss')).
   Qed.
 
   (* ------------------------------------------------------------------- *)
