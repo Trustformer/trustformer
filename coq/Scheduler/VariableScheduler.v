@@ -574,9 +574,23 @@ Section VariableScheduler.
         if Nat.eqb (length base') (length base) then base else gsaturate f dfg base'
     end.
 
+  (* Constants and inputs hold the same value in any two runs, so they are
+     derivable under no guard.  Seeding them is a cost fix as much as a
+     precision one: otherwise a shared constant becomes a hub -- the target of
+     every phi's downward instance and then a source for every other phi --
+     which makes the fact base grow cubically in the nesting depth. *)
+  Definition trivially_public (dfg: dfg_state) : list nid_t :=
+    filter (fun k => match op (nth k (graph dfg)
+                                 {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+                     | DFG_Const _ => true
+                     | DFG_Input _ => true
+                     | _ => false
+                     end)
+           (List.seq 1 (length (graph dfg) - 1)).
+
   Definition decl_facts (dfg: dfg_state) : list gfact :=
     gsaturate (length (graph dfg)) dfg
-      (map (fun n => (n, [])) (untainted_roots dfg)).
+      (map (fun n => (n, [])) (untainted_roots dfg ++ trivially_public dfg)).
 
   (* ============================== *)
   (* = Step 6: TF Compilations    = *)

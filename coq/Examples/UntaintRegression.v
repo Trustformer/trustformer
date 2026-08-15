@@ -240,11 +240,15 @@ Section GuardedContrast.
     Definition gctx_open := mk_gctx [neg_rule; phibranch_rule; phiconst_rule].
 
     (* Node 3 is the outer selector, node 5 the inner one.  The inner IS
-       declassified -- but only under [(3, true)], which this occurrence's path
-       does not supply, and the report says so instead of staying silent. *)
+       declassified -- under three different guards, none of which this
+       occurrence's path supplies -- and the report says so instead of staying
+       silent.  The self-referential guards are sound and not useless: an
+       occurrence of the same condition nested under itself does meet them. *)
     Example guarded_inner_unreachable :
       crit_report_all gctx_guarded (build_dfg gctx_guarded gs_act)
-      = [CR_no_rule 3; CR_guard_unmet 5 [[(3, true)]]; CR_no_rule 3].
+      = [CR_no_rule 3;
+         CR_guard_unmet 5 [[(5, true)]; [(5, false)]; [(3, true)]];
+         CR_no_rule 3].
     Proof. vm_compute. reflexivity. Qed.
 
     (* Declassifying the outer selector makes its phi non-critical, which

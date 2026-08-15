@@ -949,14 +949,39 @@ Section IPR.
     exact (IH _ (gsaturate_step_sound act a_idx input Hall base Hbase)).
   Qed.
 
+  (* Constants and inputs are the same in any two runs, so they seed the fact
+     base alongside the untainted roots. *)
+  Lemma trivial_derivable (act: tfs_action sched) (a_idx: a_index)
+      (input: input_t) (n: nid_t) :
+    List.In n (trivially_public ctx (build_dfg ctx act)) ->
+    derivable act a_idx input n.
+  Proof.
+    unfold trivially_public. intro Hin.
+    apply filter_In in Hin. destruct Hin as [Hseq Hop].
+    apply in_seq in Hseq. destruct Hseq as [Hn1 Hn2].
+    assert (Hlen : n < length (graph (build_dfg ctx act))) by lia.
+    intros ss ss' _. unfold nval.
+    destruct (op (nth n (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | ] eqn:Hopn;
+      try discriminate.
+    - rewrite (nre_const ctx cost_limit act a_idx n c Hn1 Hlen Hopn). reflexivity.
+    - rewrite (nre_input ctx cost_limit act a_idx n v Hn1 Hlen Hopn). reflexivity.
+  Qed.
+
   Lemma seed_sound (act: tfs_action sched) (a_idx: a_index) (input: input_t) :
     base_sound act a_idx input
-      (map (fun n => (n, [])) (untainted_roots ctx (build_dfg ctx act))).
+      (map (fun n => (n, []))
+         (untainted_roots ctx (build_dfg ctx act)
+          ++ trivially_public ctx (build_dfg ctx act))).
   Proof.
     intros c g Hin. apply in_map_iff in Hin.
     destruct Hin as [n [Heq Hn]]. injection Heq as Hc Hg. subst c g.
-    exact (derivable_gderivable act a_idx input [] n
-             (untainted_roots_derivable act a_idx input n Hn)).
+    apply in_app_or in Hn. destruct Hn as [Hn | Hn].
+    - exact (derivable_gderivable act a_idx input [] n
+               (untainted_roots_derivable act a_idx input n Hn)).
+    - exact (derivable_gderivable act a_idx input [] n
+               (trivial_derivable act a_idx input n Hn)).
   Qed.
 
   Theorem decl_sound_of_instances (act: tfs_action sched) (a_idx: a_index)
