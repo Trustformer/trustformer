@@ -121,7 +121,9 @@ Section Contrast.
        [length (graph dfg)] iterations. *)
     Example saturation_adds_one_root :
       List.length (untainted_roots ctx_whitebox (build_dfg ctx_whitebox act_neg))
-      = S (List.length (public_dsts ctx_whitebox (build_dfg ctx_whitebox act_neg))).
+      = S (List.length (public_dsts ctx_whitebox (build_dfg ctx_whitebox act_neg)
+                        ++ trivially_public ctx_whitebox
+                             (build_dfg ctx_whitebox act_neg))).
     Proof. vm_compute. reflexivity. Qed.
 
 End Contrast.

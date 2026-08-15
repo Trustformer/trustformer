@@ -469,11 +469,25 @@ Section VariableScheduler.
         if Nat.eqb (length acc') (length acc) then acc else saturate f dfg acc'
     end.
 
+  (* Constants and inputs hold the same value in any two runs, so they are
+     derivable under no guard.  Both saturations seed with them: without it an
+     unconditional rule whose source is an input -- the paper's "binary
+     operations under the condition that one operand is known" -- could never
+     fire, and a shared constant would become a hub in [decl_facts]. *)
+  Definition trivially_public (dfg: dfg_state) : list nid_t :=
+    filter (fun k => match op (nth k (graph dfg)
+                                 {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+                     | DFG_Const _ => true
+                     | DFG_Input _ => true
+                     | _ => false
+                     end)
+           (List.seq 1 (length (graph dfg) - 1)).
+
   (* Every node the attacker can derive a value for. Whitebox untainting is the
      saturation below; it must stay computable without the taint set, since the
      fold below consumes this as a seed. *)
   Definition untainted_roots (dfg: dfg_state) : list (nid_t) :=
-    saturate (length (graph dfg)) dfg (public_dsts dfg).
+    saturate (length (graph dfg)) dfg (public_dsts dfg ++ trivially_public dfg).
 
   (* ============================== *)
   (* = Guards and their checker   = *)
@@ -574,23 +588,9 @@ Section VariableScheduler.
         if Nat.eqb (length base') (length base) then base else gsaturate f dfg base'
     end.
 
-  (* Constants and inputs hold the same value in any two runs, so they are
-     derivable under no guard.  Seeding them is a cost fix as much as a
-     precision one: otherwise a shared constant becomes a hub -- the target of
-     every phi's downward instance and then a source for every other phi --
-     which makes the fact base grow cubically in the nesting depth. *)
-  Definition trivially_public (dfg: dfg_state) : list nid_t :=
-    filter (fun k => match op (nth k (graph dfg)
-                                 {| nid := 0; op := DFG_Empty; sz := 0 |}) with
-                     | DFG_Const _ => true
-                     | DFG_Input _ => true
-                     | _ => false
-                     end)
-           (List.seq 1 (length (graph dfg) - 1)).
-
   Definition decl_facts (dfg: dfg_state) : list gfact :=
     gsaturate (length (graph dfg)) dfg
-      (map (fun n => (n, [])) (untainted_roots dfg ++ trivially_public dfg)).
+      (map (fun n => (n, [])) (untainted_roots dfg)).
 
   (* ============================== *)
   (* = Step 6: TF Compilations    = *)
