@@ -48,6 +48,7 @@ Section VariableScheduler.
   Local Notation externs_sig := (tfs_spec_externs_sig ctx).
   Local Notation externs_arg_size := (@tfe_arg_size _ externs_sig).
   Local Notation externs_res_size := (@tfe_res_size _ externs_sig).
+  Local Notation externs_lat := (@tfe_latency _ externs_sig).
 
   Local Notation spec_action := (tfs_spec_action ctx).
   Local Notation spec_action_eq_dec := (tfs_spec_action_eq_dec ctx).
@@ -108,6 +109,14 @@ Section VariableScheduler.
     let new_node := {| nid := next_id; op := op; sz := sz |} in
     let! _ := put_state ({| graph := new_node :: graph s; var_map := var_map s |}) in
     ret next_id.
+
+  (* [k] chained identity nodes. Each one costs a full bucket, so [require_buffer]
+     buffers its argument and the chain delays validity by [k] cycles (D9). *)
+  Fixpoint emit_delay_chain (k: nat) (id: nid_t) (size: sz_t) : M nid_t :=
+    match k with
+    | 0 => ret id
+    | S k' => let! id' := emit (DFG_Delay id) size in emit_delay_chain k' id' size
+    end.
 
   (* --- Variable & Output Management --- *)
 
@@ -180,7 +189,9 @@ Section VariableScheduler.
       emit (DFG_Phi cond_id then_id else_id) sz
     | tf_ext f arg =>
       let! arg_id := dataflow_expr arg (externs_arg_size f) in
-      emit (DFG_Ext f arg_id) sz
+      (* L+2 buffered levels: the result register is only trustworthy that late (D9) *)
+      let! dly_id := emit_delay_chain (S (S (externs_lat f))) arg_id (externs_arg_size f) in
+      emit (DFG_Ext f arg_id dly_id) sz
     end.
 
   (* --- Generic Map Merger --- *)
@@ -304,7 +315,7 @@ Section VariableScheduler.
     | DFG_Binary _ arg1 arg2 => [arg1; arg2]
     | DFG_Resize arg => [arg]
     | DFG_Phi cond then_id else_id => [cond; then_id; else_id]
-    | DFG_Ext _ arg => [arg]
+    | DFG_Ext _ src dly => [src; dly]
     | DFG_Delay arg => [arg]
     | DFG_Empty => []
     end.
@@ -338,7 +349,7 @@ Section VariableScheduler.
     (* The combinational delay of an attached module is not declared, so it is
        costed like any other single-level operator. Phase B replaces this with a
        latency-driven treatment. *)
-    | DFG_Ext _ _ => 1
+    | DFG_Ext _ _ _ => 1
     (* A whole bucket, so [calc_target_cycle] places the argument one cycle earlier and
        [require_buffer] picks it up: that buffer is the latency element (D9). *)
     | DFG_Delay _ => cost_limit
@@ -801,7 +812,13 @@ Section VariableScheduler.
                 else
                   valid_expr_and cond_val (valid_expr_if cond_expr then_val else_val)
               )
-          | DFG_Ext f arg1 =>
+          | DFG_Ext f arg1 _ =>
+              (* NOT YET the D8/D9 form. The target is
+                   [let '(_, v) := compile … dly … in (tf_svar (tf_dfg_eres f), v)]
+                 i.e. read the designated result register and take the validity from
+                 the delay chain. That edit is one line here but makes
+                 [compile_nobuf_step_stable] in SchedulerSimulation.v FALSE (see B2c),
+                 so it lands together with B2c, not before. *)
               let '(arg_expr, val_expr) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers in
               (tf_ext f arg_expr, val_expr)
           | DFG_Delay arg1 =>
@@ -834,6 +851,47 @@ Section VariableScheduler.
               [ tf_assign (tf_dfg_b a_idx' n_idx') expr; tf_assign (tf_dfg_v a_idx' n_idx') valid ]
             | None => [] (* should not happen *)
             end ) buffers
+    end.
+
+  (* TEMPORARY (extern-calls-mvp, D9). The MVP gives each external function ONE
+     argument register, so only the first call site of each function in an action gets
+     an argument op; a second site would need intra-action sharing, which is the
+     [function-resource-sharing] campaign. Keeping the list deduplicated here (rather
+     than assuming an action calls each function at most once) is what avoids adding a
+     hypothesis to [tfs_schedule], which every SchedulerSimulation lemma would then
+     have to carry. Delete this and emit one op per call site when sharing lands. *)
+  Fixpoint ext_call_sites_aux (l: list dfg_node) : list (externs_var * nid_t) :=
+    match l with
+    | [] => []
+    | node :: rest =>
+        let acc := ext_call_sites_aux rest in
+        match op node with
+        | DFG_Ext f src _ =>
+            if existsb (fun p => if @eq_dec _ externs_var_eq_dec (fst p) f
+                                 then true else false) acc
+            then acc else (f, src) :: acc
+        | _ => acc
+        end
+    end.
+
+  Definition ext_call_sites (dfg: dfg_state) : list (externs_var * nid_t) :=
+    ext_call_sites_aux (graph dfg).
+
+  (* One op per (deduplicated) call site, loading the function's argument register from
+     the (always buffered) argument node, so the emitted port is driven by a register. *)
+  Definition compile_dfg_ext_args (a_idx: nat) (dfg: dfg_state) (buffers: list (nid_t * (nat * sz_t)))
+    : list (@tf_op tf_dfg_states inputs_var outputs_var externs_var) :=
+    let tainted := get_tainted dfg in
+    let dfacts := decl_facts dfg in
+    let fuel := length (graph dfg) in
+    match index_of_nat (length buffer_needs) a_idx with
+    | None => []
+    | Some a_idx' =>
+      map
+        ( fun p =>
+          tf_assign (tf_dfg_earg (fst p))
+            (fst (compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg (snd p) buffers)) )
+        (ext_call_sites dfg)
     end.
 
   (* Fixpoint combine_pair_step (exprs : list expr_t) : list expr_t :=
@@ -910,7 +968,9 @@ Section VariableScheduler.
     let done_signal := compile_dfg_valid idx (nth idx dfgs {| graph := []; var_map := [] |}) (nth idx buffers []) in
     
     ( 
-      done_signal :: compile_dfg_buffers idx (nth idx dfgs {| graph := []; var_map := [] |}) (nth idx buffers []),
+      done_signal
+        :: compile_dfg_buffers idx (nth idx dfgs {| graph := []; var_map := [] |}) (nth idx buffers [])
+        ++ compile_dfg_ext_args idx (nth idx dfgs {| graph := []; var_map := [] |}) (nth idx buffers []),
       final_ops
     ).
 
@@ -1148,6 +1208,13 @@ Section VariableScheduler.
     intros s Hs. unfold emit, bind, get_state, put_state, ret; simpl. exact Hs.
   Qed.
 
+  Lemma emit_delay_chain_vm k id sz: preserves vm_nd (emit_delay_chain k id sz).
+  Proof.
+    revert id. induction k as [| k IH]; intro id; cbn [emit_delay_chain].
+    - apply preserves_ret.
+    - apply preserves_bind; [ apply emit_vm | intro x; apply IH ].
+  Qed.
+
   Lemma ensure_var_vm v: preserves vm_nd (ensure_var v).
   Proof.
     intros s Hs. unfold vm_nd, ensure_var.
@@ -1193,7 +1260,8 @@ Section VariableScheduler.
     - apply preserves_bind; [apply IHe1|]. intro xc.
       apply preserves_bind; [apply IHe2|]. intro xt.
       apply preserves_bind; [apply IHe3|]. intro xe. apply emit_vm.
-    - apply preserves_bind; [apply IHea|]. intro x. apply emit_vm.
+    - apply preserves_bind; [apply IHea|]. intro x.
+      apply preserves_bind; [apply emit_delay_chain_vm|]. intro y. apply emit_vm.
   Qed.
 
   Lemma merge_loop_nd cond mt me: forall keys acc s,
@@ -1454,6 +1522,61 @@ Section VariableScheduler.
       destruct var as [sv|ov]; simpl in Hb; destruct Hb as [<-|[]]; reflexivity.
   Qed.
 
+  (* --- external-argument-op tags --- *)
+
+  Lemma ext_arg_tags_in (idx: nat) (DFG: dfg_state)
+        (BUF: list (nid_t * (nat * sz_t))) t:
+    In t (flat_map OPTAG (compile_dfg_ext_args idx DFG BUF)) ->
+    exists f, t = StOp (tf_dfg_earg f).
+  Proof.
+    intro Hin. apply in_flat_map in Hin. destruct Hin as [op0 [Hop Ht]].
+    unfold compile_dfg_ext_args in Hop.
+    destruct (index_of_nat (length buffer_needs) idx) as [a'|]; [| destruct Hop].
+    apply in_map_iff in Hop. destruct Hop as [p [Heq _]]. subst op0.
+    simpl in Ht. destruct Ht as [<-|[]]. exists (fst p). reflexivity.
+  Qed.
+
+  Lemma ext_call_sites_aux_nodup (l: list dfg_node) : NoDup (map fst (ext_call_sites_aux l)).
+  Proof.
+    induction l as [| node rest IH]; [ constructor |].
+    cbn [ext_call_sites_aux]. cbv zeta.
+    destruct (op node) as [ | | | | | | | xf xsrc xdly | | ]; try exact IH.
+    destruct (existsb (fun p => if @eq_dec _ externs_var_eq_dec (fst p) xf
+                                then true else false) (ext_call_sites_aux rest)) eqn:E;
+      [ exact IH |].
+    cbn [map]. apply NoDup_cons; [| exact IH].
+    intro Hin. apply in_map_iff in Hin. destruct Hin as [p [Hp Hpin]]. cbn [fst] in Hp.
+    assert (Hex : existsb (fun q => if @eq_dec _ externs_var_eq_dec (fst q) xf
+                                    then true else false) (ext_call_sites_aux rest) = true).
+    { apply existsb_exists. exists p. split; [ exact Hpin |].
+      cbn beta. rewrite Hp.
+      destruct (@eq_dec _ externs_var_eq_dec xf xf) as [_|Hne];
+        [ reflexivity | exfalso; apply Hne; reflexivity ]. }
+    rewrite E in Hex. discriminate Hex.
+  Qed.
+
+  Lemma ext_call_sites_nodup (DFG: dfg_state) : NoDup (map fst (ext_call_sites DFG)).
+  Proof. apply ext_call_sites_aux_nodup. Qed.
+
+  Lemma ext_arg_tags_map_l (l: list (externs_var * nid_t)) (g: externs_var * nid_t -> expr_t) :
+    flat_map OPTAG (map (fun p => tf_assign (tf_dfg_earg (fst p)) (g p)) l)
+    = map (fun f => StOp (s_t:=tf_dfg_states) (o_t:=outputs_var) (tf_dfg_earg f)) (map fst l).
+  Proof.
+    induction l as [| p ps IH]; [ reflexivity |].
+    cbn [flat_map map app]. rewrite IH. reflexivity.
+  Qed.
+
+  Lemma ext_arg_tags_nodup (idx: nat) (DFG: dfg_state)
+        (BUF: list (nid_t * (nat * sz_t))):
+    NoDup (flat_map OPTAG (compile_dfg_ext_args idx DFG BUF)).
+  Proof.
+    unfold compile_dfg_ext_args.
+    destruct (index_of_nat (length buffer_needs) idx) as [a'|]; [| simpl; constructor].
+    rewrite ext_arg_tags_map_l.
+    apply FinFun.Injective_map_NoDup; [| apply ext_call_sites_nodup ].
+    intros x y Hxy. injection Hxy as Hxy. exact Hxy.
+  Qed.
+
   (* --- assembly --- *)
 
   Lemma schedule_no_dup_aux (idx: nat) (DFG: dfg_state)
@@ -1461,26 +1584,38 @@ Section VariableScheduler.
     NoDup (map fst (var_map DFG)) ->
     NoDup (map (fun '(_, x) => fst x) BUF) ->
     NoDup (flat_map OPTAG
-      ((compile_dfg_valid idx DFG BUF :: compile_dfg_buffers idx DFG BUF)
+      ((compile_dfg_valid idx DFG BUF :: compile_dfg_buffers idx DFG BUF
+        ++ compile_dfg_ext_args idx DFG BUF)
        ++ compile_dfg_aux idx DFG BUF)).
   Proof.
     intros HDFG HBUF.
     assert (Hval: flat_map OPTAG
-        (compile_dfg_valid idx DFG BUF :: compile_dfg_buffers idx DFG BUF)
-      = StOp tf_dfg_done :: flat_map OPTAG (compile_dfg_buffers idx DFG BUF)).
-    { unfold compile_dfg_valid. reflexivity. }
+        (compile_dfg_valid idx DFG BUF :: compile_dfg_buffers idx DFG BUF
+         ++ compile_dfg_ext_args idx DFG BUF)
+      = StOp tf_dfg_done
+        :: flat_map OPTAG (compile_dfg_buffers idx DFG BUF)
+           ++ flat_map OPTAG (compile_dfg_ext_args idx DFG BUF)).
+    { unfold compile_dfg_valid. cbn [flat_map app]. rewrite flat_map_app. reflexivity. }
     rewrite flat_map_app, Hval, <- app_comm_cons.
     apply NoDup_cons.
-    - rewrite in_app_iff. intros [Hb|Hf].
+    - rewrite in_app_iff, in_app_iff. intros [[Hb|He]|Hf].
       + apply buffers_tags_in in Hb. destruct Hb as [a' [n' [Hb|Hb]]]; discriminate Hb.
+      + apply ext_arg_tags_in in He. destruct He as [f He]; discriminate He.
       + apply final_tags_in in Hf. destruct Hf as [[sv Hf]|[ov Hf]]; discriminate Hf.
-    - apply NoDup_app.
+    - rewrite <- app_assoc. apply NoDup_app.
       + apply buffers_tags_nodup. exact HBUF.
-      + apply final_tags_nodup. exact HDFG.
-      + intros x Hxb Hxf.
-        apply buffers_tags_in in Hxb. apply final_tags_in in Hxf.
-        destruct Hxb as [a' [n' [-> | ->]]];
-          destruct Hxf as [[sv Hs]|[ov Ho]]; discriminate.
+      + apply NoDup_app.
+        * apply ext_arg_tags_nodup.
+        * apply final_tags_nodup. exact HDFG.
+        * intros x Hxe Hxf.
+          apply ext_arg_tags_in in Hxe. apply final_tags_in in Hxf.
+          destruct Hxe as [f ->]; destruct Hxf as [[sv Hs]|[ov Ho]]; discriminate.
+      + intros x Hxb Hxr. apply buffers_tags_in in Hxb.
+        apply in_app_iff in Hxr. destruct Hxr as [Hxe|Hxf].
+        * apply ext_arg_tags_in in Hxe. destruct Hxb as [a' [n' [-> | ->]]];
+            destruct Hxe as [f He]; discriminate.
+        * apply final_tags_in in Hxf. destruct Hxb as [a' [n' [-> | ->]]];
+            destruct Hxf as [[sv Hs]|[ov Ho]]; discriminate.
   Qed.
 
 
@@ -1625,7 +1760,9 @@ Section VariableScheduler.
     apply in_app_or in Hin. destruct Hin as [Hin | Hin].
     - unfold schedule, compile_dfg_valid in Hin. cbn [fst flat_map app] in Hin.
       destruct Hin as [Heq | Hin]; [discriminate Heq |].
-      apply buffers_tags_in in Hin. destruct Hin as [a' [n' [H|H]]]; discriminate H.
+      rewrite flat_map_app in Hin. apply in_app_or in Hin. destruct Hin as [Hin | Hin].
+      + apply buffers_tags_in in Hin. destruct Hin as [a' [n' [H|H]]]; discriminate H.
+      + apply ext_arg_tags_in in Hin. destruct Hin as [g H]; discriminate H.
     - unfold schedule in Hin. cbn [snd] in Hin.
       apply final_tags_in in Hin. destruct Hin as [[sv H]|[ov H]]; discriminate H.
   Qed.

@@ -416,7 +416,7 @@ Section IPR.
     intros ss ss' _. unfold nval.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | xf xarg | dly | ] eqn:Hopn;
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | xf xarg xdly | dly | ] eqn:Hopn;
       try discriminate.
     - rewrite (nre_const ctx cost_limit act a_idx n c Hn1 Hlen Hopn). reflexivity.
     - rewrite (nre_input ctx cost_limit act a_idx n v Hn1 Hlen Hopn). reflexivity.
@@ -605,7 +605,7 @@ Section IPR.
 
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | iv | [sv | ov] | uop arg | bop a1 a2 | src | cnd tid eid | xf xarg | dly | ]
+      as [c | iv | [sv | ov] | uop arg | bop a1 a2 | src | cnd tid eid | xf xarg xdly | dly | ]
       eqn:Eop.
 
     - rewrite (nre_const ctx cost_limit act a_idx n c H1 Hlen Eop).
@@ -675,7 +675,7 @@ Section IPR.
                                                 {| nid := 0; op := DFG_Empty; sz := 0 |})))
         by (unfold get_args; rewrite Eop; left; reflexivity).
       unfold node_args_sz in Hfg. rewrite Eop in Hfg.
-      rewrite (nre_ext ctx cost_limit act a_idx n xf xarg H1 Hlen Eop).
+      rewrite (nre_ext ctx cost_limit act a_idx n xf xarg xdly H1 Hlen Eop).
       cbn [tf_eval_expr]. rewrite (Hder_at xarg _ Ha Hfg). reflexivity.
 
     - (* a delay is the identity, so it is derivable exactly when its argument is *)
@@ -1146,7 +1146,7 @@ Section IPR.
     assert (Hrange : forall x, List.In x (get_args ctx node) -> 1 <= x /\ x < n)
       by (intros x Hx; exact (node_args_range ctx cost_limit act n Hn1 Hnlen x Hx)).
     pose proof (wfg_build_dfg ctx cost_limit act node Hnode_in) as Hfg.
-    destruct (op node) as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | xf xarg | dly | ]
+    destruct (op node) as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | xf xarg xdly | dly | ]
       eqn:Hop.
     - reflexivity.
     - reflexivity.

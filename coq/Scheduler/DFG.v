@@ -36,8 +36,10 @@ Section SchedulerTypes.
     | DFG_Binary (op: tf_binary_ops) (arg1: nid_t) (arg2: nid_t)
     | DFG_Resize (arg: nid_t)
     | DFG_Phi (cond: nid_t) (then_id: nid_t) (else_id: nid_t)
-    (* Call to a trusted external function; see Trustformer.Semantics.tf_externs. *)
-    | DFG_Ext (f: externs_var) (arg: nid_t)
+    (* Call to a trusted external function; see Trustformer.Semantics.tf_externs.
+       [src] feeds the argument register, [dly] is the end of the delay chain whose
+       validity gates the result (campaign extern-calls-mvp, D9). *)
+    | DFG_Ext (f: externs_var) (src: nid_t) (dly: nid_t)
     (* Identity, but costed at a full cycle so [require_buffer] buffers its argument:
        this is how a call's latency is realised (campaign extern-calls-mvp, D9). *)
     | DFG_Delay (arg: nid_t)
