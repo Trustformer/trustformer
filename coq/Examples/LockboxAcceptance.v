@@ -69,7 +69,7 @@ Section Specification.
 
     (* fig. A5: tries is secret, nothing about it is published. *)
     Definition lb_secret_tries (act: lb_action)
-      : (@tf_ops lb_states lb_inputs lb_outputs) :=
+      : (@tf_ops lb_states lb_inputs lb_outputs tf_no_externs) :=
       match act with
       | lb_act_test =>
           {[
@@ -87,7 +87,7 @@ Section Specification.
 
     (* fig. B5: the user may see how many tries are left. *)
     Definition lb_public_tries (act: lb_action)
-      : (@tf_ops lb_states lb_inputs lb_outputs) :=
+      : (@tf_ops lb_states lb_inputs lb_outputs tf_no_externs) :=
       match act with
       | lb_act_test =>
           {[
@@ -108,8 +108,8 @@ End Specification.
 
 Section Contexts.
 
-    Definition mk_lb (ops: lb_action -> @tf_ops lb_states lb_inputs lb_outputs)
-        (decls: list (decl_rule lb_states lb_inputs lb_outputs))
+    Definition mk_lb (ops: lb_action -> @tf_ops lb_states lb_inputs lb_outputs tf_no_externs)
+        (decls: list (decl_rule lb_states lb_inputs lb_outputs tf_no_externs))
       : TFSchedContext := {|
       tfs_spec_states := lb_states;
       tfs_spec_states_fin := _;
@@ -124,13 +124,16 @@ Section Contexts.
       tfs_spec_outputs_fin := _;
       tfs_spec_outputs_size := lb_outputs_size;
 
+      tfs_spec_externs := tf_no_externs;
+      tfs_spec_externs_sig := tf_no_externs_sig;
+
       tfs_spec_action := lb_action;
       tfs_spec_action_fin := _;
       tfs_spec_action_ops := ops;
       tfs_spec_decls := decls
     |}.
 
-    Definition lb_rules : list (decl_rule lb_states lb_inputs lb_outputs) :=
+    Definition lb_rules : list (decl_rule lb_states lb_inputs lb_outputs tf_no_externs) :=
       [neg_rule; phibranch_rule; phiconst_rule].
 
     Definition ctx_A := mk_lb lb_secret_tries lb_rules.

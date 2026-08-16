@@ -74,6 +74,12 @@ Section SynthesisCorrectness.
   Local Notation spec_outputs_fin := (tfs_outputs_fin (tf_sched_ctx tf_ctx)).
   Opaque tfs_outputs_fin.
   Local Notation spec_outputs_size := (tfs_outputs_size (tf_sched_ctx tf_ctx)).
+  Local Notation spec_externs := (tfs_spec_externs (tfs_ctx (tf_sched_ctx tf_ctx))).
+  Local Notation spec_externs_sig := (tfs_spec_externs_sig (tfs_ctx (tf_sched_ctx tf_ctx))).
+  Local Notation spec_externs_arg := (@tfe_arg_size _ spec_externs_sig).
+  Local Notation spec_externs_res := (@tfe_res_size _ spec_externs_sig).
+  Hint Extern 0 (tf_externs spec_externs) => exact spec_externs_sig : typeclass_instances.
+  Hint Extern 1 (tf_externs _) => exact spec_externs_sig : typeclass_instances.
   Opaque tfs_outputs_size.
   Local Notation spec_outputs_t := (tf_outputs_type spec_outputs_size).
   Opaque tf_outputs_type.
@@ -122,8 +128,7 @@ Section SynthesisCorrectness.
   Local Notation system_schedule := (system_schedule tf_ctx).
   Local Notation REnv := (@ContextEnv reg_t (_reg_t_finite tf_ctx)).
 
-  Hint Extern 0 (FiniteType spec_states) => exact (tfs_states_fin (tf_sched_ctx tf_ctx)) : typeclass_instances.
-  Hint Extern 0 (FiniteType spec_inputs) => exact (tfs_inputs_fin (tf_sched_ctx tf_ctx)) : typeclass_instances.
+  Hint Extern 0 (FiniteType spec_states) => exact (tfs_states_fin (tf_sched_ctx tf_ctx)) : typeclass_instances.  Hint Extern 0 (FiniteType spec_inputs) => exact (tfs_inputs_fin (tf_sched_ctx tf_ctx)) : typeclass_instances.
   Hint Extern 0 (FiniteType spec_outputs) => exact (tfs_outputs_fin (tf_sched_ctx tf_ctx)) : typeclass_instances.
   Hint Extern 0 (FiniteType spec_action) => exact (tfs_action_fin (tf_sched_ctx tf_ctx)) : typeclass_instances.
 
@@ -417,6 +422,13 @@ Section SynthesisCorrectness.
     (@fst (vect bool (tf_action_reg_size tf_ctx)) unit
       (@snd (vect_cons_t bool (vect_nil_t bool)) (prod (vect bool (tf_action_reg_size tf_ctx)) unit) cmd_res) = spec_action_encoding act) /\
     (forall (x: spec_inputs), sigma (ext_input x) (Ob~1) = input x).
+
+  (* Interface obligation on the attached trusted modules: each one computes the
+     function its declaration says it computes. Unlike [input_matches] this holds in
+     every cycle, because the design only ever samples a result port on the cycle
+     that port carries the result. See D3 in agents/extern-calls-mvp/PLAN.md. *)
+  Definition externs_match (sigma: forall f, Sig_denote (Sigma f)) : Prop :=
+    forall f, sigma (ext_call f) = tfe_denote f.
 
   Lemma state_env_matches_comp :
     forall sys act input r1 r2,
@@ -1113,6 +1125,11 @@ Section SynthesisCorrectness.
               eval_expr_aux else_expr log_cond sys_state input 
             else
               eval_expr_aux then_expr log_cond sys_state input
+        (* An external call reads a port, never a register, so the read-log is unchanged. *)
+        | tf_ext f arg =>
+            let (val_arg, log_arg) :=
+              eval_expr_aux (szB:=spec_externs_arg f) arg log sys_state input in
+            (convert (tfe_denote f val_arg), log_arg)
         end.
 
   Lemma fst_eval_expr_aux_eq_tf_eval_expr:
@@ -1152,6 +1169,8 @@ Section SynthesisCorrectness.
     - cbn. let_to_projs. extract_match_term_lhs. extract_match_term_rhs.
       assert (MT = MT0). 2: { rewrite H. subst. destr; try apply IHexpr2; try apply IHexpr3. }
       subst. f_equal. apply (IHexpr1 log1 1).
+    - cbn. rewrite Common.fst_let_repackage. f_equal. f_equal.
+      apply (IHexpr log1 (spec_externs_arg f)).
   Qed.
 
   Lemma snd_eval_expr_aux_log_irrelevant:
@@ -1238,6 +1257,10 @@ Section SynthesisCorrectness.
       destr. 
       + apply IHexpr3.
       + apply IHexpr2.
+    - cbn.
+      pose proof (IHexpr log1 log2 (spec_externs_arg f)).
+      destruct (eval_expr_aux expr log1 sys input). cbn in *. subst.
+      destruct (eval_expr_aux expr log2 sys input). cbn in *. subst. reflexivity.
   Qed.
 
   Lemma snd_eval_expr_aux_app_log:
@@ -1323,6 +1346,10 @@ Section SynthesisCorrectness.
       destruct (eval_expr_aux expr1 (log1 ++ log2) sys input). cbn in *. subst.
       destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
       destr.
+    - cbn.
+      pose proof (IHexpr log1 log2 (spec_externs_arg f)).
+      destruct (eval_expr_aux expr (log1 ++ log2) sys input). cbn in *. subst.
+      destruct (eval_expr_aux expr log1 sys input). cbn in *. subst. reflexivity.
   Qed.
     
   Lemma snd_eval_expr_aux_app:
@@ -1458,6 +1485,12 @@ Section SynthesisCorrectness.
         rewrite (snd_eval_expr_aux_app_log expr2_1 _ l sys input 1). reflexivity.
       * rewrite (snd_eval_expr_aux_app_log expr2_2 _ l sys input szB2). f_equal. f_equal.
         rewrite (snd_eval_expr_aux_app_log expr2_1 _ l sys input 1). reflexivity.
+    - cbn.
+      pose proof (IHexpr2 szB1 (spec_externs_arg f)).
+      destruct (eval_expr_aux expr1 [] sys input).
+      destruct (eval_expr_aux (szB:=spec_externs_arg f) expr2 [] sys input).
+      destruct (eval_expr_aux (szB:=spec_externs_arg f) expr2 l sys input).
+      cbn in *. subst. reflexivity.
   Qed. 
 
   Lemma snd_eval_expr_aux_app2:
@@ -1540,12 +1573,33 @@ Section SynthesisCorrectness.
     - cbn. unfold opt_bind. reflexivity.
   Time Qed. (* ca. 0.1 s *)
 
+  (* Stated over [expr_to_action] with [tau] pinned to the reduced [bits_t …]: the
+     elaborated goal carries that form, whereas [ExternalCall]'s own typing gives the
+     convertible-but-not-syntactic [retSig (Sigma (ext_call f))], and [rewrite]
+     matches syntactically. *)
+  Lemma interp_ext_step :
+    forall r sigma log_r log_a (f : spec_externs) (e : tf_expr),
+      interp_action (R:=R) (Sigma:=Sigma) (REnv:=REnv) (tau := bits_t (spec_externs_res f))
+        r sigma CtxEmpty log_r log_a
+        (ExternalCall (ext_call f) (expr_to_action tf_ctx e (spec_externs_arg f)))
+      = match
+          interp_action (R:=R) (Sigma:=Sigma) (REnv:=REnv) (tau := bits_t (spec_externs_arg f))
+            r sigma CtxEmpty log_r log_a
+            (expr_to_action tf_ctx e (spec_externs_arg f))
+        with
+        | Some (l, v, g) => Some (l, sigma (ext_call f) v, g)
+        | None => None
+        end.
+  Proof. reflexivity. Qed.
+
+Set Printing Implicit.
   Lemma interp_action_expr :
     forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
            (act: spec_action) (input: input_t)
            (sigma: forall f, Sig_denote (Sigma f))
            log_r log_a expr dst_sz,
       state_matches sys r ->
+      externs_match sigma ->
       may_read_all log_r P0 (map tf_reg spec_all_states) = true ->
       may_read_all log_r P1 (map tf_in spec_all_inputs) = true ->
       may_read_all log_r P0 (map tf_out spec_all_outputs) = true ->
@@ -1558,7 +1612,7 @@ Section SynthesisCorrectness.
         ).
   Proof.
     intros sys r act input sigma log_r log_a expr dst_sz.
-    intros Hstate Hrd0_st Hrd1_in Hrd0_out.
+    intros Hstate Hsig Hrd0_st Hrd1_in Hrd0_out.
 
     unfold state_matches in Hstate. destruct Hstate as [Hstate_r Hstate_out].
 
@@ -1747,16 +1801,22 @@ Section SynthesisCorrectness.
             apply snd_eval_expr_aux_app2.
           -- subst. destruct vtl. reflexivity.
         ++ apply inputs_are_buffered_expr_log. exact Hin_buf.
+    + (* Ext: the attached module computes [tfe_denote f], by [externs_match] *)
+      cbn. rewrite interp_synth_convert, interp_ext_step.
+      rewrite (IHexpr log_a (spec_externs_arg f) Hin_buf).
+      unfold expr_log. cbn. rewrite Hsig.
+      destruct (eval_expr_aux (szB:=spec_externs_arg f) expr [] sys input).
+      reflexivity.
   Time Qed. (* ca. 1.7 s *)
 
-  Definition affected_regs (ops: list (@tf_op spec_states spec_inputs spec_outputs)) : list reg_t :=
+  Definition affected_regs (ops: list (@tf_op spec_states spec_inputs spec_outputs spec_externs)) : list reg_t :=
     fold_right (fun op acc => match op with
                              | tf_assign dst _ => tf_reg dst :: acc
                              | tf_output dst _ => tf_out dst :: acc
                              | _ => acc
                              end) [] ops.
 
-  Definition aux_log sys input (ops: list (@tf_op spec_states spec_inputs spec_outputs)) (log_a: Log R ContextEnv) : Log R ContextEnv :=
+  Definition aux_log sys input (ops: list (@tf_op spec_states spec_inputs spec_outputs spec_externs)) (log_a: Log R ContextEnv) : Log R ContextEnv :=
     fold_left (fun acc op => match op with
                              | tf_assign dst expr => log_cons (R:=R) (REnv:=REnv) (tf_reg dst) (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size expr sys input)) (expr_log expr (spec_states_size dst) sys input acc)
                              | tf_output dst expr => log_cons (R:=R) (REnv:=REnv) (tf_out dst) (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size expr sys input)) (expr_log expr (spec_outputs_size dst) sys input acc)
@@ -1836,6 +1896,7 @@ Section SynthesisCorrectness.
            (sigma: forall f, Sig_denote (Sigma f))
            log_r log_a ops rest,
       state_matches sys r ->
+      externs_match sigma ->
       may_read_all log_r P0 (map tf_reg spec_all_states) = true ->
       may_read_all log_r P1 (map tf_in spec_all_inputs) = true ->
       may_read_all log_r P0 (map tf_out spec_all_outputs) = true ->
@@ -1854,7 +1915,7 @@ Section SynthesisCorrectness.
       end.
   Proof.
     intros sys r act input sigma log_r log_a ops rest.
-    intros Hstate Hrd0_st Hrd1_in Hrd0_out Hin_buf HNoDup_aff Hwr0_aff.
+    intros Hstate Hsig Hrd0_st Hrd1_in Hrd0_out Hin_buf HNoDup_aff Hwr0_aff.
 
     generalize dependent log_a. generalize dependent rest.
     induction ops as [| op ops H0 ]; intros.
@@ -2477,6 +2538,7 @@ Section SynthesisCorrectness.
            (sigma: forall f, Sig_denote (Sigma f))
            log_r log_a,
       state_matches sys r ->
+      externs_match sigma ->
       may_read_all log_r P0 (map tf_reg spec_all_states) = true ->
       may_write_all log_r log_a P0 (map tf_reg spec_all_states) = true ->
       may_read_all log_r P1 (map tf_in spec_all_inputs) = true ->
@@ -2491,7 +2553,7 @@ Section SynthesisCorrectness.
       Some ( construct_log sys act input r.[tf_ready] log_a ).
   Proof.
     intros sys r act input sigma log_r log_a.
-    intros Hstate Hrd0_st Hwr0_st Hrd1_in Hrd0_out Hwr0_out Hwr1_ready Hin_buf.
+    intros Hstate Hsig Hrd0_st Hwr0_st Hrd1_in Hrd0_out Hwr0_out Hwr1_ready Hin_buf.
     
     unfold _rule_cmd. 
     rewrite (interp_action_aux sys r act input sigma log_r log_a); try timeout 1 assumption.
@@ -2575,6 +2637,7 @@ Section SynthesisCorrectness.
           rewrite may_write_all_log_cons_P1_not_w1 by reflexivity.
           rewrite may_write_all_aux_log_P1. exact Hwr1_reset.
       + exact Hstate.
+      + exact Hsig.
       + exact Hrd0_st.
       + exact Hrd1_in.
       + exact Hrd0_out.
@@ -2751,13 +2814,14 @@ Section SynthesisCorrectness.
            (sigma: forall f, Sig_denote (Sigma f))
            log,
       state_matches sys r ->
+      externs_match sigma ->
       ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
       ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
       good_log log ->
       let guard_log := if Bits.single r.[tf_ready] then log_after_cmd_guard_rdy act sigma else log_cons tf_cmd Read0 (log_cons tf_ready Read0 log_empty) in
       interp_rule r sigma log (rules (rule_cmd act)) = Some (construct_log sys act input r.[tf_ready] guard_log).
   Proof.
-    intros sys r act input sigma log Hstate Hinput_rdy Hinput_nrdy Hgood.
+    intros sys r act input sigma log Hstate Hsig Hinput_rdy Hinput_nrdy Hgood.
     cbv zeta.
     unfold good_log in Hgood.
     destruct Hgood as [Hrd0_st [Hwr0_st [Hrd0_in [Hwr0_in [Hrd0_out
@@ -2773,6 +2837,7 @@ Section SynthesisCorrectness.
                 else log_cons tf_cmd Read0 (log_cons tf_ready Read0 log_empty))).
     - reflexivity.
     - exact Hstate.
+    - exact Hsig.
     - exact Hrd0_st.
     - (* may_write_all log guard_log P0 states *)
       destruct (reg_ready_or_not r) as [Hready | Hnotready].
@@ -2939,6 +3004,7 @@ Section SynthesisCorrectness.
            (sigma: forall f, Sig_denote (Sigma f))
            log,
       state_matches sys r ->
+      externs_match sigma ->
       ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
       ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
       good_log log ->
@@ -2948,8 +3014,8 @@ Section SynthesisCorrectness.
         | None => log
         end tf_cmd = Some (spec_action_encoding act).
   Proof.
-    intros sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hgood Hrdy.
-    rewrite (interp_rule_correct sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hgood).
+    intros sys r act input sigma log Hstate Hsig Hin_rdy Hin_nrdy Hgood Hrdy.
+    rewrite (interp_rule_correct sys r act input sigma log Hstate Hsig Hin_rdy Hin_nrdy Hgood).
     cbv zeta.
     rewrite Hrdy. replace (Bits.single Ob~1) with true by reflexivity. cbv iota.
     rewrite SemanticProperties.latest_write_app.
@@ -2965,6 +3031,7 @@ Section SynthesisCorrectness.
            (sigma: forall f, Sig_denote (Sigma f))
            log,
       state_matches sys r ->
+      externs_match sigma ->
       ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
       ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
       good_log log ->
@@ -2974,12 +3041,12 @@ Section SynthesisCorrectness.
         | None => log
         end tf_cmd = None.
   Proof.
-    intros sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hgood Hnrdy.
+    intros sys r act input sigma log Hstate Hsig Hin_rdy Hin_nrdy Hgood Hnrdy.
     assert (Hcmd : may_write log log_empty P0 tf_cmd = true).
     { unfold good_log in Hgood.
       destruct Hgood as [_ [_ [_ [_ [_ [_ [_ [_ [_ Hwr0_cmd]]]]]]]]]. exact Hwr0_cmd. }
     pose proof (may_write0_latest_write_None log tf_cmd Hcmd) as Hnone.
-    rewrite (interp_rule_correct sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hgood).
+    rewrite (interp_rule_correct sys r act input sigma log Hstate Hsig Hin_rdy Hin_nrdy Hgood).
     cbv zeta.
     rewrite Hnrdy. replace (Bits.single Ob~0) with false by reflexivity. cbv iota.
     rewrite SemanticProperties.latest_write_app.
@@ -2996,6 +3063,7 @@ Section SynthesisCorrectness.
            (sigma: forall f, Sig_denote (Sigma f))
            log x,
       state_matches sys r ->
+      externs_match sigma ->
       ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
       ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
       good_log log ->
@@ -3005,8 +3073,8 @@ Section SynthesisCorrectness.
         | None => log
         end (tf_in x) = Some (input x).
   Proof.
-    intros sys r act input sigma log x Hstate Hin_rdy Hin_nrdy Hgood Hrdy.
-    rewrite (interp_rule_correct sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hgood).
+    intros sys r act input sigma log x Hstate Hsig Hin_rdy Hin_nrdy Hgood Hrdy.
+    rewrite (interp_rule_correct sys r act input sigma log Hstate Hsig Hin_rdy Hin_nrdy Hgood).
     cbv zeta.
     rewrite Hrdy. replace (Bits.single Ob~1) with true by reflexivity. cbv iota.
     rewrite SemanticProperties.latest_write_app.
@@ -3024,6 +3092,7 @@ Section SynthesisCorrectness.
            (sigma: forall f, Sig_denote (Sigma f))
            log x,
       state_matches sys r ->
+      externs_match sigma ->
       ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
       ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
       good_log log ->
@@ -3033,14 +3102,14 @@ Section SynthesisCorrectness.
         | None => log
         end (tf_in x) = None.
   Proof.
-    intros sys r act input sigma log x Hstate Hin_rdy Hin_nrdy Hgood Hnrdy.
+    intros sys r act input sigma log x Hstate Hsig Hin_rdy Hin_nrdy Hgood Hnrdy.
     assert (Hin_none : may_write log log_empty P0 (tf_in x) = true).
     { unfold good_log in Hgood.
       destruct Hgood as [_ [_ [_ [Hwr0_in [_ [_ [_ [_ [_ _]]]]]]]]].
       unfold may_write_all in Hwr0_in. rewrite forallb_forall in Hwr0_in.
       apply Hwr0_in. apply in_map. apply in_spec_all_inputs. }
     pose proof (may_write0_latest_write_None log (tf_in x) Hin_none) as Hnone.
-    rewrite (interp_rule_correct sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hgood).
+    rewrite (interp_rule_correct sys r act input sigma log Hstate Hsig Hin_rdy Hin_nrdy Hgood).
     cbv zeta.
     rewrite Hnrdy. replace (Bits.single Ob~0) with false by reflexivity. cbv iota.
     rewrite SemanticProperties.latest_write_app.
@@ -3337,6 +3406,7 @@ Section SynthesisCorrectness.
            (sigma: forall f, Sig_denote (Sigma f))
            log x,
       state_matches sys r ->
+      externs_match sigma ->
       ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
       ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
       good_log log ->
@@ -3354,14 +3424,14 @@ Section SynthesisCorrectness.
             ++ tfs_get_updates sched_ctx (snd (spec_schedule act)) sys input 
             ++ tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input).
   Proof.
-    intros sys r act input sigma log x Hstate Hin_rdy Hin_nrdy Hgood.
+    intros sys r act input sigma log x Hstate Hsig Hin_rdy Hin_nrdy Hgood.
     assert (Hlog : latest_write log (tf_reg x) = None).
     { unfold good_log in Hgood.
       destruct Hgood as [_ [Hwr0_st _]].
       apply may_write0_latest_write_None.
       unfold may_write_all in Hwr0_st. rewrite forallb_forall in Hwr0_st.
       apply Hwr0_st. apply in_map. apply in_spec_all_states. }
-    rewrite (interp_rule_correct sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hgood).
+    rewrite (interp_rule_correct sys r act input sigma log Hstate Hsig Hin_rdy Hin_nrdy Hgood).
     cbv zeta.
     rewrite SemanticProperties.latest_write_app.
     rewrite latest_write_construct_log_reg
@@ -3376,6 +3446,7 @@ Section SynthesisCorrectness.
            (sigma: forall f, Sig_denote (Sigma f))
            log x,
       state_matches sys r ->
+      externs_match sigma ->
       ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
       ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
       good_log log ->
@@ -3393,14 +3464,14 @@ Section SynthesisCorrectness.
             ++ tfs_get_updates sched_ctx (snd (spec_schedule act)) sys input 
             ++ tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input).
   Proof.
-    intros sys r act input sigma log x Hstate Hin_rdy Hin_nrdy Hgood.
+    intros sys r act input sigma log x Hstate Hsig Hin_rdy Hin_nrdy Hgood.
     assert (Hlog : latest_write log (tf_out x) = None).
     { unfold good_log in Hgood.
       destruct Hgood as [_ [_ [_ [_ [_ [Hwr0_out _]]]]]].
       apply may_write0_latest_write_None.
       unfold may_write_all in Hwr0_out. rewrite forallb_forall in Hwr0_out.
       apply Hwr0_out. apply in_map. apply in_spec_all_outputs. }
-    rewrite (interp_rule_correct sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hgood).
+    rewrite (interp_rule_correct sys r act input sigma log Hstate Hsig Hin_rdy Hin_nrdy Hgood).
     cbv zeta.
     rewrite SemanticProperties.latest_write_app.
     rewrite latest_write_construct_log_out
@@ -3417,6 +3488,7 @@ Section SynthesisCorrectness.
            (sigma: forall f, Sig_denote (Sigma f))
            log,
       state_matches sys r ->
+      externs_match sigma ->
       ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
       ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
       good_log log ->
@@ -3425,7 +3497,7 @@ Section SynthesisCorrectness.
         | None => log
         end).
   Proof.
-    intros sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hlog.
+    intros sys r act input sigma log Hstate Hsig Hin_rdy Hin_nrdy Hlog.
     unfold state_env_matches; split.
     - unfold state_matches; split; intros.
       + unfold commit_update, tfs_next_cycle. cbn [fst snd].
@@ -3453,12 +3525,13 @@ Section SynthesisCorrectness.
            (sigma: forall f, Sig_denote (Sigma f))
            log a,
       state_matches sys r ->
+      externs_match sigma ->
       ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
       ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
       act <> a ->
       interp_rule r sigma log (rules (rule_cmd a)) = None.
   Proof.
-    intros sys r act input sigma log a Hstate Hin_rdy Hin_nrdy Hact_neq_a.
+    intros sys r act input sigma log a Hstate Hsig Hin_rdy Hin_nrdy Hact_neq_a.
     unfold interp_rule, rules, rule_cmd_guard. simpl_eq.
     destruct may_read; try reflexivity. timeout 10 cbn. 
     destruct (reg_ready_or_not r) as [Hready | Hnotready].
@@ -3500,6 +3573,7 @@ Section SynthesisCorrectness.
            (sigma: forall f, Sig_denote (Sigma f))
            log (actions: list spec_action),
       state_matches sys r ->
+      externs_match sigma ->
       ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
       ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
       good_log log ->
@@ -3517,7 +3591,7 @@ Section SynthesisCorrectness.
           | None => log
           end).
   Proof.
-    intros sys r act input sigma log actions Hstate Hin_rdy Hin_nrdy Hlog H_notin_actions.
+    intros sys r act input sigma log actions Hstate Hsig Hin_rdy Hin_nrdy Hlog H_notin_actions.
 
     induction actions as [|a actions IH].
     - cbn [fold_right].
@@ -3544,9 +3618,9 @@ Section SynthesisCorrectness.
 
       cbn [fold_right interp_scheduler'].
       destruct (interp_rule r sigma log (rules (rule_cmd act))) as [l | ] eqn:H_interp_cmd.
-      + rewrite (interp_rule_cmd_wrong sys r act input sigma (log_app l log) a Hstate Hin_rdy Hin_nrdy); try assumption.
+      + rewrite (interp_rule_cmd_wrong sys r act input sigma (log_app l log) a Hstate Hsig Hin_rdy Hin_nrdy); try assumption.
         apply IH; try assumption.
-      + rewrite (interp_rule_cmd_wrong sys r act input sigma log a Hstate Hin_rdy Hin_nrdy); try assumption.
+      + rewrite (interp_rule_cmd_wrong sys r act input sigma log a Hstate Hsig Hin_rdy Hin_nrdy); try assumption.
         apply IH; try assumption.
   Qed.
 
@@ -3557,12 +3631,13 @@ Section SynthesisCorrectness.
            (sigma: forall f, Sig_denote (Sigma f))
            log,
       state_matches sys r ->
+      externs_match sigma ->
       ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
       ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
       good_log log ->
       state_env_matches (tfs_next_cycle sched_ctx act sys input) act input (commit_update r (interp_scheduler' r sigma rules log (system_schedule_actions tf_ctx))).
   Proof.
-    intros sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hlog.
+    intros sys r act input sigma log Hstate Hsig Hin_rdy Hin_nrdy Hlog.
     unfold system_schedule_actions.
 
     pose proof (nodup_spec_all_actions) as H_nodup_actions.
@@ -3578,13 +3653,13 @@ Section SynthesisCorrectness.
       cbn [fold_right interp_scheduler'].
 
       rewrite synthesis_correct_aux2; try assumption.
-      apply (synthesis_correct_aux3 sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hlog).
+      apply (synthesis_correct_aux3 sys r act input sigma log Hstate Hsig Hin_rdy Hin_nrdy Hlog).
 
     - (* current action is not the requested action *)
       assert (H_act_neq_a: act <> a). { intro H. subst. contradiction. }
       cbn [fold_right interp_scheduler'].
 
-      rewrite (interp_rule_cmd_wrong sys r act input sigma log a Hstate Hin_rdy Hin_nrdy H_act_neq_a).
+      rewrite (interp_rule_cmd_wrong sys r act input sigma log a Hstate Hsig Hin_rdy Hin_nrdy H_act_neq_a).
       apply IH; try assumption.
   Qed.
 
@@ -3635,11 +3710,13 @@ Section SynthesisCorrectness.
            (act: spec_action) (input: input_t)
            (sigma: forall f, Sig_denote (Sigma f)),
       state_matches sys r ->
+      (* the attached trusted modules compute what their declarations say *)
+      externs_match sigma ->
       ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
       ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
       state_env_matches (tfs_next_cycle sched_ctx act sys input) act input (interp_cycle sigma rules system_schedule r).
   Proof.
-    intros sys r act input sigma Hstate Hin_rdy Hin_nrdy.
+    intros sys r act input sigma Hstate Hsig Hin_rdy Hin_nrdy.
     
     unfold interp_cycle, interp_scheduler, system_schedule in *.
     cbn [interp_scheduler'].

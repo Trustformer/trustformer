@@ -61,7 +61,7 @@ Section Specification.
        point here is the CONDITION: it reads the two secrets, and only the xor
        and resize rules can recover them. *)
     Definition rw_transitions (act: rw_action)
-      : (@tf_ops rw_states rw_inputs rw_outputs) :=
+      : (@tf_ops rw_states rw_inputs rw_outputs tf_no_externs) :=
       match act with
       | rw_act =>
           {[
@@ -78,7 +78,7 @@ End Specification.
 
 Section Contrast.
 
-    Definition mk_rw (decls: list (decl_rule rw_states rw_inputs rw_outputs))
+    Definition mk_rw (decls: list (decl_rule rw_states rw_inputs rw_outputs tf_no_externs))
       : TFSchedContext := {|
       tfs_spec_states := rw_states;
       tfs_spec_states_fin := _;
@@ -92,6 +92,9 @@ Section Contrast.
       tfs_spec_outputs := rw_outputs;
       tfs_spec_outputs_fin := _;
       tfs_spec_outputs_size := rw_outputs_size;
+
+      tfs_spec_externs := tf_no_externs;
+      tfs_spec_externs_sig := tf_no_externs_sig;
 
       tfs_spec_action := rw_action;
       tfs_spec_action_fin := _;

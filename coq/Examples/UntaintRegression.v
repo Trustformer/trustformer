@@ -55,7 +55,7 @@ Section FunctionalSpecification.
     (* The spec publishes the bitwise negation of the secret, then branches on
        the secret itself. *)
     Definition fs_transitions (act: fs_action)
-        : (@tf_ops fs_states fs_inputs fs_outputs) :=
+        : (@tf_ops fs_states fs_inputs fs_outputs tf_no_externs) :=
         match act with
         | act_neg =>
             {[
@@ -68,7 +68,7 @@ End FunctionalSpecification.
 
 Section Contrast.
 
-    Definition mk_ctx (decls: list (decl_rule fs_states fs_inputs fs_outputs))
+    Definition mk_ctx (decls: list (decl_rule fs_states fs_inputs fs_outputs tf_no_externs))
         : TFSchedContext := {|
         tfs_spec_states := fs_states;
         tfs_spec_states_fin := _;
@@ -83,6 +83,9 @@ Section Contrast.
         tfs_spec_outputs_fin := _;
         tfs_spec_outputs_size := fs_outputs_size;
 
+        tfs_spec_externs := tf_no_externs;
+        tfs_spec_externs_sig := tf_no_externs_sig;
+
         tfs_spec_action := fs_action;
         tfs_spec_action_fin := _;
         tfs_spec_action_ops := fs_transitions;
@@ -96,7 +99,7 @@ Section Contrast.
        compiler's own diagnostic rather than from a per-node approximation. *)
     Definition critical_count (ctx: TFSchedContext)
         (dfg: @dfg_state_t (tfs_spec_states ctx) (tfs_spec_inputs ctx)
-                (tfs_spec_outputs ctx)) : nat :=
+                (tfs_spec_outputs ctx) (tfs_spec_externs ctx)) : nat :=
         List.length (crit_report_all ctx dfg).
 
     (* Without a rule the branch on the secret must be constant-time. *)
@@ -193,7 +196,7 @@ Section GuardedSpecification.
         end.
 
     Definition gs_transitions (act: gs_action)
-        : (@tf_ops gs_states gs_inputs gs_outputs) :=
+        : (@tf_ops gs_states gs_inputs gs_outputs tf_no_externs) :=
         match act with
         | gs_act =>
             {[
@@ -209,7 +212,7 @@ End GuardedSpecification.
 
 Section GuardedContrast.
 
-    Definition mk_gctx (decls: list (decl_rule gs_states gs_inputs gs_outputs))
+    Definition mk_gctx (decls: list (decl_rule gs_states gs_inputs gs_outputs tf_no_externs))
         : TFSchedContext := {|
         tfs_spec_states := gs_states;
         tfs_spec_states_fin := _;
@@ -223,6 +226,9 @@ Section GuardedContrast.
         tfs_spec_outputs := gs_outputs;
         tfs_spec_outputs_fin := _;
         tfs_spec_outputs_size := gs_outputs_size;
+
+        tfs_spec_externs := tf_no_externs;
+        tfs_spec_externs_sig := tf_no_externs_sig;
 
         tfs_spec_action := gs_action;
         tfs_spec_action_fin := _;

@@ -40,6 +40,7 @@ Section SynthesisTypes.
   Context {states_var: Type}.
   Context {inputs_var: Type}.
   Context {outputs_var: Type}.
+  Context {externs_var: Type}.
   Context {actions: Type}.
 
   Inductive _reg_t := 
@@ -62,6 +63,9 @@ Section SynthesisTypes.
     | ext_in_cmd
     | ext_input (x : inputs_var)
     | ext_output (x : outputs_var)
+    (* Trusted external function port. Carries the argument out and the result back
+       in; assumed not to be observable by the attacker. *)
+    | ext_call (f : externs_var)
     .
 
 End SynthesisTypes.
@@ -97,8 +101,7 @@ Section TypedSynthesis.
     Local Notation spec_output_index := (@finite_index spec_outputs spec_outputs_fin).
     Local Notation spec_output_num := (Datatypes.length spec_all_outputs).
 
-    Local Notation spec_action := (tfs_action (tf_sched_ctx tf_ctx)).
-    Local Notation spec_action_fin := (tfs_action_fin (tf_sched_ctx tf_ctx)).
+    Local Notation spec_action := (tfs_action (tf_sched_ctx tf_ctx)).    Local Notation spec_action_fin := (tfs_action_fin (tf_sched_ctx tf_ctx)).
     Local Notation spec_all_actions := (@finite_elements spec_action spec_action_fin).
     Local Notation spec_action_index := (@finite_index spec_action spec_action_fin).
     Local Notation spec_action_num := (Datatypes.length spec_all_actions).
@@ -299,15 +302,29 @@ Section TypedSynthesis.
 
     (* ====== External Functions ====== *)
 
-    Local Notation ext_fn_t := (@_ext_fn_t spec_inputs spec_outputs).
+    Local Notation spec_externs := (tfs_spec_externs (tfs_ctx (tf_sched_ctx tf_ctx))).
+    Local Notation spec_externs_sig := (tfs_spec_externs_sig (tfs_ctx (tf_sched_ctx tf_ctx))).
+    Local Notation spec_externs_fin := (tfs_spec_externs_fin (tfs_ctx (tf_sched_ctx tf_ctx))).
+    Local Notation spec_externs_arg := (@tfe_arg_size _ spec_externs_sig).
+    Local Notation spec_externs_res := (@tfe_res_size _ spec_externs_sig).
+
+    Hint Extern 0 (FiniteType spec_externs) => exact spec_externs_fin : typeclass_instances.
+    Hint Extern 0 (tf_externs spec_externs) => exact spec_externs_sig : typeclass_instances.
+    Hint Extern 0 (Show spec_externs) =>
+      exact (tfs_spec_externs_names (tfs_ctx (tf_sched_ctx tf_ctx))) : typeclass_instances.
+
+    Local Notation ext_fn_t := (@_ext_fn_t spec_inputs spec_outputs spec_externs).
 
     Definition Sigma (fn: ext_fn_t) : ExternalSignature :=
       match fn with
       | ext_in_cmd => {$ bits_t 1 ~> maybe (bits_t spec_action_reg_size) $}
       | ext_input x => {$ bits_t 1 ~> spec_inputs_t x $}
       | ext_output x => {$ spec_outputs_t x ~> bits_t 1 $}
+      | ext_call f => {$ bits_t (spec_externs_arg f) ~> bits_t (spec_externs_res f) $}
       end.
 
+    (* The "ext_" prefix is what separates the trusted function wires from the normal
+       module I/O in the generated Verilog. *)
     Definition ext_fn_specs (fn : ext_fn_t) := 
       match fn with
       | ext_in_cmd => {| efr_name := "in_cmd"; 
@@ -316,6 +333,8 @@ Section TypedSynthesis.
                           efr_internal := false |}
       | ext_output x => {| efr_name := String.append "out_param_" (show x); 
                            efr_internal := false |}
+      | ext_call f => {| efr_name := String.append "ext_" (show f);
+                         efr_internal := false |}
       end.
 
     Instance ext_fn_names : Show ext_fn_t :=
@@ -323,6 +342,7 @@ Section TypedSynthesis.
           | ext_in_cmd => "in_cmd"
           | ext_input x => String.append "in_param_" (show x)
           | ext_output x => String.append "out_param_" (show x)
+          | ext_call f => String.append "ext_" (show f)
           end
       }.
     
@@ -429,6 +449,10 @@ Section TypedSynthesis.
           If (expr_to_action cond 1)
             (expr_to_action then_expr target_size)
             (expr_to_action else_expr target_size)
+
+      | tf_ext f arg =>
+          synth_convert target_size
+            (ExternalCall (ext_call f) (expr_to_action arg (spec_externs_arg f)))
       end.
 
     Definition op_to_action {sig tau} (op: tf_op) (code: action sig tau) : action sig tau :=

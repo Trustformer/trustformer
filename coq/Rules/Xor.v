@@ -55,7 +55,7 @@ Proof.
   rewrite (xor_comm x k), (xor_comm y k). exact H.
 Qed.
 
-Definition xor_rule {s i o} : decl_rule s i o :=
+Definition xor_rule {s i o e} : decl_rule s i o e :=
   fun dfg =>
     flat_map
       (fun n =>
@@ -82,6 +82,7 @@ Section Soundness.
   Hint Extern 0 (FiniteType s_var) => exact (tfs_spec_states_fin ctx)  : typeclass_instances.
   Hint Extern 0 (FiniteType i_var) => exact (tfs_spec_inputs_fin ctx)  : typeclass_instances.
   Hint Extern 0 (FiniteType o_var) => exact (tfs_spec_outputs_fin ctx) : typeclass_instances.
+  Hint Extern 1 (tf_externs _) => exact (tfs_spec_externs_sig ctx) : typeclass_instances.
   Hint Extern 0 (FiniteType (tfs_states sched))  => exact (tfs_states_fin sched)  : typeclass_instances.
   Hint Extern 0 (FiniteType (tfs_outputs sched)) => exact (tfs_outputs_fin sched) : typeclass_instances.
 
@@ -99,7 +100,7 @@ Section Soundness.
     assert (Hlen : n < length (graph (build_dfg ctx act))) by lia.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | ] eqn:Hop;
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | xf xarg | ] eqn:Hop;
       cbn [List.In] in Hi; try contradiction.
     destruct bop; cbn [List.In] in Hi; try contradiction.
     assert (Hnode_in : List.In (nth n (graph (build_dfg ctx act))

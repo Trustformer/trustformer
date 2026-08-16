@@ -9,6 +9,54 @@ Require Import Trustformer.Syntax.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
+(* Declaration of the trusted external functions a module may call.
+   A *class*, so that the ~150 existing applications of the semantics definitions
+   below need not name it: [externs_var] is always fixed by the expression being
+   evaluated, and the signature itself is resolved by the [Hint Extern] each
+   section installs.
+   Kept as a record type so later campaigns can add fields (pipelining initiation
+   interval, per-argument taint influence, ...) without changing any arity. *)
+Class tf_externs (externs_var: Type) := {
+  tfe_arg_size : externs_var -> nat;
+  tfe_res_size : externs_var -> nat;
+  (* Cycles from "argument held stable on the argument port" to "result port carries
+     the result". This is an obligation on the attached module, not a property the
+     tool establishes. Phase A of the campaign only supports 0. *)
+  tfe_latency  : externs_var -> nat;
+  (* The function the attached module is assumed to compute. Pure by construction:
+     see agents/extern-calls-mvp/PLAN.md, section "Purity". *)
+  tfe_denote   : forall f: externs_var, bits_t (tfe_arg_size f) -> bits_t (tfe_res_size f);
+}.
+
+(* Instantiation for modules that call no external function at all; reproduces the
+   pre-externs behaviour of the whole pipeline. *)
+Inductive tf_no_externs : Type := .
+
+Instance tf_no_externs_eqdec : EqDec tf_no_externs.
+Proof. constructor. intros t1; destruct t1. Defined.
+
+Instance tf_no_externs_fin : FiniteType tf_no_externs.
+Proof.
+  refine {| finite_index := fun f : tf_no_externs => match f with end;
+            finite_elements := @nil tf_no_externs |}.
+  - intros a; destruct a.
+  - constructor.
+Defined.
+
+Instance tf_no_externs_show : Show tf_no_externs :=
+  { show := fun f => match f with end }.
+
+(* Deliberately NOT an [Instance]: [tf_externs] is a class whose argument is often
+   still an evar at resolution time, and a global instance would then be picked
+   (silently fixing externs_var := tf_no_externs) in preference to the signature the
+   surrounding section intends. Sections install a [Hint Extern] instead; the
+   examples below pass this explicitly. *)
+Definition tf_no_externs_sig : tf_externs tf_no_externs :=
+  {| tfe_arg_size := fun f : tf_no_externs => match f with end;
+     tfe_res_size := fun f : tf_no_externs => match f with end;
+     tfe_latency  := fun f : tf_no_externs => match f with end;
+     tfe_denote   := fun f : tf_no_externs => match f with end |}.
+
 Section Semantics.
 
     (* Given some (finite) variables, each with some HW register size, we define our semantics  *)
@@ -18,6 +66,8 @@ Section Semantics.
             (states_size : states_var -> nat)
             (inputs_size : inputs_var -> nat)
             (outputs_size : outputs_var -> nat).
+
+    Context {externs_var: Type} {externs : tf_externs externs_var}.
 
     (* All spec states are mapped to bits, the size is given by the states_size function *)
     Definition tf_states_type (x: states_var) := 
@@ -93,6 +143,9 @@ Section Semantics.
               tf_eval_expr else_expr sys_state input 
             else
               tf_eval_expr then_expr sys_state input
+        | tf_ext f arg =>
+            convert (tfe_denote f
+                       (tf_eval_expr (szB:=tfe_arg_size f) arg sys_state input))
         end.
 
     Inductive tf_update :=

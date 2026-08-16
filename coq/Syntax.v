@@ -15,6 +15,10 @@ Section TrustformerSyntax.
     Context {inputs_var_eqdec: EqDec inputs_var}.
     Context {outputs_var: Type}.
     Context {outputs_var_eqdec: EqDec outputs_var}.
+    (* Trusted external functions: their I/O wires are assumed not to be exposed to
+       the attacker, and the module behind them is trusted too. *)
+    Context {externs_var: Type}.
+    Context {externs_var_eqdec: EqDec externs_var}.
 
     Inductive tf_unary_ops :=
         | tf_not                                (* Bitwise NOT *)
@@ -48,6 +52,11 @@ Section TrustformerSyntax.
         | tf_op1 (op: tf_unary_ops) (src: tf_expr)                              (* Unary operation *)
         | tf_op2 (op: tf_binary_ops) (src1: tf_expr) (src2: tf_expr)            (* Binary operation *)
         | tf_expr_if (cond: tf_expr) (then_expr: tf_expr) (else_expr: tf_expr)  (* Conditional expression *)
+        (* Call to a trusted external function. Deliberately restricted to *pure*
+           functions (result depends only on [arg], no internal state): both branches
+           of a [tf_ops_if] are always evaluated, so a call is issued even on the
+           untaken branch. See agents/extern-calls-mvp/PLAN.md, section "Purity". *)
+        | tf_ext (f: externs_var) (arg: tf_expr)                                (* External call *)
         .
 
     (* Atomic operations on variables *)
@@ -91,6 +100,7 @@ Section TrustformerSyntax.
         try apply states_var_eqdec;
         try apply inputs_var_eqdec;
         try apply outputs_var_eqdec;
+        try apply externs_var_eqdec;
         try apply tf_unary_ops_eqdec;
         try apply tf_binary_ops_eqdec.
     Qed.
@@ -119,47 +129,47 @@ End TrustformerSyntax.
     TODO: This is only temporary, to make some code more readable.
 *)
 
-Class IsExpr (S I O V : Type) := { 
-    as_expr : V -> @tf_expr S I O 
+Class IsExpr (S I O E V : Type) := { 
+    as_expr : V -> @tf_expr S I O E
 }.
 
-Class IsAssignable (S I O V : Type) := { 
-    do_assign : V -> @tf_expr S I O -> @tf_op S I O 
+Class IsAssignable (S I O E V : Type) := { 
+    do_assign : V -> @tf_expr S I O E -> @tf_op S I O E
 }.
 
-Class HasIf (Ret S I O : Type) := {
-    make_if : @tf_expr S I O -> Ret -> Ret -> Ret
+Class HasIf (Ret S I O E : Type) := {
+    make_if : @tf_expr S I O E -> Ret -> Ret -> Ret
 }.
 
-Arguments as_expr {S I O V} {_} _.
-Arguments do_assign {S I O V} {_} _ _.
-Arguments make_if {Ret S I O} {_} _ _ _.
+Arguments as_expr {S I O E V} {_} _.
+Arguments do_assign {S I O E V} {_} _ _.
+Arguments make_if {Ret S I O E} {_} _ _ _.
 
-Instance StateIsExpr {S I O : Type} : IsExpr S I O S := {
+Instance StateIsExpr {S I O E : Type} : IsExpr S I O E S := {
     as_expr := tf_svar
 }.
 
-Instance InputIsExpr {S I O : Type} : IsExpr S I O I := {
+Instance InputIsExpr {S I O E : Type} : IsExpr S I O E I := {
     as_expr := tf_ivar
 }.
 
-Instance OutputIsExpr {S I O : Type} : IsExpr S I O O := {
+Instance OutputIsExpr {S I O E : Type} : IsExpr S I O E O := {
     as_expr := tf_ovar
 }.
 
-Instance StateIsAssignable {S I O : Type} : IsAssignable S I O S := {
+Instance StateIsAssignable {S I O E : Type} : IsAssignable S I O E S := {
     do_assign := tf_assign
 }.  
 
-Instance OutputIsAssignable {S I O : Type} : IsAssignable S I O O := {
+Instance OutputIsAssignable {S I O E : Type} : IsAssignable S I O E O := {
     do_assign := tf_output
 }.
 
-Instance IfExpr {S I O : Type} : HasIf (@tf_expr S I O) S I O := {
+Instance IfExpr {S I O E : Type} : HasIf (@tf_expr S I O E) S I O E := {
     make_if := tf_expr_if
 }.
 
-Instance IfOps {S I O : Type} : HasIf (@tf_ops S I O) S I O := {
+Instance IfOps {S I O E : Type} : HasIf (@tf_ops S I O E) S I O E := {
     make_if := tf_ops_if
 }.
 
@@ -253,17 +263,20 @@ Section NotationExamples.
     Context {states_var: Type}.
     Context {inputs_var: Type}.
     Context {outputs_var: Type}.
+    Context {externs_var: Type}.
 
     Variables (s_a s_b : states_var) (i_x : inputs_var) (o_y : outputs_var).
 
-    Definition t1 : @tf_ops states_var inputs_var outputs_var := {[ 
+    Local Notation ops := (@tf_ops states_var inputs_var outputs_var externs_var).
+
+    Definition t1 : ops := {[ 
         let $s_a := $i_x + #1;
         let $s_b := $i_x
     ]}.
     Goal True. pose (debug := t1); compute in debug.
     Abort.
 
-    Definition t2 : @tf_ops states_var inputs_var outputs_var := {[ 
+    Definition t2 : ops := {[ 
         if ($i_x ==[32] $s_a) 
         then 
             let $o_y := #1;
@@ -273,13 +286,13 @@ Section NotationExamples.
     Goal True. pose (debug := t2); compute in debug.
     Abort.
 
-    Definition t3 : @tf_ops states_var inputs_var outputs_var := {[ 
+    Definition t3 : ops := {[ 
         pass ; pass                  
     ]}.
     Goal True. pose (debug := t3); compute in debug.
     Abort.
 
-    Definition t4 : @tf_ops states_var inputs_var outputs_var := {[ 
+    Definition t4 : ops := {[ 
         let $s_a := $i_x + #1;                 
         if ($s_a ==[32] #10) 
         then let $o_y := $s_a 
@@ -288,14 +301,14 @@ Section NotationExamples.
     Goal True. pose (debug := t4); compute in debug.
     Abort.
 
-    Definition t5 : @tf_ops states_var inputs_var outputs_var := {[ 
+    Definition t5 : ops := {[ 
         let $s_a := $i_x + `tf_const 1`;           
         if ($s_a ==[32] #10) then pass else pass
     ]}.
     Goal True. pose (debug := t5); compute in debug.
     Abort.
 
-    Definition t6 : @tf_ops states_var inputs_var outputs_var := {[ 
+    Definition t6 : ops := {[ 
         let $s_a := if ($i_x ==[32] #0) then #1 else #2 
     ]}.
     Goal True. pose (debug := t6); compute in debug.

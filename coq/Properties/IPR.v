@@ -133,6 +133,11 @@ Section IPR.
   Hint Extern 0 (FiniteType o_var) => exact (tfs_spec_outputs_fin ctx) : typeclass_instances.
   Hint Extern 0 (FiniteType (tfs_states sched))  => exact (tfs_states_fin sched)  : typeclass_instances.
   Hint Extern 0 (FiniteType (tfs_outputs sched)) => exact (tfs_outputs_fin sched) : typeclass_instances.
+  (* [tfs_ctx sched] and [ctx] are convertible but not syntactically equal, and the
+     goal appears under both spellings; [exact] fails harmlessly if neither matches. *)
+  Hint Extern 0 (tf_externs (tfs_spec_externs ctx)) =>
+    exact (tfs_spec_externs_sig ctx) : typeclass_instances.
+  Hint Extern 1 (tf_externs _) => exact (tfs_spec_externs_sig ctx) : typeclass_instances.
 
   Local Notation sched_st_env  := (ContextEnv.(env_t) (tf_states_type (tfs_states_size sched))).
   Local Notation sched_out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).
@@ -411,7 +416,7 @@ Section IPR.
     intros ss ss' _. unfold nval.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | ] eqn:Hopn;
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | xf xarg | ] eqn:Hopn;
       try discriminate.
     - rewrite (nre_const ctx cost_limit act a_idx n c Hn1 Hlen Hopn). reflexivity.
     - rewrite (nre_input ctx cost_limit act a_idx n v Hn1 Hlen Hopn). reflexivity.
@@ -600,7 +605,7 @@ Section IPR.
 
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | iv | [sv | ov] | uop arg | bop a1 a2 | src | cnd tid eid | ]
+      as [c | iv | [sv | ov] | uop arg | bop a1 a2 | src | cnd tid eid | xf xarg | ]
       eqn:Eop.
 
     - rewrite (nre_const ctx cost_limit act a_idx n c H1 Hlen Eop).
@@ -663,6 +668,15 @@ Section IPR.
       cbn [tf_eval_expr].
       rewrite (Hder_at cnd _ Hc Hgc), (Hder_at tid _ Ht Hgt),
               (Hder_at eid _ He Hge). reflexivity.
+
+    - (* a call's result is a function of its argument, so it is derivable
+         exactly when the argument is *)
+      assert (Ha : List.In xarg (get_args ctx (nth n (graph (build_dfg ctx act))
+                                                {| nid := 0; op := DFG_Empty; sz := 0 |})))
+        by (unfold get_args; rewrite Eop; left; reflexivity).
+      unfold node_args_sz in Hfg. rewrite Eop in Hfg.
+      rewrite (nre_ext ctx cost_limit act a_idx n xf xarg H1 Hlen Eop).
+      cbn [tf_eval_expr]. rewrite (Hder_at xarg _ Ha Hfg). reflexivity.
 
     - assert (Hemp : node_ref_expr ctx cost_limit act a_idx n = tf_const 0).
       { rewrite (nre_unfold ctx cost_limit act a_idx n H1 Hlen).
@@ -822,7 +836,7 @@ Section IPR.
 
   (* Bridge to the unconditional obligation, so the rules in coq/Rules/ can
      discharge [Hdecls] from the same [instance_sound] proof. *)
-  Lemma uncond_guard_nil (dfg: @dfg_state_t s_var i_var o_var) (i: decl_instance) :
+  Lemma uncond_guard_nil (dfg: @dfg_state_t s_var i_var o_var (tfs_spec_externs ctx)) (i: decl_instance) :
     List.In i (uncond_instances ctx dfg) -> di_guard i = [].
   Proof.
     unfold uncond_instances. intro Hin.
@@ -1124,7 +1138,7 @@ Section IPR.
     assert (Hrange : forall x, List.In x (get_args ctx node) -> 1 <= x /\ x < n)
       by (intros x Hx; exact (node_args_range ctx cost_limit act n Hn1 Hnlen x Hx)).
     pose proof (wfg_build_dfg ctx cost_limit act node Hnode_in) as Hfg.
-    destruct (op node) as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | ]
+    destruct (op node) as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | xf xarg | ]
       eqn:Hop.
     - reflexivity.
     - reflexivity.
@@ -1242,9 +1256,9 @@ Section IPR.
                         \/ valid_expr_if ctx cost_limit ce tv ev
                            = tf_expr_if ce tv ev).
         { unfold valid_expr_if.
-          destruct tv as [vt| | | | | |]; try (right; reflexivity).
+          destruct tv as [vt| | | | | | |]; try (right; reflexivity).
           destruct vt as [|[|vt]]; try (right; reflexivity).
-          destruct ev as [vee| | | | | |]; try (right; reflexivity).
+          destruct ev as [vee| | | | | | |]; try (right; reflexivity).
           destruct vee as [|[|vee]]; try (right; reflexivity).
           left; split; reflexivity. }
         destruct Hcase as [[Htc Hec] | Hcs].
@@ -1285,6 +1299,14 @@ Section IPR.
              pose proof (IH tid ((cnd, true) :: pi) Ht1 ltac:(lia) ltac:(lia)
                            Hp1 Hp1') as Hct.
              rewrite Et in Hct. cbn [snd] in Hct. exact Hct.
+    - (* Ext: validity is the argument's *)
+      assert (Hain : List.In xarg (get_args ctx node))
+        by (unfold get_args; rewrite Hop; left; reflexivity).
+      destruct (Hrange xarg Hain) as [Ha1 Ha2].
+      destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                  xarg bufs) as [ae ve] eqn:E1.
+      pose proof (IH xarg pi Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
+      rewrite E1 in Ha. cbn [snd] in Ha |- *. exact Ha.
     - reflexivity.
   Qed.
 

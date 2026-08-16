@@ -56,7 +56,7 @@ Section FunctionalSpecification.
   (* The branch condition reads [fs_secret], so a naive compilation would take a
      different number of cycles for a correct and an incorrect guess. *)
   Definition fs_transitions (act: fs_action)
-      : @tf_ops fs_states fs_inputs fs_outputs :=
+      : @tf_ops fs_states fs_inputs fs_outputs tf_no_externs :=
     match act with
     | fs_check =>
         {[
@@ -85,6 +85,9 @@ Section Context.
     tfs_spec_outputs      := fs_outputs;
     tfs_spec_outputs_fin  := _;
     tfs_spec_outputs_size := fs_outputs_size;
+
+    tfs_spec_externs      := tf_no_externs;
+    tfs_spec_externs_sig  := tf_no_externs_sig;
 
     tfs_spec_action     := fs_action;
     tfs_spec_action_fin := _;
@@ -142,11 +145,13 @@ Section TheoremInstantiation.
       start_rel tfs_ctx cost sp0  ss0  ->
       start_rel tfs_ctx cost sp0' ss0' ->
       (forall ov, (snd sp0).[ov] = (snd sp0').[ov]) ->
-      (forall ov, (snd (tf_ops_run (tfs_spec_states_size tfs_ctx)
+      (forall ov, (snd (tf_ops_run (externs := tfs_spec_externs_sig tfs_ctx)
+                          (tfs_spec_states_size tfs_ctx)
                           (tfs_spec_inputs_size tfs_ctx)
                           (tfs_spec_outputs_size tfs_ctx)
                           (tfs_spec_action_ops tfs_ctx fs_check) sp0 input)).[ov]
-                = (snd (tf_ops_run (tfs_spec_states_size tfs_ctx)
+                = (snd (tf_ops_run (externs := tfs_spec_externs_sig tfs_ctx)
+                          (tfs_spec_states_size tfs_ctx)
                           (tfs_spec_inputs_size tfs_ctx)
                           (tfs_spec_outputs_size tfs_ctx)
                           (tfs_spec_action_ops tfs_ctx fs_check) sp0' input)).[ov]) ->

@@ -85,10 +85,16 @@ Section SchedulerSimulation.
   Local Notation s_sz  := (tfs_spec_states_size ctx).
   Local Notation i_sz  := (tfs_spec_inputs_size ctx).
   Local Notation o_sz  := (tfs_spec_outputs_size ctx).
+  Local Notation e_var := (tfs_spec_externs ctx).
+  Local Notation e_sig := (tfs_spec_externs_sig ctx).
 
   Hint Extern 0 (FiniteType s_var) => exact (tfs_spec_states_fin ctx)  : typeclass_instances.
   Hint Extern 0 (FiniteType i_var) => exact (tfs_spec_inputs_fin ctx)  : typeclass_instances.
   Hint Extern 0 (FiniteType o_var) => exact (tfs_spec_outputs_fin ctx) : typeclass_instances.
+  Hint Extern 0 (tf_externs e_var) => exact e_sig : typeclass_instances.
+  (* [tfs_ctx sched] and [ctx] are convertible but not syntactically equal, and the
+     goal appears under both spellings; [exact] fails harmlessly if neither matches. *)
+  Hint Extern 1 (tf_externs _) => exact e_sig : typeclass_instances.
 
   Local Notation src_st_env  := (ContextEnv.(env_t) (tf_states_type s_sz)).
   Local Notation src_out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).
@@ -163,7 +169,7 @@ Section SchedulerSimulation.
     (tf_eval_expr ss_sz i_sz oo_sz (szB := oo_sz dst) e ss input).
 
   (* tfs_get_updates is a map, so it peels one op at a time. *)
-  Lemma tfs_get_updates_cons (op: @tf_op (tfs_states sched) i_var o_var) ops ss input :
+  Lemma tfs_get_updates_cons (op: @tf_op (tfs_states sched) i_var o_var e_var) ops ss input :
     tfs_get_updates sched (op :: ops) ss input =
     tf_op_step_updates ss_sz i_sz oo_sz op ss input :: tfs_get_updates sched ops ss input.
   Proof. reflexivity. Qed.
@@ -191,7 +197,7 @@ Section SchedulerSimulation.
   Qed.
 
   (* find_st_update skips a head op that does not assign the queried state. *)
-  Lemma find_st_update_skip_head x (op: @tf_op (tfs_states sched) i_var o_var) ops ss input :
+  Lemma find_st_update_skip_head x (op: @tf_op (tfs_states sched) i_var o_var e_var) ops ss input :
     (forall e, op <> tf_assign x e) ->
     find_st_update sched x (tfs_get_updates sched (op :: ops) ss input)
     = find_st_update sched x (tfs_get_updates sched ops ss input).
@@ -224,7 +230,7 @@ Section SchedulerSimulation.
   Qed.
 
   (* find_out_update skips a head op that does not output the queried var. *)
-  Lemma find_out_update_skip_head x (op: @tf_op (tfs_states sched) i_var o_var) ops ss input :
+  Lemma find_out_update_skip_head x (op: @tf_op (tfs_states sched) i_var o_var e_var) ops ss input :
     (forall e, op <> tf_output x e) ->
     find_out_update sched x (tfs_get_updates sched (op :: ops) ss input)
     = find_out_update sched x (tfs_get_updates sched ops ss input).
@@ -235,10 +241,10 @@ Section SchedulerSimulation.
   Qed.
 
   (* Predicate: op writes state x. *)
-  Definition op_assigns_st (x: tfs_states sched) (op: @tf_op (tfs_states sched) i_var o_var) : Prop :=
+  Definition op_assigns_st (x: tfs_states sched) (op: @tf_op (tfs_states sched) i_var o_var e_var) : Prop :=
     exists e, op = tf_assign x e.
   (* Predicate: op writes output x. *)
-  Definition op_writes_out (x: o_var) (op: @tf_op (tfs_states sched) i_var o_var) : Prop :=
+  Definition op_writes_out (x: o_var) (op: @tf_op (tfs_states sched) i_var o_var e_var) : Prop :=
     exists e, op = tf_output x e.
 
   (* If no op in the list assigns x, find_st_update returns None. *)
@@ -474,20 +480,20 @@ Section SchedulerSimulation.
 
 
   Lemma valid_and_eval
-    (e1 e2: @tf_expr (tfs_states sched) i_var o_var) (ss: sched_sys_state) (input: input_t) :
+    (e1 e2: @tf_expr (tfs_states sched) i_var o_var e_var) (ss: sched_sys_state) (input: input_t) :
     eval1 (valid_expr_and ctx cost_limit e1 e2) ss input
     = Bits.and (eval1 e1 ss input) (eval1 e2 ss input).
   Proof.
     unfold valid_expr_and.
-    destruct e1 as [v1| | | | | |];
-      try (destruct e2 as [v2| | | | | |];
+    destruct e1 as [v1| | | | | | |];
+      try (destruct e2 as [v2| | | | | | |];
            try (destruct v2 as [|[|v2]]);
            cbn [tf_eval_expr];
            change (Bits.of_nat 1 1) with (Bits.ones 1);
            rewrite ?Bits.and_ones_l, ?Bits.and_ones_r; reflexivity).
     (* e1 = tf_const v1 *)
     destruct v1 as [|[|v1]];
-      try (destruct e2 as [v2| | | | | |];
+      try (destruct e2 as [v2| | | | | | |];
            try (destruct v2 as [|[|v2]]);
            cbn [tf_eval_expr];
            change (Bits.of_nat 1 1) with (Bits.ones 1);
@@ -498,7 +504,7 @@ Section SchedulerSimulation.
      either it collapsed to `tf_const 1`, or it is a runtime `tf_expr_if` whose
      two branches both evaluate to ones (so the selection is irrelevant). *)
   Lemma valid_if_eval
-    (cond t e: @tf_expr (tfs_states sched) i_var o_var) (ss: sched_sys_state) (input: input_t) :
+    (cond t e: @tf_expr (tfs_states sched) i_var o_var e_var) (ss: sched_sys_state) (input: input_t) :
     eval1 t ss input = Bits.ones 1 ->
     eval1 e ss input = Bits.ones 1 ->
     eval1 (valid_expr_if ctx cost_limit cond t e) ss input = Bits.ones 1.
@@ -507,13 +513,13 @@ Section SchedulerSimulation.
     assert (Hcase: valid_expr_if ctx cost_limit cond t e = tf_const 1
                    \/ valid_expr_if ctx cost_limit cond t e = tf_expr_if cond t e).
     { unfold valid_expr_if.
-      destruct t as [vt| | | | | |]; try (right; reflexivity).
+      destruct t as [vt| | | | | | |]; try (right; reflexivity).
       destruct vt as [|[|vt]]; try (right; reflexivity).
-      destruct e as [ve| | | | | |]; try (right; reflexivity).
+      destruct e as [ve| | | | | | |]; try (right; reflexivity).
       destruct ve as [|[|ve]]; try (right; reflexivity).
       left; reflexivity. }
     destruct Hcase as [Hc | Hc]; rewrite Hc.
-    - apply eval1_const1.
+    - exact (eval1_const1 ss input).
     - cbn [tf_eval_expr].
       destruct (beq_dec (tf_eval_expr ss_sz i_sz oo_sz (szB := 1) cond ss input) Bits.zero).
       + exact He.
@@ -523,12 +529,12 @@ Section SchedulerSimulation.
   (* The compiled combined-validity expression evaluates to the AND-fold of the
      individual validity exprs (base case = all-ones for the empty conjunction). *)
   Lemma combine_valid_eval
-    (exprs: list (@tf_expr (tfs_states sched) i_var o_var)) (ss: sched_sys_state) (input: input_t) :
+    (exprs: list (@tf_expr (tfs_states sched) i_var o_var e_var)) (ss: sched_sys_state) (input: input_t) :
     eval1 (combine_valid_exprs ctx cost_limit exprs) ss input
     = fold_right Bits.and (Bits.ones 1) (map (fun e => eval1 e ss input) exprs).
   Proof.
     induction exprs as [| e rest IH].
-    - cbn [combine_valid_exprs map fold_right]. apply eval1_const1.
+    - cbn [combine_valid_exprs map fold_right]. exact (eval1_const1 ss input).
     - destruct rest as [| e2 rest].
       + cbn [combine_valid_exprs map fold_right].
         rewrite Bits.and_ones_r. reflexivity.
@@ -674,7 +680,7 @@ Section SchedulerSimulation.
   Definition node_ref_expr
       (act: tfs_action sched)
       (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
-      (n: nat) : @tf_expr (tfs_states sched) i_var o_var :=
+      (n: nat) : @tf_expr (tfs_states sched) i_var o_var e_var :=
     fst (compile_dfg_expr ctx cost_limit
            (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n []).
 
@@ -1203,8 +1209,8 @@ Section SchedulerSimulation.
      node processed later, then the inequality getn x >= getn (nid N) is
      preserved through the rest of the fold. *)
   Lemma cost_ge_after_fold :
-    forall (suf: list (@dfg_node_t s_var i_var o_var)) acc
-           (N: @dfg_node_t s_var i_var o_var) x,
+    forall (suf: list (@dfg_node_t s_var i_var o_var e_var)) acc
+           (N: @dfg_node_t s_var i_var o_var e_var) x,
       getn acc (nid N) <= getn acc x ->
       (forall M, In M suf -> ~ In (nid N) (nid M :: get_args ctx M)) ->
       getn (fold_left bc_aux suf acc) (nid N)
@@ -1226,12 +1232,12 @@ Section SchedulerSimulation.
   (* Along the fold order [rev (graph (build_dfg …))] the node ids are strictly
      decreasing (each node was emitted with a strictly larger id than every node
      appearing later in this order). *)
-  Definition ids_desc (L : list (@dfg_node_t s_var i_var o_var)) : Prop :=
+  Definition ids_desc (L : list (@dfg_node_t s_var i_var o_var e_var)) : Prop :=
     forall pre a rest, L = pre ++ a :: rest ->
       forall M, In M rest -> nid M < nid a.
 
   (* Every node's args reference strictly-earlier (lower) ids. *)
-  Definition args_lt (L : list (@dfg_node_t s_var i_var o_var)) : Prop :=
+  Definition args_lt (L : list (@dfg_node_t s_var i_var o_var e_var)) : Prop :=
     forall a, In a L -> forall x, In x (get_args ctx a) -> x < nid a.
 
   (* ===================================================================== *)
@@ -1240,7 +1246,7 @@ Section SchedulerSimulation.
   (* Proved by a state-monad invariant [winv] threaded through the builder.*)
   (* ===================================================================== *)
 
-  Local Notation wst := (@dfg_state_t s_var i_var o_var).
+  Local Notation wst := (@dfg_state_t s_var i_var o_var e_var).
 
   (* --- list / seq arithmetic helpers --- *)
 
@@ -1525,6 +1531,12 @@ Section SchedulerSimulation.
           -- exact Hpt.
         * exact Hpc.
       + exact Hinv.
+    - (* tf_ext: same shape as the unary case, one argument node *)
+      simpl. apply seq_full.
+      + apply IHe.
+      + intros id1 s1 Hg1 Hn1 Hp1. apply emit_full;
+          [ exact Hp1 | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn1 ].
+      + exact Hinv.
   Qed.
 
   (* ===================================================================== *)
@@ -1744,6 +1756,15 @@ Section SchedulerSimulation.
         * exact Hqc.
       + exact Hinv.
       + exact Hvsz.
+    - (* tf_ext: the argument is compiled at the declared argument width *)
+      simpl. apply (seq_sz _ _ _ size).
+      + intros Hi Hv. pose proof (IHe (@tfe_arg_size _ e_sig f) s Hi Hv) as H.
+        destruct (dataflow_expr ctx e (@tfe_arg_size _ e_sig f) s) as [id s1].
+        exact (sz_weaken _ _ _ _ _ H).
+      + intros id s1 Hg Hn Hp Hq. apply emit_sz;
+          [ exact Hp | exact Hq | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn ].
+      + exact Hinv.
+      + exact Hvsz.
   Qed.
 
   (* ===================================================================== *)
@@ -1759,7 +1780,7 @@ Section SchedulerSimulation.
   (* constraint from the args' [wsz] returned by the recursive calls.       *)
   (* ===================================================================== *)
 
-  Definition node_args_sz (s: wst) (node: @dfg_node_t s_var i_var o_var) : Prop :=
+  Definition node_args_sz (s: wst) (node: @dfg_node_t s_var i_var o_var e_var) : Prop :=
     match op node with
     | DFG_Unary uop a =>
         match uop with
@@ -1772,6 +1793,7 @@ Section SchedulerSimulation.
         | _ => wsz s a1 (sz node) /\ wsz s a2 (sz node)
         end
     | DFG_Phi c t e => wsz s c 1 /\ wsz s t (sz node) /\ wsz s e (sz node)
+    | DFG_Ext f a => wsz s a (@tfe_arg_size _ e_sig f)
     | _ => True
     end.
 
@@ -1782,11 +1804,12 @@ Section SchedulerSimulation.
     node_args_sz s node -> wgmono s s' -> node_args_sz s' node.
   Proof.
     unfold node_args_sz. intros H Hg.
-    destruct (op node) as [c|v|v|uop a|bop a1 a2|a|cd t e|];
-      [ exact I | exact I | exact I | | | exact I | | exact I ].
+    destruct (op node) as [c|v|v|uop a|bop a1 a2|a|cd t e|xf xa|];
+      [ exact I | exact I | exact I | | | exact I | | | exact I ].
     - destruct uop; eapply wsz_gmono; eauto.
     - destruct bop; destruct H as [H1 H2]; split; eapply wsz_gmono; eauto.
     - destruct H as [H1 [H2 H3]]; repeat split; eapply wsz_gmono; eauto.
+    - eapply wsz_gmono; eauto.
   Qed.
 
   Lemma emit_fg op size (s: wst) :
@@ -1983,6 +2006,24 @@ Section SchedulerSimulation.
       destruct He as [Hg4 [Hn4 [Hp4 [Hq4 [Hs4 Hf4]]]]].
       split; [ eapply wgmono_trans; [ exact Hgc | eapply wgmono_trans; [ exact Hgt | eapply wgmono_trans; [ exact Hge | exact Hg4 ] ] ]
              | split; [ exact Hn4 | split; [ exact Hp4 | split; [ exact Hq4 | split; [ exact Hs4 | exact Hf4 ] ] ] ] ].
+    - (* tf_ext: same shape as tf_resize, argument at the declared width *)
+      cbn [dataflow_expr]. unfold bind. cbv beta.
+      destruct (dataflow_expr ctx e (@tfe_arg_size _ e_sig f) s) as [id1 s1] eqn:Erun.
+      pose proof (IHe (@tfe_arg_size _ e_sig f) s Hinv Hvsz Hfg) as H1. rewrite Erun in H1.
+      cbv beta iota. destruct H1 as [Hg1 [Hn1 [Hw1 [Hv1 [Hs1 Hf1]]]]].
+      assert (Hargs : forall x,
+          In x (get_args ctx
+            {| nid := length (graph s1); op := DFG_Ext f id1; sz := size |}) ->
+          wnidwf s1 x)
+        by (intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn1).
+      assert (Hnode : node_args_sz s1
+          {| nid := length (graph s1); op := DFG_Ext f id1; sz := size |})
+        by (unfold node_args_sz; cbn [op]; exact Hs1).
+      pose proof (emit_fg (DFG_Ext f id1) size s1 Hw1 Hv1 Hf1 Hargs Hnode) as He.
+      destruct (emit ctx (DFG_Ext f id1) size s1) as [id2 s2].
+      destruct He as [Hg2 [Hn2 [Hp2 [Hq2 [Hs2 Hf2]]]]].
+      split; [ eapply wgmono_trans; [ exact Hg1 | exact Hg2 ]
+             | split; [ exact Hn2 | split; [ exact Hp2 | split; [ exact Hq2 | split; [ exact Hs2 | exact Hf2 ] ] ] ] ].
   Qed.
 
   (* --- map merger --- *)
@@ -2708,6 +2749,13 @@ Section SchedulerSimulation.
           -- exact Hpt.
         * exact Hpc.
       + exact Hp.
+    - (* tf_ext *)
+      simpl. apply seq_pos.
+      + apply IHe.
+      + intros id1 s1 Hid1 Hp1. apply emit_pos;
+          [ exact Hp1 | discriminate
+          | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hid1 ].
+      + exact Hp.
   Qed.
 
   Lemma merge_key_pos cond_id k vt_opt ve_opt (s: wst) res s' :
@@ -3306,12 +3354,12 @@ Section SchedulerSimulation.
      Holds vacuously of the empty start state and is preserved by dataflow_ops;
      the preservation step (over emit/set_var/ensure_var/merge_maps + the two
      compiler Fixpoints) is the sole remaining assumption here. *)
-  Definition vmg (s : dfg_state_t (states_var:=s_var)(inputs_var:=i_var)(outputs_var:=o_var)) : Prop :=
+  Definition vmg (s : dfg_state_t (states_var:=s_var)(inputs_var:=i_var)(outputs_var:=o_var)(externs_var:=e_var)) : Prop :=
     forall k id, In (k, id) (var_map s) ->
                  exists node, In node (graph s) /\ nid node = id.
 
   Local Notation dstate :=
-    (dfg_state_t (states_var:=s_var)(inputs_var:=i_var)(outputs_var:=o_var)).
+    (dfg_state_t (states_var:=s_var)(inputs_var:=i_var)(outputs_var:=o_var)(externs_var:=e_var)).
 
   (* graph only grows (node-preserving) *)
   Definition gmono (s s': dstate) : Prop :=
@@ -3523,6 +3571,10 @@ Section SchedulerSimulation.
         * intros idt s2 Hgt Hnt. apply fspec_seq.
           -- apply IHe3.
           -- intros ide s3 Hge Hne. apply emit_fspec.
+    - (* tf_ext *)
+      cbn [dataflow_expr]. apply fspec_seq.
+      + apply IHe.
+      + intros id s1 Hg Hn Hv1. apply emit_fspec; assumption.
   Qed.
 
   (* unit-returning forward spec (assuming vmg on entry) *)
@@ -3981,7 +4033,7 @@ Section SchedulerSimulation.
     (a_idx: nat)
     (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var) (outputs_var := o_var))
     (buffers: list (nat * (nat * nat))) (s: s_var)
-    (op: @tf_op (tfs_states sched) i_var o_var) :
+    (op: @tf_op (tfs_states sched) i_var o_var e_var) :
     In op (compile_dfg_buffers ctx cost_limit a_idx dfg buffers) ->
     ~ op_assigns_st (tf_dfg_s s) op.
   Proof.
@@ -3999,7 +4051,7 @@ Section SchedulerSimulation.
      the done-flag assignment (tf_dfg_done) and the tail is compile_dfg_buffers
      (only tf_dfg_b / tf_dfg_v writes). *)
   Lemma always_ops_no_svar (act: tfs_action sched) (s: s_var)
-    (op: @tf_op (tfs_states sched) i_var o_var) :
+    (op: @tf_op (tfs_states sched) i_var o_var e_var) :
     In op (fst (Contract.tfs_schedule sched act)) ->
     ~ op_assigns_st (tf_dfg_s s) op.
   Proof.
@@ -4030,7 +4082,7 @@ Section SchedulerSimulation.
     (a_idx: nat)
     (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var) (outputs_var := o_var))
     (buffers: list (nat * (nat * nat))) (o: o_var)
-    (op: @tf_op (tfs_states sched) i_var o_var) :
+    (op: @tf_op (tfs_states sched) i_var o_var e_var) :
     In op (compile_dfg_buffers ctx cost_limit a_idx dfg buffers) ->
     ~ op_writes_out o op.
   Proof.
@@ -4048,7 +4100,7 @@ Section SchedulerSimulation.
      flag and the tail is compile_dfg_buffers (only tf_dfg_b / tf_dfg_v writes).
      Outputs are produced exclusively by the DONE branch of tfs_next_cycle. *)
   Lemma always_ops_no_out (act: tfs_action sched) (o: o_var)
-    (op: @tf_op (tfs_states sched) i_var o_var) :
+    (op: @tf_op (tfs_states sched) i_var o_var e_var) :
     In op (fst (Contract.tfs_schedule sched act)) ->
     ~ op_writes_out o op.
   Proof.
@@ -4086,7 +4138,7 @@ Section SchedulerSimulation.
      so the value expression is the same under any path. *)
   Lemma compile_fst_pi_irrel (tainted: list nid_t)
         (dfacts: list gfact) a_idx
-        (dfg: @dfg_state_t s_var i_var o_var)
+        (dfg: @dfg_state_t s_var i_var o_var e_var)
         (bufs: list (nid_t * (nat * sz_t))) :
     forall fuel n pi pi',
       fst (compile_dfg_expr_aux ctx cost_limit tainted dfacts pi  fuel a_idx dfg n bufs)
@@ -4097,7 +4149,7 @@ Section SchedulerSimulation.
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |]; [ reflexivity | ].
     cbv beta iota zeta.
     destruct (op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | ];
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | xf xarg | ];
       cbv beta iota zeta; try reflexivity.
     - destruct (compile_dfg_expr_aux ctx cost_limit tainted dfacts pi fuel a_idx
                   dfg arg bufs) as [ae ve] eqn:E1.
@@ -4146,6 +4198,13 @@ Section SchedulerSimulation.
                      (ppath tainted dfacts pi' cnd false)) as He.
       rewrite Ee, Ee' in He. cbn [fst] in He.
       cbn [fst]. rewrite Hc, Ht, He. reflexivity.
+    - (* DFG_Ext: one argument, like the unary case *)
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dfacts pi fuel a_idx
+                  dfg xarg bufs) as [ae ve] eqn:E1.
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dfacts pi' fuel a_idx
+                  dfg xarg bufs) as [ae' ve'] eqn:E1'.
+      pose proof (IH xarg pi pi') as Ha. rewrite E1, E1' in Ha. cbn [fst] in Ha.
+      cbn [fst]. rewrite Ha. reflexivity.
   Qed.
 
   (* Packages the phi step of the VALUE component in one equation, so proofs
@@ -4154,7 +4213,7 @@ Section SchedulerSimulation.
      destructs miss (implicit/notation mismatches). *)
   Lemma compile_fst_phi_gen (tainted: list nid_t)
         (dfacts: list gfact) (pi: list lit) a_idx
-        (dfg: @dfg_state_t s_var i_var o_var)
+        (dfg: @dfg_state_t s_var i_var o_var e_var)
         (bufs: list (nid_t * (nat * sz_t))) fuel n cnd tid eid :
     BitsToLists.list_assoc bufs n = None ->
     op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |})
@@ -4225,7 +4284,7 @@ Section SchedulerSimulation.
     cbn [compile_dfg_expr_aux BitsToLists.list_assoc]. cbv beta iota.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | ].
+      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | xf xarg | ].
     - reflexivity.
     - reflexivity.
     - destruct v; cbn [fst tf_eval_expr]; [ rewrite Hs | rewrite Ho ]; reflexivity.
@@ -4268,6 +4327,12 @@ Section SchedulerSimulation.
       rewrite Ec in Hcc. rewrite Et in Hct. rewrite Ee in Hce.
       cbn [fst] in Hcc, Hct, Hce.
       rewrite Hcc, Hct, Hce. reflexivity.
+    - (* DFG_Ext: argument evaluated at the declared width *)
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dfacts pi fuel a_idx
+                  (build_dfg ctx act) xarg []) as [ae ve] eqn:E1.
+      cbn [fst tf_eval_expr].
+      specialize (IH xarg (@tfe_arg_size _ e_sig xf) pi).
+      rewrite E1 in IH. cbn [fst] in IH. rewrite IH. reflexivity.
     - reflexivity.
   Qed.
 
@@ -4346,7 +4411,7 @@ Section SchedulerSimulation.
                 = compile_dfg_expr_aux ctx cost_limit tainted dfacts p f2' a_idx dfg x buffers).
       { intros x p Hx. destruct (Harg x Hx) as [Hx1 Hx2].
         apply (IH x Hx2 Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen)); lia. }
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | ] eqn:Hop.
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | xf xarg | ] eqn:Hop.
       + reflexivity.
       + reflexivity.
       + destruct v; reflexivity.
@@ -4369,6 +4434,9 @@ Section SchedulerSimulation.
           by (unfold get_args; rewrite Hop; right; right; left; reflexivity).
         rewrite (Hrec cnd pi Hcin), (Hrec tid (ppath tainted dfacts pi cnd true) Htin),
                 (Hrec eid (ppath tainted dfacts pi cnd false) Hein). reflexivity.
+      + assert (Hain : In xarg (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        rewrite (Hrec xarg pi Hain). reflexivity.
       + exfalso. apply (node_op_not_empty act n Hn1 Hnlen). exact Hop.
   Qed.
 
@@ -4516,7 +4584,7 @@ Section SchedulerSimulation.
         apply (IH x sx p Hx1 Hxlen);
           [ lia | lia | right; lia | symmetry; exact Hxsz ]. }
       pose proof (wfg_build_dfg act node Hnode_in) as Hfg.
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | xf xarg | ]
         eqn:Hop.
       + (* Const *) reflexivity.
       + (* Input *) reflexivity.
@@ -4612,6 +4680,18 @@ Section SchedulerSimulation.
         rewrite Ec, Ec' in Hcc. rewrite Et, Et' in Hct. rewrite Ee, Ee' in Hce.
         cbn [fst] in Hcc, Hct, Hce.
         cbn [tf_eval_expr]. rewrite Hcc, Hct, Hce. reflexivity.
+      + (* Ext: child demanded at the declared argument width, which [wfg] pins *)
+        assert (Hain : In xarg (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                    xarg bufs) as [ae ve] eqn:E1.
+        destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                    xarg []) as [ae' ve'] eqn:E2.
+        cbn [fst].
+        unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+        pose proof (Hchild xarg (@tfe_arg_size _ e_sig xf) pi Hain Hfg) as Hc.
+        rewrite E1, E2 in Hc. cbn [fst] in Hc.
+        cbn [tf_eval_expr]. rewrite Hc. reflexivity.
       + (* Empty: impossible for a real node *)
         exfalso. apply (node_op_not_empty act n Hn1 Hnlen).
         unfold node in Hop. exact Hop.
@@ -4683,7 +4763,7 @@ Section SchedulerSimulation.
      SELECTED branch is valid (and if it collapsed to [tf_const 1], both
      branches were literally [tf_const 1], hence valid). *)
   Lemma valid_if_eval_inv
-    (cond t e: @tf_expr (tfs_states sched) i_var o_var) (ss: sched_sys_state) (input: input_t) :
+    (cond t e: @tf_expr (tfs_states sched) i_var o_var e_var) (ss: sched_sys_state) (input: input_t) :
     eval1 (valid_expr_if ctx cost_limit cond t e) ss input = Bits.ones 1 ->
     (eval1 cond ss input <> Bits.zero -> eval1 t ss input = Bits.ones 1) /\
     (eval1 cond ss input = Bits.zero -> eval1 e ss input = Bits.ones 1).
@@ -4692,13 +4772,13 @@ Section SchedulerSimulation.
     assert (Hcase: (t = tf_const 1 /\ e = tf_const 1)
                    \/ valid_expr_if ctx cost_limit cond t e = tf_expr_if cond t e).
     { unfold valid_expr_if.
-      destruct t as [vt| | | | | |]; try (right; reflexivity).
+      destruct t as [vt| | | | | | |]; try (right; reflexivity).
       destruct vt as [|[|vt]]; try (right; reflexivity).
-      destruct e as [ve| | | | | |]; try (right; reflexivity).
+      destruct e as [ve| | | | | | |]; try (right; reflexivity).
       destruct ve as [|[|ve]]; try (right; reflexivity).
       left; split; reflexivity. }
     destruct Hcase as [[Ht He] | Hc].
-    - subst t e. split; intros _; apply eval1_const1.
+    - subst t e. split; intros _; exact (eval1_const1 ss input).
     - rewrite Hc in H. cbn [tf_eval_expr] in H.
       destruct (beq_dec (eval1 cond ss input) Bits.zero) eqn:Hb.
       + apply beq_dec_iff in Hb.
@@ -4808,7 +4888,7 @@ Section SchedulerSimulation.
         destruct (wsz_node_sz act x sx Hwsz) as [Hxlen Hxsz].
         apply (IH x sx p Hx1 Hxlen ltac:(lia) (eq_sym Hxsz) Hxv). }
       pose proof (wfg_build_dfg act node Hnode_in) as Hfg.
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | xf xarg | ]
         eqn:Hop.
       + (* Const *) reflexivity.
       + (* Input *) reflexivity.
@@ -4959,6 +5039,21 @@ Section SchedulerSimulation.
                by (rewrite Et; cbn [snd]; exact (Hthen Hcnz)).
              pose proof (Hchild tid (sz node) pt Htin Hf2 Hat) as Hct.
              rewrite Et, Et' in Hct. cbn [fst] in Hct. exact Hct.
+      + (* Ext: validity passes through, like the unary case *)
+        assert (Hain : In xarg (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                    xarg bufs) as [ae ve] eqn:E1.
+        destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                    xarg []) as [ae' ve'] eqn:E2.
+        cbn [fst]. cbn [snd] in Hval.
+        unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+        assert (Hav : eval1 (snd (compile_dfg_expr_at ctx cost_limit pi fuel a_idx
+                                    (build_dfg ctx act) xarg bufs)) ss input
+                      = Bits.ones 1) by (rewrite E1; cbn [snd]; exact Hval).
+        pose proof (Hchild xarg (@tfe_arg_size _ e_sig xf) pi Hain Hfg Hav) as Hc.
+        rewrite E1, E2 in Hc. cbn [fst] in Hc.
+        cbn [tf_eval_expr]. rewrite Hc. reflexivity.
       + (* Empty: impossible for a real node *)
         exfalso. apply (node_op_not_empty act n Hn1 Hnlen).
         unfold node in Hop. exact Hop.
@@ -5397,11 +5492,11 @@ Section SchedulerSimulation.
       { intros x p Hx. destruct (Harg x Hx) as [Hx1 Hx2].
         apply (IH x p Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen));
           [ lia | lia | right; lia ]. }
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | xf xarg | ]
         eqn:Hop.
-      + cbn [snd]. apply eval1_const1.
-      + cbn [snd]. apply eval1_const1.
-      + destruct v; cbn [snd]; apply eval1_const1.
+      + cbn [snd]. exact (eval1_const1 ss input).
+      + cbn [snd]. exact (eval1_const1 ss input).
+      + destruct v; cbn [snd]; exact (eval1_const1 ss input).
       + assert (Hain : In arg (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
         pose proof (Hchild arg pi Hain) as Ha.
@@ -5449,6 +5544,13 @@ Section SchedulerSimulation.
           rewrite Bits.and_ones_l. apply Bits.and_ones_l.
         * rewrite valid_and_eval, Hcv, Bits.and_ones_l.
           apply (valid_if_eval ce tv ev _ input Htv Hev).
+      + (* Ext: validity is the argument's *)
+        assert (Hain : In xarg (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        pose proof (Hchild xarg pi Hain) as Ha.
+        destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                    xarg bufs) as [ae ve] eqn:E1.
+        cbn [snd] in Ha |- *. exact Ha.
       + exfalso. apply (node_op_not_empty act n Hn1 Hnlen).
         unfold node in Hop. exact Hop.
   Qed.
@@ -6286,8 +6388,27 @@ Section SchedulerSimulation.
     rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3), E. reflexivity.
   Qed.
 
-  Lemma nre_binary (act: tfs_action sched) a_idx n bop a1 a2 :
+  Lemma nre_ext (act: tfs_action sched) a_idx n f arg :
     1 <= n -> n < length (graph (build_dfg ctx act)) ->
+    op (nth n (graph (build_dfg ctx act))
+          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Ext f arg ->
+    node_ref_expr act a_idx n = tf_ext f (node_ref_expr act a_idx arg).
+  Proof.
+    intros H1 H2 Hop.
+    assert (Hain : In arg (get_args ctx (nth n (graph (build_dfg ctx act))
+                                           {| nid := 0; op := DFG_Empty; sz := 0 |})))
+      by (unfold get_args; rewrite Hop; left; reflexivity).
+    destruct (node_args_range act n H1 H2 arg Hain) as [Ha1 Ha3].
+    assert (Ha2 : arg < length (graph (build_dfg ctx act))) by lia.
+    rewrite (nre_unfold act a_idx n H1 H2).
+    cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
+    destruct (compile_dfg_expr ctx cost_limit n a_idx (build_dfg ctx act) arg [])
+      as [ae av] eqn:E.
+    cbn [fst]. f_equal.
+    rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3), E. reflexivity.
+  Qed.
+
+  Lemma nre_binary (act: tfs_action sched) a_idx n bop a1 a2 :    1 <= n -> n < length (graph (build_dfg ctx act)) ->
     op (nth n (graph (build_dfg ctx act))
           {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Binary bop a1 a2 ->
     node_ref_expr act a_idx n
@@ -6572,11 +6693,11 @@ Section SchedulerSimulation.
   Qed.
 
   (* Book-keeping about [emit] that the semantic induction needs at every node. *)
-  Lemma emit_vm (o: @dfg_op_t s_var i_var o_var) size (s: wst) id s' :
+  Lemma emit_vm (o: @dfg_op_t s_var i_var o_var e_var) size (s: wst) id s' :
     emit ctx o size s = (id, s') -> var_map s' = var_map s.
   Proof. rewrite emit_red. intro H. injection H as _ <-. reflexivity. Qed.
 
-  Lemma emit_gmono (o: @dfg_op_t s_var i_var o_var) size (s: wst) id s' :
+  Lemma emit_gmono (o: @dfg_op_t s_var i_var o_var e_var) size (s: wst) id s' :
     emit ctx o size s = (id, s') -> wgmono s s'.
   Proof.
     rewrite emit_red. intro H. injection H as _ <-.
@@ -6795,7 +6916,8 @@ Section SchedulerSimulation.
         /\ NV szE id = tf_eval_expr s_sz i_sz o_sz (szB := szE) e sp input.
     Proof.
       induction e as [ c | sv | iv | ov | uop e1 IH1
-                     | bop e1 IH1 e2 IH2 | ec IHc et IHt ee IHe ];
+                     | bop e1 IH1 e2 IH2 | ec IHc et IHt ee IHe
+                     | xf e1 IH1 ];
         intros szE s s' id sp Hne Hinv Hvsz Hde Hg' Hsem.
       - (* tf_const *)
         cbn [dataflow_expr] in Hde.
@@ -7013,6 +7135,24 @@ Section SchedulerSimulation.
         + unfold nval in Hvc, Hvt, Hve |- *.
           rewrite (nre_phi act a_idx id cid tid eid R1 R2 Rop).
           cbn [tf_eval_expr]. rewrite Hvc, Hvt, Hve. reflexivity.
+      - (* tf_ext: same shape as tf_resize, argument at the declared width *)
+        cbn [dataflow_expr] in Hde. unfold bind in Hde.
+        pose proof (dataflow_expr_sz e1 (@tfe_arg_size _ e_sig xf) s Hinv Hvsz) as Hsz1.
+        destruct (dataflow_expr ctx e1 (@tfe_arg_size _ e_sig xf) s) as [src_id s1] eqn:Ee1.
+        destruct Hsz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hz1]]]].
+        cbv beta in Hde.
+        assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
+        assert (Hg1F : wgmono s1 F)
+          by exact (wgmono_trans s1 s' F (emit_gmono _ _ _ _ _ Hde) Hg').
+        destruct (IH1 (@tfe_arg_size _ e_sig xf) s s1 src_id sp Hne Hinv Hvsz Ee1 Hg1F Hsem)
+          as [Hsem1 Hv1].
+        destruct (emitted_node_at act F s1 s' (DFG_Ext xf src_id) szE id
+                    HF Hne1 Hde Hg') as [R1 [R2 [Rop _]]].
+        split.
+        + apply (sem_inv_vm s1 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem1 ].
+        + unfold nval in Hv1 |- *.
+          rewrite (nre_ext act a_idx id xf src_id R1 R2 Rop).
+          cbn [tf_eval_expr]. rewrite Hv1. reflexivity.
     Qed.
 
     (* ================================================================= *)

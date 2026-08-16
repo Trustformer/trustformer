@@ -19,6 +19,7 @@ Section SchedulerTypes.
   Context {states_var: Type}.
   Context {inputs_var: Type}.
   Context {outputs_var: Type}.
+  Context {externs_var: Type}.
 
   Definition nid_t := nat.
   Definition sz_t := nat.
@@ -35,6 +36,8 @@ Section SchedulerTypes.
     | DFG_Binary (op: tf_binary_ops) (arg1: nid_t) (arg2: nid_t)
     | DFG_Resize (arg: nid_t)
     | DFG_Phi (cond: nid_t) (then_id: nid_t) (else_id: nid_t)
+    (* Call to a trusted external function; see Trustformer.Semantics.tf_externs. *)
+    | DFG_Ext (f: externs_var) (arg: nid_t)
     | DFG_Empty                
     .
 
@@ -77,5 +80,5 @@ Record decl_instance := {
 
 (* A reusable rule inspects the current DFG and emits instances, so users never
    write node ids by hand. *)
-Definition decl_rule (states_var inputs_var outputs_var: Type) :=
-  @dfg_state_t states_var inputs_var outputs_var -> list decl_instance.
+Definition decl_rule (states_var inputs_var outputs_var externs_var: Type) :=
+  @dfg_state_t states_var inputs_var outputs_var externs_var -> list decl_instance.

@@ -42,6 +42,13 @@ Section VariableScheduler.
   Local Notation outputs_var_fin := (tfs_spec_outputs_fin ctx).
   Local Notation outputs_var_size := (tfs_spec_outputs_size ctx).
 
+  Local Notation externs_var := (tfs_spec_externs ctx).
+  Local Notation externs_var_eq_dec := (tfs_spec_externs_eq_dec ctx).
+  Local Notation externs_var_fin := (tfs_spec_externs_fin ctx).
+  Local Notation externs_sig := (tfs_spec_externs_sig ctx).
+  Local Notation externs_arg_size := (@tfe_arg_size _ externs_sig).
+  Local Notation externs_res_size := (@tfe_res_size _ externs_sig).
+
   Local Notation spec_action := (tfs_spec_action ctx).
   Local Notation spec_action_eq_dec := (tfs_spec_action_eq_dec ctx).
   Local Notation spec_action_fin := (tfs_spec_action_fin ctx).
@@ -50,10 +57,12 @@ Section VariableScheduler.
   Local Notation spec_action_index := (@finite_index spec_action spec_action_fin).
 
   Hint Extern 0 (FiniteType states_var) => exact (tfs_spec_states_fin ctx) : typeclass_instances.
+  Hint Extern 0 (tf_externs externs_var) => exact externs_sig : typeclass_instances.
   
   Hint Extern 0 (Show states_var) => exact (tfs_spec_states_names ctx) : typeclass_instances.
   Hint Extern 0 (Show inputs_var) => exact (tfs_spec_inputs_names ctx) : typeclass_instances.
   Hint Extern 0 (Show outputs_var) => exact (tfs_spec_outputs_names ctx) : typeclass_instances.
+  Hint Extern 0 (Show externs_var) => exact (tfs_spec_externs_names ctx) : typeclass_instances.
 
   (* ============================ *)
   (* = Step 1: DFG Construction = *)
@@ -61,9 +70,9 @@ Section VariableScheduler.
 
   (* --- DFG Definitions --- *)
   Local Notation dfg_vars := (@dfg_vars_t states_var outputs_var).
-  Local Notation dfg_op := (@dfg_op_t states_var inputs_var outputs_var).
-  Local Notation dfg_node := (@dfg_node_t states_var inputs_var outputs_var).
-  Local Notation dfg_state := (@dfg_state_t states_var inputs_var outputs_var). 
+  Local Notation dfg_op := (@dfg_op_t states_var inputs_var outputs_var externs_var).
+  Local Notation dfg_node := (@dfg_node_t states_var inputs_var outputs_var externs_var).
+  Local Notation dfg_state := (@dfg_state_t states_var inputs_var outputs_var externs_var). 
 
   Instance dfg_vars_eq_dec : EqDec dfg_vars.
   Proof.
@@ -168,6 +177,9 @@ Section VariableScheduler.
       let! then_id := dataflow_expr then_expr sz in
       let! else_id := dataflow_expr else_expr sz in
       emit (DFG_Phi cond_id then_id else_id) sz
+    | tf_ext f arg =>
+      let! arg_id := dataflow_expr arg (externs_arg_size f) in
+      emit (DFG_Ext f arg_id) sz
     end.
 
   (* --- Generic Map Merger --- *)
@@ -291,6 +303,7 @@ Section VariableScheduler.
     | DFG_Binary _ arg1 arg2 => [arg1; arg2]
     | DFG_Resize arg => [arg]
     | DFG_Phi cond then_id else_id => [cond; then_id; else_id]
+    | DFG_Ext _ arg => [arg]
     | DFG_Empty => []
     end.
 
@@ -320,6 +333,10 @@ Section VariableScheduler.
                         end
     | DFG_Resize _ => 0
     | DFG_Phi _ _ _ => 1
+    (* The combinational delay of an attached module is not declared, so it is
+       costed like any other single-level operator. Phase B replaces this with a
+       latency-driven treatment. *)
+    | DFG_Ext _ _ => 1
     | DFG_Empty => 0
     end.
 
@@ -596,7 +613,7 @@ Section VariableScheduler.
   (* = Step 6: TF Compilations    = *)
   (* ============================== *)
 
-  Local Notation expr_t := (@tf_expr tf_dfg_states inputs_var outputs_var).
+  Local Notation expr_t := (@tf_expr tf_dfg_states inputs_var outputs_var externs_var).
 
   Definition valid_expr_and (expr1: expr_t) (expr2: expr_t) : expr_t :=
     match expr1, expr2 with
@@ -774,6 +791,9 @@ Section VariableScheduler.
                 else
                   valid_expr_and cond_val (valid_expr_if cond_expr then_val else_val)
               )
+          | DFG_Ext f arg1 =>
+              let '(arg_expr, val_expr) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers in
+              (tf_ext f arg_expr, val_expr)
           | DFG_Empty => (tf_const 0, tf_const 0) (* should not happen *)
           end
         end
@@ -824,7 +844,7 @@ Section VariableScheduler.
   Definition combine_valid_exprs (exprs : list expr_t) : expr_t :=
     combine_balanced_helper (length exprs) exprs. *)
 
-  Fixpoint combine_valid_exprs (exprs: list (@tf_expr tf_dfg_states inputs_var outputs_var)) : @tf_expr tf_dfg_states inputs_var outputs_var :=
+  Fixpoint combine_valid_exprs (exprs: list (@tf_expr tf_dfg_states inputs_var outputs_var externs_var)) : @tf_expr tf_dfg_states inputs_var outputs_var externs_var :=
     match exprs with
     | [] => tf_const 1
     | [e] => e
@@ -1114,7 +1134,8 @@ Section VariableScheduler.
   Lemma dataflow_expr_vm: forall e sz, preserves vm_nd (dataflow_expr e sz).
   Proof.
     induction e as [val | sv | iv | ov | uop e IHe
-                    | bop e1 IHe1 e2 IHe2 | ec IHe1 et IHe2 ee IHe3];
+                    | bop e1 IHe1 e2 IHe2 | ec IHe1 et IHe2 ee IHe3
+                    | f ea IHea];
       intros sz; cbn [dataflow_expr].
     - apply emit_vm.
     - apply preserves_bind; [apply get_var_vm|]. intro x.
@@ -1133,6 +1154,7 @@ Section VariableScheduler.
     - apply preserves_bind; [apply IHe1|]. intro xc.
       apply preserves_bind; [apply IHe2|]. intro xt.
       apply preserves_bind; [apply IHe3|]. intro xe. apply emit_vm.
+    - apply preserves_bind; [apply IHea|]. intro x. apply emit_vm.
   Qed.
 
   Lemma merge_loop_nd cond mt me: forall keys acc s,
@@ -1594,6 +1616,9 @@ Module Examples.
       tfs_spec_outputs := dfge_o;
       tfs_spec_outputs_size := dfge_o_size;
 
+      tfs_spec_externs := tf_no_externs;
+      tfs_spec_externs_sig := tf_no_externs_sig;
+
       tfs_spec_action := dfge_a;
       tfs_spec_action_ops := fun a =>
         match a with
@@ -1636,6 +1661,9 @@ Module Examples.
 
       tfs_spec_outputs := dfge_o;
       tfs_spec_outputs_size := dfge_o_size;
+
+      tfs_spec_externs := tf_no_externs;
+      tfs_spec_externs_sig := tf_no_externs_sig;
 
       tfs_spec_action := dfge_a;
       tfs_spec_action_ops := fun a =>
@@ -1694,6 +1722,9 @@ Module Examples.
 
       tfs_spec_outputs := dfge_o;
       tfs_spec_outputs_size := dfge_o_size;
+
+      tfs_spec_externs := tf_no_externs;
+      tfs_spec_externs_sig := tf_no_externs_sig;
 
       tfs_spec_action := dfge_a;
       tfs_spec_action_ops := fun a =>

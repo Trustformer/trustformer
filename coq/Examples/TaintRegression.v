@@ -63,13 +63,13 @@ Section FunctionalSpecification.
 
     (* A phi in condition position, bound to no variable: no var_map rule can reach
        it, so only joining the condition's taint labels it correctly. *)
-    Definition anon_cond : @tf_expr fs_states fs_inputs fs_outputs :=
+    Definition anon_cond : @tf_expr fs_states fs_inputs fs_outputs tf_no_externs :=
         tf_expr_if (tf_svar st_secret) (tf_const 1) (tf_const 0).
 
     Definition fs_transitions
         (act: fs_action)
         :
-        (@tf_ops fs_states fs_inputs fs_outputs)
+        (@tf_ops fs_states fs_inputs fs_outputs tf_no_externs)
         :=
         match act with
         (* Baseline: a read of pre-action secret state must taint. *)
@@ -146,6 +146,9 @@ Section TaintAnalysis.
         tfs_spec_outputs := fs_outputs;
         tfs_spec_outputs_fin := _;
         tfs_spec_outputs_size := fs_outputs_size;
+
+        tfs_spec_externs := tf_no_externs;
+        tfs_spec_externs_sig := tf_no_externs_sig;
 
         tfs_spec_action := fs_action;
         tfs_spec_action_fin := _;

@@ -29,20 +29,27 @@ Record TFSchedContext := {
   tfs_spec_outputs_names : Show tfs_spec_outputs;
   tfs_spec_outputs_size : tfs_spec_outputs -> nat;
 
+  (* Trusted external functions. [] of them reproduces the pre-externs behaviour. *)
+  tfs_spec_externs : Type;
+  tfs_spec_externs_eq_dec : EqDec tfs_spec_externs;
+  tfs_spec_externs_fin : FiniteType tfs_spec_externs;
+  tfs_spec_externs_names : Show tfs_spec_externs;
+  tfs_spec_externs_sig : tf_externs tfs_spec_externs;
+
   tfs_spec_action : Type;
   tfs_spec_action_eq_dec : EqDec tfs_spec_action;
   tfs_spec_action_fin : FiniteType tfs_spec_action;
-  tfs_spec_action_ops : tfs_spec_action -> @tf_ops tfs_spec_states tfs_spec_inputs tfs_spec_outputs;
+  tfs_spec_action_ops : tfs_spec_action -> @tf_ops tfs_spec_states tfs_spec_inputs tfs_spec_outputs tfs_spec_externs;
 
   (* whitebox untainting: [] reproduces the blackbox behaviour *)
-  tfs_spec_decls : list (decl_rule tfs_spec_states tfs_spec_inputs tfs_spec_outputs)
+  tfs_spec_decls : list (decl_rule tfs_spec_states tfs_spec_inputs tfs_spec_outputs tfs_spec_externs)
 }.
 
 Inductive _tfs_ops_t {s_t o_t} :=
   | StOp (s: s_t)
   | OutOp (o: o_t).
 
-Definition tfs_ops_no_duplicates {s i o} (ops: list (@tf_op s i o)) : Prop :=
+Definition tfs_ops_no_duplicates {s i o e} (ops: list (@tf_op s i o e)) : Prop :=
   NoDup (flat_map (fun op => 
     match op with 
       | tf_assign dst _ => [StOp dst]  
@@ -76,7 +83,7 @@ Record TFSchedule := {
   tfs_map_from: ((ContextEnv (FT:=tfs_states_fin)).(env_t) (tf_states_type tfs_states_size)) -> ((ContextEnv (FT:=(tfs_spec_states_fin tfs_ctx))).(env_t) (tf_states_type (tfs_spec_states_size tfs_ctx)));
 
   (* returns the operations that should always run (fst) and the operations that should only run when the done signal is set (snd) *)
-  tfs_schedule: tfs_action -> list (@tf_op tfs_states tfs_inputs tfs_outputs) * list (@tf_op tfs_states tfs_inputs tfs_outputs);
+  tfs_schedule: tfs_action -> list (@tf_op tfs_states tfs_inputs tfs_outputs (tfs_spec_externs tfs_ctx)) * list (@tf_op tfs_states tfs_inputs tfs_outputs (tfs_spec_externs tfs_ctx));
   (* after the done signal is set, the next cycle the module is ready for new input & the modules output is valid (if the above schedule is respected) *)
   tfs_done_signal: tfs_states;
   (* these states have to be reset to Bits.zero if the done signal is set *)
@@ -120,6 +127,9 @@ Section SchedulerSpec.
   Local Notation s_sz := (tfs_states_size tf_sched_ctx).
   Local Notation i_sz := (tfs_inputs_size tf_sched_ctx).
   Local Notation o_sz := (tfs_outputs_size tf_sched_ctx).
+  (* The scheduled module calls the same external functions as the spec. *)
+  Local Notation e_var := (tfs_spec_externs (tfs_ctx tf_sched_ctx)).
+  Local Notation e_sig := (tfs_spec_externs_sig (tfs_ctx tf_sched_ctx)).
   
   Local Notation st_env := (ContextEnv.(env_t) (tf_states_type s_sz)).
   Local Notation out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).
@@ -129,9 +139,10 @@ Section SchedulerSpec.
   Hint Extern 0 (FiniteType s_var) => exact (tfs_states_fin (tf_sched_ctx)) : typeclass_instances.
   Hint Extern 0 (FiniteType i_var) => exact (tfs_inputs_fin (tf_sched_ctx)) : typeclass_instances.
   Hint Extern 0 (FiniteType o_var) => exact (tfs_outputs_fin (tf_sched_ctx)) : typeclass_instances.
+  Hint Extern 0 (tf_externs e_var) => exact e_sig : typeclass_instances.
 
   Definition tfs_get_updates
-    (ops: list (@tf_op s_var i_var o_var))
+    (ops: list (@tf_op s_var i_var o_var e_var))
     (sys_state: sys_state_t)
     (input: input_t) :=
     List.map (fun op => tf_op_step_updates s_sz i_sz o_sz op sys_state input) ops.

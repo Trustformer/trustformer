@@ -79,14 +79,14 @@ Section FunctionalSpecification.
     Definition fs_transitions
         (act: fs_action)
         :
-        (@tf_ops fs_states fs_inputs fs_outputs)
+        (@tf_ops fs_states fs_inputs fs_outputs tf_no_externs)
         :=
         match act with
         | fs_act_nop => tf_ops_base (tf_nop) 
         | fs_act_neg => tf_ops_base (tf_assign fs_st_val (tf_op1 (tf_not) (tf_svar fs_st_val)))
         end.
 
-    Definition fs_step := tf_ops_run fs_states_size fs_inputs_size fs_outputs_size.
+    Definition fs_step := tf_ops_run (externs := tf_no_externs_sig) fs_states_size fs_inputs_size fs_outputs_size.
     
     Section Examples.
 
@@ -126,6 +126,9 @@ Section TypedSynthesis.
         tfs_spec_outputs := fs_outputs;
         tfs_spec_outputs_fin := _;
         tfs_spec_outputs_size := fs_outputs_size;
+
+        tfs_spec_externs := tf_no_externs;
+        tfs_spec_externs_sig := tf_no_externs_sig;
 
         tfs_spec_action := fs_action;
         tfs_spec_action_fin := _;
