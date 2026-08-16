@@ -38,6 +38,9 @@ Section SchedulerTypes.
     | DFG_Phi (cond: nid_t) (then_id: nid_t) (else_id: nid_t)
     (* Call to a trusted external function; see Trustformer.Semantics.tf_externs. *)
     | DFG_Ext (f: externs_var) (arg: nid_t)
+    (* Identity, but costed at a full cycle so [require_buffer] buffers its argument:
+       this is how a call's latency is realised (campaign extern-calls-mvp, D9). *)
+    | DFG_Delay (arg: nid_t)
     | DFG_Empty                
     .
 
@@ -57,6 +60,10 @@ Section SchedulerTypes.
   Inductive tf_dfg_states_t :=
     | tf_dfg_done
     | tf_dfg_s (state: states_var)
+    (* Designated argument / result register of a trusted external function; the call
+       itself is issued by the dedicated [rule_ext] (campaign extern-calls-mvp, D8). *)
+    | tf_dfg_earg (f: externs_var)
+    | tf_dfg_eres (f: externs_var)
     | tf_dfg_b (a_idx: Vect.index (length buffer_needs)) (n_idx: Vect.index (length (nth (index_to_nat a_idx) buffer_needs [])))
     | tf_dfg_v (a_idx: Vect.index (length buffer_needs)) (n_idx: Vect.index (length (nth (index_to_nat a_idx) buffer_needs [])))
     .

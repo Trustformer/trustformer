@@ -79,14 +79,14 @@ Section Soundness.
     cbv zeta in Hi.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | xf xarg | ] eqn:Hop;
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | xf xarg | dly | ] eqn:Hop;
       cbn [List.In] in Hi; try contradiction.
     destruct (op (nth tid (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [kt | | | | | | | | ] eqn:Hopt; try contradiction.
+      as [kt | | | | | | | | | ] eqn:Hopt; try contradiction.
     destruct (op (nth eid (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [ke | | | | | | | | ] eqn:Hope; try contradiction.
+      as [ke | | | | | | | | | ] eqn:Hope; try contradiction.
     destruct (beq_dec
                 (Bits.of_nat (sz (nth n (graph (build_dfg ctx act))
                                     {| nid := 0; op := DFG_Empty; sz := 0 |})) kt)

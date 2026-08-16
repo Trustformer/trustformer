@@ -57,6 +57,7 @@ Section VariableScheduler.
   Local Notation spec_action_index := (@finite_index spec_action spec_action_fin).
 
   Hint Extern 0 (FiniteType states_var) => exact (tfs_spec_states_fin ctx) : typeclass_instances.
+  Hint Extern 0 (FiniteType externs_var) => exact (tfs_spec_externs_fin ctx) : typeclass_instances.
   Hint Extern 0 (tf_externs externs_var) => exact externs_sig : typeclass_instances.
   
   Hint Extern 0 (Show states_var) => exact (tfs_spec_states_names ctx) : typeclass_instances.
@@ -304,6 +305,7 @@ Section VariableScheduler.
     | DFG_Resize arg => [arg]
     | DFG_Phi cond then_id else_id => [cond; then_id; else_id]
     | DFG_Ext _ arg => [arg]
+    | DFG_Delay arg => [arg]
     | DFG_Empty => []
     end.
 
@@ -337,6 +339,9 @@ Section VariableScheduler.
        costed like any other single-level operator. Phase B replaces this with a
        latency-driven treatment. *)
     | DFG_Ext _ _ => 1
+    (* A whole bucket, so [calc_target_cycle] places the argument one cycle earlier and
+       [require_buffer] picks it up: that buffer is the latency element (D9). *)
+    | DFG_Delay _ => cost_limit
     | DFG_Empty => 0
     end.
 
@@ -420,13 +425,15 @@ Section VariableScheduler.
     
     buffers.
 
-  Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (buffer_needs:=buffer_needs)).
+  Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (externs_var:=externs_var) (buffer_needs:=buffer_needs)).
   Definition test := tf_dfg_states.
 
   Instance show_tf_dfg_states : Show tf_dfg_states :=
     { show := fun dfg_s =>
         match dfg_s with
         | tf_dfg_s s => String.append "s_" (show s)
+        | tf_dfg_earg f => String.append "earg_" (show f)
+        | tf_dfg_eres f => String.append "eres_" (show f)
         | tf_dfg_b a_idx n_idx => String.append "b_" (String.append (show (index_to_nat a_idx)) (String.append "_" (show (index_to_nat n_idx))))
         | tf_dfg_v a_idx n_idx => String.append "v_" (String.append (show (index_to_nat a_idx)) (String.append "_" (show (index_to_nat n_idx))))
         | tf_dfg_done => "done"
@@ -435,6 +442,8 @@ Section VariableScheduler.
   Definition tf_dfg_states_size (dfg_s: tf_dfg_states) : sz_t :=
     match dfg_s with
     | tf_dfg_s s => states_var_size s
+    | tf_dfg_earg f => externs_arg_size f
+    | tf_dfg_eres f => externs_res_size f
     | tf_dfg_b a_idx b_idx => snd (snd (nth (index_to_nat b_idx) (nth (index_to_nat a_idx) buffer_needs []) (0, (0, 0))))
     | tf_dfg_v a_idx b_idx => 1
     | tf_dfg_done => 1
@@ -720,6 +729,7 @@ Section VariableScheduler.
             match op node with
             | DFG_Unary _ a => crit_report_aux dfg tainted dfacts pi fuel' a bufs
             | DFG_Resize a => crit_report_aux dfg tainted dfacts pi fuel' a bufs
+            | DFG_Delay a => crit_report_aux dfg tainted dfacts pi fuel' a bufs
             | DFG_Binary _ a1 a2 =>
                 crit_report_aux dfg tainted dfacts pi fuel' a1 bufs
                 ++ crit_report_aux dfg tainted dfacts pi fuel' a2 bufs
@@ -794,6 +804,8 @@ Section VariableScheduler.
           | DFG_Ext f arg1 =>
               let '(arg_expr, val_expr) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers in
               (tf_ext f arg_expr, val_expr)
+          | DFG_Delay arg1 =>
+              compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers
           | DFG_Empty => (tf_const 0, tf_const 0) (* should not happen *)
           end
         end
@@ -902,7 +914,12 @@ Section VariableScheduler.
       final_ops
     ).
 
-  Definition done_signal := tf_dfg_done (states_var:=states_var) (buffer_needs:=buffer_needs).
+  Definition done_signal := tf_dfg_done (states_var:=states_var) (externs_var:=externs_var) (buffer_needs:=buffer_needs).
+
+  (* Designated argument / result registers of the trusted external functions. The
+     call is issued by [rule_ext], which runs after every action rule (D8). *)
+  Definition ext_arg (f: externs_var) : tf_dfg_states := tf_dfg_earg f.
+  Definition ext_res (f: externs_var) : tf_dfg_states := tf_dfg_eres f.
 
   Definition reset_states : list tf_dfg_states :=  
     flat_map 
@@ -923,11 +940,15 @@ Section VariableScheduler.
     - intro s. destruct s.
       + exact (0, 0).
       + exact (1, finite_index state).
-      + exact (2 + finite_index a_idx, finite_index n_idx).
-      + exact (2 + (Datatypes.length (finite_elements (T:=(Vect.index (Datatypes.length buffer_needs))))) + finite_index a_idx, finite_index n_idx).
+      + exact (2, finite_index f).
+      + exact (3, finite_index f).
+      + exact (4 + finite_index a_idx, finite_index n_idx).
+      + exact (4 + (Datatypes.length (finite_elements (T:=(Vect.index (Datatypes.length buffer_needs))))) + finite_index a_idx, finite_index n_idx).
         
     - refine ([ [tf_dfg_done] ] ++ 
               [ map tf_dfg_s finite_elements ] ++ 
+              [ map tf_dfg_earg finite_elements ] ++ 
+              [ map tf_dfg_eres finite_elements ] ++ 
               map (fun a => map (tf_dfg_b a) finite_elements) finite_elements ++ 
               map (fun a => map (tf_dfg_v a) finite_elements) finite_elements).
 
@@ -938,6 +959,12 @@ Section VariableScheduler.
       + (* tf_dfg_s *)
         exists (map tf_dfg_s finite_elements). split; auto.
         rewrite map_nth_error with (d:=state); auto. rewrite finite_surjective. reflexivity.
+      + (* tf_dfg_earg *)
+        exists (map tf_dfg_earg finite_elements). split; auto.
+        rewrite map_nth_error with (d:=f); auto. rewrite finite_surjective. reflexivity.
+      + (* tf_dfg_eres *)
+        exists (map tf_dfg_eres finite_elements). split; auto.
+        rewrite map_nth_error with (d:=f); auto. rewrite finite_surjective. reflexivity.
       + (* tf_dfg_b *)
         exists (map (tf_dfg_b a_idx) finite_elements). split; auto.
         * cbn [nth_error List.app].
@@ -968,9 +995,15 @@ Section VariableScheduler.
       destruct n as [|n].
       { inversion Hn; subst. apply nth_error_map_inv in Hm. destruct Hm as [s [Hs ?]]; subst.
         apply finite_elements_index in Hs. subst. reflexivity. }
+      destruct n as [|n].
+      { inversion Hn; subst. apply nth_error_map_inv in Hm. destruct Hm as [s [Hs ?]]; subst.
+        apply finite_elements_index in Hs. subst. reflexivity. }
+      destruct n as [|n].
+      { inversion Hn; subst. apply nth_error_map_inv in Hm. destruct Hm as [s [Hs ?]]; subst.
+        apply finite_elements_index in Hs. subst. reflexivity. }
       
       rewrite nth_error_app2 in Hn by (simpl; lia).
-      change (S (S n) - Datatypes.length [[tf_dfg_done]]) with (S n) in *.
+      change (S (S (S (S n))) - Datatypes.length [[tf_dfg_done]]) with (S (S (S n))) in *.
 
       cbn [nth_error List.app] in Hn.
       destruct (lt_dec n (length (finite_elements (T := Vect.index (Datatypes.length buffer_needs))))) as [HLT | HGE].      
@@ -990,8 +1023,10 @@ Section VariableScheduler.
         apply finite_elements_index in Hn'.
         subst m. simpl. f_equal. 
         (* hammer *) timeout 10 sauto.
-    - apply Forall_app; split; [| apply Forall_app; split].
+    - apply Forall_app; split; [| apply Forall_app; split; [| apply Forall_app; split; [| apply Forall_app; split]]].
       + repeat constructor. (* hammer *) timeout 10 sfirstorder.
+      + repeat constructor. cbn [map]. rewrite map_map. apply NoDup_map_pair. apply finite_injective.
+      + repeat constructor. cbn [map]. rewrite map_map. apply NoDup_map_pair. apply finite_injective.
       + repeat constructor. cbn [map]. rewrite map_map. apply NoDup_map_pair. apply finite_injective.
       + apply Forall_app; split.
         * (* Block for tf_dfg_b *)
@@ -1015,6 +1050,8 @@ Section VariableScheduler.
       fun s =>
         match s as s0 return (type_denote (tf_states_type tf_dfg_states_size s0)) with
         | tf_dfg_s sv => getenv ContextEnv env sv
+        | tf_dfg_earg _ => Bits.zero
+        | tf_dfg_eres _ => Bits.zero
         | tf_dfg_b a_idx n_idx => Bits.zero
         | tf_dfg_v a_idx n_idx => Bits.zero
         | tf_dfg_done => Bits.zero
@@ -1033,6 +1070,8 @@ Section VariableScheduler.
   Definition tf_dfg_states_init (x: tf_dfg_states) : tf_states_type tf_dfg_states_size x :=
     match x with
     | tf_dfg_s sv => states_var_init sv
+    | tf_dfg_earg _ => Bits.zero
+    | tf_dfg_eres _ => Bits.zero
     | tf_dfg_b _ _ => Bits.zero
     | tf_dfg_v _ _ => Bits.zero
     | tf_dfg_done => Bits.zero
@@ -1479,8 +1518,7 @@ Section VariableScheduler.
     left. reflexivity.
   Qed.
 
-  Theorem reset_states_nodup: NoDup reset_states.
-  Proof.
+  Theorem reset_states_nodup: NoDup reset_states.  Proof.
     unfold reset_states.
     (* recover the a-index and n-index from an element *)
     pose (a_of := fun v : tf_dfg_states =>
@@ -1546,6 +1584,52 @@ Section VariableScheduler.
     simpl in Hin. destruct Hin as [<-|[<-|[]]]; reflexivity.
   Qed.
 
+  Lemma reset_states_shape: forall v, In v reset_states ->
+    exists a' n', v = tf_dfg_b a' n' \/ v = tf_dfg_v a' n'.
+  Proof.
+    intros v Hin. unfold reset_states in Hin.
+    apply in_flat_map in Hin. destruct Hin as [a_idx [_ Hin]].
+    destruct (index_of_nat (length buffer_needs) a_idx) as [a_idx'|]; [|contradiction].
+    apply in_flat_map in Hin. destruct Hin as [n_idx [_ Hin]].
+    destruct (index_of_nat _ n_idx) as [n_idx'|]; [|contradiction].
+    simpl in Hin. destruct Hin as [<-|[<-|[]]]; eauto.
+  Qed.
+
+  Theorem ext_res_inj: forall f g, ext_res f = ext_res g -> f = g.
+  Proof. intros f g H. injection H. auto. Qed.
+
+  Theorem ext_res_not_arg: forall f g, ext_res f <> ext_arg g.
+  Proof. intros f g H. discriminate H. Qed.
+
+  Theorem ext_res_not_done: forall f, ext_res f <> done_signal.
+  Proof. intros f H. discriminate H. Qed.
+
+  Theorem ext_res_not_reset: forall f, ~ In (ext_res f) reset_states.
+  Proof.
+    intros f Hin. apply reset_states_shape in Hin.
+    destruct Hin as [a' [n' [H|H]]]; discriminate H.
+  Qed.
+
+  Theorem ext_arg_not_reset: forall f, ~ In (ext_arg f) reset_states.
+  Proof.
+    intros f Hin. apply reset_states_shape in Hin.
+    destruct Hin as [a' [n' [H|H]]]; discriminate H.
+  Qed.
+
+  (* The scheduled ops only ever write the done signal, buffers, validity bits, spec
+     states and outputs — never a designated external result register. *)
+  Theorem ext_res_not_scheduled: forall a f,
+    ~ In (StOp (ext_res f)) (tfs_ops_tags (fst (schedule a) ++ snd (schedule a))).
+  Proof.
+    intros a f Hin. unfold tfs_ops_tags in Hin. rewrite flat_map_app in Hin.
+    apply in_app_or in Hin. destruct Hin as [Hin | Hin].
+    - unfold schedule, compile_dfg_valid in Hin. cbn [fst flat_map app] in Hin.
+      destruct Hin as [Heq | Hin]; [discriminate Heq |].
+      apply buffers_tags_in in Hin. destruct Hin as [a' [n' [H|H]]]; discriminate H.
+    - unfold schedule in Hin. cbn [snd] in Hin.
+      apply final_tags_in in Hin. destruct Hin as [[sv H]|[ov H]]; discriminate H.
+  Qed.
+
   Definition tfs_schedule : TFSchedule :=
     {|
       tfs_ctx := ctx;
@@ -1571,6 +1655,14 @@ Section VariableScheduler.
       tfs_schedule := schedule;
       tfs_done_signal := done_signal;
       tfs_reset_states := reset_states;
+      tfs_ext_arg := ext_arg;
+      tfs_ext_res := ext_res;
+      tfs_ext_res_inj := ext_res_inj;
+      tfs_ext_res_not_arg := ext_res_not_arg;
+      tfs_ext_res_not_done := ext_res_not_done;
+      tfs_ext_res_not_reset := ext_res_not_reset;
+      tfs_ext_res_not_scheduled := ext_res_not_scheduled;
+      tfs_ext_arg_not_reset := ext_arg_not_reset;
       tfs_schedule_no_duplicates := schedule_no_dup;
       tfs_done_signal_size := eq_refl;
       tfs_done_signal_assigned_by_always := schedule_done_assigned;
@@ -1634,7 +1726,7 @@ Module Examples.
     pose (cost := 10).
     pose (shd := shd_ctx1).
     pose (debug_dfg := build_dfg shd (action)); vm_compute in debug_dfg.
-    pose (debug_cost := calc_backward_cost shd debug_dfg); vm_compute in debug_cost.
+    pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
     pose (debug_sched := schedule shd cost (action)); vm_compute in debug_sched.
@@ -1644,7 +1736,7 @@ Module Examples.
     pose (cost := 4).
     pose (shd := shd_ctx1).
     pose (debug_dfg := build_dfg shd (action)); vm_compute in debug_dfg.
-    pose (debug_cost := calc_backward_cost shd debug_dfg); vm_compute in debug_cost.
+    pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
     pose (debug_sched := schedule shd cost (action)); time vm_compute in debug_sched. (* TIME: 0.2 Seconds *)
@@ -1685,7 +1777,7 @@ Module Examples.
     pose (cost := 15).
     pose (shd := shd_ctx2).
     pose (debug_dfg := build_dfg shd (action)); vm_compute in debug_dfg.
-    pose (debug_cost := calc_backward_cost shd debug_dfg); vm_compute in debug_cost.
+    pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
     pose (debug_sched := schedule shd cost (action)); vm_compute in debug_sched.
@@ -1695,7 +1787,7 @@ Module Examples.
     pose (cost := 5).
     pose (shd := shd_ctx2).
     pose (debug_dfg := build_dfg shd (action)); vm_compute in debug_dfg.
-    pose (debug_cost := calc_backward_cost shd debug_dfg); vm_compute in debug_cost.
+    pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
     pose (debug_sched := schedule shd cost (action)); time vm_compute in debug_sched.
@@ -1742,7 +1834,7 @@ Module Examples.
     pose (cost := 15).
     pose (shd := shd_ctx3).
     pose (debug_dfg := build_dfg shd (action)); vm_compute in debug_dfg.
-    pose (debug_cost := calc_backward_cost shd debug_dfg); vm_compute in debug_cost.
+    pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
     pose (debug_sched := schedule shd cost (action)); vm_compute in debug_sched.

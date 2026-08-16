@@ -49,6 +49,14 @@ Inductive _tfs_ops_t {s_t o_t} :=
   | StOp (s: s_t)
   | OutOp (o: o_t).
 
+Definition tfs_ops_tags {s i o e} (ops: list (@tf_op s i o e)) : list (@_tfs_ops_t s o) :=
+  flat_map (fun op =>
+    match op with
+      | tf_assign dst _ => [StOp dst]
+      | tf_output dst _ => [OutOp dst]
+      | _ => []
+    end) ops.
+
 Definition tfs_ops_no_duplicates {s i o e} (ops: list (@tf_op s i o e)) : Prop :=
   NoDup (flat_map (fun op => 
     match op with 
@@ -89,7 +97,36 @@ Record TFSchedule := {
   (* these states have to be reset to Bits.zero if the done signal is set *)
   tfs_reset_states: list tfs_states;
 
-  tfs_schedule_no_duplicates: forall a, tfs_ops_no_duplicates (fst (tfs_schedule a) ++ snd (tfs_schedule a));
+  (* ---- external calls (campaign extern-calls-mvp, decision D8) ----
+     Each trusted external function owns one argument and one result register. The
+     call itself is issued by a single rule that runs after every action rule, so the
+     design contains exactly one [ExternalCall] per function and therefore one Verilog
+     driver per port. The argument is read at P1 (it is the value the action just
+     wrote) and the result is written at P0 (so the action reads the *previous*
+     cycle's result); Koika admits no ordering in which both hops are P0. *)
+  tfs_ext_arg: tfs_spec_externs tfs_ctx -> tfs_states;
+  tfs_ext_res: tfs_spec_externs tfs_ctx -> tfs_states;
+
+  (* one result register per function, and no register is both an argument and a
+     result: [rule_ext] writes all of them in one rule and reads the arguments at P1,
+     which would otherwise observe a sibling's write *)
+  tfs_ext_res_inj: forall f g, tfs_ext_res f = tfs_ext_res g -> f = g;
+  tfs_ext_res_not_arg: forall f g, tfs_ext_res f <> tfs_ext_arg g;
+
+  (* [rule_ext] writes the result registers at P0, after the action rule ran. A P0
+     write is blocked by an earlier read1, write0 or write1, so no result register may
+     be the done signal (read at P1 by the done gate), a reset register (written at
+     P1) or a target of the scheduled ops (written at P0). *)
+  tfs_ext_res_not_done: forall f, tfs_ext_res f <> tfs_done_signal;
+  tfs_ext_res_not_reset: forall f, ~ In (tfs_ext_res f) tfs_reset_states;
+  tfs_ext_res_not_scheduled: forall a f,
+    ~ In (StOp (tfs_ext_res f)) (tfs_ops_tags (fst (tfs_schedule a) ++ snd (tfs_schedule a)));
+
+  (* [rule_ext] reads the argument registers at P1, which a P1 write would block *)
+  tfs_ext_arg_not_reset: forall f, ~ In (tfs_ext_arg f) tfs_reset_states;
+
+  tfs_schedule_no_duplicates: forall a,
+    tfs_ops_no_duplicates (fst (tfs_schedule a) ++ snd (tfs_schedule a));
 
   (* the done signal is a single bit; the HW gates the done-branch on its low bit
      while the spec gates on `done_val <> 0`, so they must coincide *)
@@ -139,6 +176,7 @@ Section SchedulerSpec.
   Hint Extern 0 (FiniteType s_var) => exact (tfs_states_fin (tf_sched_ctx)) : typeclass_instances.
   Hint Extern 0 (FiniteType i_var) => exact (tfs_inputs_fin (tf_sched_ctx)) : typeclass_instances.
   Hint Extern 0 (FiniteType o_var) => exact (tfs_outputs_fin (tf_sched_ctx)) : typeclass_instances.
+  Hint Extern 0 (FiniteType e_var) => exact (tfs_spec_externs_fin (tfs_ctx tf_sched_ctx)) : typeclass_instances.
   Hint Extern 0 (tf_externs e_var) => exact e_sig : typeclass_instances.
 
   Definition tfs_get_updates
@@ -213,6 +251,15 @@ Section SchedulerSpec.
     | None => (snd sys_state).[x]
     end.
 
+  (* One update per external function: its result register takes the denotation of the
+     function applied to its argument register. Widths are reconciled with [convert],
+     mirroring [tf_eval_expr]'s [tf_ext] case and the hardware's [synth_convert]. *)
+  Definition tfs_ext_updates (st: st_env) : list (tf_update s_sz o_sz) :=
+    List.map
+      (fun f => tf_st_update s_sz o_sz (tfs_ext_res tf_sched_ctx f)
+                  (convert (tfe_denote f (convert (st.[tfs_ext_arg tf_sched_ctx f])))))
+      (finite_elements (T:=e_var)).
+
   Definition tfs_next_cycle
     (action: tfs_action tf_sched_ctx)
     (sys_state: sys_state_t)
@@ -230,9 +277,15 @@ Section SchedulerSpec.
 
     let updates := if beq_dec done_val Bits.zero then always_updates else (reset_updates ++ done_updates ++ always_updates) in
 
+    (* The external calls run in their own rule *after* the action rule, reading the
+       argument registers the action just wrote (D8), so they are evaluated on the
+       state the action produced. They only ever write result registers, which the
+       action never writes, so putting them first in the list is an override. *)
+    let ext_updates := tfs_ext_updates (ContextEnv.(create) (fun x => find_st_val x updates sys_state)) in
+
     ( 
-      ContextEnv.(create) (fun x => find_st_val x updates sys_state),
-      ContextEnv.(create) (fun x => find_out_val x updates sys_state)
+      ContextEnv.(create) (fun x => find_st_val x (ext_updates ++ updates) sys_state),
+      ContextEnv.(create) (fun x => find_out_val x (ext_updates ++ updates) sys_state)
     ).
 
 End SchedulerSpec.

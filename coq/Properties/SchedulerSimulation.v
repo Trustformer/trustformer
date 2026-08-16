@@ -78,6 +78,11 @@ Section SchedulerSimulation.
   (* The concrete TFSchedule instance built by the variable scheduler. *)
   Local Notation sched := (tfs_schedule ctx cost_limit).
 
+  (* [cost_fn] costs a [DFG_Delay] at a full bucket (D9), so [calc_backward_cost]
+     takes [cost_limit]. This abbreviation keeps the ~27 uses below unchanged. *)
+  Local Notation calc_backward_cost c d :=
+    (VariableScheduler.calc_backward_cost c cost_limit d).
+
   (* ---- Source (spec) world ---- *)
   Local Notation s_var := (tfs_spec_states ctx).
   Local Notation i_var := (tfs_spec_inputs ctx).
@@ -91,6 +96,7 @@ Section SchedulerSimulation.
   Hint Extern 0 (FiniteType s_var) => exact (tfs_spec_states_fin ctx)  : typeclass_instances.
   Hint Extern 0 (FiniteType i_var) => exact (tfs_spec_inputs_fin ctx)  : typeclass_instances.
   Hint Extern 0 (FiniteType o_var) => exact (tfs_spec_outputs_fin ctx) : typeclass_instances.
+  Hint Extern 0 (FiniteType e_var) => exact (tfs_spec_externs_fin ctx) : typeclass_instances.
   Hint Extern 0 (tf_externs e_var) => exact e_sig : typeclass_instances.
   (* [tfs_ctx sched] and [ctx] are convertible but not syntactically equal, and the
      goal appears under both spellings; [exact] fails harmlessly if neither matches. *)
@@ -129,14 +135,17 @@ Section SchedulerSimulation.
 
   (* The list of updates a single cycle selects (mirrors the inline `updates`
      let inside tfs_next_cycle): always-updates unconditionally, plus the
-     reset+done updates when the done flag fired this cycle. *)
+     reset+done updates when the done flag fired this cycle, all overridden by the
+     external-call updates, which run in their own rule after the action rule. *)
   Definition cycle_updates (act: tfs_action sched) (ss: sched_sys_state) (input: input_t) :=
     let always_updates := tfs_get_updates sched (fst (Contract.tfs_schedule sched act)) ss input in
     let done_updates   := tfs_get_updates sched (snd (Contract.tfs_schedule sched act)) ss input in
     let reset_updates  := tfs_reset_updates sched (tfs_reset_states sched) in
     let done_val := find_st_val sched (tfs_done_signal sched) always_updates ss in
-    if beq_dec done_val Bits.zero then always_updates
-    else reset_updates ++ done_updates ++ always_updates.
+    let updates :=
+      if beq_dec done_val Bits.zero then always_updates
+      else reset_updates ++ done_updates ++ always_updates in
+    tfs_ext_updates sched (ContextEnv.(create) (fun x => find_st_val sched x updates ss)) ++ updates.
 
   (* One cycle, expressed as create over find_{st,out}_val of the selected updates. *)
   Lemma sched_step_eq (act: tfs_action sched) (ss: sched_sys_state) (input: input_t) :
@@ -295,6 +304,12 @@ Section SchedulerSimulation.
     - apply IH. exact Htail.
   Qed.
 
+  Lemma NoDup_app_r {A} (l1 l2: list A) : NoDup (l1 ++ l2) -> NoDup l2.
+  Proof.
+    induction l1 as [| a l1 IH]; intro Hnd; [ exact Hnd |].
+    cbn [app] in Hnd. inversion Hnd; subst. apply IH. assumption.
+  Qed.
+
   (* If no op in the list writes output x, find_out_update returns None. *)
   Lemma find_out_update_not_in x ops ss input :
     (forall op, In op ops -> ~ op_writes_out x op) ->
@@ -323,6 +338,85 @@ Section SchedulerSimulation.
 
   (* find_st_update over an append: if the prefix has no match, skip it. *)
   Local Notation find_st_update_app_None := (find_st_update_app_None_gen sched).
+
+  (* --- find over an append whose SUFFIX has no match --- *)
+
+  Lemma find_st_update_app_r_None x (ups1 ups2: list (tf_update ss_sz oo_sz)) :
+    find_st_update sched x ups2 = None ->
+    find_st_update sched x (ups1 ++ ups2) = find_st_update sched x ups1.
+  Proof.
+    induction ups1 as [| u ups1 IH]; intro Hnone; [ exact Hnone |].
+    cbn [app]. destruct u as [| var val | var val]; cbn [find_st_update] in *.
+    - apply IH, Hnone.
+    - destruct (eq_dec var x); [ reflexivity | apply IH, Hnone ].
+    - apply IH, Hnone.
+  Qed.
+
+  Lemma find_out_update_app_r_None x (ups1 ups2: list (tf_update ss_sz oo_sz)) :
+    find_out_update sched x ups2 = None ->
+    find_out_update sched x (ups1 ++ ups2) = find_out_update sched x ups1.
+  Proof.
+    induction ups1 as [| u ups1 IH]; intro Hnone; [ exact Hnone |].
+    cbn [app]. destruct u as [| var val | var val]; cbn [find_out_update] in *.
+    - apply IH, Hnone.
+    - apply IH, Hnone.
+    - destruct (eq_dec var x); [ reflexivity | apply IH, Hnone ].
+  Qed.
+
+  Lemma find_out_update_app_None x (ups1 ups2: list (tf_update ss_sz oo_sz)) :
+    find_out_update sched x ups1 = None ->
+    find_out_update sched x (ups1 ++ ups2) = find_out_update sched x ups2.
+  Proof.
+    induction ups1 as [| u ups1 IH]; intro Hnone; [ reflexivity |].
+    cbn [app]. destruct u as [| var val | var val]; cbn [find_out_update] in *.
+    - apply IH, Hnone.
+    - apply IH, Hnone.
+    - destruct (eq_dec var x); [ discriminate | apply IH, Hnone ].
+  Qed.
+
+  (* The external-call updates write only the designated per-function result
+     registers, so every other register sees straight through them. *)
+  Lemma ext_updates_no_st (x: tfs_states sched) (st: sched_st_env) :
+    (forall f, tfs_ext_res sched f <> x) ->
+    find_st_update sched x (tfs_ext_updates sched st) = None.
+  Proof.
+    intro Hne. unfold tfs_ext_updates.
+    match goal with |- context [List.map _ ?L] => induction L as [| f fs IH] end;
+      cbn [List.map find_st_update].
+    - reflexivity.
+    - destruct (eq_dec (tfs_ext_res sched f) x) as [Heq | _];
+        [ exfalso; exact (Hne f Heq) | exact IH ].
+  Qed.
+
+  Lemma ext_updates_no_out (o: o_var) (st: sched_st_env) :
+    find_out_update sched o (tfs_ext_updates sched st) = None.
+  Proof.
+    unfold tfs_ext_updates.
+    match goal with |- context [List.map _ ?L] => induction L as [| f fs IH] end;
+      cbn [List.map find_out_update].
+    - reflexivity.
+    - exact IH.
+  Qed.
+
+  Lemma ext_updates_no_done (st: sched_st_env) :
+    find_st_update sched (tfs_done_signal sched) (tfs_ext_updates sched st) = None.
+  Proof. apply ext_updates_no_st. intros f H. discriminate H. Qed.
+
+  Lemma ext_updates_no_svar (s: s_var) (st: sched_st_env) :
+    find_st_update sched (tf_dfg_s s) (tfs_ext_updates sched st) = None.
+  Proof. apply ext_updates_no_st. intros f H. discriminate H. Qed.
+
+  Lemma ext_updates_no_b (a_idx: Vect.index (length (buffer_needs ctx cost_limit)))
+    (n_idx: Vect.index (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+    (st: sched_st_env) :
+    find_st_update sched (tf_dfg_b a_idx n_idx) (tfs_ext_updates sched st) = None.
+  Proof. apply ext_updates_no_st. intros f H. discriminate H. Qed.
+
+  Lemma ext_updates_no_v (a_idx: Vect.index (length (buffer_needs ctx cost_limit)))
+    (n_idx: Vect.index (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+    (st: sched_st_env) :
+    find_st_update sched (tf_dfg_v a_idx n_idx) (tfs_ext_updates sched st) = None.
+  Proof. apply ext_updates_no_st. intros f H. discriminate H. Qed.
 
   (* The reset states are only buffer/valid registers, never the done flag. *)
   Lemma reset_states_not_done v :
@@ -387,10 +481,11 @@ Section SchedulerSimulation.
         (tfs_get_updates sched (fst (Contract.tfs_schedule sched act)) ss input) ss.
   Proof.
     unfold cycle_updates. cbv zeta.
+    unfold find_st_val.
+    rewrite (find_st_update_app_None _ _ _ (ext_updates_no_done _)).
     destruct (beq_dec _ _) eqn:Hd.
     - reflexivity.
-    - unfold find_st_val.
-      rewrite (find_st_update_app_None _ _ _ reset_updates_no_done).
+    - rewrite (find_st_update_app_None _ _ _ reset_updates_no_done).
       rewrite (find_st_update_app_None _ _ _ (done_ops_no_done act ss input)).
       reflexivity.
   Qed.
@@ -1199,11 +1294,11 @@ Section SchedulerSimulation.
   Local Definition bc_aux (cost_map : list (nid_t * nat)) node
     : list (nid_t * nat) :=
     list_assoc_set_all_max cost_map (nid node :: get_args ctx node)
-      (getn cost_map (nid node) + cost_fn ctx (op node) (sz node)).
+      (getn cost_map (nid node) + cost_fn ctx cost_limit (op node) (sz node)).
 
   Lemma calc_backward_cost_fold dfg :
     calc_backward_cost ctx dfg = fold_left bc_aux (rev (graph dfg)) [].
-  Proof. unfold calc_backward_cost, bc_aux, getn. reflexivity. Qed.
+  Proof. unfold VariableScheduler.calc_backward_cost, bc_aux, getn. reflexivity. Qed.
 
   (* Frozen-key propagation: if key (nid N) is never in the key-set of any
      node processed later, then the inequality getn x >= getn (nid N) is
@@ -1794,6 +1889,7 @@ Section SchedulerSimulation.
         end
     | DFG_Phi c t e => wsz s c 1 /\ wsz s t (sz node) /\ wsz s e (sz node)
     | DFG_Ext f a => wsz s a (@tfe_arg_size _ e_sig f)
+    | DFG_Delay a => wsz s a (sz node)
     | _ => True
     end.
 
@@ -1804,11 +1900,12 @@ Section SchedulerSimulation.
     node_args_sz s node -> wgmono s s' -> node_args_sz s' node.
   Proof.
     unfold node_args_sz. intros H Hg.
-    destruct (op node) as [c|v|v|uop a|bop a1 a2|a|cd t e|xf xa|];
-      [ exact I | exact I | exact I | | | exact I | | | exact I ].
+    destruct (op node) as [c|v|v|uop a|bop a1 a2|a|cd t e|xf xa|dly|];
+      [ exact I | exact I | exact I | | | exact I | | | | exact I ].
     - destruct uop; eapply wsz_gmono; eauto.
     - destruct bop; destruct H as [H1 H2]; split; eapply wsz_gmono; eauto.
     - destruct H as [H1 [H2 H3]]; repeat split; eapply wsz_gmono; eauto.
+    - eapply wsz_gmono; eauto.
     - eapply wsz_gmono; eauto.
   Qed.
 
@@ -3148,7 +3245,7 @@ Section SchedulerSimulation.
     (* base inequality after processing [node] itself *)
     apply cost_ge_after_fold.
     - unfold bc_aux.
-      set (w := getn acc0 (nid node) + cost_fn ctx (op node) (sz node)).
+      set (w := getn acc0 (nid node) + cost_fn ctx cost_limit (op node) (sz node)).
       eapply Nat.le_trans.
       + (* getn (sam ..) (nid node) <= w *)
         eapply Nat.le_trans; [ apply sam_upper |].
@@ -3281,7 +3378,7 @@ Section SchedulerSimulation.
                        (nid n :: get_args ctx n)
                        (match BitsToLists.list_assoc cost_map (nid n) with
                         | Some c => c | None => 0 end
-                        + cost_fn ctx (op n) (sz n)))).
+                        + cost_fn ctx cost_limit (op n) (sz n)))).
     - intros acc a j H. apply set_all_max_pres. exact H.
     - intros acc a. apply set_all_max_mem. left. reflexivity.
     - exact Hin.
@@ -4004,12 +4101,16 @@ Section SchedulerSimulation.
   Qed.
 
   (* When a cycle does NOT fire the done flag, tfs_next_cycle takes the ALWAYS
-     branch: cycle_updates reduces to just the always-updates (no reset/done
-     prefix).  This is the entry point for pre-done buffer reasoning. *)
+     branch: cycle_updates reduces to the always-updates, still overridden by the
+     external-call updates (no reset/done prefix).  This is the entry point for
+     pre-done buffer reasoning. *)
   Lemma cycle_updates_not_done (act: tfs_action sched) (ss: sched_sys_state) (input: input_t) :
     ~ done_set (sched_step act ss input) ->
     cycle_updates act ss input
-    = tfs_get_updates sched (fst (Contract.tfs_schedule sched act)) ss input.
+    = tfs_ext_updates sched
+        (ContextEnv.(create) (fun x => find_st_val sched x
+           (tfs_get_updates sched (fst (Contract.tfs_schedule sched act)) ss input) ss))
+      ++ tfs_get_updates sched (fst (Contract.tfs_schedule sched act)) ss input.
   Proof.
     intro Hnd.
     (* ~done_set gives the always-list done value = zero *)
@@ -4072,6 +4173,7 @@ Section SchedulerSimulation.
   Proof.
     intro Hnd. rewrite sched_step_getst. rewrite (cycle_updates_not_done _ _ _ Hnd).
     unfold find_st_val.
+    rewrite (find_st_update_app_None _ _ _ (ext_updates_no_svar s _)).
     rewrite (find_st_update_not_in (tf_dfg_s s) _ ss input
                (fun op Hin => always_ops_no_svar act s op Hin)).
     reflexivity.
@@ -4119,6 +4221,7 @@ Section SchedulerSimulation.
   Proof.
     intro Hnd. rewrite sched_step_getout. rewrite (cycle_updates_not_done _ _ _ Hnd).
     unfold find_out_val.
+    rewrite (find_out_update_app_None _ _ _ (ext_updates_no_out o _)).
     rewrite (find_out_update_not_in o _ ss input
                (fun op Hin => always_ops_no_out act o op Hin)).
     reflexivity.
@@ -4149,7 +4252,7 @@ Section SchedulerSimulation.
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |]; [ reflexivity | ].
     cbv beta iota zeta.
     destruct (op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | xf xarg | ];
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | xf xarg | dly | ];
       cbv beta iota zeta; try reflexivity.
     - destruct (compile_dfg_expr_aux ctx cost_limit tainted dfacts pi fuel a_idx
                   dfg arg bufs) as [ae ve] eqn:E1.
@@ -4205,6 +4308,8 @@ Section SchedulerSimulation.
                   dfg xarg bufs) as [ae' ve'] eqn:E1'.
       pose proof (IH xarg pi pi') as Ha. rewrite E1, E1' in Ha. cbn [fst] in Ha.
       cbn [fst]. rewrite Ha. reflexivity.
+    - (* DFG_Delay: identity, so the argument's expression is passed through *)
+      exact (IH dly pi pi').
   Qed.
 
   (* Packages the phi step of the VALUE component in one equation, so proofs
@@ -4284,7 +4389,7 @@ Section SchedulerSimulation.
     cbn [compile_dfg_expr_aux BitsToLists.list_assoc]. cbv beta iota.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | xf xarg | ].
+      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | xf xarg | dly | ].
     - reflexivity.
     - reflexivity.
     - destruct v; cbn [fst tf_eval_expr]; [ rewrite Hs | rewrite Ho ]; reflexivity.
@@ -4333,6 +4438,8 @@ Section SchedulerSimulation.
       cbn [fst tf_eval_expr].
       specialize (IH xarg (@tfe_arg_size _ e_sig xf) pi).
       rewrite E1 in IH. cbn [fst] in IH. rewrite IH. reflexivity.
+    - (* DFG_Delay: identity *)
+      exact (IH dly szB pi).
     - reflexivity.
   Qed.
 
@@ -4411,7 +4518,7 @@ Section SchedulerSimulation.
                 = compile_dfg_expr_aux ctx cost_limit tainted dfacts p f2' a_idx dfg x buffers).
       { intros x p Hx. destruct (Harg x Hx) as [Hx1 Hx2].
         apply (IH x Hx2 Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen)); lia. }
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | xf xarg | ] eqn:Hop.
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | xf xarg | dly | ] eqn:Hop.
       + reflexivity.
       + reflexivity.
       + destruct v; reflexivity.
@@ -4437,6 +4544,9 @@ Section SchedulerSimulation.
       + assert (Hain : In xarg (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
         rewrite (Hrec xarg pi Hain). reflexivity.
+      + assert (Hain : In dly (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        rewrite (Hrec dly pi Hain). reflexivity.
       + exfalso. apply (node_op_not_empty act n Hn1 Hnlen). exact Hop.
   Qed.
 
@@ -4584,7 +4694,7 @@ Section SchedulerSimulation.
         apply (IH x sx p Hx1 Hxlen);
           [ lia | lia | right; lia | symmetry; exact Hxsz ]. }
       pose proof (wfg_build_dfg act node Hnode_in) as Hfg.
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | xf xarg | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | xf xarg | dly | ]
         eqn:Hop.
       + (* Const *) reflexivity.
       + (* Input *) reflexivity.
@@ -4692,6 +4802,11 @@ Section SchedulerSimulation.
         pose proof (Hchild xarg (@tfe_arg_size _ e_sig xf) pi Hain Hfg) as Hc.
         rewrite E1, E2 in Hc. cbn [fst] in Hc.
         cbn [tf_eval_expr]. rewrite Hc. reflexivity.
+      + (* Delay: identity, so the child is demanded at the node's own size *)
+        assert (Hain : In dly (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+        exact (Hchild dly (sz node) pi Hain Hfg).
       + (* Empty: impossible for a real node *)
         exfalso. apply (node_op_not_empty act n Hn1 Hnlen).
         unfold node in Hop. exact Hop.
@@ -4888,7 +5003,7 @@ Section SchedulerSimulation.
         destruct (wsz_node_sz act x sx Hwsz) as [Hxlen Hxsz].
         apply (IH x sx p Hx1 Hxlen ltac:(lia) (eq_sym Hxsz) Hxv). }
       pose proof (wfg_build_dfg act node Hnode_in) as Hfg.
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | xf xarg | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | xf xarg | dly | ]
         eqn:Hop.
       + (* Const *) reflexivity.
       + (* Input *) reflexivity.
@@ -5054,6 +5169,11 @@ Section SchedulerSimulation.
         pose proof (Hchild xarg (@tfe_arg_size _ e_sig xf) pi Hain Hfg Hav) as Hc.
         rewrite E1, E2 in Hc. cbn [fst] in Hc.
         cbn [tf_eval_expr]. rewrite Hc. reflexivity.
+      + (* Delay: identity, child demanded at the node's own size *)
+        assert (Hain : In dly (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+        exact (Hchild dly (sz node) pi Hain Hfg Hval).
       + (* Empty: impossible for a real node *)
         exfalso. apply (node_op_not_empty act n Hn1 Hnlen).
         unfold node in Hop. exact Hop.
@@ -5378,9 +5498,11 @@ Section SchedulerSimulation.
     { rewrite Hops. right. exact Hvalid. }
     split; rewrite sched_step_getst, (cycle_updates_not_done act ss input Hnd);
       unfold find_st_val.
-    - rewrite (find_st_update_unique_assign _ _ _ _ _ Hnd_always Hvalue_ops).
+    - rewrite (find_st_update_app_None _ _ _ (ext_updates_no_b a_idx n_idx _)).
+      rewrite (find_st_update_unique_assign _ _ _ _ _ Hnd_always Hvalue_ops).
       reflexivity.
-    - rewrite (find_st_update_unique_assign _ _ _ _ _ Hnd_always Hvalid_ops).
+    - rewrite (find_st_update_app_None _ _ _ (ext_updates_no_v a_idx n_idx _)).
+      rewrite (find_st_update_unique_assign _ _ _ _ _ Hnd_always Hvalid_ops).
       reflexivity.
   Qed.
 
@@ -5492,7 +5614,7 @@ Section SchedulerSimulation.
       { intros x p Hx. destruct (Harg x Hx) as [Hx1 Hx2].
         apply (IH x p Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen));
           [ lia | lia | right; lia ]. }
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | xf xarg | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | xf xarg | dly | ]
         eqn:Hop.
       + cbn [snd]. exact (eval1_const1 ss input).
       + cbn [snd]. exact (eval1_const1 ss input).
@@ -5551,6 +5673,10 @@ Section SchedulerSimulation.
         destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
                     xarg bufs) as [ae ve] eqn:E1.
         cbn [snd] in Ha |- *. exact Ha.
+      + (* Delay: validity is the argument's *)
+        assert (Hain : In dly (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        exact (Hchild dly pi Hain).
       + exfalso. apply (node_op_not_empty act n Hn1 Hnlen).
         unfold node in Hop. exact Hop.
   Qed.
@@ -5699,9 +5825,14 @@ Section SchedulerSimulation.
   Lemma cycle_updates_done (act: tfs_action sched) (ss: sched_sys_state) (input: input_t) :
     done_set (sched_step act ss input) ->
     cycle_updates act ss input
-    = tfs_reset_updates sched (tfs_reset_states sched)
-      ++ tfs_get_updates sched (snd (Contract.tfs_schedule sched act)) ss input
-      ++ tfs_get_updates sched (fst (Contract.tfs_schedule sched act)) ss input.
+    = tfs_ext_updates sched
+        (ContextEnv.(create) (fun x => find_st_val sched x
+           (tfs_reset_updates sched (tfs_reset_states sched)
+            ++ tfs_get_updates sched (snd (Contract.tfs_schedule sched act)) ss input
+            ++ tfs_get_updates sched (fst (Contract.tfs_schedule sched act)) ss input) ss))
+      ++ (tfs_reset_updates sched (tfs_reset_states sched)
+          ++ tfs_get_updates sched (snd (Contract.tfs_schedule sched act)) ss input
+          ++ tfs_get_updates sched (fst (Contract.tfs_schedule sched act)) ss input).
   Proof.
     intro Hd. unfold done_set in Hd. rewrite sched_step_done in Hd.
     unfold cycle_updates. cbv zeta.
@@ -5710,39 +5841,6 @@ Section SchedulerSimulation.
   Qed.
 
   (* --- find over an append whose SUFFIX has no match --- *)
-
-  Lemma find_st_update_app_r_None x (ups1 ups2: list (tf_update ss_sz oo_sz)) :
-    find_st_update sched x ups2 = None ->
-    find_st_update sched x (ups1 ++ ups2) = find_st_update sched x ups1.
-  Proof.
-    induction ups1 as [| u ups1 IH]; intro Hnone; [ exact Hnone |].
-    cbn [app]. destruct u as [| var val | var val]; cbn [find_st_update] in *.
-    - apply IH, Hnone.
-    - destruct (eq_dec var x); [ reflexivity | apply IH, Hnone ].
-    - apply IH, Hnone.
-  Qed.
-
-  Lemma find_out_update_app_None x (ups1 ups2: list (tf_update ss_sz oo_sz)) :
-    find_out_update sched x ups1 = None ->
-    find_out_update sched x (ups1 ++ ups2) = find_out_update sched x ups2.
-  Proof.
-    induction ups1 as [| u ups1 IH]; intro Hnone; [ reflexivity |].
-    cbn [app]. destruct u as [| var val | var val]; cbn [find_out_update] in *.
-    - apply IH, Hnone.
-    - apply IH, Hnone.
-    - destruct (eq_dec var x); [ discriminate | apply IH, Hnone ].
-  Qed.
-
-  Lemma find_out_update_app_r_None x (ups1 ups2: list (tf_update ss_sz oo_sz)) :
-    find_out_update sched x ups2 = None ->
-    find_out_update sched x (ups1 ++ ups2) = find_out_update sched x ups1.
-  Proof.
-    induction ups1 as [| u ups1 IH]; intro Hnone; [ exact Hnone |].
-    cbn [app]. destruct u as [| var val | var val]; cbn [find_out_update] in *.
-    - apply IH, Hnone.
-    - apply IH, Hnone.
-    - destruct (eq_dec var x); [ reflexivity | apply IH, Hnone ].
-  Qed.
 
   Lemma find_out_update_not_in_raw x (ups: list (tf_update ss_sz oo_sz)) :
     (forall u, In u ups -> forall val, u <> tf_out_update ss_sz oo_sz x val) ->
@@ -5790,12 +5888,6 @@ Section SchedulerSimulation.
   Qed.
 
   (* --- uniqueness of the done-branch writes --- *)
-
-  Lemma NoDup_app_r {A} (l1 l2: list A) : NoDup (l1 ++ l2) -> NoDup l2.
-  Proof.
-    induction l1 as [| a l1 IH]; intro Hnd; [ exact Hnd |].
-    cbn [app] in Hnd. inversion Hnd; subst. apply IH. assumption.
-  Qed.
 
   Lemma done_ops_no_dup (act: tfs_action sched) :
     tfs_ops_no_duplicates (snd (Contract.tfs_schedule sched act)).
@@ -5938,6 +6030,7 @@ Section SchedulerSimulation.
     intros Halign Hdone Hin.
     rewrite sched_step_getst, (cycle_updates_done act ss input Hdone).
     unfold find_st_val.
+    rewrite (find_st_update_app_None _ _ _ (ext_updates_no_svar sv _)).
     rewrite (find_st_update_app_None _ _ _ (reset_updates_no_svar sv)).
     rewrite (find_st_update_app_r_None _ _ _
                (find_st_update_not_in (tf_dfg_s sv) _ ss input
@@ -5958,6 +6051,7 @@ Section SchedulerSimulation.
     intros Halign Hdone Hin.
     rewrite sched_step_getout, (cycle_updates_done act ss input Hdone).
     unfold find_out_val.
+    rewrite (find_out_update_app_None _ _ _ (ext_updates_no_out ov _)).
     rewrite (find_out_update_app_None _ _ _ (reset_updates_no_out ov)).
     rewrite (find_out_update_app_r_None _ _ _
                (find_out_update_not_in ov _ ss input
@@ -5978,6 +6072,7 @@ Section SchedulerSimulation.
     intros Halign Hdone Hno.
     rewrite sched_step_getst, (cycle_updates_done act ss input Hdone).
     unfold find_st_val.
+    rewrite (find_st_update_app_None _ _ _ (ext_updates_no_svar sv _)).
     rewrite (find_st_update_app_None _ _ _ (reset_updates_no_svar sv)).
     rewrite (find_st_update_app_r_None _ _ _
                (find_st_update_not_in (tf_dfg_s sv) _ ss input
@@ -5997,6 +6092,7 @@ Section SchedulerSimulation.
     intros Halign Hdone Hno.
     rewrite sched_step_getout, (cycle_updates_done act ss input Hdone).
     unfold find_out_val.
+    rewrite (find_out_update_app_None _ _ _ (ext_updates_no_out ov _)).
     rewrite (find_out_update_app_None _ _ _ (reset_updates_no_out ov)).
     rewrite (find_out_update_app_r_None _ _ _
                (find_out_update_not_in ov _ ss input
@@ -6066,6 +6162,7 @@ Section SchedulerSimulation.
     intro Hdone.
     rewrite sched_step_getst, (cycle_updates_done act ss input Hdone).
     unfold find_st_val.
+    rewrite (find_st_update_app_None _ _ _ (ext_updates_no_v a_idx n_idx _)).
     rewrite (find_st_update_app_Some _ _ _ _ (reset_updates_v a_idx n_idx)).
     reflexivity.
   Qed.
@@ -6406,6 +6503,23 @@ Section SchedulerSimulation.
       as [ae av] eqn:E.
     cbn [fst]. f_equal.
     rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3), E. reflexivity.
+  Qed.
+
+  Lemma nre_delay (act: tfs_action sched) a_idx n arg :
+    1 <= n -> n < length (graph (build_dfg ctx act)) ->
+    op (nth n (graph (build_dfg ctx act))
+          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Delay arg ->
+    node_ref_expr act a_idx n = node_ref_expr act a_idx arg.
+  Proof.
+    intros H1 H2 Hop.
+    assert (Hain : In arg (get_args ctx (nth n (graph (build_dfg ctx act))
+                                           {| nid := 0; op := DFG_Empty; sz := 0 |})))
+      by (unfold get_args; rewrite Hop; left; reflexivity).
+    destruct (node_args_range act n H1 H2 arg Hain) as [Ha1 Ha3].
+    assert (Ha2 : arg < length (graph (build_dfg ctx act))) by lia.
+    rewrite (nre_unfold act a_idx n H1 H2).
+    cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
+    rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3). reflexivity.
   Qed.
 
   Lemma nre_binary (act: tfs_action sched) a_idx n bop a1 a2 :    1 <= n -> n < length (graph (build_dfg ctx act)) ->

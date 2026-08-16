@@ -76,8 +76,12 @@ Section SynthesisCorrectness.
   Local Notation spec_outputs_size := (tfs_outputs_size (tf_sched_ctx tf_ctx)).
   Local Notation spec_externs := (tfs_spec_externs (tfs_ctx (tf_sched_ctx tf_ctx))).
   Local Notation spec_externs_sig := (tfs_spec_externs_sig (tfs_ctx (tf_sched_ctx tf_ctx))).
+  Local Notation spec_externs_fin := (tfs_spec_externs_fin (tfs_ctx (tf_sched_ctx tf_ctx))).
+  Local Notation spec_all_externs := (@finite_elements spec_externs spec_externs_fin).
   Local Notation spec_externs_arg := (@tfe_arg_size _ spec_externs_sig).
   Local Notation spec_externs_res := (@tfe_res_size _ spec_externs_sig).
+  Local Notation spec_ext_arg := (tfs_ext_arg (tf_sched_ctx tf_ctx)).
+  Local Notation spec_ext_res := (tfs_ext_res (tf_sched_ctx tf_ctx)).
   Hint Extern 0 (tf_externs spec_externs) => exact spec_externs_sig : typeclass_instances.
   Hint Extern 1 (tf_externs _) => exact spec_externs_sig : typeclass_instances.
   Opaque tfs_outputs_size.
@@ -3480,6 +3484,580 @@ Set Printing Implicit.
     destruct (find_out_update sched_ctx x _); reflexivity.
   Qed.
 
+  (* ==================================================================== *)
+  (* rule_ext: the external calls, issued once, after every action rule.  *)
+  (* ==================================================================== *)
+
+  (* [may_read _ P1] and [may_write _ _ P1] inspect the very same log. *)
+  Lemma may_read_P1_may_write :
+    forall (log_r log_a: Log R ContextEnv) idx,
+      may_read (log_app log_a log_r) P1 idx = may_write log_r log_a P1 idx.
+  Proof.
+    Local Transparent may_read may_write. reflexivity.
+  Qed.
+
+  Lemma may_write_app_empty :
+    forall (log_r log_a: Log R ContextEnv) prt idx,
+      may_write (log_app log_a log_r) log_empty prt idx = may_write log_r log_a prt idx.
+  Proof.
+    intros log_r log_a prt idx. unfold may_write.
+    rewrite SemanticProperties.log_app_empty_r. reflexivity.
+  Qed.
+
+  (* Without a P1 write in the log the two latest-write notions coincide. *)
+  Lemma latest_write0_eq_latest_write :
+    forall (L: Log R ContextEnv) idx,
+      may_read L P1 idx = true ->
+      latest_write0 L idx = latest_write L idx.
+  Proof.
+    intros L idx H.
+    unfold may_read in H. apply negb_true_iff in H.
+    unfold latest_write0, latest_write, log_find, log_existsb in *.
+    induction (ContextEnv.(getenv) L idx) as [| e l IH]; [ reflexivity |].
+    destruct e as [k p v]. cbn [existsb] in H. apply orb_false_iff in H.
+    destruct H as [Hh Ht]. specialize (IH Ht).
+    destruct k, p; cbn [list_find_opt log_latest_write0_fn log_latest_write_fn] in *;
+      solve [ exact IH | reflexivity | discriminate Hh ].
+  Qed.
+  Local Opaque may_read may_write.
+
+  (* The ext updates depend on the state only through the argument registers. *)
+  Lemma find_st_update_ext_updates_ext :
+    forall (st1 st2: ContextEnv.(env_t) spec_states_t),
+      (forall f, st1.[spec_ext_arg f] = st2.[spec_ext_arg f]) ->
+      forall x, find_st_update sched_ctx x (tfs_ext_updates sched_ctx st1)
+              = find_st_update sched_ctx x (tfs_ext_updates sched_ctx st2).
+  Proof.
+    intros st1 st2 Heq x. unfold tfs_ext_updates.
+    match goal with |- context [List.map _ ?L] => induction L as [| f fs IH] end;
+      cbn [List.map find_st_update]; [ reflexivity |].
+    destruct (eq_dec (spec_ext_res f) x) as [Heqx | Hne]; [| exact IH ].
+    rewrite (Heq f). reflexivity.
+  Qed.
+
+  (* ---- the ext registers survive the guard log and the command rule's log ---- *)
+
+  Lemma may_write_all_singleton :
+    forall log_r log_a prt idx,
+      may_write_all log_r log_a prt [idx] = may_write log_r log_a prt idx.
+  Proof. intros. unfold may_write_all. cbn [forallb]. apply andb_true_r. Qed.
+
+  Lemma may_write_aux_log_P0_one :
+    forall ops sys input log_r log_a idx,
+      ~ In idx (affected_regs ops) ->
+      (forall i, idx <> tf_in i) ->
+      may_write log_r log_a P0 idx = true ->
+      may_write log_r (aux_log sys input ops log_a) P0 idx = true.
+  Proof.
+    intros ops sys input log_r log_a idx Hna Hni Hb.
+    rewrite <- may_write_all_singleton.
+    apply may_write_all_aux_log_P0.
+    - intros reg [<- | []]. exact Hna.
+    - intros i [Heq | []]. exact (Hni i Heq).
+    - rewrite may_write_all_singleton. exact Hb.
+  Qed.
+
+  Lemma may_write_construct_log_P0 :
+    forall sys act input ready log_r log_a x,
+      ~ In (tf_reg x) (affected_regs (fst (spec_schedule act))) ->
+      ~ In (tf_reg x) (affected_regs (snd (spec_schedule act))) ->
+      x <> spec_done_state ->
+      ~ In x spec_reset_states ->
+      may_write log_r log_a P0 (tf_reg x) = true ->
+      may_write log_r (construct_log sys act input ready log_a) P0 (tf_reg x) = true.
+  Proof.
+    intros sys act input ready log_r log_a x Hfst Hsnd Hdone Hreset Hbase.
+    assert (Hni : forall i, tf_reg (states_var:=spec_states) (inputs_var:=spec_inputs)
+                              (outputs_var:=spec_outputs) x <> tf_in i) by discriminate.
+    assert (Hdone' : tf_reg (states_var:=spec_states) (inputs_var:=spec_inputs)
+                       (outputs_var:=spec_outputs) x <> tf_reg spec_done_state)
+      by (intro Heq; injection Heq as Heq'; exact (Hdone Heq')).
+    assert (Hreset' : ~ In (tf_reg (states_var:=spec_states) (inputs_var:=spec_inputs)
+                              (outputs_var:=spec_outputs) x) (map tf_reg spec_reset_states)).
+    { intro Hin. apply in_map_iff in Hin. destruct Hin as [y [Heq Hy]].
+      injection Heq as Heq'. subst y. exact (Hreset Hy). }
+    unfold construct_log. cbv zeta.
+    destruct (beq_dec _ _).
+    - rewrite may_write_log_cons_neq by exact Hdone'.
+      apply may_write_aux_log_P0_one; assumption.
+    - rewrite may_write_log_cons_neq by discriminate.
+      rewrite may_write_reset_log_neq by exact Hreset'.
+      apply may_write_aux_log_P0_one; [ exact Hsnd | exact Hni |].
+      rewrite may_write_log_cons_neq by exact Hdone'.
+      apply may_write_aux_log_P0_one; assumption.
+  Qed.
+
+  Lemma may_write_construct_log_P1 :
+    forall sys act input ready log_r log_a x,
+      ~ In x spec_reset_states ->
+      may_write log_r log_a P1 (tf_reg x) = true ->
+      may_write log_r (construct_log sys act input ready log_a) P1 (tf_reg x) = true.
+  Proof.
+    intros sys act input ready log_r log_a x Hreset Hbase.
+    assert (Hreset' : ~ In (tf_reg (states_var:=spec_states) (inputs_var:=spec_inputs)
+                              (outputs_var:=spec_outputs) x) (map tf_reg spec_reset_states)).
+    { intro Hin. apply in_map_iff in Hin. destruct Hin as [y [Heq Hy]].
+      injection Heq as Heq'. subst y. exact (Hreset Hy). }
+    unfold construct_log. cbv zeta.
+    destruct (beq_dec _ _).
+    - rewrite may_write_log_cons_P1_not_w1 by reflexivity.
+      rewrite may_write_aux_log_P1. exact Hbase.
+    - rewrite may_write_log_cons_neq by discriminate.
+      rewrite may_write_reset_log_neq by exact Hreset'.
+      rewrite may_write_aux_log_P1.
+      rewrite may_write_log_cons_P1_not_w1 by reflexivity.
+      rewrite may_write_aux_log_P1. exact Hbase.
+  Qed.
+
+  Lemma may_write_guard_log_other :
+    forall (r: ContextEnv.(env_t) R) act sigma log_r prt idx,
+      idx <> tf_ready -> idx <> tf_cmd -> (forall v, idx <> tf_in v) ->
+      may_write log_r (if Bits.single r.[tf_ready]
+                       then log_after_cmd_guard_rdy act sigma
+                       else log_cons tf_cmd Read0 (log_cons tf_ready Read0 log_empty)) prt idx
+      = may_write log_r log_empty prt idx.
+  Proof.
+    intros r act sigma log_r prt idx Hrdy Hcmd Hin.
+    assert (Hfold : ~ In idx (map tf_in spec_all_inputs)).
+    { intro Hmem. apply in_map_iff in Hmem. destruct Hmem as [v [Heq _]].
+      exact (Hin v (eq_sym Heq)). }
+    destruct (reg_ready_or_not r) as [Hready | Hnotready].
+    - rewrite Hready. replace (Bits.single Ob~1) with true by reflexivity. cbv iota.
+      unfold log_after_cmd_guard_rdy.
+      rewrite may_write_log_cons_neq by exact Hrdy.
+      rewrite may_write_log_cons_neq by exact Hcmd.
+      rewrite may_write_fold_cons_w0_inputs by exact Hfold.
+      rewrite !may_write_log_cons_neq by exact Hrdy.
+      reflexivity.
+    - rewrite Hnotready. replace (Bits.single Ob~0) with false by reflexivity. cbv iota.
+      rewrite may_write_log_cons_neq by exact Hcmd.
+      rewrite may_write_log_cons_neq by exact Hrdy.
+      reflexivity.
+  Qed.
+
+  (* What the ext rule needs of the log it runs on: it writes the result registers at
+     P0 and reads the argument registers at P1. *)
+  Definition ext_ok (L: Log R ContextEnv) : Prop :=
+    (forall f, may_write L log_empty P0 (tf_reg (spec_ext_res f)) = true) /\
+    (forall f, may_read L P1 (tf_reg (spec_ext_arg f)) = true).
+
+  Lemma ext_res_not_affected :
+    forall act f,
+      ~ In (tf_reg (spec_ext_res f)) (affected_regs (fst (spec_schedule act)))
+      /\ ~ In (tf_reg (spec_ext_res f)) (affected_regs (snd (spec_schedule act))).
+  Proof.
+    intros act f.
+    pose proof (tfs_ext_res_not_scheduled (tf_sched_ctx tf_ctx) act f) as Hns.
+    unfold tfs_ops_tags in Hns. rewrite flat_map_app in Hns.
+    split; intro Hin; apply affected_reg_in_ops_tags in Hin; apply Hns;
+      apply in_or_app; [ left | right ]; exact Hin.
+  Qed.
+
+  Lemma ext_ok_cmd_log :
+    forall (r: ContextEnv.(env_t) R) sys act input sigma log,
+      good_log log ->
+      ext_ok (log_app (construct_log sys act input r.[tf_ready]
+                        (if Bits.single r.[tf_ready]
+                         then log_after_cmd_guard_rdy act sigma
+                         else log_cons tf_cmd Read0 (log_cons tf_ready Read0 log_empty))) log).
+  Proof.
+    intros r sys act input sigma log Hgood.
+    destruct Hgood as [Hrd0_st [Hwr0_st _]].
+    split; intro f.
+    - rewrite may_write_app_empty.
+      destruct (ext_res_not_affected act f) as [Hfst Hsnd].
+      apply may_write_construct_log_P0.
+      + exact Hfst.
+      + exact Hsnd.
+      + exact (tfs_ext_res_not_done (tf_sched_ctx tf_ctx) f).
+      + exact (tfs_ext_res_not_reset (tf_sched_ctx tf_ctx) f).
+      + rewrite may_write_guard_log_other by discriminate.
+        unfold may_write_all in Hwr0_st. rewrite forallb_forall in Hwr0_st.
+        apply Hwr0_st. apply in_map. apply in_spec_all_states.
+    - rewrite may_read_P1_may_write.
+      apply may_write_construct_log_P1.
+      + exact (tfs_ext_arg_not_reset (tf_sched_ctx tf_ctx) f).
+      + rewrite may_write_guard_log_other by discriminate.
+        apply may_write0_implies_may_write1.
+        unfold may_write_all in Hwr0_st. rewrite forallb_forall in Hwr0_st.
+        apply Hwr0_st. apply in_map. apply in_spec_all_states.
+  Qed.
+
+  (* ---- interpreting rule_ext ---- *)
+
+  Definition ext_val (r: ContextEnv.(env_t) R) (L: Log R ContextEnv) (f: spec_externs)
+    : bits_t (spec_states_size (spec_ext_res f)) :=
+    convert (tfe_denote f
+               (convert (match latest_write0 L (tf_reg (spec_ext_arg f)) with
+                         | Some v => v
+                         | None => r.[tf_reg (spec_ext_arg f)]
+                         end))).
+
+  Fixpoint ext_rule_log (r: ContextEnv.(env_t) R) (L: Log R ContextEnv)
+    (fs: list spec_externs) (log_a: Log R ContextEnv) : Log R ContextEnv :=
+    match fs with
+    | [] => log_a
+    | f :: rest =>
+        ext_rule_log r L rest
+          (log_cons (R:=R) (REnv:=REnv) (tf_reg (spec_ext_res f)) (Write0 (ext_val r L f))
+             (log_cons (R:=R) (REnv:=REnv) (tf_reg (spec_ext_arg f)) Read1 log_a))
+    end.
+
+  Lemma latest_write0_log_cons_read :
+    forall (log: Log R ContextEnv) idx idx' le,
+      kind le = LogRead ->
+      latest_write0 (log_cons (R:=R) (REnv:=REnv) idx' le log) idx = latest_write0 log idx.
+  Proof.
+    intros log idx idx' le Hk.
+    destruct (eq_dec idx' idx) as [Heq | Hne].
+    - subst idx'. rewrite SemanticProperties.latest_write0_cons_eq.
+      destruct le; simpl in *; destruct kind; [ reflexivity | discriminate Hk ].
+    - rewrite SemanticProperties.latest_write0_cons_neq by (intro; congruence). reflexivity.
+  Qed.
+
+  (* [tau] is pinned on both sides: [ExternalCall]'s own typing gives the
+     convertible-but-not-syntactic [arg1Sig/retSig (Sigma (ext_call f))]. *)
+  Lemma interp_ext_call_read_step :
+    forall (r: ContextEnv.(env_t) R) sigma log_r log_a (f: spec_externs),
+      interp_action (R:=R) (Sigma:=Sigma) (REnv:=REnv) (tau := bits_t (spec_externs_res f))
+        r sigma CtxEmpty log_r log_a
+        (ExternalCall (ext_call f)
+           (synth_convert (in_var_size := spec_states_size (spec_ext_arg f)) tf_ctx
+              (spec_externs_arg f) (Read P1 (tf_reg (spec_ext_arg f)))))
+      = match
+          interp_action (R:=R) (Sigma:=Sigma) (REnv:=REnv) (tau := bits_t (spec_externs_arg f))
+            r sigma CtxEmpty log_r log_a
+            (synth_convert (in_var_size := spec_states_size (spec_ext_arg f)) tf_ctx
+               (spec_externs_arg f) (Read P1 (tf_reg (spec_ext_arg f))))
+        with
+        | Some (l, v, g) => Some (l, sigma (ext_call f) v, g)
+        | None => None
+        end.
+  Proof. reflexivity. Qed.
+
+  (* Same as [interp_action_read1] but with [tau] in the reduced [bits_t …] form the
+     surrounding [synth_convert] forces. *)
+  Lemma interp_action_read1_reg :
+    forall (r: ContextEnv.(env_t) R) sigma log_r log_a x,
+      may_read log_r P1 (tf_reg x) = true ->
+      interp_action (pos_t:=pos_t) (var_t:=var_t) (fn_name_t:=fn_name_t)
+        (R:=R) (Sigma:=Sigma) (REnv:=REnv)
+        (tau := bits_t (spec_states_size x)) r sigma CtxEmpty log_r log_a
+        (Read P1 (tf_reg x))
+      = Some (log_cons (R:=R) (REnv:=REnv) (tf_reg x) Read1 log_a,
+              match latest_write0 (log_app log_a log_r) (tf_reg x) with
+              | Some v => v
+              | None => r.[tf_reg x]
+              end,
+              CtxEmpty).
+  Proof. intros; simpl. rewrite H. reflexivity. Qed.
+
+  Lemma interp_ext_value :
+    forall (r: ContextEnv.(env_t) R) sigma log_r log_a (f: spec_externs),
+      externs_match sigma ->
+      may_read log_r P1 (tf_reg (spec_ext_arg f)) = true ->
+      interp_action (R:=R) (Sigma:=Sigma) (REnv:=REnv)
+        (tau := bits_t (spec_states_size (spec_ext_res f)))
+        r sigma CtxEmpty log_r log_a
+        (synth_convert (in_var_size := spec_externs_res f) tf_ctx
+           (spec_states_size (spec_ext_res f))
+           (ExternalCall (ext_call f)
+              (synth_convert (in_var_size := spec_states_size (spec_ext_arg f)) tf_ctx
+                 (spec_externs_arg f) (Read P1 (tf_reg (spec_ext_arg f))))))
+      = Some (log_cons (R:=R) (REnv:=REnv) (tf_reg (spec_ext_arg f)) Read1 log_a,
+              ext_val r (log_app log_a log_r) f, CtxEmpty).
+  Proof.
+    intros r sigma log_r log_a f Hsig Hrd.
+    rewrite interp_synth_convert.
+    rewrite interp_ext_call_read_step.
+    rewrite interp_synth_convert.
+    rewrite (interp_action_read1_reg r sigma log_r log_a (spec_ext_arg f) Hrd).
+    unfold ext_val. rewrite (Hsig f). reflexivity.
+  Qed.
+
+  Lemma interp_action_write0_reg :
+    forall (r: ContextEnv.(env_t) R) sigma log_r log_a x
+           (v: action R Sigma [] (bits_t (spec_states_size x))),
+      interp_action (tau:=unit_t) r sigma CtxEmpty log_r log_a (Write P0 (tf_reg x) v)
+      = match interp_action (tau := bits_t (spec_states_size x)) r sigma CtxEmpty log_r log_a v with
+        | Some (l, val, g) =>
+            if may_write log_r l P0 (tf_reg x)
+            then Some (log_cons (R:=R) (REnv:=REnv) (tf_reg x) (Write0 val) l, Bits.nil, g)
+            else None
+        | None => None
+        end.
+  Proof. reflexivity. Qed.
+
+  Lemma ext_val_app :
+    forall (r: ContextEnv.(env_t) R) log_r log_a f,
+      latest_write0 log_a (tf_reg (spec_ext_arg f)) = None ->
+      ext_val r (log_app log_a log_r) f = ext_val r log_r f.
+  Proof.
+    intros r log_r log_a f H. unfold ext_val.
+    rewrite SemanticProperties.latest_write0_app, H. reflexivity.
+  Qed.
+
+  Lemma ext_res_neq_arg :
+    forall g h, tf_reg (states_var:=spec_states) (inputs_var:=spec_inputs)
+                  (outputs_var:=spec_outputs) (spec_ext_res g) <> tf_reg (spec_ext_arg h).
+  Proof.
+    intros g h Heq. injection Heq as Heq'.
+    exact (tfs_ext_res_not_arg (tf_sched_ctx tf_ctx) g h Heq').
+  Qed.
+
+  Lemma interp_rule_ext_calls_gen :
+    forall (r: ContextEnv.(env_t) R) sigma log_r fs log_a,
+      externs_match sigma ->
+      NoDup fs ->
+      (forall f, may_read log_r P1 (tf_reg (spec_ext_arg f)) = true) ->
+      (forall f, In f fs -> may_write log_r log_a P0 (tf_reg (spec_ext_res f)) = true) ->
+      (forall f, latest_write0 log_a (tf_reg (spec_ext_arg f)) = None) ->
+      interp_action (tau:=unit_t) r sigma CtxEmpty log_r log_a
+        (rule_ext_calls tf_ctx fs (Const (tau:=unit_t) vect_nil))
+      = Some (ext_rule_log r log_r fs log_a, Bits.nil, CtxEmpty).
+  Proof.
+    intros r sigma log_r fs. induction fs as [| f fs IH]; intros log_a Hsig Hnd Hrd Hwr Hlw.
+    - reflexivity.
+    - apply NoDup_cons_iff in Hnd. destruct Hnd as [Hnotin Hnd].
+      assert (Hres_res : forall g, In g fs ->
+                tf_reg (states_var:=spec_states) (inputs_var:=spec_inputs)
+                  (outputs_var:=spec_outputs) (spec_ext_res g) <> tf_reg (spec_ext_res f)).
+      { intros g Hg Heq. injection Heq as Heq'.
+        apply tfs_ext_res_inj in Heq'. subst g. exact (Hnotin Hg). }
+      cbn [rule_ext_calls ext_rule_log].
+      rewrite interp_action_seq. unfold opt_bind.
+      rewrite interp_action_write0_reg.
+      rewrite (interp_ext_value r sigma log_r log_a f Hsig (Hrd f)).
+      rewrite (may_write_log_cons_neq log_r log_a P0
+                 (tf_reg (spec_ext_arg f)) (tf_reg (spec_ext_res f)) Read1 (ext_res_neq_arg f f)).
+      rewrite (Hwr f (or_introl eq_refl)).
+      rewrite (ext_val_app r log_r log_a f (Hlw f)).
+      apply IH; try assumption.
+      + intros g Hg.
+        rewrite (may_write_log_cons_neq _ _ P0 _ _ _ (Hres_res g Hg)).
+        rewrite (may_write_log_cons_neq _ _ P0 _ _ _ (ext_res_neq_arg g f)).
+        exact (Hwr g (or_intror Hg)).
+      + intros g.
+        rewrite SemanticProperties.latest_write0_cons_neq
+          by (apply not_eq_sym; exact (ext_res_neq_arg f g)).
+        rewrite latest_write0_log_cons_read by reflexivity.
+        exact (Hlw g).
+  Qed.
+
+  Definition ext_updates_of (r: ContextEnv.(env_t) R) (L: Log R ContextEnv)
+    (fs: list spec_externs) : list (tf_update spec_states_size spec_outputs_size) :=
+    List.map (fun f => tf_st_update spec_states_size spec_outputs_size
+                         (spec_ext_res f) (ext_val r L f)) fs.
+
+  Lemma ext_updates_of_nil : forall r L, ext_updates_of r L [] = [].
+  Proof. reflexivity. Qed.
+
+  Lemma ext_updates_of_cons : forall r L f fs,
+    ext_updates_of r L (f :: fs)
+    = tf_st_update spec_states_size spec_outputs_size (spec_ext_res f) (ext_val r L f)
+      :: ext_updates_of r L fs.
+  Proof. reflexivity. Qed.
+
+  Lemma find_st_update_ext_updates_of_in :
+    forall (r: ContextEnv.(env_t) R) L fs x v,
+      find_st_update sched_ctx x (ext_updates_of r L fs) = Some v ->
+      exists g, In g fs /\ spec_ext_res g = x.
+  Proof.
+    intros r L fs. induction fs as [| f fs IH]; intros x v H.
+    - rewrite ext_updates_of_nil in H. discriminate H.
+    - rewrite ext_updates_of_cons in H. cbn [find_st_update] in H.
+      destruct (eq_dec (spec_ext_res f) x) as [Heq | Hne].
+      + exists f. split; [ left; reflexivity | exact Heq ].
+      + destruct (IH x v H) as [g [Hg Hres]]. exists g. split; [ right; exact Hg | exact Hres ].
+  Qed.
+
+  Lemma latest_write_ext_rule_log_reg :
+    forall (r: ContextEnv.(env_t) R) L fs log_a x,
+      NoDup fs ->
+      latest_write (ext_rule_log r L fs log_a) (tf_reg x)
+      = match find_st_update sched_ctx x (ext_updates_of r L fs) with
+        | Some v => Some v
+        | None => latest_write log_a (tf_reg x)
+        end.
+  Proof.
+    intros r L fs. induction fs as [| f fs IH]; intros log_a x Hnd.
+    - rewrite ext_updates_of_nil. reflexivity.
+    - apply NoDup_cons_iff in Hnd. destruct Hnd as [Hnotin Hnd].
+      cbn [ext_rule_log]. rewrite ext_updates_of_cons. cbn [find_st_update].
+      rewrite (IH _ x Hnd).
+      destruct (find_st_update sched_ctx x (ext_updates_of r L fs)) as [v |] eqn:Hfs.
+      + destruct (eq_dec (spec_ext_res f) x) as [Heq | Hne]; [| reflexivity ].
+        exfalso. destruct (find_st_update_ext_updates_of_in r L fs x v Hfs) as [g [Hg Hres]].
+        assert (g = f) as ->.
+        { apply (tfs_ext_res_inj (tf_sched_ctx tf_ctx)). rewrite Hres, Heq. reflexivity. }
+        exact (Hnotin Hg).
+      + destruct (eq_dec (spec_ext_res f) x) as [Heq | Hne].
+        * destruct Heq. rewrite SemanticProperties.latest_write_cons_eq. reflexivity.
+        * rewrite SemanticProperties.latest_write_cons_neq
+            by (intro Hc; injection Hc as Hc'; exact (Hne (eq_sym Hc'))).
+          rewrite Common.latest_write_log_cons_read by reflexivity. reflexivity.
+  Qed.
+
+  Lemma latest_write_ext_rule_log_other :
+    forall (r: ContextEnv.(env_t) R) L fs log_a idx,
+      (forall y, idx <> tf_reg y) ->
+      latest_write (ext_rule_log r L fs log_a) idx = latest_write log_a idx.
+  Proof.
+    intros r L fs. induction fs as [| f fs IH]; intros log_a idx Hidx; [ reflexivity |].
+    cbn [ext_rule_log]. rewrite (IH _ idx Hidx).
+    rewrite SemanticProperties.latest_write_cons_neq by (apply Hidx).
+    rewrite Common.latest_write_log_cons_read by reflexivity. reflexivity.
+  Qed.
+
+  Lemma nodup_spec_all_externs : NoDup spec_all_externs.
+  Proof. apply NoDup_map_inv with (f:=(finite_index (FiniteType:=spec_externs_fin))). apply finite_injective. Qed.
+
+  Lemma interp_rule_ext :
+    forall (r: ContextEnv.(env_t) R) sigma L,
+      externs_match sigma ->
+      ext_ok L ->
+      interp_rule r sigma L (rules (@rule_ext spec_outputs spec_action))
+      = Some (ext_rule_log r L spec_all_externs log_empty).
+  Proof.
+    intros r sigma L Hsig [Hwr Hrd]. unfold interp_rule, rules.
+    rewrite interp_rule_ext_calls_gen with (fs := spec_all_externs).
+    - reflexivity.
+    - exact Hsig.
+    - exact nodup_spec_all_externs.
+    - exact Hrd.
+    - intros f _. exact (Hwr f).
+    - intro f. apply (SemanticProperties.latest_write0_empty (R:=R) (REnv:=REnv)).
+  Qed.
+
+  Local Notation cmd_log r sigma log act :=
+    (match interp_rule r sigma log (rules (@rule_cmd spec_outputs spec_action act)) with
+     | Some l => log_app l log
+     | None => log
+     end).
+
+  (* A definition rather than a notation: the [match]'s return predicate would
+     otherwise be re-elaborated at every use site and [rewrite] would stop matching. *)
+  Definition ext_step (r: ContextEnv.(env_t) R) (sigma: forall f, Sig_denote (Sigma f)) L :=
+    match interp_rule r sigma L (rules (@rule_ext spec_outputs spec_action)) with
+    | Some l => log_app l L
+    | None => L
+    end.
+
+  Lemma latest_write_ext_full_reg :
+    forall (r: ContextEnv.(env_t) R) sigma (L: Log R ContextEnv) x,
+      externs_match sigma -> ext_ok L ->
+      latest_write (ext_step r sigma L) (tf_reg x)
+      = match find_st_update sched_ctx x (ext_updates_of r L spec_all_externs) with
+        | Some v => Some v
+        | None => latest_write L (tf_reg x)
+        end.
+  Proof.
+    intros r sigma L x Hsig Hok. unfold ext_step.
+    rewrite (interp_rule_ext r sigma L Hsig Hok).
+    rewrite SemanticProperties.latest_write_app.
+    rewrite (latest_write_ext_rule_log_reg r L spec_all_externs log_empty x nodup_spec_all_externs).
+    destruct (find_st_update sched_ctx x (ext_updates_of r L spec_all_externs)); [ reflexivity |].
+    rewrite (SemanticProperties.latest_write_empty (R:=R) (REnv:=REnv)). reflexivity.
+  Qed.
+
+  Lemma latest_write_ext_full_other :
+    forall (r: ContextEnv.(env_t) R) sigma (L: Log R ContextEnv) idx,
+      externs_match sigma -> ext_ok L ->
+      (forall y, idx <> tf_reg y) ->
+      latest_write (ext_step r sigma L) idx = latest_write L idx.
+  Proof.
+    intros r sigma L idx Hsig Hok Hidx. unfold ext_step.
+    rewrite (interp_rule_ext r sigma L Hsig Hok).
+    rewrite SemanticProperties.latest_write_app.
+    rewrite (latest_write_ext_rule_log_other r L spec_all_externs log_empty idx Hidx).
+    rewrite (SemanticProperties.latest_write_empty (R:=R) (REnv:=REnv)). reflexivity.
+  Qed.
+
+  Lemma tfs_ext_updates_eq :
+    forall (r: ContextEnv.(env_t) R) L (st: ContextEnv.(env_t) spec_states_t),
+      (forall f, st.[spec_ext_arg f]
+                 = match latest_write0 L (tf_reg (spec_ext_arg f)) with
+                   | Some v => v
+                   | None => r.[tf_reg (spec_ext_arg f)]
+                   end) ->
+      tfs_ext_updates sched_ctx st = ext_updates_of r L spec_all_externs.
+  Proof.
+    intros r L st H. unfold tfs_ext_updates, ext_updates_of, ext_val.
+    apply map_ext. intro f. rewrite (H f). reflexivity.
+  Qed.
+
+  Lemma find_out_update_ext_updates :
+    forall st x, find_out_update sched_ctx x (tfs_ext_updates sched_ctx st) = None.
+  Proof.
+    intros st x. unfold tfs_ext_updates.
+    match goal with |- context [List.map _ ?L] => induction L as [| f fs IH] end;
+      cbn [List.map find_out_update]; [ reflexivity | exact IH ].
+  Qed.
+
+  Lemma find_st_val_app :
+    forall x a b sys,
+      find_st_val sched_ctx x (a ++ b) sys
+      = match find_st_update sched_ctx x a with
+        | Some v => v
+        | None => find_st_val sched_ctx x b sys
+        end.
+  Proof.
+    intros x a b sys. unfold find_st_val. rewrite find_st_update_app.
+    destruct (find_st_update sched_ctx x a); reflexivity.
+  Qed.
+
+  (* Bridges the two sides through [apply], whose unification is up to conversion:
+     the ext-update option appears on both sides but from two different lemma
+     statements, so [destruct] would abstract only one of them. *)
+  Lemma commit_ext_reg_step :
+    forall (r: ContextEnv.(env_t) R) (L: Log R ContextEnv) x
+           (ups: list (tf_update spec_states_size spec_outputs_size)) sys
+           (o: option (bits_t (spec_states_size x))),
+      (match latest_write L (tf_reg x) with Some v => v | None => r.[tf_reg x] end
+       = find_st_val sched_ctx x ups sys) ->
+      match (match o with Some v => Some v | None => latest_write L (tf_reg x) end) with
+      | Some v => v
+      | None => r.[tf_reg x]
+      end
+      = match o with Some v => v | None => find_st_val sched_ctx x ups sys end.
+  Proof. intros r L x ups sys o H. destruct o; [ reflexivity | exact H ]. Qed.
+
+  (* Same reason as above: reach the committed value through [apply], not [rewrite]. *)
+  Lemma commit_of_latest_write :
+    forall (r: ContextEnv.(env_t) R) (L: Log R ContextEnv) idx (v: R idx),
+      latest_write L idx = Some v ->
+      match latest_write L idx with Some u => u | None => r.[idx] end = v.
+  Proof. intros r L idx v H. rewrite H. reflexivity. Qed.
+
+  Lemma commit_of_no_write :
+    forall (r: ContextEnv.(env_t) R) (L: Log R ContextEnv) idx (v: R idx),
+      latest_write L idx = None -> r.[idx] = v ->
+      match latest_write L idx with Some u => u | None => r.[idx] end = v.
+  Proof. intros r L idx v H Hv. rewrite H. exact Hv. Qed.
+
+  Lemma ext_ok_after_cmd :
+    forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) act input sigma log,
+      state_matches sys r ->
+      externs_match sigma ->
+      ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
+      ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
+      good_log log ->
+      ext_ok (cmd_log r sigma log act).
+  Proof.
+    intros sys r act input sigma log Hstate Hsig Hin_rdy Hin_nrdy Hlog.
+    rewrite (interp_rule_correct sys r act input sigma log Hstate Hsig Hin_rdy Hin_nrdy Hlog).
+    apply (ext_ok_cmd_log r sys act input sigma log Hlog).
+  Qed.
+
+  Lemma interp_scheduler'_ext_cons :
+    forall (r: ContextEnv.(env_t) R) sigma (L: Log R ContextEnv) s,
+      interp_scheduler' r sigma rules L (@rule_ext spec_outputs spec_action |> s)
+      = interp_scheduler' r sigma rules (ext_step r sigma L) s.
+  Proof.
+    intros. cbn [interp_scheduler']. unfold ext_step.
+    destruct (interp_rule _ _ _ _); reflexivity.
+  Qed.
+
   (* Below is done *)
 
   Lemma synthesis_correct_aux3 :
@@ -3492,31 +4070,77 @@ Set Printing Implicit.
       ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
       ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
       good_log log ->
-      state_env_matches (tfs_next_cycle sched_ctx act sys input) act input (commit_update r match interp_rule r sigma log (rules (rule_cmd act)) with
-        | Some l => log_app l log
-        | None => log
-        end).
+      state_env_matches (tfs_next_cycle sched_ctx act sys input) act input
+        (commit_update r (ext_step r sigma (cmd_log r sigma log act))).
   Proof.
     intros sys r act input sigma log Hstate Hsig Hin_rdy Hin_nrdy Hlog.
+    pose proof (ext_ok_after_cmd sys r act input sigma log Hstate Hsig Hin_rdy Hin_nrdy Hlog) as Hok.
+    (* The base cycle, read off the command rule's log. *)
+    assert (Hbase : forall y,
+              match latest_write (cmd_log r sigma log act) (tf_reg y) with
+              | Some v => v
+              | None => r.[tf_reg y]
+              end
+              = find_st_val sched_ctx y
+                  (if beq_dec (find_st_val sched_ctx spec_done_state
+                                 (tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input) sys) Bits.zero
+                   then tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input
+                   else tfs_reset_updates sched_ctx spec_reset_states
+                        ++ tfs_get_updates sched_ctx (snd (spec_schedule act)) sys input
+                        ++ tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input) sys).
+    { intro y. rewrite (latest_write_reg sys r act input sigma log y Hstate Hsig Hin_rdy Hin_nrdy Hlog).
+      unfold find_st_val. destruct (find_st_update sched_ctx y _); [ reflexivity |].
+      apply Hstate. }
+    assert (Hst : forall f,
+              (ContextEnv.(create)
+                 (fun y => find_st_val sched_ctx y
+                    (if beq_dec (find_st_val sched_ctx spec_done_state
+                                   (tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input) sys) Bits.zero
+                     then tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input
+                     else tfs_reset_updates sched_ctx spec_reset_states
+                          ++ tfs_get_updates sched_ctx (snd (spec_schedule act)) sys input
+                          ++ tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input) sys)).[spec_ext_arg f]
+              = match latest_write0 (cmd_log r sigma log act) (tf_reg (spec_ext_arg f)) with
+                | Some v => v
+                | None => r.[tf_reg (spec_ext_arg f)]
+                end).
+    { intro f. rewrite getenv_create.
+      rewrite <- (Hbase (spec_ext_arg f)).
+      match_eq. symmetry. apply latest_write0_eq_latest_write. exact (proj2 Hok f). }
     unfold state_env_matches; split.
-    - unfold state_matches; split; intros.
-      + unfold commit_update, tfs_next_cycle. cbn [fst snd].
-        rewrite !getenv_create. unfold find_st_val at 1.
-        assert (r.[tf_reg x] = (fst sys).[x]) as Hreg. { apply Hstate. } rewrite Hreg. clear Hreg.
-        match_eq. apply latest_write_reg; try assumption.
-      + unfold commit_update, tfs_next_cycle. cbn [fst snd].
-        rewrite !getenv_create. unfold find_out_val at 1.
+    - unfold state_matches; split; intros x.
+      + unfold commit_update. rewrite getenv_create.
+        rewrite (latest_write_ext_full_reg r sigma (cmd_log r sigma log act) x Hsig Hok).
+        unfold tfs_next_cycle. cbn [fst snd]. rewrite getenv_create.
+        rewrite find_st_val_app.
+        rewrite (tfs_ext_updates_eq r (cmd_log r sigma log act) _ Hst).
+        apply (commit_ext_reg_step r (cmd_log r sigma log act) x _ sys _ (Hbase x)).
+      + unfold commit_update. rewrite getenv_create.
+        rewrite (latest_write_ext_full_other r sigma _ (tf_out x))
+          by (solve [ assumption | intros; discriminate ]).
+        unfold tfs_next_cycle. cbn [fst snd]. rewrite getenv_create.
+        unfold find_out_val at 1. rewrite find_out_update_app, find_out_update_ext_updates.
         assert (r.[tf_out x] = (snd sys).[x]) as Hreg. { apply Hstate. } rewrite Hreg. clear Hreg.
         match_eq. apply latest_write_out; try assumption.
     - unfold env_matches; split; intros.
       + unfold commit_update. rewrite getenv_create.
+        rewrite (latest_write_ext_full_other r sigma _ tf_cmd)
+          by (solve [ assumption | intros; discriminate ]).
         destruct (reg_ready_or_not r) as [Hready | Hnotready].
-        * rewrite (latest_write_cmd_rdy sys r act input sigma log); try assumption; reflexivity.
-        * rewrite (latest_write_cmd_nrdy sys r act input sigma log); try assumption. apply (Hin_nrdy Hnotready).
+        * apply commit_of_latest_write.
+          apply (latest_write_cmd_rdy sys r act input sigma log); assumption.
+        * apply commit_of_no_write.
+          -- apply (latest_write_cmd_nrdy sys r act input sigma log); assumption.
+          -- apply (Hin_nrdy Hnotready).
       + unfold commit_update. rewrite getenv_create.
+        rewrite (latest_write_ext_full_other r sigma _ (tf_in x))
+          by (solve [ assumption | intros; discriminate ]).
         destruct (reg_ready_or_not r) as [Hready | Hnotready].
-        * rewrite (latest_write_input_rdy sys r act input sigma log x); try assumption; reflexivity.
-        * rewrite (latest_write_input_nrdy sys r act input sigma log x); try assumption. apply (Hin_nrdy Hnotready). 
+        * apply commit_of_latest_write.
+          apply (latest_write_input_rdy sys r act input sigma log x); assumption.
+        * apply commit_of_no_write.
+          -- apply (latest_write_input_nrdy sys r act input sigma log x); assumption.
+          -- apply (Hin_nrdy Hnotready).
   Qed.
 
   Lemma interp_rule_cmd_wrong :
@@ -3567,6 +4191,20 @@ Set Printing Implicit.
       rewrite SemanticProperties.latest_write_empty. reflexivity.
   Qed.
 
+  Lemma commit_schedule_outputs_equal :
+    forall (r: ContextEnv.(env_t) R) sigma (L: Log R ContextEnv) sys act input,
+      state_env_matches sys act input
+        (commit_update r (interp_scheduler' r sigma rules L (system_schedule_outputs tf_ctx)))
+      <-> state_env_matches sys act input (commit_update r L).
+  Proof.
+    intros r sigma L sys act input.
+    apply state_env_matches_comp.
+    - unfold state_equal; split; intros x; unfold commit_update; rewrite !getenv_create;
+        match_eq; apply latest_write_schedule_outputs; reflexivity.
+    - unfold env_equal; split; try intros x; unfold commit_update; rewrite !getenv_create;
+        match_eq; apply latest_write_schedule_outputs; reflexivity.
+  Qed.
+
   Lemma synthesis_correct_aux2 :
     forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
            (act: spec_action) (input: input_t)
@@ -3581,39 +4219,19 @@ Set Printing Implicit.
       state_env_matches (tfs_next_cycle sched_ctx act sys input) act input
         (commit_update r
           match interp_rule r sigma log (rules (rule_cmd act)) with
-          | Some l => interp_scheduler' r sigma rules (log_app l log) (fold_right (fun (t : spec_action) (acc : scheduler) => rule_cmd t |> acc) (system_schedule_outputs tf_ctx) actions)
-          | None => interp_scheduler' r sigma rules log (fold_right (fun (t : spec_action) (acc : scheduler) => rule_cmd t |> acc) (system_schedule_outputs tf_ctx) actions)
+          | Some l => interp_scheduler' r sigma rules (log_app l log) (fold_right (fun (t : spec_action) (acc : scheduler) => rule_cmd t |> acc) (system_schedule_ext tf_ctx) actions)
+          | None => interp_scheduler' r sigma rules log (fold_right (fun (t : spec_action) (acc : scheduler) => rule_cmd t |> acc) (system_schedule_ext tf_ctx) actions)
           end)
       <->
-      state_env_matches (tfs_next_cycle sched_ctx act sys input) act input (commit_update r
-          match interp_rule r sigma log (rules (rule_cmd act)) with
-          | Some l => (log_app l log)
-          | None => log
-          end).
+      state_env_matches (tfs_next_cycle sched_ctx act sys input) act input
+        (commit_update r (ext_step r sigma (cmd_log r sigma log act))).
   Proof.
     intros sys r act input sigma log actions Hstate Hsig Hin_rdy Hin_nrdy Hlog H_notin_actions.
 
     induction actions as [|a actions IH].
-    - cbn [fold_right].
-
-      remember (commit_update r
-                  match interp_rule r sigma log (rules (rule_cmd act)) with
-                  | Some l => interp_scheduler' r sigma rules (log_app l log) (system_schedule_outputs tf_ctx)
-                  | None => interp_scheduler' r sigma rules log (system_schedule_outputs tf_ctx)
-                  end) as r1.
-      remember (commit_update r
-                  match interp_rule r sigma log (rules (rule_cmd act)) with
-                  | Some l => log_app l log
-                  | None => log
-                  end) as r2.
-      assert (state_equal r1 r2) as Heq_s. {
-        subst r1 r2. unfold state_equal, env_equal; split; intros x; unfold commit_update; rewrite !getenv_create; match_eq; destruct interp_rule; apply latest_write_schedule_outputs; reflexivity.
-      }
-      assert (env_equal r1 r2) as Heq_e. {
-        subst r1 r2. unfold state_equal, env_equal; split; try intros x; unfold commit_update; rewrite !getenv_create; match_eq; destruct interp_rule; apply latest_write_schedule_outputs; reflexivity.
-      }
-
-      apply state_env_matches_comp with (r1:=r1) (r2:=r2); try assumption.
+    - cbn [fold_right]. unfold system_schedule_ext.
+      destruct (interp_rule r sigma log (rules (rule_cmd act))) as [l | ] eqn:Hc;
+        rewrite interp_scheduler'_ext_cons; apply commit_schedule_outputs_equal.
     - apply not_in_cons in H_notin_actions. destruct H_notin_actions as [Hneq Hnotin].
 
       cbn [fold_right interp_scheduler'].

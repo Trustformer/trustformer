@@ -56,6 +56,9 @@ Section SynthesisTypes.
   Inductive _rule_name_t :=
     | rule_cmd (cmd: actions)
     | rule_out (out: outputs_var)
+    (* Issues the external calls. Un-gated by action, so the design contains exactly
+       one [ExternalCall] per function and therefore one Verilog driver per port. *)
+    | rule_ext
     | rule_busy
     .
 
@@ -307,6 +310,9 @@ Section TypedSynthesis.
     Local Notation spec_externs_fin := (tfs_spec_externs_fin (tfs_ctx (tf_sched_ctx tf_ctx))).
     Local Notation spec_externs_arg := (@tfe_arg_size _ spec_externs_sig).
     Local Notation spec_externs_res := (@tfe_res_size _ spec_externs_sig).
+    Local Notation spec_all_externs := (@finite_elements spec_externs spec_externs_fin).
+    Local Notation spec_ext_arg := (tfs_ext_arg (tf_sched_ctx tf_ctx)).
+    Local Notation spec_ext_res := (tfs_ext_res (tf_sched_ctx tf_ctx)).
 
     Hint Extern 0 (FiniteType spec_externs) => exact spec_externs_fin : typeclass_instances.
     Hint Extern 0 (tf_externs spec_externs) => exact spec_externs_sig : typeclass_instances.
@@ -354,6 +360,7 @@ Section TypedSynthesis.
       { show := fun r => match r with
           | rule_cmd cmd => String.append "rule_cmd_" (show cmd)
           | rule_out out => String.append "rule_out_" (show out)
+          | rule_ext => "rule_ext"
           | rule_busy => "rule_busy"
           end
       }.
@@ -361,8 +368,14 @@ Section TypedSynthesis.
     Definition system_schedule_outputs : scheduler := 
       List.fold_right (fun t acc => @rule_out spec_outputs spec_action t |> acc) Done spec_all_outputs.
 
+    (* [rule_ext] runs *after* every action rule: it reads the argument registers at P1
+       (the value the action just wrote) and writes the result registers at P0. Koika
+       admits no ordering in which both hops are P0 (campaign extern-calls-mvp, D8). *)
+    Definition system_schedule_ext : scheduler :=
+      @rule_ext spec_outputs spec_action |> system_schedule_outputs.
+
     Definition system_schedule_actions : scheduler  :=
-      List.fold_right (fun t acc => @rule_cmd spec_outputs spec_action t |> acc) system_schedule_outputs spec_all_actions.
+      List.fold_right (fun t acc => @rule_cmd spec_outputs spec_action t |> acc) system_schedule_ext spec_all_actions.
 
     Definition system_schedule := rule_busy |> system_schedule_actions.
     
@@ -481,6 +494,26 @@ Section TypedSynthesis.
       | r :: rs => Seq (Write P1 (tf_reg r) (Const (tau:=R (tf_reg r)) Bits.zero)) (rule_reset_buffers rs code)
       end.
 
+    (* One [ExternalCall] per function, in a rule of its own, so the emitted Verilog has
+       a single driver per port no matter how many call sites the actions contain.
+       [Read P1] picks up the argument the action rule just wrote; [Write P0] means the
+       action reads the *previous* cycle's result, i.e. both ends of the port pair are
+       registered. *)
+    Fixpoint rule_ext_calls {sig} (fs: list spec_externs)
+      (code: action sig unit_t) : action sig unit_t :=
+      match fs with
+      | [] => code
+      | f :: rest =>
+          Seq (Write P0 (tf_reg (spec_ext_res f))
+                 (synth_convert (in_var_size := spec_externs_res f)
+                    (spec_states_size (spec_ext_res f))
+                    (ExternalCall (ext_call f)
+                       (synth_convert (in_var_size := spec_states_size (spec_ext_arg f))
+                          (spec_externs_arg f)
+                          (Read P1 (tf_reg (spec_ext_arg f)))))))
+              (rule_ext_calls rest code)
+      end.
+
     Definition _rule_cmd {sig} (cmd: spec_action)
       : action sig unit_t :=
       (* Bound once: [spec_schedule] runs the whole scheduler. *)
@@ -552,6 +585,8 @@ Section TypedSynthesis.
           )
       | rule_cmd cmd => 
             Seq (rule_cmd_guard cmd) (_rule_cmd cmd)
+      | rule_ext =>
+            rule_ext_calls spec_all_externs (Const (tau:=unit_t) (vect_nil))
       | rule_out out =>
             Write P1 (tf_out_ack out) (ExternalCall (ext_output out) (Read P1 (tf_out out)))
       end.

@@ -100,7 +100,7 @@ Section Soundness.
     assert (Hlen : n < length (graph (build_dfg ctx act))) by lia.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | xf xarg | ] eqn:Hop;
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | xf xarg | dly | ] eqn:Hop;
       cbn [List.In] in Hi; try contradiction.
     destruct bop; cbn [List.In] in Hi; try contradiction.
     assert (Hnode_in : List.In (nth n (graph (build_dfg ctx act))
