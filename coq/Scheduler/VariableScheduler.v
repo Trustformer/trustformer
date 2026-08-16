@@ -346,12 +346,12 @@ Section VariableScheduler.
                         end
     | DFG_Resize _ => 0
     | DFG_Phi _ _ _ => 1
-    (* The combinational delay of an attached module is not declared, so it is
-       costed like any other single-level operator. Phase B replaces this with a
-       latency-driven treatment. *)
-    | DFG_Ext _ _ _ => 1
-    (* A whole bucket, so [calc_target_cycle] places the argument one cycle earlier and
-       [require_buffer] picks it up: that buffer is the latency element (D9). *)
+    (* A whole bucket, so the call node lands strictly above its consumers and
+       [require_buffer] picks IT up: a call's value is then always read out of a
+       buffer, never inlined at a use site (D9). *)
+    | DFG_Ext _ _ _ => cost_limit
+    (* Likewise, so [calc_target_cycle] places the delay node one cycle above its
+       consumer and that buffer becomes the latency element (D9). *)
     | DFG_Delay _ => cost_limit
     | DFG_Empty => 0
     end.

@@ -418,6 +418,55 @@ Section SchedulerSimulation.
     find_st_update sched (tf_dfg_v a_idx n_idx) (tfs_ext_updates sched st) = None.
   Proof. apply ext_updates_no_st. intros f H. discriminate H. Qed.
 
+  (* The result registers are the only ones the ext rule writes, so in particular it
+     does not disturb the argument registers the action rule just wrote. *)
+  Lemma ext_updates_no_earg (f: e_var) (st: sched_st_env) :
+    find_st_update sched (tfs_ext_arg sched f) (tfs_ext_updates sched st) = None.
+  Proof. apply ext_updates_no_st. intros g. apply tfs_ext_res_not_arg. Qed.
+
+  (* ... and it writes each result register with exactly the function's denotation. *)
+  Lemma ext_updates_find_eres_l (f: e_var) (st: sched_st_env) (l: list e_var) :
+    NoDup l -> In f l ->
+    find_st_update sched (tfs_ext_res sched f)
+      (List.map (fun g => tf_st_update ss_sz oo_sz (tfs_ext_res sched g)
+                   (convert (tfe_denote g (convert (st.[tfs_ext_arg sched g]))))) l)
+    = Some (convert (tfe_denote f (convert (st.[tfs_ext_arg sched f])))).
+  Proof.
+    induction l as [| g gs IH]; intros Hnd Hin; [ destruct Hin |].
+    cbn [List.map find_st_update].
+    inversion Hnd as [| ? ? Hng Hnd' ]; subst.
+    destruct (eq_dec (tfs_ext_res sched g) (tfs_ext_res sched f)) as [Heq | Hne].
+    - assert (Hgf : g = f) by exact (tfs_ext_res_inj sched g f Heq).
+      subst g. rewrite (Eqdep_dec.UIP_dec eq_dec Heq eq_refl). reflexivity.
+    - apply IH; [ exact Hnd' |].
+      destruct Hin as [Heq | Hin]; [ subst g; contradiction Hne; reflexivity | exact Hin ].
+  Qed.
+
+  Lemma ext_updates_find_eres (f: e_var) (st: sched_st_env) :
+    find_st_update sched (tfs_ext_res sched f) (tfs_ext_updates sched st)
+    = Some (convert (tfe_denote f (convert (st.[tfs_ext_arg sched f])))).
+  Proof.
+    unfold tfs_ext_updates. apply ext_updates_find_eres_l.
+    - apply finite_nodup.
+    - apply (nth_error_In _ (finite_index f)), finite_surjective.
+  Qed.
+
+  (* After one cycle the result register holds the function applied to the argument
+     register AS OF THE SAME CYCLE: [tfs_next_cycle] evaluates the ext updates on the
+     post-action state, and the ext rule does not touch argument registers. *)
+  Lemma sched_step_eres (act: tfs_action sched) (ss: sched_sys_state)
+        (input: input_t) (f: e_var) :
+    (fst (sched_step act ss input)).[tfs_ext_res sched f]
+    = convert (tfe_denote f (convert ((fst (sched_step act ss input)).[tfs_ext_arg sched f]))).
+  Proof.
+    rewrite (sched_step_getst act ss input (tfs_ext_res sched f)).
+    rewrite (sched_step_getst act ss input (tfs_ext_arg sched f)).
+    unfold find_st_val, cycle_updates. cbv zeta.
+    rewrite (find_st_update_app_Some_gen sched _ _ _ _ (ext_updates_find_eres f _)).
+    rewrite (find_st_update_app_None _ _ _ (ext_updates_no_earg f _)).
+    rewrite getenv_create. reflexivity.
+  Qed.
+
   (* The reset states are only buffer/valid registers, never the done flag. *)
   Lemma reset_states_not_done v :
     In v (reset_states ctx cost_limit) -> v <> done_signal ctx cost_limit.
@@ -1100,6 +1149,26 @@ Section SchedulerSimulation.
       | |- In _ (let '(_, _) := ?run in _) => destruct run as [expr valid]
       end.
       cbn [In snd]. right. left. reflexivity.
+  Qed.
+
+  (* Each (deduplicated) call site emits the assignment that loads the function's
+     argument register from the call's source node. *)
+  Lemma compile_dfg_ext_args_entry
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+        (f: e_var) (src: nid_t) :
+    In (f, src) (ext_call_sites ctx (build_dfg ctx act)) ->
+    let buffers := nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [] in
+    In (tf_assign (tf_dfg_earg f)
+          (fst (compile_dfg_expr ctx cost_limit
+                  (length (graph (build_dfg ctx act))) a_idx
+                  (build_dfg ctx act) src buffers)))
+       (compile_dfg_ext_args ctx cost_limit (index_to_nat a_idx)
+          (build_dfg ctx act) buffers).
+  Proof.
+    intro Hin. cbv zeta.
+    unfold compile_dfg_ext_args. rewrite index_of_nat_to_nat.
+    apply in_map_iff. exists (f, src). split; [ reflexivity | exact Hin ].
   Qed.
 
   (* The nid cached in a buffer register is a member of that action's
@@ -5556,17 +5625,18 @@ Section SchedulerSimulation.
     eexists. reflexivity.
   Qed.
 
-  (* Structural exposure of the buffer-write tail of the always-ops list: after
-     the done-flag head, the ops start with exactly compile_dfg_buffers over
-     the aligned action's DFG (full fuel) and its require_buffer slot list; the
-     remaining [rest] is the ext-argument segment. *)
+  (* Structural exposure of the always-ops list: after the done-flag head come
+     exactly compile_dfg_buffers over the aligned action's DFG (full fuel) and its
+     require_buffer slot list, then the per-call argument loads. *)
   Lemma buffer_ops_concrete (act: tfs_action sched) a_idx :
     act_idx_aligned act a_idx ->
-    exists done_e rest,
+    exists done_e,
       fst (Contract.tfs_schedule sched act)
       = done_e ::
         (compile_dfg_buffers ctx cost_limit (index_to_nat a_idx) (build_dfg ctx act)
-          (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) ++ rest).
+          (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
+         ++ compile_dfg_ext_args ctx cost_limit (index_to_nat a_idx) (build_dfg ctx act)
+          (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
   Proof.
     intros Halign.
     assert (Halign2 : @finite_index (tfs_spec_action ctx) (tfs_spec_action_fin ctx) act
@@ -5591,7 +5661,43 @@ Section SchedulerSimulation.
     unfold schedule. cbv zeta. cbn [fst].
     rewrite Halign2.
     rewrite Hnth_dfg.
-    eexists. eexists. reflexivity.
+    eexists. reflexivity.
+  Qed.
+
+  (* The argument register of a called function is loaded, every cycle, with the
+     value of the call's source node compiled against that action's buffers. *)
+  Lemma sched_step_earg (act: tfs_action sched) a_idx (ss: sched_sys_state)
+        (input: input_t) (f: e_var) (src: nid_t) :
+    act_idx_aligned act a_idx ->
+    ~ done_set (sched_step act ss input) ->
+    In (f, src) (ext_call_sites ctx (build_dfg ctx act)) ->
+    (fst (sched_step act ss input)).[tf_dfg_earg f]
+    = eval_st (tf_dfg_earg f)
+        (fst (compile_dfg_expr ctx cost_limit (length (graph (build_dfg ctx act)))
+                a_idx (build_dfg ctx act) src
+                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))) ss input.
+  Proof.
+    intros Halign Hnd Hin.
+    destruct (buffer_ops_concrete act a_idx Halign) as [done_e Hops].
+    assert (Hnd_always : tfs_ops_no_duplicates
+              (fst (Contract.tfs_schedule sched act))).
+    { pose proof (tfs_schedule_no_duplicates sched act) as Hnd_all.
+      unfold tfs_ops_no_duplicates in *. rewrite flat_map_app in Hnd_all.
+      apply (NoDup_app_l _ _ Hnd_all). }
+    pose proof (compile_dfg_ext_args_entry act a_idx f src Hin) as Hmem.
+    cbv zeta in Hmem.
+    assert (Hops_in : In (tf_assign (tf_dfg_earg f)
+              (fst (compile_dfg_expr ctx cost_limit
+                      (length (graph (build_dfg ctx act))) a_idx
+                      (build_dfg ctx act) src
+                      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))))
+              (fst (Contract.tfs_schedule sched act)))
+      by (rewrite Hops; right; apply in_or_app; right; exact Hmem).
+    rewrite sched_step_getst, (cycle_updates_not_done act ss input Hnd).
+    unfold find_st_val.
+    rewrite (find_st_update_app_None _ _ _ (ext_updates_no_earg f _)).
+    rewrite (find_st_update_unique_assign _ _ _ _ _ Hnd_always Hops_in).
+    reflexivity.
   Qed.
 
   (* On a pre-done cycle, each buffer pair reads exactly the expressions emitted
@@ -5628,7 +5734,7 @@ Section SchedulerSimulation.
     destruct Hmem as [Hvalue Hvalid].
       unfold vreg_nid in Hvalue, Hvalid.
     cbn [fst snd] in Hvalue, Hvalid |- *.
-    destruct (buffer_ops_concrete act a_idx Halign) as [done_e [rest Hops]].
+    destruct (buffer_ops_concrete act a_idx Halign) as [done_e Hops].
     assert (Hnd_always : tfs_ops_no_duplicates
               (fst (Contract.tfs_schedule sched act))).
     { pose proof (tfs_schedule_no_duplicates sched act) as Hnd_all.
