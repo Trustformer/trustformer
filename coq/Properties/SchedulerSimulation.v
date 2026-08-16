@@ -24,6 +24,50 @@ Require Import Coq.Arith.PeanoNat.
 Require Import Lia.
 Import ListNotations.
 
+(* Structural facts about [find_st_update] over an append, proved against an
+   ABSTRACT schedule: stated over the concrete [tfs_schedule ctx cost_limit]
+   record each [Qed] costs ~6 s, because the kernel unfolds that record while
+   re-checking the induction. *)
+Section FindUpdateAppend.
+  Context (SCH: TFSchedule).
+
+  Hint Extern 0 (FiniteType (tfs_states SCH)) => exact (tfs_states_fin SCH)
+    : typeclass_instances.
+  Hint Extern 0 (FiniteType (tfs_outputs SCH)) => exact (tfs_outputs_fin SCH)
+    : typeclass_instances.
+
+  Local Notation upd :=
+    (tf_update (tfs_states_size SCH) (tfs_outputs_size SCH)).
+
+  Lemma find_st_update_app_None_gen (x: tfs_states SCH) (ups1 ups2: list upd) :
+    find_st_update SCH x ups1 = None ->
+    find_st_update SCH x (ups1 ++ ups2) = find_st_update SCH x ups2.
+  Proof.
+    induction ups1 as [| u ups1 IH]; intro Hnone.
+    - reflexivity.
+    - cbn [app]. destruct u as [| var val | var val]; cbn [find_st_update] in *.
+      + apply IH, Hnone.
+      + destruct (eq_dec var x) as [Heq | Hneq]; [ discriminate | apply IH, Hnone ].
+      + apply IH, Hnone.
+  Qed.
+
+  Lemma find_st_update_app_Some_gen (x: tfs_states SCH) (ups1 ups2: list upd) v :
+    find_st_update SCH x ups1 = Some v ->
+    find_st_update SCH x (ups1 ++ ups2) = Some v.
+  Proof.
+    induction ups1 as [| u ups1 IH]; intro Hsome; cbn [app] in *.
+    - discriminate.
+    - destruct u as [| var val | var val]; cbn [find_st_update] in *.
+      + apply IH, Hsome.
+      + destruct (eq_dec var x) as [Heq | Hneq]; [ exact Hsome | apply IH, Hsome ].
+      + apply IH, Hsome.
+  Qed.
+
+End FindUpdateAppend.
+
+(* The scheduler record is huge; deprioritise unfolding it during conversion. *)
+Strategy 1000 [tfs_schedule].
+
 Section SchedulerSimulation.
 
   (* The concrete variable scheduler is parameterized by a source scheduling
@@ -272,17 +316,7 @@ Section SchedulerSimulation.
   (* ---- Concrete shape of the compiled op lists for the variable scheduler ---- *)
 
   (* find_st_update over an append: if the prefix has no match, skip it. *)
-  Lemma find_st_update_app_None x (ups1 ups2: list (tf_update ss_sz oo_sz)) :
-    find_st_update sched x ups1 = None ->
-    find_st_update sched x (ups1 ++ ups2) = find_st_update sched x ups2.
-  Proof.
-    induction ups1 as [| u ups1 IH]; intro Hnone.
-    - reflexivity.
-    - cbn [app]. destruct u as [| var val | var val]; cbn [find_st_update] in *.
-      + apply IH, Hnone.
-      + destruct (eq_dec var x) as [Heq | Hneq]; [ discriminate | apply IH, Hnone ].
-      + apply IH, Hnone.
-  Qed.
+  Local Notation find_st_update_app_None := (find_st_update_app_None_gen sched).
 
   (* The reset states are only buffer/valid registers, never the done flag. *)
   Lemma reset_states_not_done v :
@@ -5872,17 +5906,7 @@ Section SchedulerSimulation.
 
   (* ---- The done cycle clears every validity register ---- *)
 
-  Lemma find_st_update_app_Some x (ups1 ups2: list (tf_update ss_sz oo_sz)) v :
-    find_st_update sched x ups1 = Some v ->
-    find_st_update sched x (ups1 ++ ups2) = Some v.
-  Proof.
-    induction ups1 as [| u ups1 IH]; intro Hsome; cbn [app] in *.
-    - discriminate.
-    - destruct u as [| var val | var val]; cbn [find_st_update] in *.
-      + apply IH, Hsome.
-      + destruct (eq_dec var x) as [Heq | Hneq]; [ exact Hsome | apply IH, Hsome ].
-      + apply IH, Hsome.
-  Qed.
+  Local Notation find_st_update_app_Some := (find_st_update_app_Some_gen sched).
 
   Lemma find_st_update_map_init (l: list (tfs_states sched)) (x: tfs_states sched) :
     In x l ->
