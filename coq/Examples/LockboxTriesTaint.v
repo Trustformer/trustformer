@@ -316,6 +316,67 @@ Section Bounds.
 End Bounds.
 
 (*
+    04_hardware_generation.tex §"Valid signal generation" works its example on
+    exactly this action at exactly this schedule: four valid signals, for
+    [out_secret], [tries], [out_status] and [buf].  At cost limit 4 there is
+    precisely one buffer -- node 12, the [tries - 1] subtraction -- so it IS the
+    paper's [buf].
+ *)
+
+Section ValidSignals.
+
+    (* [valid_expr_and] absorbs [tf_const 1], so a [done] signal that reduces to
+       a single valid variable is the statement that every OTHER root's valid
+       signal is [Const 0b1].  The paper: "the valid signal expressions for
+       out_secret, out_status and buf are all Const 0b1 since they only depend
+       on source nodes".  [buf]'s own valid is [Const 1] too -- which is only
+       true because a source node is no longer buffered: the [tries] read it
+       depends on used to be a buffer, and a buffer's valid signal is a
+       variable, not a constant.
+       The buffer's valid register is bound out of the schedule itself rather
+       than written down, so the assertion needs no [Vect.index] literals. *)
+    Example valid_signals_all_phis_critical :
+      match fst (schedule ctxA_blackbox 4 fs_act_test) with
+      | [ tf_assign dst_done e_done;
+          tf_assign _ e_buf;
+          tf_assign v_buf e_valid ] =>
+            dst_done = tf_dfg_done
+            /\ e_valid = tf_const 1
+            /\ e_buf = {[$(tf_dfg_s fs_st_tries) - #1]}
+            /\ e_done = tf_svar v_buf
+      | _ => False
+      end.
+    Proof. vm_compute. repeat split; reflexivity. Qed.
+
+    (* The non-critical case.  The paper says: "If tries is <> 0 and
+       pin = in_pin then the valid signal is the current valid signal of buf,
+       else it is the constant true."  The compiler says the opposite on the
+       INNER test, and the compiler is right: [tries - 1] -- the only buffered
+       node -- sits in the WRONG-pin branch (LockboxTries.v, [fs_act_test]),
+       while the matching-pin branch assigns the constant [tries_reset], which
+       is a source node and valid at once.  So the wait on [buf] happens exactly
+       when [tries <> 0] AND [pin <> in_pin]. *)
+    Example valid_signals_no_phi_critical :
+      match fst (schedule ctxB_whitebox 4 fs_act_test) with
+      | [ tf_assign dst_done e_done;
+          tf_assign _ e_buf;
+          tf_assign v_buf e_valid ] =>
+            dst_done = tf_dfg_done
+            /\ e_valid = tf_const 1
+            /\ e_buf = {[$fsB_out_tries - #1]}
+            /\ e_done =
+                 tf_expr_if {[$fsB_out_tries !=[tsz] #0]}
+                   (tf_expr_if {[$(tf_dfg_s fsB_st_pin) ==[sz] $fsB_in_pin]}
+                      (tf_const 1)
+                      (tf_svar v_buf))
+                   (tf_const 1)
+      | _ => False
+      end.
+    Proof. vm_compute. repeat split; reflexivity. Qed.
+
+End ValidSignals.
+
+(*
     ...but the bounds do separate when the branches are unbalanced, and that
     separation is exactly what criticality removes.  Same design twice, once
     branching on an input and once on the secret.
