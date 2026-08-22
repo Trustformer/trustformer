@@ -1716,10 +1716,15 @@ Section SchedulerSimulation.
       + apply IHe.
       + intros id1 s1 Hg1 Hn1 Hp1. apply seq_full.
         * intros _. apply emit_delay_chain_full; assumption.
-        * intros id2 s2 Hg2 Hn2 Hp2. apply emit_full;
-            [ exact Hp2
-            | intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[]]];
-              [ eapply wnidwf_gmono; [ exact Hn1 | exact Hg2 ] | exact Hn2 ] ].
+        * intros id2 s2 Hg2 Hn2 Hp2. apply seq_full.
+          -- intros _. apply emit_full;
+               [ exact Hp2
+               | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn2 ].
+          -- intros id3 s3 Hg3 Hn3 Hp3. apply emit_full;
+               [ exact Hp3
+               | intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[]]];
+                 [ eapply wnidwf_gmono; [ exact Hn2 | exact Hg3 ] | exact Hn3 ] ].
+          -- exact Hp2.
         * exact Hp1.
       + exact Hinv.
   Qed.
@@ -1969,18 +1974,25 @@ Section SchedulerSimulation.
       pose proof (IHe (@tfe_arg_size _ e_sig f) s Hinv Hvsz) as H1.
       destruct (dataflow_expr ctx e (@tfe_arg_size _ e_sig f) s) as [id1 s1] eqn:E1.
       destruct H1 as [Hg1 [Hn1 [Hi1 [Hv1 Hs1]]]].
-      pose proof (emit_delay_chain_sz (S (S (@tfe_latency _ e_sig f))) id1
+      pose proof (emit_delay_chain_sz (S (@tfe_latency _ e_sig f)) id1
                     (@tfe_arg_size _ e_sig f) s1 Hi1 Hv1 Hn1 Hs1) as H2.
-      destruct (emit_delay_chain ctx (S (S (@tfe_latency _ e_sig f))) id1
+      destruct (emit_delay_chain ctx (S (@tfe_latency _ e_sig f)) id1
                   (@tfe_arg_size _ e_sig f) s1) as [id2 s2].
       destruct H2 as [Hg2 [Hn2 [Hi2 [Hv2 Hs2]]]].
-      pose proof (emit_sz (DFG_Ext f id1 id2) size s2 Hi2 Hv2
-                    ltac:(intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[]]];
-                          [ eapply wnidwf_gmono; [ exact Hn1 | exact Hg2 ] | exact Hn2 ])) as H3.
-      destruct (emit ctx (DFG_Ext f id1 id2) size s2) as [id3 s3].
+      pose proof (emit_sz (DFG_Delay id2) (@tfe_arg_size _ e_sig f) s2 Hi2 Hv2
+                    ltac:(intros x Hx; simpl in Hx; destruct Hx as [<-|[]];
+                          exact Hn2)) as H3.
+      destruct (emit ctx (DFG_Delay id2) (@tfe_arg_size _ e_sig f) s2) as [id3 s3].
       destruct H3 as [Hg3 [Hn3 [Hi3 [Hv3 Hs3]]]].
-      split; [ eapply wgmono_trans; [ exact Hg1 | eapply wgmono_trans; [ exact Hg2 | exact Hg3 ] ]
-             | split; [ exact Hn3 | split; [ exact Hi3 | split; [ exact Hv3 | exact Hs3 ] ] ] ].
+      pose proof (emit_sz (DFG_Ext f id2 id3) size s3 Hi3 Hv3
+                    ltac:(intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[]]];
+                          [ eapply wnidwf_gmono; [ exact Hn2 | exact Hg3 ] | exact Hn3 ])) as H4.
+      destruct (emit ctx (DFG_Ext f id2 id3) size s3) as [id4 s4].
+      destruct H4 as [Hg4 [Hn4 [Hi4 [Hv4 Hs4]]]].
+      split; [ eapply wgmono_trans;
+                 [ exact Hg1 | eapply wgmono_trans;
+                     [ exact Hg2 | eapply wgmono_trans; [ exact Hg3 | exact Hg4 ] ] ]
+             | split; [ exact Hn4 | split; [ exact Hi4 | split; [ exact Hv4 | exact Hs4 ] ] ] ].
   Qed.
 
   (* ===================================================================== *)
@@ -2258,25 +2270,41 @@ Section SchedulerSimulation.
       destruct (dataflow_expr ctx e (@tfe_arg_size _ e_sig f) s) as [id1 s1] eqn:Erun.
       pose proof (IHe (@tfe_arg_size _ e_sig f) s Hinv Hvsz Hfg) as H1. rewrite Erun in H1.
       cbv beta iota. destruct H1 as [Hg1 [Hn1 [Hw1 [Hv1 [Hs1 Hf1]]]]].
-      pose proof (emit_delay_chain_fg (S (S (@tfe_latency _ e_sig f))) id1
+      pose proof (emit_delay_chain_fg (S (@tfe_latency _ e_sig f)) id1
                     (@tfe_arg_size _ e_sig f) s1 Hw1 Hv1 Hf1 Hn1 Hs1) as H2.
-      destruct (emit_delay_chain ctx (S (S (@tfe_latency _ e_sig f))) id1
-                  (@tfe_arg_size _ e_sig f) s1) as [idd sd].
-      destruct H2 as [Hgd [Hnd [Hwd [Hvd [Hsd Hfd]]]]].
+      destruct (emit_delay_chain ctx (S (@tfe_latency _ e_sig f)) id1
+                  (@tfe_arg_size _ e_sig f) s1) as [idm sm].
+      destruct H2 as [Hgm [Hnm [Hwm [Hvm [Hsm Hfm]]]]].
+      assert (HargsD : forall x,
+          In x (get_args ctx
+            {| nid := length (graph sm); op := DFG_Delay idm;
+               sz := @tfe_arg_size _ e_sig f |}) ->
+          wnidwf sm x)
+        by (intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hnm).
+      assert (HnodeD : node_args_sz sm
+          {| nid := length (graph sm); op := DFG_Delay idm;
+             sz := @tfe_arg_size _ e_sig f |})
+        by (unfold node_args_sz; cbn [op sz]; exact Hsm).
+      pose proof (emit_fg (DFG_Delay idm) (@tfe_arg_size _ e_sig f) sm
+                    Hwm Hvm Hfm HargsD HnodeD) as Hd.
+      destruct (emit ctx (DFG_Delay idm) (@tfe_arg_size _ e_sig f) sm) as [idd sd].
+      destruct Hd as [Hgd [Hnd [Hwd [Hvd [Hsd Hfd]]]]].
       assert (Hargs : forall x,
           In x (get_args ctx
-            {| nid := length (graph sd); op := DFG_Ext f id1 idd; sz := size |}) ->
+            {| nid := length (graph sd); op := DFG_Ext f idm idd; sz := size |}) ->
           wnidwf sd x)
         by (intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[]]];
-            [ eapply wnidwf_gmono; [ exact Hn1 | exact Hgd ] | exact Hnd ]).
+            [ eapply wnidwf_gmono; [ exact Hnm | exact Hgd ] | exact Hnd ]).
       assert (Hnode : node_args_sz sd
-          {| nid := length (graph sd); op := DFG_Ext f id1 idd; sz := size |})
+          {| nid := length (graph sd); op := DFG_Ext f idm idd; sz := size |})
         by (unfold node_args_sz; cbn [op];
-            eapply wsz_gmono; [ exact Hs1 | exact Hgd ]).
-      pose proof (emit_fg (DFG_Ext f id1 idd) size sd Hwd Hvd Hfd Hargs Hnode) as He.
-      destruct (emit ctx (DFG_Ext f id1 idd) size sd) as [id2 s2].
+            eapply wsz_gmono; [ exact Hsm | exact Hgd ]).
+      pose proof (emit_fg (DFG_Ext f idm idd) size sd Hwd Hvd Hfd Hargs Hnode) as He.
+      destruct (emit ctx (DFG_Ext f idm idd) size sd) as [id2 s2].
       destruct He as [Hg2 [Hn2 [Hp2 [Hq2 [Hs2 Hf2]]]]].
-      split; [ eapply wgmono_trans; [ exact Hg1 | eapply wgmono_trans; [ exact Hgd | exact Hg2 ] ]
+      split; [ eapply wgmono_trans;
+                 [ exact Hg1 | eapply wgmono_trans;
+                     [ exact Hgm | eapply wgmono_trans; [ exact Hgd | exact Hg2 ] ] ]
              | split; [ exact Hn2 | split; [ exact Hp2 | split; [ exact Hq2 | split; [ exact Hs2 | exact Hf2 ] ] ] ] ].
   Qed.
 
@@ -3022,10 +3050,15 @@ Section SchedulerSimulation.
       + apply IHe.
       + intros id1 s1 Hid1 Hp1. apply seq_pos.
         * intros _. apply emit_delay_chain_pos; assumption.
-        * intros id2 s2 Hid2 Hp2. apply emit_pos;
-            [ exact Hp2 | discriminate
-            | intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[]]];
-              [ exact Hid1 | exact Hid2 ] ].
+        * intros id2 s2 Hid2 Hp2. apply seq_pos.
+          -- intros _. apply emit_pos;
+               [ exact Hp2 | discriminate
+               | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hid2 ].
+          -- intros id3 s3 Hid3 Hp3. apply emit_pos;
+               [ exact Hp3 | discriminate
+               | intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[]]];
+                 [ exact Hid2 | exact Hid3 ] ].
+          -- exact Hp2.
         * exact Hp1.
       + exact Hp.
   Qed.
@@ -3238,6 +3271,480 @@ Section SchedulerSimulation.
 
   (* --- the theorem --- *)
 
+  (* ===================================================================== *)
+  (* The call-node shape invariant (B2c).  [dataflow_expr]'s tf_ext case     *)
+  (* emits the argument chain, then ONE more [DFG_Delay], then the call, so  *)
+  (* a call's validity node is exactly one delay level above the node its    *)
+  (* argument register is loaded from.  That is what lets [valid_settled]    *)
+  (* survive the one-cycle gap between [tf_dfg_eres] and the call's buffer,  *)
+  (* and (via [args_lt]) it also yields the id gap [mid + 2 <= nid].         *)
+  (* ===================================================================== *)
+
+  (* A call's validity node is a single delay over its argument node, and the
+     argument node is itself a delay (the top of the latency chain, which is always
+     at least one node deep).  Both facts are needed: they are what make [dly] and
+     [mid] provably buffered, hence what makes the validity of the call lag the
+     argument register by exactly one cycle. *)
+  Definition ext_shape (g: list (@dfg_node_t s_var i_var o_var e_var))
+                       (mid dly: nid_t) : Prop :=
+    (exists dnode, In dnode g /\ nid dnode = dly /\ op dnode = DFG_Delay mid)
+    /\ (exists mnode a, In mnode g /\ nid mnode = mid /\ op mnode = DFG_Delay a).
+
+  Lemma ext_shape_mono g g' mid dly :
+    (forall x, In x g -> In x g') -> ext_shape g mid dly -> ext_shape g' mid dly.
+  Proof.
+    intros Hsub [[dnode [Hd [Hn Ho]]] [mnode [a [Hm [Hmn Hmo]]]]].
+    split.
+    - exists dnode. split; [ exact (Hsub _ Hd) | split; assumption ].
+    - exists mnode, a. split; [ exact (Hsub _ Hm) | split; assumption ].
+  Qed.
+
+  Definition ggap (s: wst) : Prop :=
+    forall node, In node (graph s) ->
+      forall f mid dly, op node = DFG_Ext f mid dly -> ext_shape (graph s) mid dly.
+
+  Definition Pgap (s: wst) (id: nid_t) (s': wst) : Prop :=
+    wgmono s s' /\ wnidwf s' id /\ winv s' /\ ggap s'.
+
+  Lemma emit_ggap_eq o size (s: wst) id s' :
+    emit ctx o size s = (id, s') -> ggap s ->
+    (forall f mid dly, o = DFG_Ext f mid dly -> ext_shape (graph s) mid dly) ->
+    ggap s'.
+  Proof.
+    intros He Hg Hnew. rewrite emit_red in He. injection He as <- <-.
+    intros node Hin f mid dly Hop. cbn [graph] in Hin.
+    assert (Hlift : forall dnode, In dnode (graph s) -> In dnode
+              ({| nid := length (graph s); op := o; sz := size |} :: graph s))
+      by (intros dnode Hd; right; exact Hd).
+    destruct Hin as [<-|Hin].
+    - cbn [op] in Hop. exact (ext_shape_mono _ _ _ _ Hlift (Hnew f mid dly Hop)).
+    - exact (ext_shape_mono _ _ _ _ Hlift (Hg node Hin f mid dly Hop)).
+  Qed.
+
+  Lemma emit_ggap_other o size (s: wst) id s' :
+    emit ctx o size s = (id, s') -> ggap s ->
+    (forall f mid dly, o <> DFG_Ext f mid dly) -> ggap s'.
+  Proof.
+    intros He Hg Hne. apply (emit_ggap_eq o size s id s' He Hg).
+    intros f mid dly Hop. exfalso. exact (Hne f mid dly Hop).
+  Qed.
+
+  Lemma ensure_var_ggap v (s: wst) id s' :
+    ensure_var ctx v s = (id, s') -> ggap s -> ggap s'.
+  Proof.
+    intros Ev Hg. pose proof (ensure_var_graph v s id s' Ev) as [Hgr _].
+    intros node Hin f mid dly Hop. rewrite Hgr in Hin.
+    destruct Hin as [<-|Hin]; [ cbn [op] in Hop; discriminate |].
+    apply (ext_shape_mono (graph s));
+      [ rewrite Hgr; intros x Hx; right; exact Hx
+      | exact (Hg node Hin f mid dly Hop) ].
+  Qed.
+
+  Lemma emit_Pgap o size (s: wst) :
+    winv s -> ggap s ->
+    (forall x, In x (get_args ctx {| nid := length (graph s); op := o; sz := size |}) ->
+       wnidwf s x) ->
+    (forall f mid dly, o = DFG_Ext f mid dly -> ext_shape (graph s) mid dly) ->
+    let (id, s') := emit ctx o size s in Pgap s id s'.
+  Proof.
+    intros Hinv Hg Hargs Hnew.
+    pose proof (emit_full o size s Hinv Hargs) as Hf.
+    destruct (emit ctx o size s) as [id s'] eqn:E.
+    destruct Hf as [Hgm [Hn Hi]].
+    exact (conj Hgm (conj Hn (conj Hi (emit_ggap_eq o size s id s' E Hg Hnew)))).
+  Qed.
+
+  Lemma emit_Pgap_other o size (s: wst) :
+    winv s -> ggap s ->
+    (forall x, In x (get_args ctx {| nid := length (graph s); op := o; sz := size |}) ->
+       wnidwf s x) ->
+    (forall f mid dly, o <> DFG_Ext f mid dly) ->
+    let (id, s') := emit ctx o size s in Pgap s id s'.
+  Proof.
+    intros Hinv Hg Hargs Hne. apply emit_Pgap; try assumption.
+    intros f mid dly Hop. exfalso. exact (Hne f mid dly Hop).
+  Qed.
+
+  Lemma ensure_var_Pgap v (s: wst) :
+    winv s -> ggap s ->
+    let (id, s') := ensure_var ctx v s in Pgap s id s'.
+  Proof.
+    intros Hinv Hg.
+    pose proof (ensure_var_full v s Hinv) as Hf.
+    destruct (ensure_var ctx v s) as [id s'] eqn:Ev.
+    destruct Hf as [Hgm [Hn Hi]].
+    exact (conj Hgm (conj Hn (conj Hi (ensure_var_ggap v s id s' Ev Hg)))).
+  Qed.
+
+  Lemma get_var_Pgap v (s: wst) :
+    winv s -> ggap s ->
+    let (id, s') := get_var ctx v s in Pgap s id s'.
+  Proof.
+    intros Hinv Hg. unfold get_var, bind, get_state.
+    destruct (BitsToLists.list_assoc (var_map s) v) as [id|] eqn:E.
+    - unfold ret. split; [ apply wgmono_refl | split; [| split; [exact Hinv | exact Hg]]].
+      destruct Hinv as [Hv _]. apply wla_in in E.
+      destruct (Hv v id E) as [node [Hn Hnid]]. exists node; split; assumption.
+    - apply ensure_var_Pgap; assumption.
+  Qed.
+
+  Lemma ret_Pgap id (s: wst) :
+    wnidwf s id -> winv s -> ggap s ->
+    let (i, s') := ret ctx id s in Pgap s i s'.
+  Proof.
+    intros Hn Hi Hg. unfold ret.
+    split; [ apply wgmono_refl | split; [exact Hn | split; [exact Hi | exact Hg]]].
+  Qed.
+
+  Lemma seq_Pgap (m: M ctx nid_t) (g: nid_t -> M ctx nid_t) (s: wst) :
+    (winv s -> ggap s -> let (id, s1) := m s in Pgap s id s1) ->
+    (forall id s1, wgmono s s1 -> wnidwf s1 id -> winv s1 -> ggap s1 ->
+       let (id2, s2) := g id s1 in Pgap s1 id2 s2) ->
+    winv s -> ggap s ->
+    let (id2, s2) := bind ctx m g s in Pgap s id2 s2.
+  Proof.
+    intros H1 H2 Hinv Hg. specialize (H1 Hinv Hg).
+    unfold bind. destruct (m s) as [id s1] eqn:Em.
+    destruct H1 as [g1 [n1 [p1 x1]]].
+    specialize (H2 id s1 g1 n1 p1 x1).
+    destruct (g id s1) as [id2 s2]. destruct H2 as [g2 [n2 [p2 x2]]].
+    split; [ eapply wgmono_trans; eauto
+           | split; [exact n2 | split; [exact p2 | exact x2]]].
+  Qed.
+
+  Lemma emit_delay_chain_len k id size (s: wst) :
+    length (graph (snd (emit_delay_chain ctx k id size s))) = length (graph s) + k.
+  Proof.
+    revert id s. induction k as [| k IH]; intros id s.
+    - cbn [emit_delay_chain]. unfold ret. cbn [snd]. lia.
+    - cbn [emit_delay_chain]. unfold bind. rewrite emit_red. cbv beta iota.
+      rewrite IH. cbn [graph length]. lia.
+  Qed.
+
+  Lemma emit_delay_chain_Pgap k id size (s: wst) :
+    winv s -> ggap s -> wnidwf s id ->
+    let (id', s') := emit_delay_chain ctx k id size s in Pgap s id' s'.
+  Proof.
+    revert id s. induction k as [| k IH]; intros id s Hinv Hg Hid.
+    - cbn [emit_delay_chain]. apply ret_Pgap; assumption.
+    - cbn [emit_delay_chain]. apply seq_Pgap.
+      + intros _ _. apply emit_Pgap_other;
+          [ exact Hinv | exact Hg
+          | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hid
+          | discriminate ].
+      + intros id1 s1 Hgm1 Hn1 Hp1 Hx1. apply IH; assumption.
+      + exact Hinv.
+      + exact Hg.
+  Qed.
+
+  (* A non-empty delay chain returns the id of a [DFG_Delay] node. *)
+  Lemma emit_delay_chain_top_delay k :
+    forall id size (s: wst) id' s',
+      emit_delay_chain ctx (S k) id size s = (id', s') ->
+      exists mnode a, In mnode (graph s') /\ nid mnode = id' /\ op mnode = DFG_Delay a.
+  Proof.
+    induction k as [| k IH]; intros id size s id' s' Hrun.
+    - cbn [emit_delay_chain] in Hrun. unfold bind in Hrun.
+      rewrite emit_red in Hrun. cbv beta iota in Hrun.
+      cbn [emit_delay_chain] in Hrun. unfold ret in Hrun.
+      injection Hrun as <- <-.
+      exists {| nid := length (graph s); op := DFG_Delay id; sz := size |}, id.
+      cbn [graph]. split; [ left; reflexivity | split; reflexivity ].
+    - cbn [emit_delay_chain] in Hrun. unfold bind in Hrun.
+      destruct (emit ctx (DFG_Delay id) size s) as [id1 s1] eqn:E1.
+      exact (IH id1 size s1 id' s' Hrun).
+  Qed.
+
+  Lemma dataflow_expr_Pgap :
+    forall e sz (s: wst), winv s -> ggap s ->
+      let (id, s') := dataflow_expr ctx e sz s in Pgap s id s'.
+  Proof.
+    induction e; intros sz s Hinv Hg.
+    - (* tf_const *)
+      simpl. apply emit_Pgap_other;
+        [ exact Hinv | exact Hg | intros x Hx; simpl in Hx; destruct Hx | discriminate ].
+    - (* tf_svar *)
+      simpl. apply seq_Pgap.
+      + apply get_var_Pgap.
+      + intros id s1 Hgm Hn Hp1 Hx1. cbn beta.
+        destruct (Nat.eqb _ sz).
+        * apply ret_Pgap; assumption.
+        * apply emit_Pgap_other;
+            [ exact Hp1 | exact Hx1
+            | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn | discriminate ].
+      + exact Hinv.
+      + exact Hg.
+    - (* tf_ivar *)
+      simpl. apply seq_Pgap.
+      + intros Hp Hx. apply emit_Pgap_other;
+          [ exact Hp | exact Hx | intros x Hxx; simpl in Hxx; destruct Hxx | discriminate ].
+      + intros id s1 Hgm Hn Hp1 Hx1. cbn beta.
+        destruct (Nat.eqb _ sz).
+        * apply ret_Pgap; assumption.
+        * apply emit_Pgap_other;
+            [ exact Hp1 | exact Hx1
+            | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn | discriminate ].
+      + exact Hinv.
+      + exact Hg.
+    - (* tf_ovar *)
+      simpl. apply seq_Pgap.
+      + apply get_var_Pgap.
+      + intros id s1 Hgm Hn Hp1 Hx1. cbn beta.
+        destruct (Nat.eqb _ sz).
+        * apply ret_Pgap; assumption.
+        * apply emit_Pgap_other;
+            [ exact Hp1 | exact Hx1
+            | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn | discriminate ].
+      + exact Hinv.
+      + exact Hg.
+    - (* tf_op1 *)
+      simpl. destruct op as [| source_size];
+        ( apply seq_Pgap;
+          [ apply IHe
+          | intros id1 s1 Hgm1 Hn1 Hp1 Hx1; apply emit_Pgap_other;
+            [ exact Hp1 | exact Hx1
+            | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn1 | discriminate ]
+          | exact Hinv | exact Hg ]).
+    - (* tf_op2 *)
+      simpl. destruct op;
+        ( apply seq_Pgap;
+          [ apply IHe1
+          | intros id1 s1 Hgm1 Hn1 Hp1 Hx1; apply seq_Pgap;
+            [ apply IHe2
+            | intros id2 s2 Hgm2 Hn2 Hp2 Hx2; apply emit_Pgap_other;
+              [ exact Hp2 | exact Hx2
+              | intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[]]];
+                [ eapply wnidwf_gmono; [ exact Hn1 | exact Hgm2 ] | exact Hn2 ]
+              | discriminate ]
+            | exact Hp1 | exact Hx1 ]
+          | exact Hinv | exact Hg ]).
+    - (* tf_expr_if *)
+      simpl. apply seq_Pgap.
+      + apply IHe1.
+      + intros idc s1 Hgmc Hnc Hpc Hxc. apply seq_Pgap.
+        * apply IHe2.
+        * intros idt s2 Hgmt Hnt Hpt Hxt. apply seq_Pgap.
+          -- apply IHe3.
+          -- intros ide s3 Hgme Hne Hpe Hxe. apply emit_Pgap_other.
+             ++ exact Hpe.
+             ++ exact Hxe.
+             ++ intros x Hx. simpl in Hx.
+                destruct Hx as [<-|[<-|[<-|[]]]].
+                ** eapply wnidwf_gmono;
+                     [ exact Hnc | eapply wgmono_trans; [ exact Hgmt | exact Hgme ] ].
+                ** eapply wnidwf_gmono; [ exact Hnt | exact Hgme ].
+                ** exact Hne.
+             ++ discriminate.
+          -- exact Hpt.
+          -- exact Hxt.
+        * exact Hpc.
+        * exact Hxc.
+      + exact Hinv.
+      + exact Hg.
+    - (* tf_ext: the argument chain, then one gating delay, then the call *)
+      cbn [dataflow_expr]. unfold bind.
+      pose proof (IHe (@tfe_arg_size _ e_sig f) s Hinv Hg) as H1.
+      destruct (dataflow_expr ctx e (@tfe_arg_size _ e_sig f) s) as [arg_id s1] eqn:E1.
+      destruct H1 as [Hgm1 [Hn1 [Hi1 Hx1]]]. cbv beta.
+      pose proof (emit_delay_chain_Pgap (S (@tfe_latency _ e_sig f)) arg_id
+                    (@tfe_arg_size _ e_sig f) s1 Hi1 Hx1 Hn1) as H2.
+      pose proof (emit_delay_chain_top_delay (@tfe_latency _ e_sig f) arg_id
+                    (@tfe_arg_size _ e_sig f) s1) as Htop.
+      destruct (emit_delay_chain ctx (S (@tfe_latency _ e_sig f)) arg_id
+                  (@tfe_arg_size _ e_sig f) s1) as [mid_id sm] eqn:Ed.
+      destruct H2 as [Hgmm [Hnm [Him Hxm]]].
+      specialize (Htop mid_id sm eq_refl).
+      pose proof (emit_Pgap (DFG_Delay mid_id) (@tfe_arg_size _ e_sig f) sm Him Hxm
+                    ltac:(intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hnm)
+                    ltac:(discriminate)) as H3.
+      destruct (emit ctx (DFG_Delay mid_id) (@tfe_arg_size _ e_sig f) sm)
+        as [dly_id sd] eqn:Ee.
+      destruct H3 as [Hgmd [Hnd [Hid Hxd]]].
+      (* both witnesses the shape invariant demands: the gating delay just emitted,
+         and the chain top it delays *)
+      assert (Hwit : ext_shape (graph sd) mid_id dly_id).
+      { assert (Hgr : graph sd = {| nid := length (graph sm); op := DFG_Delay mid_id;
+                                    sz := @tfe_arg_size _ e_sig f |} :: graph sm)
+          by (rewrite emit_red in Ee; injection Ee as _ <-; reflexivity).
+        assert (Hdly : dly_id = length (graph sm))
+          by (rewrite emit_red in Ee; injection Ee as <- _; reflexivity).
+        split.
+        - exists {| nid := length (graph sm); op := DFG_Delay mid_id;
+                    sz := @tfe_arg_size _ e_sig f |}.
+          rewrite Hgr, Hdly. split; [ left; reflexivity | split; reflexivity ].
+        - destruct Htop as [mnode [a [Hm [Hmn Hmo]]]].
+          exists mnode, a. rewrite Hgr.
+          split; [ right; exact Hm | split; assumption ]. }
+      pose proof (emit_Pgap (DFG_Ext f mid_id dly_id) sz sd Hid Hxd
+                    ltac:(intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[]]];
+                          [ eapply wnidwf_gmono; [ exact Hnm | exact Hgmd ] | exact Hnd ])
+                    ltac:(intros f0 mid0 dly0 Hop; injection Hop; intros; subst;
+                          exact Hwit)) as H4.
+      destruct (emit ctx (DFG_Ext f mid_id dly_id) sz sd) as [id4 s4].
+      destruct H4 as [Hgm4 [Hn4 [Hi4 Hx4]]].
+      split; [ eapply wgmono_trans;
+                 [ exact Hgm1 | eapply wgmono_trans;
+                     [ exact Hgmm | eapply wgmono_trans; [ exact Hgmd | exact Hgm4 ] ] ]
+             | split; [ exact Hn4 | split; [ exact Hi4 | exact Hx4 ] ] ].
+  Qed.
+
+  Lemma merge_key_ggap cond_id k vt_opt ve_opt (s: wst) res s' :
+    merge_key ctx cond_id k vt_opt ve_opt s = (res, s') -> ggap s -> ggap s'.
+  Proof.
+    intros Hrun Hg. unfold merge_key in Hrun.
+    destruct vt_opt as [vt|]; destruct ve_opt as [ve|].
+    - destruct (eq_dec vt ve) as [Heq|Hne].
+      + unfold ret in Hrun. injection Hrun as <- <-. exact Hg.
+      + destruct (emit ctx (DFG_Phi cond_id vt ve) (dfg_var_size ctx k) s) as [phi s1] eqn:Ee.
+        rewrite (bind_red (emit ctx (DFG_Phi cond_id vt ve) (dfg_var_size ctx k)) _ s _ _ Ee)
+          in Hrun.
+        unfold ret in Hrun. injection Hrun as <- <-.
+        exact (emit_ggap_other _ _ s phi s1 Ee Hg ltac:(discriminate)).
+    - destruct (ensure_var ctx k s) as [ve0 s1] eqn:Ev.
+      rewrite (bind_red (ensure_var ctx k) _ s _ _ Ev) in Hrun.
+      destruct (emit ctx (DFG_Phi cond_id vt ve0) (dfg_var_size ctx k) s1) as [phi s2] eqn:Ee.
+      rewrite (bind_red (emit ctx (DFG_Phi cond_id vt ve0) (dfg_var_size ctx k)) _ s1 _ _ Ee)
+        in Hrun.
+      unfold ret in Hrun. injection Hrun as <- <-.
+      exact (emit_ggap_other _ _ s1 phi s2 Ee (ensure_var_ggap k s ve0 s1 Ev Hg)
+               ltac:(discriminate)).
+    - destruct (ensure_var ctx k s) as [vt0 s1] eqn:Ev.
+      rewrite (bind_red (ensure_var ctx k) _ s _ _ Ev) in Hrun.
+      destruct (emit ctx (DFG_Phi cond_id vt0 ve) (dfg_var_size ctx k) s1) as [phi s2] eqn:Ee.
+      rewrite (bind_red (emit ctx (DFG_Phi cond_id vt0 ve) (dfg_var_size ctx k)) _ s1 _ _ Ee)
+        in Hrun.
+      unfold ret in Hrun. injection Hrun as <- <-.
+      exact (emit_ggap_other _ _ s1 phi s2 Ee (ensure_var_ggap k s vt0 s1 Ev Hg)
+               ltac:(discriminate)).
+    - unfold ret in Hrun. injection Hrun as <- <-. exact Hg.
+  Qed.
+
+  Lemma merge_loop_ggap cond_id mt me :
+    forall keys acc (s: wst) fin s',
+      merge_loop ctx cond_id mt me keys acc s = (fin, s') -> ggap s -> ggap s'.
+  Proof.
+    induction keys as [|[k kv] rest IH]; intros acc s fin s' Hrun Hg.
+    - simpl in Hrun. unfold ret in Hrun. injection Hrun as <- <-. exact Hg.
+    - simpl in Hrun.
+      destruct (BitsToLists.list_assoc acc k) as [existing|] eqn:Ek.
+      + eapply IH; eauto.
+      + unfold bind in Hrun. cbv beta in Hrun.
+        destruct (merge_key ctx cond_id k (BitsToLists.list_assoc mt k)
+                    (BitsToLists.list_assoc me k) s) as [res_opt s1] eqn:Emk.
+        cbv beta iota in Hrun.
+        pose proof (merge_key_ggap cond_id k _ _ s res_opt s1 Emk Hg) as Hk.
+        destruct res_opt as [final_id|]; eapply IH; eauto.
+  Qed.
+
+  Lemma merge_maps_ggap cond_id mo mt me (s: wst) fin s' :
+    merge_maps ctx cond_id mo mt me s = (fin, s') -> ggap s -> ggap s'.
+  Proof.
+    intros Hrun Hg. unfold merge_maps in Hrun.
+    eapply merge_loop_ggap; [ exact Hrun | exact Hg ].
+  Qed.
+
+  Lemma dataflow_ops_ggap :
+    forall ops (s: wst), winv s -> ggap s ->
+      let (u, s') := dataflow_ops ctx ops s in ggap s'.
+  Proof.
+    induction ops as [op | op1 IHops1 op2 IHops2 | cond op1 IHops1 op2 IHops2];
+      intros s Hinv Hg.
+    - destruct op.
+      + simpl. unfold ret. exact Hg.
+      + simpl.
+        pose proof (dataflow_expr_Pgap expr (dfg_var_size ctx (DFG_SVar dst)) s Hinv Hg) as He.
+        destruct (dataflow_expr ctx expr (dfg_var_size ctx (DFG_SVar dst)) s)
+          as [res_id s1] eqn:Ee.
+        destruct He as [_ [_ [_ Xe]]].
+        rewrite (bind_red (dataflow_expr ctx expr (dfg_var_size ctx (DFG_SVar dst))) _ s _ _ Ee).
+        unfold set_var, bind, get_state, put_state. cbn [graph]. exact Xe.
+      + simpl.
+        pose proof (dataflow_expr_Pgap expr (dfg_var_size ctx (DFG_OVar dst)) s Hinv Hg) as He.
+        destruct (dataflow_expr ctx expr (dfg_var_size ctx (DFG_OVar dst)) s)
+          as [res_id s1] eqn:Ee.
+        destruct He as [_ [_ [_ Xe]]].
+        rewrite (bind_red (dataflow_expr ctx expr (dfg_var_size ctx (DFG_OVar dst))) _ s _ _ Ee).
+        unfold set_var, bind, get_state, put_state. cbn [graph]. exact Xe.
+    - simpl.
+      pose proof (dataflow_ops_full op1 s Hinv) as F1.
+      pose proof (IHops1 s Hinv Hg) as H1.
+      destruct (dataflow_ops ctx op1 s) as [u1 s1] eqn:E1.
+      destruct F1 as [_ Hi1].
+      rewrite (bind_red (dataflow_ops ctx op1) _ s _ _ E1).
+      exact (IHops2 s1 Hi1 H1).
+    - simpl.
+      pose proof (dataflow_expr_full cond 1 s Hinv) as Fc.
+      pose proof (dataflow_expr_Pgap cond 1 s Hinv Hg) as Hc.
+      destruct (dataflow_expr ctx cond 1 s) as [cond_id s1] eqn:Ec.
+      destruct Fc as [_ [Nc Pc]]. destruct Hc as [_ [_ [_ Xc]]].
+      rewrite (bind_red (dataflow_expr ctx cond 1) _ s _ _ Ec).
+      rewrite (bind_red (get_state ctx) _ s1 _ _ (get_state_red s1)).
+      pose proof (dataflow_ops_full op1 s1 Pc) as Ft.
+      pose proof (IHops1 s1 Pc Xc) as Hthen.
+      destruct (dataflow_ops ctx op1 s1) as [ut s_then] eqn:Et.
+      destruct Ft as [Gt Pt].
+      rewrite (bind_red (dataflow_ops ctx op1) _ s1 _ _ Et).
+      rewrite (bind_red (get_state ctx) _ s_then _ _ (get_state_red s_then)).
+      set (sR := {| graph := graph s_then; var_map := var_map s1 |} : wst).
+      rewrite (bind_red (put_state ctx sR) _ s_then _ _ (put_state_red sR s_then)).
+      assert (XsR : ggap sR) by (unfold sR; unfold ggap; cbn [graph]; exact Hthen).
+      assert (PsR : winv sR).
+      { destruct Pc as [Hv1 _]. destruct Pt as [_ [Hnst Habt]].
+        split; [ | split ].
+        - intros k id Hin. unfold sR in *; cbn [var_map graph] in *.
+          destruct (Hv1 k id Hin) as [node [Hn2 Hnid]].
+          exists node. split; [ exact (Gt node Hn2) | exact Hnid ].
+        - unfold sR; cbn [graph]. exact Hnst.
+        - unfold sR; cbn [graph]. exact Habt. }
+      pose proof (dataflow_ops_full op2 sR PsR) as Fe.
+      pose proof (IHops2 sR PsR XsR) as Helse.
+      destruct (dataflow_ops ctx op2 sR) as [ue s_else] eqn:Ee.
+      destruct Fe as [Ge Pe].
+      rewrite (bind_red (dataflow_ops ctx op2) _ sR _ _ Ee).
+      rewrite (bind_red (get_state ctx) _ s_else _ _ (get_state_red s_else)).
+      destruct (merge_maps ctx cond_id (var_map s1) (var_map s_then) (var_map s_else) s_else)
+        as [final_vars s_final] eqn:Em.
+      pose proof (merge_maps_ggap cond_id (var_map s1) (var_map s_then) (var_map s_else)
+                    s_else final_vars s_final Em Helse) as Hmerge.
+      rewrite (bind_red (merge_maps ctx cond_id (var_map s1) (var_map s_then)
+                           (var_map s_else)) _ s_else _ _ Em).
+      rewrite (bind_red (get_state ctx) _ s_final _ _ (get_state_red s_final)).
+      set (sF := {| graph := graph s_final; var_map := final_vars |} : wst).
+      rewrite (put_state_red sF s_final).
+      unfold ggap. unfold sF; cbn [graph]. exact Hmerge.
+  Qed.
+
+  (* Forward-graph corollary: in build_dfg's exported graph, a call's validity node
+     is a single delay over the node its argument register is loaded from. *)
+  Lemma build_dfg_ggap (act: tfs_action sched) :
+    forall node, In node (graph (build_dfg ctx act)) ->
+      forall f mid dly, op node = DFG_Ext f mid dly ->
+        ext_shape (graph (build_dfg ctx act)) mid dly.
+  Proof.
+    assert (Hempty0 : winv {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ];
+                             var_map := [] |}).
+    { split; [ | split ].
+      - intros k id Hin. destruct Hin.
+      - unfold nid_seq. reflexivity.
+      - intros a Ha x Hx. cbn in Ha. destruct Ha as [<-|[]]. cbn in Hx. destruct Hx. }
+    assert (Hempty : ggap {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ];
+                            var_map := [] |}).
+    { intros node Hin f mid dly Hop. cbn in Hin. destruct Hin as [<-|[]].
+      cbn in Hop. discriminate Hop. }
+    unfold build_dfg.
+    pose proof (dataflow_ops_ggap (tfs_spec_action_ops ctx act)
+                  {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |}
+                  Hempty0 Hempty) as Hop.
+    destruct (dataflow_ops ctx (tfs_spec_action_ops ctx act)
+                {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |})
+      as [u final] eqn:Ed.
+    cbn [graph]. intros node Hin f mid dly Hnode.
+    apply in_rev in Hin.
+    apply (ext_shape_mono (graph final));
+      [ intros x Hx; exact (proj1 (in_rev _ x) Hx)
+      | exact (Hop node Hin f mid dly Hnode) ].
+  Qed.
+
   Lemma build_dfg_wf :
     forall (act: tfs_action sched),
       ids_desc (rev (graph (build_dfg ctx act)))
@@ -3429,6 +3936,118 @@ Section SchedulerSimulation.
         apply sam_in_ge. right. exact Hx.
     - (* frozen: no node after [node] touches key (nid node) *)
       apply (build_dfg_suffix_frozen act pre node rest Hsplit).
+  Qed.
+
+  (* The fold only ever raises costs. *)
+  Lemma cost_fold_mono :
+    forall (suf: list (@dfg_node_t s_var i_var o_var e_var)) acc j,
+      getn acc j <= getn (fold_left bc_aux suf acc) j.
+  Proof.
+    induction suf as [| M suf IH]; cbn [fold_left]; intros acc j.
+    - apply Nat.le_refl.
+    - eapply Nat.le_trans; [ | apply IH ]. unfold bc_aux. apply sam_mono.
+  Qed.
+
+  (* A frozen key keeps its value through the rest of the fold. *)
+  Lemma cost_frozen_fold :
+    forall (suf: list (@dfg_node_t s_var i_var o_var e_var)) acc (k: nid_t),
+      (forall M, In M suf -> ~ In k (nid M :: get_args ctx M)) ->
+      getn (fold_left bc_aux suf acc) k = getn acc k.
+  Proof.
+    induction suf as [| M suf IH]; cbn [fold_left]; intros acc k Hfr.
+    - reflexivity.
+    - rewrite (IH (bc_aux acc M) k (fun M' HM' => Hfr M' (or_intror HM'))).
+      unfold bc_aux. apply sam_untouched. apply Hfr. left. reflexivity.
+  Qed.
+
+  (* Splitting the fold order at two nodes, the one with the LARGER id first. *)
+  Lemma fold_order_split :
+    forall (act: tfs_action sched) node xnode,
+      In node (graph (build_dfg ctx act)) ->
+      In xnode (graph (build_dfg ctx act)) ->
+      nid xnode < nid node ->
+      exists pre mid rest,
+        rev (graph (build_dfg ctx act)) = pre ++ node :: (mid ++ xnode :: rest).
+  Proof.
+    intros act node xnode Hnode Hx Hlt.
+    destruct (build_dfg_wf act) as [Hdesc _].
+    apply in_rev in Hnode. apply in_split in Hnode.
+    destruct Hnode as [pre [rest Hsplit]].
+    assert (Hxr : In xnode rest).
+    { apply in_rev in Hx. rewrite Hsplit in Hx.
+      apply in_app_iff in Hx. destruct Hx as [Hxp | [Heq | Hxr]].
+      - (* xnode before node in the order would make nid node < nid xnode *)
+        exfalso. apply in_split in Hxp. destruct Hxp as [p [q Hpq]].
+        assert (Hsplit2 : rev (graph (build_dfg ctx act))
+                          = p ++ xnode :: (q ++ node :: rest))
+          by (rewrite Hsplit, Hpq, <- app_assoc; reflexivity).
+        assert (Hin : In node (q ++ node :: rest))
+          by (apply in_or_app; right; left; reflexivity).
+        pose proof (Hdesc p xnode _ Hsplit2 node Hin) as Hlt2. lia.
+      - exfalso. subst xnode. lia.
+      - exact Hxr. }
+    apply in_split in Hxr. destruct Hxr as [mid [rest2 Hsplit2]].
+    exists pre, mid, rest2. rewrite Hsplit, Hsplit2. reflexivity.
+  Qed.
+
+  (* An argument's final backward cost exceeds its consumer's by at least the
+     ARGUMENT's own [cost_fn]: [bc_aux] bumps a node's own key along with its
+     args, so the slack a node creates sits on its OUTPUT edge. *)
+  Lemma backward_cost_arg_self :
+    forall (act: tfs_action sched) node xnode,
+      In node (graph (build_dfg ctx act)) ->
+      In xnode (graph (build_dfg ctx act)) ->
+      In (nid xnode) (get_args ctx node) ->
+      (match BitsToLists.list_assoc
+               (calc_backward_cost ctx (build_dfg ctx act)) (nid node) with
+       | Some c => c | None => 0 end)
+        + cost_fn ctx cost_limit (op xnode) (sz xnode)
+      <= (match BitsToLists.list_assoc
+               (calc_backward_cost ctx (build_dfg ctx act)) (nid xnode) with
+          | Some c => c | None => 0 end).
+  Proof.
+    intros act node xnode Hnode Hx Harg.
+    change (getn (calc_backward_cost ctx (build_dfg ctx act)) (nid node)
+              + cost_fn ctx cost_limit (op xnode) (sz xnode)
+            <= getn (calc_backward_cost ctx (build_dfg ctx act)) (nid xnode)).
+    pose proof (args_lt_fwd act node Hnode _ Harg) as Hlt.
+    destruct (fold_order_split act node xnode Hnode Hx Hlt) as [pre [mid [rest Hsplit]]].
+    rewrite calc_backward_cost_fold, Hsplit, fold_left_app. cbn [fold_left].
+    set (acc1 := fold_left bc_aux pre []).
+    set (acc2 := bc_aux acc1 node).
+    (* node's key is frozen from acc2 onwards *)
+    assert (Hfr : forall M, In M (mid ++ xnode :: rest) ->
+                    ~ In (nid node) (nid M :: get_args ctx M))
+      by (apply (build_dfg_suffix_frozen act pre node _ Hsplit)).
+    rewrite fold_left_app. cbn [fold_left].
+    set (acc3 := fold_left bc_aux mid acc2).
+    set (acc4 := bc_aux acc3 xnode).
+    assert (Hfr_mid : forall M, In M mid -> ~ In (nid node) (nid M :: get_args ctx M))
+      by (intros M HM; apply Hfr, in_or_app; left; exact HM).
+    assert (Hfr_rest : forall M, In M rest -> ~ In (nid node) (nid M :: get_args ctx M))
+      by (intros M HM; apply Hfr, in_or_app; right; right; exact HM).
+    assert (Hfr_x : ~ In (nid node) (nid xnode :: get_args ctx xnode))
+      by (apply Hfr, in_or_app; right; left; reflexivity).
+    (* upper bound on node's key: frozen all the way to the end *)
+    assert (Hnode_final : getn (fold_left bc_aux rest acc4) (nid node) = getn acc2 (nid node)).
+    { rewrite (cost_frozen_fold rest acc4 (nid node) Hfr_rest).
+      unfold acc4, bc_aux. rewrite (sam_untouched _ _ _ _ Hfr_x).
+      exact (cost_frozen_fold mid acc2 (nid node) Hfr_mid). }
+    rewrite Hnode_final.
+    (* node's own step already puts its cost below its arg's *)
+    assert (H2 : getn acc2 (nid node) <= getn acc2 (nid xnode)).
+    { unfold acc2, bc_aux.
+      eapply Nat.le_trans.
+      - eapply Nat.le_trans; [ apply sam_upper |].
+        apply Nat.max_lub; [ apply Nat.le_add_r | apply Nat.le_refl ].
+      - apply sam_in_ge. right. exact Harg. }
+    (* xnode's own step adds its cost_fn on top *)
+    assert (H4 : getn acc3 (nid xnode) + cost_fn ctx cost_limit (op xnode) (sz xnode)
+                 <= getn acc4 (nid xnode))
+      by (unfold acc4, bc_aux; apply sam_in_ge; left; reflexivity).
+    pose proof (cost_fold_mono mid acc2 (nid xnode)) as H3.
+    pose proof (cost_fold_mono rest acc4 (nid xnode)) as H5.
+    fold acc3 in H3. lia.
   Qed.
 
   (* Backward-cost monotonicity (at cycle granularity): a node's target cycle is
@@ -3860,7 +4479,10 @@ Section SchedulerSimulation.
       + apply IHe.
       + intros id s1 Hg Hn Hv1. apply fspec_seq.
         * intros _. apply emit_delay_chain_fspec; assumption.
-        * intros id2 s2 Hg2 Hn2 Hv2. apply emit_fspec; assumption.
+        * intros id2 s2 Hg2 Hn2 Hv2. apply fspec_seq.
+          -- intros _. apply emit_fspec; assumption.
+          -- intros id3 s3 Hg3 Hn3 Hv3. apply emit_fspec; assumption.
+          -- exact Hv2.
         * exact Hv1.
   Qed.
 
@@ -4773,6 +5395,227 @@ Section SchedulerSimulation.
   Proof.
     intros n Hn1 Hnlen f1 f2 Hf1 Hf2.
     exact (compile_fuel_irrel_gen act a_idx buffers _ _ n Hn1 Hnlen f1 f2 [] Hf1 Hf2).
+  Qed.
+
+  (* A node of the exported forward graph sits at the position given by its own
+     [nid] field.  This is the bridge from the builder's [In]-based
+     monotonicity ([wgmono]) to the compiler's positional [nth] lookups. *)
+  Lemma node_at_nid (act: tfs_action sched) node :
+    In node (graph (build_dfg ctx act)) ->
+    nid node < length (graph (build_dfg ctx act))
+    /\ nth (nid node) (graph (build_dfg ctx act))
+           {| nid := 0; op := DFG_Empty; sz := 0 |} = node.
+  Proof.
+    intro Hin.
+    destruct (In_nth _ _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hin) as [p [Hp Hnth]].
+    pose proof (node_nid_at act p Hp) as Hnid. rewrite Hnth in Hnid.
+    rewrite Hnid. split; [ exact Hp | exact Hnth ].
+  Qed.
+
+  (* Every arg of a real forward node is itself a real node with a strictly
+     smaller id — the rank that every structural recursion below descends on. *)
+  Lemma node_args_range (act: tfs_action sched) n :
+    1 <= n -> n < length (graph (build_dfg ctx act)) ->
+    forall x, In x (get_args ctx (nth n (graph (build_dfg ctx act))
+                                    {| nid := 0; op := DFG_Empty; sz := 0 |})) ->
+      1 <= x /\ x < n.
+  Proof.
+    intros H1 H2 x Hx.
+    assert (Hin : In (nth n (graph (build_dfg ctx act))
+                        {| nid := 0; op := DFG_Empty; sz := 0 |})
+                     (graph (build_dfg ctx act))) by (apply nth_In; exact H2).
+    pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
+    split; [ exact (Hargpos _ Hin x Hx) | ].
+    pose proof (args_lt_fwd act _ Hin x Hx) as Hlt.
+    rewrite (node_nid_at act n H2) in Hlt. exact Hlt.
+  Qed.
+
+  (* A call's validity node is a single delay over its argument node, and therefore
+     (via [args_lt]) sits strictly between it and the call: [mid < dly < n]. *)
+  Lemma ext_dly_shape (act: tfs_action sched) n f mid dly :
+    1 <= n -> n < length (graph (build_dfg ctx act)) ->
+    op (nth n (graph (build_dfg ctx act))
+          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Ext f mid dly ->
+    dly < n
+    /\ 1 <= dly
+    /\ op (nth dly (graph (build_dfg ctx act))
+             {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Delay mid.
+  Proof.
+    intros Hn1 Hn Hop.
+    assert (Hin : In (nth n (graph (build_dfg ctx act))
+                        {| nid := 0; op := DFG_Empty; sz := 0 |})
+                     (graph (build_dfg ctx act))) by (apply nth_In; exact Hn).
+    assert (Hdin : In dly (get_args ctx (nth n (graph (build_dfg ctx act))
+                                           {| nid := 0; op := DFG_Empty; sz := 0 |})))
+      by (unfold get_args; rewrite Hop; right; left; reflexivity).
+    destruct (node_args_range act n Hn1 Hn dly Hdin) as [Hd1 Hdlt].
+    destruct (build_dfg_ggap act _ Hin f mid dly Hop) as [[dnode [Hdn [Hnid Hdop]]] _].
+    destruct (node_at_nid act dnode Hdn) as [_ Hnth].
+    rewrite Hnid in Hnth. rewrite Hnth.
+    split; [ exact Hdlt | split; [ exact Hd1 | exact Hdop ] ].
+  Qed.
+
+  (* The node the argument register is loaded from is itself a delay (the top of
+     the latency chain), which is what makes it buffered too. *)
+  Lemma ext_mid_shape (act: tfs_action sched) n f mid dly :
+    1 <= n -> n < length (graph (build_dfg ctx act)) ->
+    op (nth n (graph (build_dfg ctx act))
+          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Ext f mid dly ->
+    exists a, op (nth mid (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Delay a.
+  Proof.
+    intros Hn1 Hn Hop.
+    assert (Hin : In (nth n (graph (build_dfg ctx act))
+                        {| nid := 0; op := DFG_Empty; sz := 0 |})
+                     (graph (build_dfg ctx act))) by (apply nth_In; exact Hn).
+    destruct (build_dfg_ggap act _ Hin f mid dly Hop) as [_ [mnode [a [Hm [Hmn Hmo]]]]].
+    destruct (node_at_nid act mnode Hm) as [_ Hnth].
+    rewrite Hmn in Hnth. rewrite Hnth. exists a. exact Hmo.
+  Qed.
+
+  (* Hence a call node sits at least 2 ids above the node its argument register is
+     loaded from: [dataflow_expr] emits that node, then the gating delay, then the
+     call.  This is the slack the settle bound needs. *)
+  Lemma ext_node_gap (act: tfs_action sched) n f mid dly :
+    1 <= n -> n < length (graph (build_dfg ctx act)) ->
+    op (nth n (graph (build_dfg ctx act))
+          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Ext f mid dly ->
+    mid + 2 <= n.
+  Proof.
+    intros Hn1 Hn Hop.
+    destruct (ext_dly_shape act n f mid dly Hn1 Hn Hop) as [Hdlt [Hd1 Hdop]].
+    assert (Hmin : In mid (get_args ctx (nth dly (graph (build_dfg ctx act))
+                                           {| nid := 0; op := DFG_Empty; sz := 0 |})))
+      by (unfold get_args; rewrite Hdop; left; reflexivity).
+    destruct (node_args_range act dly Hd1 (Nat.lt_trans _ _ _ Hdlt Hn) mid Hmin)
+      as [_ Hmlt].
+    lia.
+  Qed.
+
+  (* The gating delay node is buffered: its own [cost_fn] is a whole bucket, so it
+     sits a strictly higher target cycle than the call that consumes it, and
+     [require_buffer] picks up exactly the args that cross a cycle boundary. *)
+  Lemma delay_arg_buffered (act: tfs_action sched) (p x a: nid_t) :
+    0 < cost_limit ->
+    p < length (graph (build_dfg ctx act)) ->
+    x < length (graph (build_dfg ctx act)) ->
+    In x (get_args ctx (nth p (graph (build_dfg ctx act))
+                          {| nid := 0; op := DFG_Empty; sz := 0 |})) ->
+    op (nth x (graph (build_dfg ctx act))
+          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Delay a ->
+    In x (require_buffer ctx (build_dfg ctx act) (act_cycle_map act)).
+  Proof.
+    intros Hcl Hp Hx Hargin Hdop.
+    assert (Hnode : In (nth p (graph (build_dfg ctx act))
+                          {| nid := 0; op := DFG_Empty; sz := 0 |})
+                       (graph (build_dfg ctx act))) by (apply nth_In; exact Hp).
+    assert (Hdin : In (nth x (graph (build_dfg ctx act))
+                         {| nid := 0; op := DFG_Empty; sz := 0 |})
+                      (graph (build_dfg ctx act))) by (apply nth_In; exact Hx).
+    destruct (arg_same_cycle_or_buffer act _ x Hnode Hargin) as [Heq | Hbuf];
+      [| exact Hbuf ].
+    exfalso.
+    pose proof (node_nid_at act p Hp) as Hnnid.
+    pose proof (node_nid_at act x Hx) as Hdnid.
+    pose proof (backward_cost_arg_self act _ _ Hnode Hdin
+                  ltac:(rewrite Hdnid; exact Hargin)) as Hcost.
+    rewrite Hdnid, Hnnid, Hdop in Hcost.
+    assert (Hcf : forall z, cost_fn ctx cost_limit (DFG_Delay a) z = cost_limit)
+      by reflexivity.
+    rewrite Hcf in Hcost.
+    unfold node_cycle in Heq. rewrite Hnnid in Heq.
+    rewrite !list_assoc_calc_target_cycle in Heq.
+    destruct (BitsToLists.list_assoc
+                (calc_backward_cost ctx (build_dfg ctx act)) x) as [cd|];
+    destruct (BitsToLists.list_assoc
+                (calc_backward_cost ctx (build_dfg ctx act)) p) as [cn|];
+      cbn [option_map] in Heq; try lia.
+    - assert (Hcl' : cost_limit <> 0) by lia.
+      assert (Hstep : (cn + 1 * cost_limit) / cost_limit = cn / cost_limit + 1)
+        by (apply Nat.div_add; exact Hcl').
+      assert (Hmono : (cn + 1 * cost_limit) / cost_limit <= cd / cost_limit)
+        by (apply Nat.Div0.div_le_mono; lia).
+      lia.
+    - assert (Hcl' : cost_limit <> 0) by lia.
+      assert (Hstep : (0 + 1 * cost_limit) / cost_limit = 0 / cost_limit + 1)
+        by (apply Nat.div_add; exact Hcl').
+      rewrite Nat.Div0.div_0_l in Hstep.
+      assert (Hmono : (0 + 1 * cost_limit) / cost_limit <= cd / cost_limit)
+        by (apply Nat.Div0.div_le_mono; lia).
+      lia.
+  Qed.
+
+  Lemma ext_dly_buffered (act: tfs_action sched) n f mid dly :
+    0 < cost_limit ->
+    1 <= n -> n < length (graph (build_dfg ctx act)) ->
+    op (nth n (graph (build_dfg ctx act))
+          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Ext f mid dly ->
+    In dly (require_buffer ctx (build_dfg ctx act) (act_cycle_map act)).
+  Proof.
+    intros Hcl Hn1 Hn Hop.
+    destruct (ext_dly_shape act n f mid dly Hn1 Hn Hop) as [Hdlt [Hd1 Hdop]].
+    apply (delay_arg_buffered act n dly mid Hcl Hn ltac:(lia));
+      [ unfold get_args; rewrite Hop; right; left; reflexivity | exact Hdop ].
+  Qed.
+
+  (* Likewise the chain top, which the argument register is loaded from. *)
+  Lemma ext_mid_buffered (act: tfs_action sched) n f mid dly :
+    0 < cost_limit ->
+    1 <= n -> n < length (graph (build_dfg ctx act)) ->
+    op (nth n (graph (build_dfg ctx act))
+          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Ext f mid dly ->
+    In mid (require_buffer ctx (build_dfg ctx act) (act_cycle_map act)).
+  Proof.
+    intros Hcl Hn1 Hn Hop.
+    destruct (ext_dly_shape act n f mid dly Hn1 Hn Hop) as [Hdlt [Hd1 Hdop]].
+    destruct (ext_mid_shape act n f mid dly Hn1 Hn Hop) as [a Hmop].
+    assert (Hdn : dly < length (graph (build_dfg ctx act))) by lia.
+    assert (Hmin : In mid (get_args ctx (nth dly (graph (build_dfg ctx act))
+                                           {| nid := 0; op := DFG_Empty; sz := 0 |})))
+      by (unfold get_args; rewrite Hdop; left; reflexivity).
+    destruct (node_args_range act dly Hd1 Hdn mid Hmin) as [_ Hmlt].
+    apply (delay_arg_buffered act dly mid a Hcl Hdn ltac:(lia) Hmin Hmop).
+  Qed.
+
+  (* Any fuel above the node's id computes [node_ref_expr]. *)
+  Lemma nre_fuel (act: tfs_action sched) a_idx x f :
+    1 <= x -> x < length (graph (build_dfg ctx act)) -> x < f ->
+    fst (compile_dfg_expr ctx cost_limit f a_idx (build_dfg ctx act) x [])
+    = node_ref_expr act a_idx x.
+  Proof.
+    intros H1 H2 H3. unfold node_ref_expr.
+    rewrite (compile_fuel_irrel act a_idx [] x H1 H2 f
+               (length (graph (build_dfg ctx act))) H3 H2).
+    reflexivity.
+  Qed.
+
+  Lemma nre_unfold (act: tfs_action sched) a_idx n :
+    1 <= n -> n < length (graph (build_dfg ctx act)) ->
+    node_ref_expr act a_idx n
+    = fst (compile_dfg_expr ctx cost_limit (S n) a_idx (build_dfg ctx act) n []).
+  Proof.
+    intros H1 H2. symmetry.
+    apply (nre_fuel act a_idx n (S n) H1 H2 (Nat.lt_succ_diag_r n)).
+  Qed.
+
+  Lemma nre_ext (act: tfs_action sched) a_idx n f arg dly :
+    1 <= n -> n < length (graph (build_dfg ctx act)) ->
+    op (nth n (graph (build_dfg ctx act))
+          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Ext f arg dly ->
+    node_ref_expr act a_idx n = tf_ext f (node_ref_expr act a_idx arg).
+  Proof.
+    intros H1 H2 Hop.
+    assert (Hain : In arg (get_args ctx (nth n (graph (build_dfg ctx act))
+                                           {| nid := 0; op := DFG_Empty; sz := 0 |})))
+      by (unfold get_args; rewrite Hop; left; reflexivity).
+    destruct (node_args_range act n H1 H2 arg Hain) as [Ha1 Ha3].
+    assert (Ha2 : arg < length (graph (build_dfg ctx act))) by lia.
+    rewrite (nre_unfold act a_idx n H1 H2).
+    cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
+    destruct (compile_dfg_expr ctx cost_limit n a_idx (build_dfg ctx act) arg [])
+      as [ae av] eqn:E.
+    cbn [fst]. f_equal.
+    rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3), E. reflexivity.
   Qed.
 
   (* Every buffer register of [act]'s slot whose cached node id is BELOW [bound]
@@ -5762,6 +6605,96 @@ Section SchedulerSimulation.
      buffers it can read cache strictly smaller ids and are settled by the IH
      (compile_subst), and a pre-done cycle does not disturb the settled value
      itself (compile_nobuf_step_stable). *)
+  (* Expression reductions that leave [getenv] alone, unlike [cbn [tf_eval_expr]].
+     The state binder MUST be annotated [sched_sys_state]: left to inference it
+     elaborates to [tfs_outputs sched]/[oo_sz] rather than [o_var]/[o_sz], and the
+     rewritten term then no longer matches the rest of the file. *)
+  Lemma eval_st_svar (dst v: tfs_states sched) (ss: sched_sys_state) (input: input_t) :
+    tf_eval_expr ss_sz i_sz oo_sz (szB := ss_sz dst) (tf_svar v) ss input
+    = convert ((fst ss).[v]).
+  Proof. reflexivity. Qed.
+
+  Lemma eval_st_ext (dst: tfs_states sched) (f: e_var) e
+        (ss: sched_sys_state) (input: input_t) :
+    tf_eval_expr ss_sz i_sz oo_sz (szB := ss_sz dst) (tf_ext f e) ss input
+    = convert (tfe_denote f
+                 (tf_eval_expr ss_sz i_sz oo_sz (szB := @tfe_arg_size _ e_sig f)
+                    e ss input)).
+  Proof. reflexivity. Qed.
+
+  (* Same statement as [sched_step_eres], but over the scheduler's own register
+     constructors so that [rewrite] matches. *)
+  Lemma sched_step_eres_reg (act: tfs_action sched) (ss: sched_sys_state)
+        (input: input_t) (f: e_var) :
+    (fst (sched_step act ss input)).[tf_dfg_eres f]
+    = convert (tfe_denote f (convert ((fst (sched_step act ss input)).[tf_dfg_earg f]))).
+  Proof. exact (sched_step_eres act ss input f). Qed.
+
+  (* B2c core: at any pre-done cycle past the call node's id, the designated result
+     register holds [tfe_denote f] of the call's SETTLED argument.  [rule_ext]
+     refreshed it from the argument register in the same cycle, and the argument
+     register was loaded from the source node's buffer one cycle earlier; the
+     three-id gap between a call and its source ([ext_node_gap]) is what makes that
+     two-cycle lag fit inside the settle bound.
+
+     This is what the call node's buffer will read once [compile_dfg_buffers] lowers
+     a call to [tf_svar (tf_dfg_eres f)] (B2c step 2, still to land). *)
+  Lemma ext_res_settled_step
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+        (input: input_t) (ss0: sched_sys_state) (k: nat)
+        (n: nid_t) (f: e_var) (src dly: nid_t) :
+    ext_single_use ctx ->
+    act_idx_aligned act a_idx ->
+    (forall i, 1 <= i <= S k -> ~ done_set (run_n i act input ss0)) ->
+    (forall j, j < S k ->
+       (forall i, 1 <= i <= j -> ~ done_set (run_n i act input ss0)) ->
+       buffers_settled act a_idx (run_n j act input ss0) input j) ->
+    n < S k ->
+    1 <= n -> n < length (graph (build_dfg ctx act)) ->
+    op (nth n (graph (build_dfg ctx act))
+          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Ext f src dly ->
+    (fst (run_n (S k) act input ss0)).[tf_dfg_eres f]
+    = convert (tfe_denote f
+        (tf_eval_expr ss_sz i_sz oo_sz (szB := @tfe_arg_size _ e_sig f)
+           (node_ref_expr act a_idx src) (run_n (S k) act input ss0) input)).
+  Proof.
+    intros Hsingle Halign Hnd IHall Hlt Hn1 Hnlen Hop.
+    pose proof (ext_node_gap act n f src dly Hn1 Hnlen Hop) as Hgap.
+    pose proof (Hsingle act n f src dly Hop) as Hsite.
+    assert (Hain : In src (get_args ctx (nth n (graph (build_dfg ctx act))
+                              {| nid := 0; op := DFG_Empty; sz := 0 |})))
+      by (unfold get_args; rewrite Hop; left; reflexivity).
+    assert (Hnode_in : In (nth n (graph (build_dfg ctx act))
+                             {| nid := 0; op := DFG_Empty; sz := 0 |})
+                          (graph (build_dfg ctx act)))
+      by (apply nth_In; exact Hnlen).
+    pose proof (wfg_build_dfg act _ Hnode_in) as Hfg.
+    unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+    destruct (wsz_node_sz act src (@tfe_arg_size _ e_sig f) Hfg) as [Hsrclen Hsrcsz].
+    destruct (node_args_range act n Hn1 Hnlen src Hain) as [Hsrc1 _].
+    set (ss2 := run_n k act input ss0) in *.
+    assert (Hstep2 : ~ done_set (sched_step act ss2 input))
+      by (apply (Hnd (S k)); lia).
+    assert (Hsettled : buffers_settled act a_idx ss2 input k)
+      by (apply IHall; [ lia | intros i Hi; apply Hnd; lia ]).
+    change (run_n (S k) act input ss0) with (sched_step act ss2 input).
+    rewrite (sched_step_eres_reg act ss2 input f).
+    rewrite (sched_step_earg act a_idx ss2 input f src Halign Hstep2 Hsite).
+    repeat rewrite convert_same.
+    f_equal.
+    etransitivity.
+    { apply (compile_subst act a_idx ss2 input Halign k Hsettled
+               (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
+               (fun e He => He)
+               (length (graph (build_dfg ctx act))) src);
+        [ exact Hsrc1 | exact Hsrclen | exact Hsrclen | lia | right; lia
+        | symmetry; exact Hsrcsz ]. }
+    unfold node_ref_expr.
+    rewrite (compile_nobuf_step_stable act a_idx ss2 input Hstep2).
+    reflexivity.
+  Qed.
+
   Lemma buffers_settled_run :
     forall (act: tfs_action sched) a_idx (input: input_t)
            (ss0: sched_sys_state) (k: nat),
@@ -6599,58 +7532,11 @@ Section SchedulerSimulation.
   (* ==================================================================== *)
 
   (* A node of the exported forward graph sits at the position given by its own
-     [nid] field.  This is the bridge from the builder's [In]-based
-     monotonicity ([wgmono]) to the compiler's positional [nth] lookups. *)
-  Lemma node_at_nid (act: tfs_action sched) node :
-    In node (graph (build_dfg ctx act)) ->
-    nid node < length (graph (build_dfg ctx act))
-    /\ nth (nid node) (graph (build_dfg ctx act))
-           {| nid := 0; op := DFG_Empty; sz := 0 |} = node.
-  Proof.
-    intro Hin.
-    destruct (In_nth _ _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hin) as [p [Hp Hnth]].
-    pose proof (node_nid_at act p Hp) as Hnid. rewrite Hnth in Hnid.
-    rewrite Hnid. split; [ exact Hp | exact Hnth ].
-  Qed.
+     [nid] field: see [node_at_nid], proved above (it is needed by
+     [ext_buffer_settled_step]). *)
 
-  (* Every arg of a real forward node is itself a real node with a strictly
-     smaller id — the rank that every structural recursion below descends on. *)
-  Lemma node_args_range (act: tfs_action sched) n :
-    1 <= n -> n < length (graph (build_dfg ctx act)) ->
-    forall x, In x (get_args ctx (nth n (graph (build_dfg ctx act))
-                                    {| nid := 0; op := DFG_Empty; sz := 0 |})) ->
-      1 <= x /\ x < n.
-  Proof.
-    intros H1 H2 x Hx.
-    assert (Hin : In (nth n (graph (build_dfg ctx act))
-                        {| nid := 0; op := DFG_Empty; sz := 0 |})
-                     (graph (build_dfg ctx act))) by (apply nth_In; exact H2).
-    pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
-    split; [ exact (Hargpos _ Hin x Hx) | ].
-    pose proof (args_lt_fwd act _ Hin x Hx) as Hlt.
-    rewrite (node_nid_at act n H2) in Hlt. exact Hlt.
-  Qed.
-
-  (* Any fuel above the node's id computes [node_ref_expr]. *)
-  Lemma nre_fuel (act: tfs_action sched) a_idx x f :
-    1 <= x -> x < length (graph (build_dfg ctx act)) -> x < f ->
-    fst (compile_dfg_expr ctx cost_limit f a_idx (build_dfg ctx act) x [])
-    = node_ref_expr act a_idx x.
-  Proof.
-    intros H1 H2 H3. unfold node_ref_expr.
-    rewrite (compile_fuel_irrel act a_idx [] x H1 H2 f
-               (length (graph (build_dfg ctx act))) H3 H2).
-    reflexivity.
-  Qed.
-
-  Lemma nre_unfold (act: tfs_action sched) a_idx n :
-    1 <= n -> n < length (graph (build_dfg ctx act)) ->
-    node_ref_expr act a_idx n
-    = fst (compile_dfg_expr ctx cost_limit (S n) a_idx (build_dfg ctx act) n []).
-  Proof.
-    intros H1 H2. symmetry.
-    apply (nre_fuel act a_idx n (S n) H1 H2 (Nat.lt_succ_diag_r n)).
-  Qed.
+  (* Any fuel above the node's id computes [node_ref_expr]: see [nre_fuel] and
+     [nre_unfold], also proved above. *)
 
   Lemma nre_const (act: tfs_action sched) a_idx n c :
     1 <= n -> n < length (graph (build_dfg ctx act)) ->
@@ -6735,25 +7621,7 @@ Section SchedulerSimulation.
     rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3), E. reflexivity.
   Qed.
 
-  Lemma nre_ext (act: tfs_action sched) a_idx n f arg dly :
-    1 <= n -> n < length (graph (build_dfg ctx act)) ->
-    op (nth n (graph (build_dfg ctx act))
-          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Ext f arg dly ->
-    node_ref_expr act a_idx n = tf_ext f (node_ref_expr act a_idx arg).
-  Proof.
-    intros H1 H2 Hop.
-    assert (Hain : In arg (get_args ctx (nth n (graph (build_dfg ctx act))
-                                           {| nid := 0; op := DFG_Empty; sz := 0 |})))
-      by (unfold get_args; rewrite Hop; left; reflexivity).
-    destruct (node_args_range act n H1 H2 arg Hain) as [Ha1 Ha3].
-    assert (Ha2 : arg < length (graph (build_dfg ctx act))) by lia.
-    rewrite (nre_unfold act a_idx n H1 H2).
-    cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
-    destruct (compile_dfg_expr ctx cost_limit n a_idx (build_dfg ctx act) arg [])
-      as [ae av] eqn:E.
-    cbn [fst]. f_equal.
-    rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3), E. reflexivity.
-  Qed.
+  (* [nre_ext] is proved above, before [ext_buffer_settled_step] needs it. *)
 
   Lemma nre_delay (act: tfs_action sched) a_idx n arg :
     1 <= n -> n < length (graph (build_dfg ctx act)) ->
@@ -6885,6 +7753,35 @@ Section SchedulerSimulation.
     cbn [nid] in Hlt, Hnth.
     subst id.
     split; [ lia | split; [ exact Hlt | rewrite Hnth; split; reflexivity ] ].
+  Qed.
+
+  (* A delay chain does not change the reference expression: every node it emits is
+     a [DFG_Delay] of the previous one, and [nre_delay] collapses each level. *)
+  Lemma emit_delay_chain_nre (act: tfs_action sched) F a_idx :
+    exports act F ->
+    forall k id size (s: wst) id' s',
+      emit_delay_chain ctx k id size s = (id', s') ->
+      0 < length (graph s) ->
+      winv s -> wnidwf s id ->
+      wgmono s' F ->
+      node_ref_expr act a_idx id' = node_ref_expr act a_idx id.
+  Proof.
+    intros HF k. induction k as [| k IH]; intros id size s id' s' Hrun Hne Hinv Hid Hg.
+    - cbn [emit_delay_chain] in Hrun. unfold ret in Hrun.
+      injection Hrun as <- <-. reflexivity.
+    - cbn [emit_delay_chain] in Hrun. unfold bind in Hrun.
+      pose proof (emit_full (DFG_Delay id) size s Hinv
+                    ltac:(intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hid)) as Hf.
+      destruct (emit ctx (DFG_Delay id) size s) as [id1 s1] eqn:E1.
+      destruct Hf as [Hg1 [Hn1 Hi1]].
+      assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
+      pose proof (emit_delay_chain_full k id1 size s1 Hi1 Hn1) as Hch.
+      rewrite Hrun in Hch. destruct Hch as [Hgch _].
+      assert (Hg1F : wgmono s1 F) by exact (wgmono_trans s1 s' F Hgch Hg).
+      rewrite (IH id1 size s1 id' s' Hrun Hne1 Hi1 Hn1 Hg).
+      destruct (emitted_node_at act F s s1 (DFG_Delay id) size id1 HF Hne E1 Hg1F)
+        as [R1 [R2 [Rop _]]].
+      exact (nre_delay act a_idx id1 id R1 R2 Rop).
   Qed.
 
   Lemma ensure_var_node_at (act: tfs_action sched) F (s s': wst) v id :
@@ -7509,33 +8406,46 @@ Section SchedulerSimulation.
         + unfold nval in Hvc, Hvt, Hve |- *.
           rewrite (nre_phi act a_idx id cid tid eid R1 R2 Rop).
           cbn [tf_eval_expr]. rewrite Hvc, Hvt, Hve. reflexivity.
-      - (* tf_ext: argument at the declared width, then the D9 delay chain *)
+      - (* tf_ext: argument at the declared width, the D9 delay chain, then the
+           gating delay whose validity the call reads *)
         cbn [dataflow_expr] in Hde. unfold bind in Hde.
         pose proof (dataflow_expr_sz e1 (@tfe_arg_size _ e_sig xf) s Hinv Hvsz) as Hsz1.
         destruct (dataflow_expr ctx e1 (@tfe_arg_size _ e_sig xf) s) as [src_id s1] eqn:Ee1.
         destruct Hsz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hz1]]]].
         cbv beta in Hde.
-        pose proof (emit_delay_chain_sz (S (S (@tfe_latency _ e_sig xf))) src_id
+        pose proof (emit_delay_chain_sz (S (@tfe_latency _ e_sig xf)) src_id
                       (@tfe_arg_size _ e_sig xf) s1 Hp1 Hq1 Hn1 Hz1) as Hszd.
-        destruct (emit_delay_chain ctx (S (S (@tfe_latency _ e_sig xf))) src_id
-                    (@tfe_arg_size _ e_sig xf) s1) as [dly_id sd] eqn:Ed.
-        destruct Hszd as [Hgd [Hnd [Hpd [Hqd Hzd]]]].
+        destruct (emit_delay_chain ctx (S (@tfe_latency _ e_sig xf)) src_id
+                    (@tfe_arg_size _ e_sig xf) s1) as [mid_id sm] eqn:Ed.
+        destruct Hszd as [Hgm [Hnm [Hpm [Hqm Hzm]]]].
+        cbv beta in Hde.
+        destruct (emit ctx (DFG_Delay mid_id) (@tfe_arg_size _ e_sig xf) sm)
+          as [dly_id sd] eqn:Edy.
         assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
-        assert (Hned : 0 < length (graph sd)) by exact (gne_gmono s1 sd Hgd Hne1).
+        assert (Hnem : 0 < length (graph sm)) by exact (gne_gmono s1 sm Hgm Hne1).
+        assert (Hned : 0 < length (graph sd))
+          by exact (gne_gmono sm sd (emit_gmono _ _ _ _ _ Edy) Hnem).
         assert (HgdF : wgmono sd F)
           by exact (wgmono_trans sd s' F (emit_gmono _ _ _ _ _ Hde) Hg').
-        assert (Hg1F : wgmono s1 F) by exact (wgmono_trans s1 sd F Hgd HgdF).
+        assert (HgmF : wgmono sm F)
+          by exact (wgmono_trans sm sd F (emit_gmono _ _ _ _ _ Edy) HgdF).
+        assert (Hg1F : wgmono s1 F) by exact (wgmono_trans s1 sm F Hgm HgmF).
         destruct (IH1 (@tfe_arg_size _ e_sig xf) s s1 src_id sp Hne Hinv Hvsz Ee1 Hg1F Hsem)
           as [Hsem1 Hv1].
-        assert (Hsemd : sem_inv sd sp)
-          by (apply (sem_inv_vm s1 sd);
+        assert (Hsemm : sem_inv sm sp)
+          by (apply (sem_inv_vm s1 sm);
               [ exact (emit_delay_chain_vm_map _ _ _ _ _ _ Ed) | exact Hsem1 ]).
-        destruct (emitted_node_at act F sd s' (DFG_Ext xf src_id dly_id) szE id
+        assert (Hsemd : sem_inv sd sp)
+          by (apply (sem_inv_vm sm sd); [ exact (emit_vm _ _ _ _ _ Edy) | exact Hsemm ]).
+        (* the chain leaves the reference expression unchanged *)
+        assert (Hmid : node_ref_expr act a_idx mid_id = node_ref_expr act a_idx src_id)
+          by exact (emit_delay_chain_nre act F a_idx HF _ _ _ _ _ _ Ed Hne1 Hp1 Hn1 HgmF).
+        destruct (emitted_node_at act F sd s' (DFG_Ext xf mid_id dly_id) szE id
                     HF Hned Hde Hg') as [R1 [R2 [Rop _]]].
         split.
         + apply (sem_inv_vm sd s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsemd ].
         + unfold nval in Hv1 |- *.
-          rewrite (nre_ext act a_idx id xf src_id dly_id R1 R2 Rop).
+          rewrite (nre_ext act a_idx id xf mid_id dly_id R1 R2 Rop), Hmid.
           cbn [tf_eval_expr]. rewrite Hv1. reflexivity.
     Qed.
 

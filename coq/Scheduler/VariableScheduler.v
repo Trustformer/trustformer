@@ -189,9 +189,14 @@ Section VariableScheduler.
       emit (DFG_Phi cond_id then_id else_id) sz
     | tf_ext f arg =>
       let! arg_id := dataflow_expr arg (externs_arg_size f) in
-      (* L+2 buffered levels: the result register is only trustworthy that late (D9) *)
-      let! dly_id := emit_delay_chain (S (S (externs_lat f))) arg_id (externs_arg_size f) in
-      emit (DFG_Ext f arg_id dly_id) sz
+      (* L+1 delay levels for the declared latency, then ONE more whose validity gates
+         the call.  The call node's buffer reads [tf_dfg_eres] one cycle after the ext
+         rule computed it from [tf_dfg_earg], so the node supplying the validity must
+         sit exactly one buffer level above the node supplying the argument register,
+         or [valid_settled] cannot be re-established (D9). *)
+      let! mid_id := emit_delay_chain (S (externs_lat f)) arg_id (externs_arg_size f) in
+      let! dly_id := emit (DFG_Delay mid_id) (externs_arg_size f) in
+      emit (DFG_Ext f mid_id dly_id) sz
     end.
 
   (* --- Generic Map Merger --- *)
@@ -876,6 +881,16 @@ Section VariableScheduler.
 
   Definition ext_call_sites (dfg: dfg_state) : list (externs_var * nid_t) :=
     ext_call_sites_aux (graph dfg).
+
+  (* TEMPORARY (extern-calls-mvp, D9). Correctness is conditioned on this: it says
+     [ext_call_sites]'s deduplication threw nothing away, i.e. an action calls each
+     external function at most once. Stated in the form the simulation proof consumes.
+     Delete when intra-action sharing lands. *)
+  Definition ext_single_use : Prop :=
+    forall a n f src dly,
+      op (nth n (graph (build_dfg a)) {| nid := 0; op := DFG_Empty; sz := 0 |})
+        = DFG_Ext f src dly ->
+      In (f, src) (ext_call_sites (build_dfg a)).
 
   (* One op per (deduplicated) call site, loading the function's argument register from
      the (always buffered) argument node, so the emitted port is driven by a register. *)
