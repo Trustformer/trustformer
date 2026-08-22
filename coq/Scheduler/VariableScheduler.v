@@ -728,6 +728,68 @@ Section VariableScheduler.
     flat_map (fun v => crit_report_aux dfg tainted dfacts [] (length (graph dfg)) (snd v) [])
              (var_map dfg).
 
+  (* ---------------------------------------------------------------- *)
+  (* CYCLE BOUNDS.  How long an action takes for a CONCRETE input is    *)
+  (* not something to compute (that is [L] in Properties/IPR.v, which   *)
+  (* exists for the proofs).  What the circuit does give cheaply is the *)
+  (* best and worst case, read off the same cone the compiler walks.    *)
+  (* ---------------------------------------------------------------- *)
+
+  Definition cycle_of (cycles: list (nid_t * cycle_t)) (n: nid_t) : cycle_t :=
+    match BitsToLists.list_assoc cycles n with
+    | Some c => c
+    | None => 0
+    end.
+
+  (* A critical phi ANDs both branch validities, so it can only be ready when
+     the slower branch is; a non-critical one selects, so its best case is the
+     faster branch.  That difference is the entire cost of criticality. *)
+  Fixpoint node_bounds (dfg: dfg_state) (tainted: list nid_t) (dfacts: list gfact)
+      (cycles: list (nid_t * cycle_t)) (pi: list lit) (fuel: nat) (n: nid_t)
+      : cycle_t * cycle_t :=
+    match fuel with
+    | 0 => (0, 0)
+    | S fuel' =>
+        let here := cycle_of cycles n in
+        let node := nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |} in
+        match op node with
+        | DFG_Unary _ a =>
+            let '(l, u) := node_bounds dfg tainted dfacts cycles pi fuel' a in
+            (Nat.max here l, Nat.max here u)
+        | DFG_Resize a =>
+            let '(l, u) := node_bounds dfg tainted dfacts cycles pi fuel' a in
+            (Nat.max here l, Nat.max here u)
+        | DFG_Binary _ a1 a2 =>
+            let '(l1, u1) := node_bounds dfg tainted dfacts cycles pi fuel' a1 in
+            let '(l2, u2) := node_bounds dfg tainted dfacts cycles pi fuel' a2 in
+            (Nat.max here (Nat.max l1 l2), Nat.max here (Nat.max u1 u2))
+        | DFG_Phi c t e =>
+            let crit := phi_crit tainted dfacts c pi in
+            let '(lc, uc) := node_bounds dfg tainted dfacts cycles pi fuel' c in
+            let '(lt, ut) := node_bounds dfg tainted dfacts cycles (phi_path crit c true pi) fuel' t in
+            let '(le, ue) := node_bounds dfg tainted dfacts cycles (phi_path crit c false pi) fuel' e in
+            (Nat.max here (Nat.max lc (if crit then Nat.max lt le else Nat.min lt le)),
+             Nat.max here (Nat.max uc (Nat.max ut ue)))
+        | _ => (here, here)
+        end
+    end.
+
+  (* The action is done when every variable it writes is valid, so the bounds
+     are the maxima over the roots.  Reported as a NUMBER of cycles, i.e. the
+     deepest stage index plus one: a fully combinational action is (1, 1).
+     [fst = snd] is a certificate that the action is constant time. *)
+  Definition action_bounds (dfg: dfg_state) : cycle_t * cycle_t :=
+    let tainted := get_tainted dfg in
+    let dfacts := decl_facts dfg in
+    let cycles := calc_target_cycle (calc_backward_cost dfg) in
+    let '(l, u) :=
+      fold_left (fun '(l, u) v =>
+                   let '(lv, uv) :=
+                     node_bounds dfg tainted dfacts cycles [] (length (graph dfg)) (snd v) in
+                   (Nat.max l lv, Nat.max u uv))
+                (var_map dfg) (0, 0) in
+    (S l, S u).
+
   Fixpoint compile_dfg_expr_aux (tainted: list nid_t)
     (dfacts: list gfact) (pi: list lit)
     (fuel: nat) (a_idx: Vect.index (length buffer_needs)) (dfg: dfg_state) (nid: nid_t) (buffers: list (nid_t * (nat * sz_t))) 
