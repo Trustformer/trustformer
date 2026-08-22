@@ -56,8 +56,11 @@ Section SynthesisTypes.
   Inductive _rule_name_t :=
     | rule_cmd (cmd: actions)
     | rule_out (out: outputs_var)
-    (* Issues the external calls. Un-gated by action, so the design contains exactly
-       one [ExternalCall] per function and therefore one Verilog driver per port. *)
+    (* Issues the external calls. Un-gated by action, so that once the scheduled ops
+       stop containing [tf_ext] (campaign extern-calls-mvp, B2c-2) there is exactly one
+       [ExternalCall] per function, hence one Verilog driver per port.
+       NOT TRUE YET: the inline [tf_ext] still emits a second, conflicting driver.
+       See DEBT-4 in agents/extern-calls-mvp/PLAN.md. *)
     | rule_ext
     | rule_busy
     .
@@ -104,7 +107,8 @@ Section TypedSynthesis.
     Local Notation spec_output_index := (@finite_index spec_outputs spec_outputs_fin).
     Local Notation spec_output_num := (Datatypes.length spec_all_outputs).
 
-    Local Notation spec_action := (tfs_action (tf_sched_ctx tf_ctx)).    Local Notation spec_action_fin := (tfs_action_fin (tf_sched_ctx tf_ctx)).
+    Local Notation spec_action := (tfs_action (tf_sched_ctx tf_ctx)).
+    Local Notation spec_action_fin := (tfs_action_fin (tf_sched_ctx tf_ctx)).
     Local Notation spec_all_actions := (@finite_elements spec_action spec_action_fin).
     Local Notation spec_action_index := (@finite_index spec_action spec_action_fin).
     Local Notation spec_action_num := (Datatypes.length spec_all_actions).
@@ -494,8 +498,9 @@ Section TypedSynthesis.
       | r :: rs => Seq (Write P1 (tf_reg r) (Const (tau:=R (tf_reg r)) Bits.zero)) (rule_reset_buffers rs code)
       end.
 
-    (* One [ExternalCall] per function, in a rule of its own, so the emitted Verilog has
-       a single driver per port no matter how many call sites the actions contain.
+    (* One [ExternalCall] per function, in a rule of its own, so that the emitted Verilog
+       has a single driver per port no matter how many call sites the actions contain --
+       once the scheduled ops stop containing [tf_ext] (B2c-2); see DEBT-4.
        [Read P1] picks up the argument the action rule just wrote; [Write P0] means the
        action reads the *previous* cycle's result, i.e. both ends of the port pair are
        registered. *)

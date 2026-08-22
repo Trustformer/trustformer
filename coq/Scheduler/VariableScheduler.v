@@ -20,6 +20,45 @@ Require Import Coq.Program.Wf.
 
 Import ListNotations.
 
+(* ====================================================================== *)
+(* ROADMAP.  This file is the HLS scheduler: it turns one action's                *)
+(* [tf_ops] into the list of scheduled ops that [Contract.v] then runs one        *)
+(* cycle at a time.  It is long, so here is the order to read it in.              *)
+(*                                                                                *)
+(* THE PIPELINE (read this to understand what the scheduler does):                *)
+(*   Step 1  build_dfg          action -> dataflow graph, via a state monad       *)
+(*   Step 2  calc_backward_cost each node -> combinational cost to the outputs    *)
+(*   Step 3  calc_target_cycle  cost / cost_limit -> the cycle a node lands in    *)
+(*   Step 4  require_buffer     edges crossing a cycle boundary -> registers      *)
+(*           buffer_needs       the per-action register allocation                *)
+(*   Step 5  get_tainted        which nodes carry secrets                         *)
+(*           decl_facts         which nodes the attacker can derive, and when     *)
+(*   Step 6  compile_dfg_*      DFG -> tf_ops, one group per register kind        *)
+(*           schedule           the entry point: (always_ops, done_ops)           *)
+(*   Step 7  tf_dfg_states      the register file the above writes into           *)
+(*                                                                                *)
+(* Step 5 only ever affects the VALIDITY component of a compiled pair, never      *)
+(* the value: a tainted phi must wait for both branches, an untainted one may     *)
+(* select.  If you are reading for the value path, skip it.                       *)
+(*                                                                                *)
+(* PLUMBING (skippable): everything under [Helper infrastructure for              *)
+(* schedule_no_dup] is list/NoDup bookkeeping proving that the emitted ops        *)
+(* write pairwise-distinct registers.  Nothing there describes behaviour.         *)
+(*                                                                                *)
+(* THE INTERFACE is the record [tfs_schedule] at the very bottom.  Its fields     *)
+(* are the whole contract this file owes the rest of the system; each             *)
+(* obligation is discharged by one theorem just above it.                         *)
+(*                                                                                *)
+(* EXTERNAL CALLS in one paragraph.  A [tf_ext f arg] becomes three nodes:        *)
+(* the argument, an [L+1]-deep [DFG_Delay] chain ending at [mid], one more        *)
+(* [DFG_Delay] [dly], then [DFG_Ext f mid dly].  [cost_fn] costs delays and       *)
+(* calls a whole bucket, so all three get registers.  [compile_dfg_ext_args]      *)
+(* emits one op loading [f]'s single argument register from [mid];                *)
+(* [TypedSynthesis.v]'s [rule_ext] issues the actual call and writes [f]'s        *)
+(* result register.  [dly] exists so the call's validity bit lags its argument    *)
+(* register by exactly one cycle, which is what the result register needs.        *)
+(* ====================================================================== *)
+
 Section VariableScheduler.
 
   Context (ctx: TFSchedContext).
@@ -989,6 +1028,13 @@ Section VariableScheduler.
       final_ops
     ).
 
+  (* ============================== *)
+  (* = Step 7: Scheduled state    = *)
+  (* ============================== *)
+
+  (* The register file the scheduled ops write into: one [tf_dfg_s] per spec state,
+     a [tf_dfg_b]/[tf_dfg_v] pair per buffered node, the argument/result registers
+     of each external function, and the done flag. *)
   Definition done_signal := tf_dfg_done (states_var:=states_var) (externs_var:=externs_var) (buffer_needs:=buffer_needs).
 
   (* Designated argument / result registers of the trusted external functions. The
@@ -1627,6 +1673,10 @@ Section VariableScheduler.
           destruct Hxe as [f ->]; destruct Hxf as [[sv Hs]|[ov Ho]]; discriminate.
       + intros x Hxb Hxr. apply buffers_tags_in in Hxb.
         apply in_app_iff in Hxr. destruct Hxr as [Hxe|Hxf].
+  (* ==================================================================== *)
+  (* Record obligations.  One theorem per field of [tfs_schedule] below.   *)
+  (* ==================================================================== *)
+
         * apply ext_arg_tags_in in Hxe. destruct Hxb as [a' [n' [-> | ->]]];
             destruct Hxe as [f He]; discriminate.
         * apply final_tags_in in Hxf. destruct Hxb as [a' [n' [-> | ->]]];
@@ -1781,6 +1831,10 @@ Section VariableScheduler.
     - unfold schedule in Hin. cbn [snd] in Hin.
       apply final_tags_in in Hin. destruct Hin as [[sv H]|[ov H]]; discriminate H.
   Qed.
+
+  (* ==================================================================== *)
+  (* THE INTERFACE.  Everything above exists to fill in these fields.      *)
+  (* ==================================================================== *)
 
   Definition tfs_schedule : TFSchedule :=
     {|

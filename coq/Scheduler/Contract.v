@@ -99,9 +99,12 @@ Record TFSchedule := {
 
   (* ---- external calls (campaign extern-calls-mvp, decision D8) ----
      Each trusted external function owns one argument and one result register. The
-     call itself is issued by a single rule that runs after every action rule, so the
-     design contains exactly one [ExternalCall] per function and therefore one Verilog
-     driver per port. The argument is read at P1 (it is the value the action just
+     call itself is issued by a single rule that runs after every action rule, so that
+     once the scheduled ops stop containing [tf_ext] (B2c-2, see DEBT-4 in
+     agents/extern-calls-mvp/PLAN.md) there is exactly one [ExternalCall] per function
+     and therefore one Verilog driver per port. That step has not landed yet, so the
+     current tree still emits a second, conflicting driver from the inline call.
+     The argument is read at P1 (it is the value the action just
      wrote) and the result is written at P0 (so the action reads the *previous*
      cycle's result); Koika admits no ordering in which both hops are P0. *)
   tfs_ext_arg: tfs_spec_externs tfs_ctx -> tfs_states;
