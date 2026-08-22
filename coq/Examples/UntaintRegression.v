@@ -249,8 +249,7 @@ Section GuardedContrast.
     Example guarded_inner_unreachable :
       crit_report_all gctx_guarded (build_dfg gctx_guarded gs_act)
       = [CR_no_rule 3;
-         CR_guard_unmet 5 [[(5, true)]; [(5, false)]; [(3, true)]];
-         CR_no_rule 3].
+         CR_guard_unmet 5 [[(5, true)]; [(5, false)]; [(3, true)]]].
     Proof. vm_compute. reflexivity. Qed.
 
     (* Declassifying the outer selector makes its phi non-critical, which

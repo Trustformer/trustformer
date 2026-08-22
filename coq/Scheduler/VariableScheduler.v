@@ -108,11 +108,42 @@ Section VariableScheduler.
     let! _ := put_state ({| graph := graph s'; var_map := new_map |}) in
     ret id.
 
+  (* Reads are shared on the GRAPH, not through [var_map].  A [DFG_Var v] node
+     denotes the register's value at the start of the action -- state is only
+     written when [done] fires -- so it is the same value in every branch and
+     any existing node may be reused.  That sharing is load-bearing: the taint
+     and declassification analyses are node-id based, so without it a rule that
+     untaints the read behind an output no longer untaints the read behind a
+     branch condition on the same variable.
+     The two extra guards on the found node (its size, and a positive nid) are
+     what make it usable without threading a new graph invariant through the
+     builder; every node the builder actually emits satisfies both. *)
+  Definition read_var (dfg_v : dfg_vars) : M nid_t :=
+    let! s := get_state in
+    match find (fun nd =>
+                  match op nd with
+                  | DFG_Var v' =>
+                      andb (andb (if eq_dec v' dfg_v then true else false)
+                                 (Nat.eqb (sz nd) (dfg_var_size dfg_v)))
+                           (Nat.ltb 0 (nid nd))
+                  | _ => false
+                  end) (graph s) with
+    | Some nd => ret (nid nd)
+    | None => emit (DFG_Var dfg_v) (dfg_var_size dfg_v)
+    end.
+
+  (* A READ must not enter [var_map].  [var_map] is the set of variables the
+     action ASSIGNS -- it drives [compile_dfg_aux], [crit_report_all] and the
+     phi merge at the end of a branch.  Caching a read there made a variable
+     that a branch merely reads indistinguishable from one it writes, so
+     [merge_key] hit its asymmetric case and emitted a phi between two copies of
+     the same value.  An assignment still wins over the read cache, hence the
+     [var_map] lookup first. *)
   Definition get_var (dfg_v : dfg_vars) : M nid_t :=
     let! s := get_state in
       match BitsToLists.list_assoc (var_map s) dfg_v with
       | Some id => ret id
-      | None => ensure_var dfg_v
+      | None => read_var dfg_v
       end.
 
   Definition set_var (dfg_v : dfg_vars) (id : nid_t) : M unit :=
@@ -366,19 +397,35 @@ Section VariableScheduler.
   (* = Step 4: Buffer Allocation  = *)
   (* ============================== *)
 
+  (* A source op holds the same value for the whole action: constants are
+     literals, inputs are latched at action start, and the spec-visible state is
+     only written at the done cycle.  Re-reading it in a later stage therefore
+     costs nothing and is always correct, so it must never get a buffer -- a
+     buffer would make every consumer wait a cycle for a value already there. *)
+  Definition source_op (o : dfg_op) : bool :=
+    match o with
+    | DFG_Const _ | DFG_Input _ | DFG_Var _ => true
+    | _ => false
+    end.
+
+  Definition is_source (dfg : dfg_state) (n : nid_t) : bool :=
+    source_op (op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0; |})).
+
   Definition require_buffer (dfg : dfg_state) (cycle_costs : list (nid_t * cycle_t)) : list (nid_t) :=
     let aux (cost_map: list (nid_t)) (node : dfg_node) : list (nid_t) :=
       let n_cycle := match BitsToLists.list_assoc cycle_costs (nid node) with
                       | Some c => c
                       | None => 0 (* should not happen *)
                       end in
-      filter (fun x => match BitsToLists.list_assoc cycle_costs x with
+      filter (fun x => if is_source dfg x then false else
+                      match BitsToLists.list_assoc cycle_costs x with
                       | Some c => negb (Nat.eqb c n_cycle)
                       | None => false (* should not happen *)
                       end ) (get_args node) ++ cost_map
     in
     nodup Nat.eq_dec (fold_left aux (graph dfg) []
-                        ++ filter (fun x => match BitsToLists.list_assoc cycle_costs x with
+                        ++ filter (fun x => if is_source dfg x then false else
+                                          match BitsToLists.list_assoc cycle_costs x with
                                           | Some 0 => false
                                           | _ => true
                                           end ) (map snd (var_map dfg))).
@@ -750,7 +797,9 @@ Section VariableScheduler.
     match fuel with
     | 0 => (0, 0)
     | S fuel' =>
-        let here := cycle_of cycles n in
+        (* A source node is never buffered (see [require_buffer]), so it is
+           readable in stage 0 no matter how deep its target cycle claims to be. *)
+        let here := if is_source dfg n then 0 else cycle_of cycles n in
         let node := nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |} in
         match op node with
         | DFG_Unary _ a =>
@@ -1158,12 +1207,22 @@ Section VariableScheduler.
     apply nodup_map_fst_cons_filter. exact Hs.
   Qed.
 
+  Lemma read_var_vm v: preserves vm_nd (read_var v).
+  Proof.
+    intros s Hs. unfold read_var, bind, get_state.
+    match goal with
+    | |- context [find ?P ?l] => destruct (find P l) as [nd|]
+    end.
+    - exact Hs.
+    - apply (emit_vm (DFG_Var v) (dfg_var_size v) s Hs).
+  Qed.
+
   Lemma get_var_vm v: preserves vm_nd (get_var v).
   Proof.
     intros s Hs. unfold get_var, bind, get_state.
     destruct (BitsToLists.list_assoc (var_map s) v).
     - exact Hs.
-    - apply (ensure_var_vm v s Hs).
+    - apply (read_var_vm v s Hs).
   Qed.
 
   Lemma set_var_vm v id: preserves vm_nd (set_var v id).

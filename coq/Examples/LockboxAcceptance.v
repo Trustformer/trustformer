@@ -139,8 +139,8 @@ Section Contexts.
     (* Both specifications elaborate to the same graph size, so the contrast is
        about the analysis and not about the shape of the design. *)
     Example lb_same_graph_size :
-      length (graph (build_dfg ctx_A lb_act_test)) = 27
-      /\ length (graph (build_dfg ctx_B lb_act_test)) = 27.
+      length (graph (build_dfg ctx_A lb_act_test)) = 23
+      /\ length (graph (build_dfg ctx_B lb_act_test)) = 23.
     Proof. split; vm_compute; reflexivity. Qed.
 
     (* fig. A5.  Node 3 is [!=[tsz]] and node 6 is [==[lsz]].  Nothing
@@ -157,8 +157,6 @@ Section Contexts.
          CR_no_rule 3;
          CR_guard_unmet 6 [[(6, true)]; [(6, false)]; [(3, true)]];
          CR_no_rule 3;
-         CR_guard_unmet 6 [[(6, true)]; [(6, false)]; [(3, true)]];
-         CR_no_rule 3; CR_no_rule 3;
          CR_guard_unmet 6 [[(6, true)]; [(6, false)]; [(3, true)]]].
     Proof. vm_compute. reflexivity. Qed.
 

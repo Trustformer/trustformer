@@ -1417,6 +1417,35 @@ Section SchedulerSimulation.
       + exact Hab.
   Qed.
 
+  (* [read_var] either reuses a [DFG_Var v] node already in the graph (state
+     untouched) or emits a fresh one.  The guards in its [find] predicate are
+     exactly the three facts the reuse case has to supply. *)
+  Lemma read_var_cases (v: dfg_vars_t (states_var:=s_var) (outputs_var:=o_var))
+        (s: wst) id s' :
+    read_var ctx v s = (id, s') ->
+    (In {| nid := id; op := DFG_Var v; sz := dfg_var_size ctx v |} (graph s)
+     /\ 1 <= id /\ s' = s)
+    \/ emit ctx (DFG_Var v) (dfg_var_size ctx v) s = (id, s').
+  Proof.
+    unfold read_var, bind, get_state.
+    match goal with
+    | |- context [find ?P ?l] => destruct (find P l) as [nd|] eqn:Ef
+    end; intro H.
+    - unfold ret in H. injection H as Hid Hs. subst s'. left.
+      apply find_some in Ef. destruct Ef as [Hin Hpred]. cbv beta in Hpred.
+      destruct (op nd) as [ c | iv | v' | uop a | bop a1 a2 | a | cd t e | ] eqn:Eo;
+        try discriminate Hpred.
+      apply andb_true_iff in Hpred. destruct Hpred as [Hpred Hpos].
+      apply andb_true_iff in Hpred. destruct Hpred as [Hveq Hsz].
+      destruct (eq_dec v' v) as [Hvv | _]; [ | discriminate Hveq ].
+      apply Nat.eqb_eq in Hsz. apply Nat.ltb_lt in Hpos.
+      assert (Hnd : nd = {| nid := id; op := DFG_Var v; sz := dfg_var_size ctx v |}).
+      { destruct nd as [n0 o0 z0]; cbn in *. subst o0. subst v'. subst z0.
+        rewrite <- Hid. reflexivity. }
+      rewrite Hnd in Hin. split; [ exact Hin | split; [ rewrite <- Hid; exact Hpos | reflexivity ] ].
+    - right. exact H.
+  Qed.
+
   Lemma get_var_full v (s: wst) :
     winv s ->
     let (id, s') := get_var ctx v s in wgmono s s' /\ wnidwf s' id /\ winv s'.
@@ -1427,7 +1456,13 @@ Section SchedulerSimulation.
       + destruct Hinv as [Hv _]. apply wla_in in E.
         destruct (Hv v id E) as [node [Hn Hnid]]. exists node; split; assumption.
       + exact Hinv.
-    - apply ensure_var_full; exact Hinv.
+    - destruct (read_var ctx v s) as [id s'] eqn:Er.
+      destruct (read_var_cases v s id s' Er) as [[Hin [_ ->]] | Hem].
+      + split; [ apply wgmono_refl | split; [ | exact Hinv ] ].
+        eexists. split; [ exact Hin | reflexivity ].
+      + pose proof (emit_full (DFG_Var v) (dfg_var_size ctx v) s Hinv
+                      (fun x Hx => match Hx with end)) as Hf.
+        rewrite Hem in Hf. exact Hf.
   Qed.
 
   Lemma ret_full id (s: wst) :
@@ -1599,7 +1634,15 @@ Section SchedulerSimulation.
       + destruct Hinv as [Hv _]. apply wla_in in E.
         destruct (Hv v id E) as [node [Hn Hnid]]. exists node; split; assumption.
       + apply wla_in in E. apply Hvsz. exact E.
-    - apply ensure_var_sz; assumption.
+    - destruct (read_var ctx v s) as [id s'] eqn:Er.
+      destruct (read_var_cases v s id s' Er) as [[Hin [_ ->]] | Hem].
+      + split; [ apply wgmono_refl
+               | split; [ | split; [ exact Hinv | split; [ exact Hvsz | ] ] ] ].
+        * eexists. split; [ exact Hin | reflexivity ].
+        * eexists. split; [ exact Hin | split; reflexivity ].
+      + pose proof (emit_sz (DFG_Var v) (dfg_var_size ctx v) s Hinv Hvsz
+                      (fun x Hx => match Hx with end)) as Hf.
+        rewrite Hem in Hf. exact Hf.
   Qed.
 
   (* weaken the 5-tuple result to the 4-tuple premise seq_sz expects for [m]. *)
@@ -1834,7 +1877,16 @@ Section SchedulerSimulation.
       + destruct Hinv as [Hv _]. apply wla_in in E.
         destruct (Hv v id E) as [node [Hn Hnid]]. exists node; split; assumption.
       + apply wla_in in E. apply Hvsz. exact E.
-    - apply ensure_var_fg; assumption.
+    - destruct (read_var ctx v s) as [id s'] eqn:Er.
+      destruct (read_var_cases v s id s' Er) as [[Hin [_ ->]] | Hem].
+      + split; [ apply wgmono_refl
+               | split; [ | split; [ exact Hinv
+                          | split; [ exact Hvsz | split; [ | exact Hfg ] ] ] ] ].
+        * eexists. split; [ exact Hin | reflexivity ].
+        * eexists. split; [ exact Hin | split; reflexivity ].
+      + pose proof (emit_fg (DFG_Var v) (dfg_var_size ctx v) s Hinv Hvsz Hfg
+                      (fun x Hx => match Hx with end) I) as Hf.
+        rewrite Hem in Hf. exact Hf.
   Qed.
 
   Lemma dataflow_var_fg (dv: @dfg_vars_t s_var o_var) (size: sz_t) (s: wst) :
@@ -2628,7 +2680,12 @@ Section SchedulerSimulation.
     destruct (BitsToLists.list_assoc (var_map s) v) as [id|] eqn:E.
     - unfold ret. split; [ | exact Hp ].
       destruct Hp as [_ [Hvm _]]. apply wla_in in E. exact (Hvm v id E).
-    - apply ensure_var_pos; exact Hp.
+    - destruct (read_var ctx v s) as [id s'] eqn:Er.
+      destruct (read_var_cases v s id s' Er) as [[_ [Hpos ->]] | Hem].
+      + split; [ exact Hpos | exact Hp ].
+      + pose proof (emit_pos (DFG_Var v) (dfg_var_size ctx v) s Hp
+                      ltac:(discriminate) (fun x Hx => match Hx with end)) as Hf.
+        rewrite Hem in Hf. exact Hf.
   Qed.
 
   Lemma ret_pos id (s: wst) :
@@ -3258,18 +3315,21 @@ Section SchedulerSimulation.
   Qed.
 
   (* Every edge either remains within one target cycle or crosses a cycle
-     boundary, in which case require_buffer contains the argument. *)
+     boundary, in which case the argument is buffered -- unless it is a source
+     node, which is stable for the whole action and is re-read in place. *)
   Lemma arg_same_cycle_or_buffer :
     forall (act: tfs_action sched) node x,
       In node (graph (build_dfg ctx act)) ->
       In x (get_args ctx node) ->
       node_cycle act x = node_cycle act (nid node)
+      \/ is_source ctx (build_dfg ctx act) x = true
       \/ In x (require_buffer ctx (build_dfg ctx act) (act_cycle_map act)).
   Proof.
     intros act node x Hnode Hx.
     destruct (Nat.eq_dec (node_cycle act x) (node_cycle act (nid node))) as [Heq | Hneq].
     - left. exact Heq.
-    - right. unfold require_buffer. apply nodup_In. apply in_app_iff. left.
+    - destruct (is_source ctx (build_dfg ctx act) x) eqn:Hsrc; [ right; left; reflexivity |].
+      right. right. unfold require_buffer. apply nodup_In. apply in_app_iff. left.
       apply fold_left_prepend_In. exists node. split; [ exact Hnode |].
       apply filter_In. split; [ exact Hx |].
       assert (Hnid_bound : nid node < length (graph (build_dfg ctx act))).
@@ -3280,6 +3340,7 @@ Section SchedulerSimulation.
       pose proof (graph_position_has_target_cycle act x Hx_bound) as Htx.
       pose proof (graph_position_has_target_cycle act (nid node) Hnid_bound) as Htn.
       unfold node_cycle in Hneq.
+      rewrite Hsrc.
       destruct (BitsToLists.list_assoc (act_cycle_map act) x) as [cx|] eqn:Ex;
       destruct (BitsToLists.list_assoc (act_cycle_map act) (nid node)) as [cn|] eqn:En;
         try congruence.
@@ -3427,7 +3488,12 @@ Section SchedulerSimulation.
             + inversion E; subst. left; reflexivity.
             + right; apply IH; exact E. }
         exact (Hv dfg_v id Hin).
-    - apply ensure_var_spec.
+    - destruct (read_var ctx dfg_v s) as [id s'] eqn:Er.
+      destruct (read_var_cases dfg_v s id s' Er) as [[Hin [_ ->]] | Hem].
+      + split; [ apply gmono_refl | intro Hv; split; [ | exact Hv ] ].
+        eexists. split; [ exact Hin | reflexivity ].
+      + pose proof (emit_spec (DFG_Var dfg_v) (dfg_var_size ctx dfg_v) s) as Hf.
+        rewrite Hem in Hf. exact (proj1 Hf).
   Qed.
 
   (* combined forward spec (assuming vmg on entry) *)
@@ -3849,6 +3915,7 @@ Section SchedulerSimulation.
       apply fold_left_prepend_In in HA.
       destruct HA as [node [Hnode Hn]].
       apply filter_In in Hn. destruct Hn as [Hn Hpred].
+      destruct (is_source ctx (build_dfg ctx act) n) eqn:Hsrc; [ discriminate Hpred |].
       unfold node_cycle. fold cc.
       destruct (BitsToLists.list_assoc cc n) as [c|] eqn:Hc; [| discriminate Hpred].
       pose proof (backward_cycle_monotone act node n Hnode Hn) as Hmono.
@@ -3861,6 +3928,7 @@ Section SchedulerSimulation.
         apply negb_true_iff, Nat.eqb_neq in Hpred. exact Hpred.
     - (* out-part: n is a var_map output with nonzero target cycle *)
       apply filter_In in HB. destruct HB as [Hmem Hpred].
+      destruct (is_source ctx (build_dfg ctx act) n) eqn:Hsrc; [ discriminate Hpred |].
       pose proof (var_map_output_has_cost act n Hmem) as Hne. fold cc in Hne.
       unfold node_cycle. fold cc.
       destruct (BitsToLists.list_assoc cc n) as [c|] eqn:Hc;
@@ -6452,6 +6520,63 @@ Section SchedulerSimulation.
     cbn [tf_eval_expr]. exact (convert_same _).
   Qed.
 
+  (* The three facts about a [DFG_Var v] node in the EXPORTED graph that the
+     semantic cases need, independent of how the node got there: [get_var] may
+     reuse one that is already in the graph instead of emitting a fresh one. *)
+  Definition var_node_at (act: tfs_action sched) (v: @dfg_vars_t s_var o_var)
+      (id: nid_t) : Prop :=
+    1 <= id
+    /\ id < length (graph (build_dfg ctx act))
+    /\ op (nth id (graph (build_dfg ctx act))
+             {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Var v.
+
+  Lemma emit_var_node_at (act: tfs_action sched) F (s s': wst) v id :
+    exports act F ->
+    0 < length (graph s) ->
+    emit ctx (DFG_Var v) (dfg_var_size ctx v) s = (id, s') ->
+    wgmono s' F ->
+    var_node_at act v id.
+  Proof.
+    intros HF Hne Hem Hg.
+    destruct (emitted_node_at act F s s' (DFG_Var v) (dfg_var_size ctx v) id
+                HF Hne Hem Hg) as [H1 [H2 [H3 _]]].
+    split; [ exact H1 | split; [ exact H2 | exact H3 ] ].
+  Qed.
+
+  Lemma in_var_node_at (act: tfs_action sched) F (s: wst) v id :
+    exports act F ->
+    In {| nid := id; op := DFG_Var v; sz := dfg_var_size ctx v |} (graph s) ->
+    1 <= id ->
+    wgmono s F ->
+    var_node_at act v id.
+  Proof.
+    intros HF Hin Hpos Hg.
+    pose proof (in_graph_fwd act F _ HF (Hg _ Hin)) as Hin'.
+    destruct (node_at_nid act _ Hin') as [Hlt Hnth].
+    cbn [nid] in Hlt, Hnth.
+    split; [ exact Hpos | split; [ exact Hlt | rewrite Hnth; reflexivity ] ].
+  Qed.
+
+  Lemma nval_var_svar (act: tfs_action sched) a_idx (ss: sched_sys_state)
+        (input: input_t) sv id :
+    var_node_at act (DFG_SVar sv) id ->
+    nval act a_idx ss input (s_sz sv) id = (fst ss).[tf_dfg_s sv].
+  Proof.
+    intros [H1 [H2 H3]].
+    unfold nval. rewrite (nre_svar act a_idx id sv H1 H2 H3).
+    exact (eval_svar_same (tf_dfg_s sv) ss input).
+  Qed.
+
+  Lemma nval_var_ovar (act: tfs_action sched) a_idx (ss: sched_sys_state)
+        (input: input_t) ov id :
+    var_node_at act (DFG_OVar ov) id ->
+    nval act a_idx ss input (o_sz ov) id = (snd ss).[ov].
+  Proof.
+    intros [H1 [H2 H3]].
+    unfold nval. rewrite (nre_ovar act a_idx id ov H1 H2 H3).
+    cbn [tf_eval_expr]. exact (convert_same _).
+  Qed.
+
   (* ==================================================================== *)
   (* PHASE 3d, STEP 3: the semantic invariant of the DFG builder.          *)
   (* Every [var_map] binding evaluates (buffer-free, in [ss]) to the value  *)
@@ -6558,11 +6683,13 @@ Section SchedulerSimulation.
       + apply Hne2. reflexivity.
   Qed.
 
-  (* [get_var] either reuses an existing binding or creates one via ensure_var. *)
+  (* [get_var] either reuses an existing ASSIGNMENT or falls through to
+     [read_var] -- a read is not an assignment, so it must not enter
+     [var_map]. *)
   Lemma get_var_cases (v: dvar) (s: wst) id s' :
     get_var ctx v s = (id, s') ->
     (In (v, id) (var_map s) /\ s' = s)
-    \/ (ensure_var ctx v s = (id, s') /\ forall n, ~ In (v, n) (var_map s)).
+    \/ (read_var ctx v s = (id, s') /\ forall n, ~ In (v, n) (var_map s)).
   Proof.
     unfold get_var, bind, get_state.
     destruct (BitsToLists.list_assoc (var_map s) v) as [id0 |] eqn:E; intro H.
@@ -6575,6 +6702,16 @@ Section SchedulerSimulation.
   Lemma emit_vm (o: @dfg_op_t s_var i_var o_var) size (s: wst) id s' :
     emit ctx o size s = (id, s') -> var_map s' = var_map s.
   Proof. rewrite emit_red. intro H. injection H as _ <-. reflexivity. Qed.
+
+  (* A read never records anything: either it reuses a node (state untouched)
+     or it only grows the graph. *)
+  Lemma read_var_vmap (v: dvar) (s: wst) id s' :
+    read_var ctx v s = (id, s') -> var_map s' = var_map s.
+  Proof.
+    intro H. destruct (read_var_cases v s id s' H) as [[_ [_ ->]] | Hem].
+    - reflexivity.
+    - exact (emit_vm _ _ s id s' Hem).
+  Qed.
 
   Lemma emit_gmono (o: @dfg_op_t s_var i_var o_var) size (s: wst) id s' :
     emit ctx o size s = (id, s') -> wgmono s s'.
@@ -6747,10 +6884,28 @@ Section SchedulerSimulation.
         exact (Hoo ov).
     Qed.
 
+    (* Same, for the node [read_var] hands back -- whether it emitted it or
+       reused one that was already in the graph. *)
+    Lemma nval_read (s s': wst) (v: dvar) id :
+      0 < length (graph s) ->
+      read_var ctx v s = (id, s') -> wgmono s' F ->
+      NV (dfg_var_size ctx v) id = src_get sp0 v.
+    Proof.
+      intros Hne Her Hg.
+      assert (Hat : var_node_at act v id).
+      { destruct (read_var_cases v s id s' Her) as [[Hin [Hpos Hss']] | Hem].
+        - subst s'. exact (in_var_node_at act F s v id HF Hin Hpos Hg).
+        - exact (emit_var_node_at act F s s' v id HF Hne Hem Hg). }
+      destruct v as [sv | ov]; cbn [src_get dfg_var_size].
+      - rewrite (nval_var_svar act a_idx ss input sv id Hat). exact (Hss sv).
+      - rewrite (nval_var_ovar act a_idx ss input ov id Hat). exact (Hoo ov).
+    Qed.
+
     (* [get_var] returns a node denoting the CURRENT source value, and keeps
-       the invariant: either the binding already existed, or [ensure_var] adds
-       one whose value is the initial one — which the frame condition says IS
-       the current one, precisely because the variable had no binding. *)
+       the invariant: either the binding already existed, or the read node
+       holds the initial value — which the frame condition says IS the current
+       one, precisely because the variable had no binding.  A read does not
+       touch [var_map], so the invariant carries over unchanged. *)
     Lemma get_var_sem (s s': wst) (v: dvar) id sp :
       0 < length (graph s) ->
       get_var ctx v s = (id, s') ->
@@ -6759,20 +6914,16 @@ Section SchedulerSimulation.
       sem_inv s' sp /\ NV (dfg_var_size ctx v) id = src_get sp v.
     Proof.
       intros Hne Hgv Hg [Hsem Hfr].
-      destruct (get_var_cases v s id s' Hgv) as [[Hin ->] | [Hev Hnotin]].
+      destruct (get_var_cases v s id s' Hgv) as [[Hin ->] | [Her Hnotin]].
       - split; [ split; assumption | exact (Hsem v id Hin) ].
-      - pose proof (nval_fresh s s' v id Hne Hev Hg) as Hfresh.
+      - pose proof (nval_read s s' v id Hne Her Hg) as Hfresh.
         assert (Hval : NV (dfg_var_size ctx v) id = src_get sp v)
           by (rewrite Hfresh; symmetry; exact (Hfr v Hnotin)).
+        pose proof (read_var_vmap v s id s' Her) as Hvm.
         split; [ | exact Hval ]. split.
-        + intros v' n' Hin.
-          destruct (ensure_var_vm_inv v s id s' v' n' Hev Hin) as [[-> ->] | Hin0].
-          * exact Hval.
-          * exact (Hsem v' n' Hin0).
+        + intros v' n' Hin. rewrite Hvm in Hin. exact (Hsem v' n' Hin).
         + intros v' Hno. apply Hfr. intros n Hin. apply (Hno n).
-          destruct (eq_dec v' v) as [Heq | Hne'].
-          * exfalso. subst v'. exact (Hno id (ensure_var_vm_head v s id s' Hev)).
-          * exact (ensure_var_vm_keep v s id s' v' n Hev Hin Hne').
+          rewrite Hvm. exact Hin.
     Qed.
 
     (* Any builder step that does not touch [var_map] preserves [sem_inv]. *)

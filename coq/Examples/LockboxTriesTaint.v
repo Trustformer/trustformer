@@ -67,7 +67,7 @@ Section FigureA.
     Example all_critical_for_lack_of_a_rule :
       crit_report_all tfs_ctx dfgA
       = [CR_no_rule 3; CR_no_rule 6; CR_no_rule 3; CR_no_rule 6; CR_no_rule 3;
-         CR_no_rule 6; CR_no_rule 3; CR_no_rule 6; CR_no_rule 3].
+         CR_no_rule 6].
     Proof. vm_compute. reflexivity. Qed.
 
 End FigureA.
@@ -167,12 +167,20 @@ Section FigureB.
 
     (* Forward taint plus the blackbox untainting that is already fused into
        [get_tainted]: the [tries != 0] branch is free, only the pin check is
-       critical.  The paper counts three such phis; the fourth occurrence here is
-       the identity phi 18 ([secret] is written back to itself on both branches),
-       which the figure does not draw. *)
+       critical.  Exactly the three occurrences the paper counts
+       (03_taint_analysis.tex L127, L203). *)
     Example only_the_pin_check_is_critical :
       crit_report_all ctxB_blackbox dfgB
-      = [CR_no_rule 6; CR_no_rule 6; CR_no_rule 6; CR_no_rule 6].
+      = [CR_no_rule 6; CR_no_rule 6; CR_no_rule 6].
+    Proof. vm_compute. reflexivity. Qed.
+
+    (* The action assigns exactly the three variables the specification writes.
+       A variable a branch merely READS is not an assignment and must not
+       appear here -- it used to, which is what produced the identity phi the
+       figure does not draw. *)
+    Example var_map_is_the_written_variables :
+      map fst (var_map dfgB)
+      = [DFG_OVar fsB_out_tries; DFG_OVar fsB_out_status; DFG_OVar fsB_out_secret].
     Proof. vm_compute. reflexivity. Qed.
 
     (* 03_taint_analysis.tex L198: the attacker deduces the outcome of the pin
@@ -217,10 +225,7 @@ Section FigureB.
          CR_no_rule 3;
          CR_guard_unmet 6 [[(6, true)]; [(6, false)]; [(3, true)]];
          CR_no_rule 3;
-         CR_guard_unmet 6 [[(6, true)]; [(6, false)]; [(3, true)]];
-         CR_no_rule 3;
-         CR_guard_unmet 6 [[(6, true)]; [(6, false)]; [(3, true)]];
-         CR_no_rule 3].
+         CR_guard_unmet 6 [[(6, true)]; [(6, false)]; [(3, true)]]].
     Proof. vm_compute. reflexivity. Qed.
 
 End FigureB.
@@ -275,8 +280,10 @@ Section Bounds.
 
     Definition ctxA_blackbox := mk_ctxA [].
 
-    (* 03_taint_analysis.tex L129 quotes two cycles for [action_test]; that is
-       what the scheduler produces at a cost limit of 4. *)
+    (* With [tries] secret every phi is critical, so both branches of the
+       decrement are always evaluated and the action is constant time: the two
+       bounds coincide.  03_taint_analysis.tex L129 quotes two cycles for
+       [action_test]; that is what the scheduler produces at a cost limit of 4. *)
     Example lockbox_takes_two_cycles :
       action_bounds ctxA_blackbox 4 (build_dfg ctxA_blackbox fs_act_test) = (2, 2).
     Proof. vm_compute. reflexivity. Qed.
@@ -287,14 +294,24 @@ Section Bounds.
       action_bounds ctxA_blackbox 10 (build_dfg ctxA_blackbox fs_act_test) = (1, 1).
     Proof. vm_compute. reflexivity. Qed.
 
-    (* Neither making [tries] public nor declassifying the pin check buys a
-       cycle here: both branch conditions read [tries], and that read is what
-       the deeper stage is spent on, so the action is constant time either way.
-       Fewer critical phis is not automatically fewer cycles. *)
-    Example public_tries_costs_the_same :
-      action_bounds ctxB_blackbox 4 (build_dfg ctxB_blackbox fs_act_test) = (2, 2)
-      /\ action_bounds ctxB_whitebox 4 (build_dfg ctxB_whitebox fs_act_test) = (2, 2).
+    (* Making [tries] public separates the bounds: the guard [tries != 0] is no
+       longer tainted, so its phi selects instead of ANDing both branches, and
+       the locked-out case never pays for the [tries - 1] stage.  One cycle when
+       [tries] is exhausted, two when it is not.  This is only visible because a
+       source node is never buffered -- the shared [tries] read would otherwise
+       drag the fast branch into the second stage as well. *)
+    Example public_tries_separates_the_bounds :
+      action_bounds ctxB_blackbox 4 (build_dfg ctxB_blackbox fs_act_test) = (1, 2)
+      /\ action_bounds ctxB_whitebox 4 (build_dfg ctxB_whitebox fs_act_test) = (1, 2).
     Proof. split; vm_compute; reflexivity. Qed.
+
+    (* The separation is a property of the schedule, not of one cost limit: it
+       shows up at every limit that splits the action at all. *)
+    Example public_tries_sweep :
+      map (fun c => action_bounds ctxB_whitebox c (build_dfg ctxB_whitebox fs_act_test))
+          [1; 2; 3; 4; 5]
+      = [(3, 5); (2, 3); (1, 2); (1, 2); (1, 1)].
+    Proof. vm_compute. reflexivity. Qed.
 
 End Bounds.
 
