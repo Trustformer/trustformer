@@ -788,14 +788,41 @@ Section VariableScheduler.
     | None => 0
     end.
 
+  (* A bound together with the path of branch literals that achieves it.  A
+     number alone says the action is not constant time; the path says WHEN it
+     is fast and when it is slow, which is the attack. *)
+  Definition wcycle := (cycle_t * list lit)%type.
+
+  Definition lit_in (a: lit) (l: list lit) : bool := existsb (lit_eqb a) l.
+
+  Definition wunion (a b: list lit) : list lit :=
+    a ++ filter (fun x => negb (lit_in x a)) b.
+
+  (* An UPPER bound is attained as soon as its dominating subterm is, so only
+     the winner's branches are required. *)
+  Definition wmax (a b: wcycle) : wcycle := if Nat.ltb (fst a) (fst b) then b else a.
+
+  (* Two LOWER bounds, on the other hand, must BOTH be attained, so the path is
+     the conjunction of their branches.  Should the two disagree on a branch the
+     conjunction is unsatisfiable and the true lower bound is higher -- which
+     keeps [ta_cycles_lo] a bound, but makes the witness merely indicative. *)
+  Definition wmax_lo (a b: wcycle) : wcycle :=
+    (Nat.max (fst a) (fst b), wunion (snd a) (snd b)).
+
+  Definition wmin (a b: wcycle) : wcycle := if Nat.ltb (fst b) (fst a) then b else a.
+
+  (* Reaching a deeper stage does not change WHICH branches were taken. *)
+  Definition wbump (here: cycle_t) (a: wcycle) : wcycle :=
+    if Nat.ltb (fst a) here then (here, snd a) else a.
+
   (* A critical phi ANDs both branch validities, so it can only be ready when
      the slower branch is; a non-critical one selects, so its best case is the
      faster branch.  That difference is the entire cost of criticality. *)
-  Fixpoint node_bounds (dfg: dfg_state) (tainted: list nid_t) (dfacts: list gfact)
+  Fixpoint node_bounds_w (dfg: dfg_state) (tainted: list nid_t) (dfacts: list gfact)
       (cycles: list (nid_t * cycle_t)) (pi: list lit) (fuel: nat) (n: nid_t)
-      : cycle_t * cycle_t :=
+      : wcycle * wcycle :=
     match fuel with
-    | 0 => (0, 0)
+    | 0 => ((0, pi), (0, pi))
     | S fuel' =>
         (* A source node is never buffered (see [require_buffer]), so it is
            readable in stage 0 no matter how deep its target cycle claims to be. *)
@@ -803,41 +830,60 @@ Section VariableScheduler.
         let node := nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |} in
         match op node with
         | DFG_Unary _ a =>
-            let '(l, u) := node_bounds dfg tainted dfacts cycles pi fuel' a in
-            (Nat.max here l, Nat.max here u)
+            let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel' a in
+            (wbump here l, wbump here u)
         | DFG_Resize a =>
-            let '(l, u) := node_bounds dfg tainted dfacts cycles pi fuel' a in
-            (Nat.max here l, Nat.max here u)
+            let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel' a in
+            (wbump here l, wbump here u)
         | DFG_Binary _ a1 a2 =>
-            let '(l1, u1) := node_bounds dfg tainted dfacts cycles pi fuel' a1 in
-            let '(l2, u2) := node_bounds dfg tainted dfacts cycles pi fuel' a2 in
-            (Nat.max here (Nat.max l1 l2), Nat.max here (Nat.max u1 u2))
+            let '(l1, u1) := node_bounds_w dfg tainted dfacts cycles pi fuel' a1 in
+            let '(l2, u2) := node_bounds_w dfg tainted dfacts cycles pi fuel' a2 in
+            (wbump here (wmax_lo l1 l2), wbump here (wmax u1 u2))
         | DFG_Phi c t e =>
             let crit := phi_crit tainted dfacts c pi in
-            let '(lc, uc) := node_bounds dfg tainted dfacts cycles pi fuel' c in
-            let '(lt, ut) := node_bounds dfg tainted dfacts cycles (phi_path crit c true pi) fuel' t in
-            let '(le, ue) := node_bounds dfg tainted dfacts cycles (phi_path crit c false pi) fuel' e in
-            (Nat.max here (Nat.max lc (if crit then Nat.max lt le else Nat.min lt le)),
-             Nat.max here (Nat.max uc (Nat.max ut ue)))
-        | _ => (here, here)
+            let '(lc, uc) := node_bounds_w dfg tainted dfacts cycles pi fuel' c in
+            let '(lt, ut) := node_bounds_w dfg tainted dfacts cycles (phi_path crit c true pi) fuel' t in
+            let '(le, ue) := node_bounds_w dfg tainted dfacts cycles (phi_path crit c false pi) fuel' e in
+            (wbump here (wmax_lo lc (if crit then wmax_lo lt le else wmin lt le)),
+             wbump here (wmax uc (wmax ut ue)))
+        | _ => ((here, pi), (here, pi))
         end
     end.
+
+  Definition node_bounds (dfg: dfg_state) (tainted: list nid_t) (dfacts: list gfact)
+      (cycles: list (nid_t * cycle_t)) (pi: list lit) (fuel: nat) (n: nid_t)
+      : cycle_t * cycle_t :=
+    let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel n in (fst l, fst u).
 
   (* The action is done when every variable it writes is valid, so the bounds
      are the maxima over the roots.  Reported as a NUMBER of cycles, i.e. the
      deepest stage index plus one: a fully combinational action is (1, 1).
      [fst = snd] is a certificate that the action is constant time. *)
-  Definition action_bounds (dfg: dfg_state) : cycle_t * cycle_t :=
+  Definition action_bounds_w (dfg: dfg_state) : wcycle * wcycle :=
     let tainted := get_tainted dfg in
     let dfacts := decl_facts dfg in
     let cycles := calc_target_cycle (calc_backward_cost dfg) in
     let '(l, u) :=
       fold_left (fun '(l, u) v =>
                    let '(lv, uv) :=
-                     node_bounds dfg tainted dfacts cycles [] (length (graph dfg)) (snd v) in
-                   (Nat.max l lv, Nat.max u uv))
-                (var_map dfg) (0, 0) in
-    (S l, S u).
+                     node_bounds_w dfg tainted dfacts cycles [] (length (graph dfg)) (snd v) in
+                   (wmax_lo l lv, wmax u uv))
+                (var_map dfg) ((0, []), (0, [])) in
+    ((S (fst l), snd l), (S (fst u), snd u)).
+
+  Definition action_bounds (dfg: dfg_state) : cycle_t * cycle_t :=
+    let '(l, u) := action_bounds_w dfg in (fst l, fst u).
+
+  (* Agreeing bounds leave nothing for the two witness paths to distinguish:
+     they are then two runs of the same length, which is what makes [fst = snd]
+     readable as [constant time]. *)
+  Lemma bounds_agree_witness (dfg: dfg_state) :
+    fst (action_bounds dfg) = snd (action_bounds dfg) ->
+    fst (fst (action_bounds_w dfg)) = fst (snd (action_bounds_w dfg)).
+  Proof.
+    unfold action_bounds. destruct (action_bounds_w dfg) as [l u]. cbn. auto.
+  Qed.
+
 
   Fixpoint compile_dfg_expr_aux (tainted: list nid_t)
     (dfacts: list gfact) (pi: list lit)

@@ -3719,5 +3719,6 @@ Section SynthesisCorrectness.
   (* Tracks which axioms / Admitted lemmas `synthesis_correct` still depends on.
      Goal: shrink this to "Closed under the global context" (no admits). *)
   Print Assumptions synthesis_correct.
+  Print Assumptions initial_state_matches.
 
 End SynthesisCorrectness.

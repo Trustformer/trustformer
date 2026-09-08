@@ -1709,9 +1709,12 @@ Print Assumptions taint_propagates.
 Print Assumptions untainted_roots_derivable.
 Print Assumptions svar_not_derivable.
 Print Assumptions untainted_derivable.
+Print Assumptions uncond_sound_of_instances.
+Print Assumptions decl_sound_of_instances.
 Print Assumptions pub_eq_run.
 Print Assumptions valid_lockstep.
 Print Assumptions done_lockstep.
+Print Assumptions latency_noninterference.
 Print Assumptions latency_noninterference_start.
 Print Assumptions latency_from_outputs.
 Print Assumptions emulator_correct.
