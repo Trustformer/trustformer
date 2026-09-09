@@ -12,6 +12,12 @@ build/%.v: build/%.ml
 	cuttlec -T verilog $<
 
 compile: $(VERILOG_FILES)
+	$(MAKE) check
+
+# Refuses generated Verilog in which one net has two *different* drivers -- see
+# agents/verilog-issues/ and the header of the script.
+check:
+	@scripts/check-drivers.sh $(VERILOG_FILES)
 
 copy_build:
 	@if [ -d _build/default/build/. ]; then \
@@ -31,4 +37,4 @@ test: copy_build
 clean:
 	rm -rf build/*
 
-.PHONY: coq all test clean copy_build compile
+.PHONY: coq all test clean copy_build compile check

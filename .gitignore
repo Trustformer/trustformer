@@ -10,9 +10,11 @@ build/
 .nia.cache
 .lia.cache
 
-# Vendored read-only reference sources (not part of the build)
+# Vendored 
 vendor/
+firesim/
 
 # Long-term agent memory (untracked)
 agents/
 paper/
+.claude
