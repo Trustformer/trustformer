@@ -35,6 +35,11 @@ Section SchedulerTypes.
     | DFG_Binary (op: tf_binary_ops) (arg1: nid_t) (arg2: nid_t)
     | DFG_Resize (arg: nid_t)
     | DFG_Phi (cond: nid_t) (then_id: nid_t) (else_id: nid_t)
+    (* SPIKE (W-b feasibility, 2026-09-09): value passes through from [arg];
+       validity lags it.  Nothing emits this yet -- it exists to measure how
+       much of the proof development breaks on a node whose validity is NOT the
+       conjunction of its arguments' validities. *)
+    | DFG_Stall (arg: nid_t)
     | DFG_Empty                
     .
 

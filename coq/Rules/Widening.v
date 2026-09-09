@@ -153,7 +153,7 @@ Section Soundness.
               /\ i = {| di_target := arg; di_sources := [n]; di_guard := [] |}).
     { destruct (op (nth n (graph (build_dfg ctx act))
                       {| nid := 0; op := DFG_Empty; sz := 0 |}))
-        as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | ] eqn:Hop;
+        as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | sa | ] eqn:Hop;
         cbn [List.In] in Hi; try contradiction.
       - (* DFG_Unary: only tf_resize emits an instance *)
         destruct uop as [| src]; cbn [List.In] in Hi; try contradiction.

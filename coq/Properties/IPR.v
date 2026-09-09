@@ -411,7 +411,7 @@ Section IPR.
     intros ss ss' _. unfold nval.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | ] eqn:Hopn;
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | sa | ] eqn:Hopn;
       try discriminate.
     - rewrite (nre_const ctx cost_limit act a_idx n c Hn1 Hlen Hopn). reflexivity.
     - rewrite (nre_input ctx cost_limit act a_idx n v Hn1 Hlen Hopn). reflexivity.
@@ -600,7 +600,7 @@ Section IPR.
 
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | iv | [sv | ov] | uop arg | bop a1 a2 | src | cnd tid eid | ]
+      as [c | iv | [sv | ov] | uop arg | bop a1 a2 | src | cnd tid eid | sa | ]
       eqn:Eop.
 
     - rewrite (nre_const ctx cost_limit act a_idx n c H1 Hlen Eop).
@@ -663,6 +663,17 @@ Section IPR.
       cbn [tf_eval_expr].
       rewrite (Hder_at cnd _ Hc Hgc), (Hder_at tid _ Ht Hgt),
               (Hder_at eid _ He Hge). reflexivity.
+
+    - (* DFG_Stall: derivability passes straight through, because the stall's
+         reference expression IS its argument's.  A real W-b stall is derivable
+         for the same reason -- the DELAY is a public constant, so it adds
+         nothing an attacker could not already compute. *)
+      assert (Ha : List.In sa (get_args ctx (nth n (graph (build_dfg ctx act))
+                                               {| nid := 0; op := DFG_Empty; sz := 0 |})))
+        by (unfold get_args; rewrite Eop; left; reflexivity).
+      unfold node_args_sz in Hfg. rewrite Eop in Hfg.
+      rewrite (nre_stall ctx cost_limit act a_idx n sa H1 Hlen Eop).
+      exact (Hder_at sa _ Ha Hfg).
 
     - assert (Hemp : node_ref_expr ctx cost_limit act a_idx n = tf_const 0).
       { rewrite (nre_unfold ctx cost_limit act a_idx n H1 Hlen).
@@ -1124,7 +1135,7 @@ Section IPR.
     assert (Hrange : forall x, List.In x (get_args ctx node) -> 1 <= x /\ x < n)
       by (intros x Hx; exact (node_args_range ctx cost_limit act n Hn1 Hnlen x Hx)).
     pose proof (wfg_build_dfg ctx cost_limit act node Hnode_in) as Hfg.
-    destruct (op node) as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | ]
+    destruct (op node) as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | sa | ]
       eqn:Hop.
     - reflexivity.
     - reflexivity.
@@ -1285,6 +1296,14 @@ Section IPR.
              pose proof (IH tid ((cnd, true) :: pi) Ht1 ltac:(lia) ltac:(lia)
                            Hp1 Hp1') as Hct.
              rewrite Et in Hct. cbn [snd] in Hct. exact Hct.
+    - (* DFG_Stall: same as DFG_Unary -- validity passes through. *)
+      assert (Hain : List.In sa (get_args ctx node))
+        by (unfold get_args; rewrite Hop; left; reflexivity).
+      destruct (Hrange sa Hain) as [Ha1 Ha2].
+      destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                  sa bufs) as [ae ve] eqn:E1.
+      pose proof (IH sa pi Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
+      rewrite E1 in Ha. cbn [snd] in Ha |- *. exact Ha.
     - reflexivity.
   Qed.
 

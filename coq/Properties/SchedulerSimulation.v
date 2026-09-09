@@ -1433,7 +1433,7 @@ Section SchedulerSimulation.
     end; intro H.
     - unfold ret in H. injection H as Hid Hs. subst s'. left.
       apply find_some in Ef. destruct Ef as [Hin Hpred]. cbv beta in Hpred.
-      destruct (op nd) as [ c | iv | v' | uop a | bop a1 a2 | a | cd t e | ] eqn:Eo;
+      destruct (op nd) as [ c | iv | v' | uop a | bop a1 a2 | a | cd t e | sa | ] eqn:Eo;
         try discriminate Hpred.
       apply andb_true_iff in Hpred. destruct Hpred as [Hpred Hpos].
       apply andb_true_iff in Hpred. destruct Hpred as [Hveq Hsz].
@@ -1815,6 +1815,9 @@ Section SchedulerSimulation.
         | _ => wsz s a1 (sz node) /\ wsz s a2 (sz node)
         end
     | DFG_Phi c t e => wsz s c 1 /\ wsz s t (sz node) /\ wsz s e (sz node)
+    (* SPIKE: a stall passes its argument through unchanged, so the argument is
+       read at the node's own size -- same discipline as DFG_Unary tf_not. *)
+    | DFG_Stall a => wsz s a (sz node)
     | _ => True
     end.
 
@@ -1825,11 +1828,12 @@ Section SchedulerSimulation.
     node_args_sz s node -> wgmono s s' -> node_args_sz s' node.
   Proof.
     unfold node_args_sz. intros H Hg.
-    destruct (op node) as [c|v|v|uop a|bop a1 a2|a|cd t e|];
-      [ exact I | exact I | exact I | | | exact I | | exact I ].
+    destruct (op node) as [c|v|v|uop a|bop a1 a2|a|cd t e|sa|];
+      [ exact I | exact I | exact I | | | exact I | | | exact I ].
     - destruct uop; eapply wsz_gmono; eauto.
     - destruct bop; destruct H as [H1 H2]; split; eapply wsz_gmono; eauto.
     - destruct H as [H1 [H2 H3]]; repeat split; eapply wsz_gmono; eauto.
+    - eapply wsz_gmono; eauto.
   Qed.
 
   Lemma emit_fg op size (s: wst) :
@@ -4165,7 +4169,7 @@ Section SchedulerSimulation.
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |]; [ reflexivity | ].
     cbv beta iota zeta.
     destruct (op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | ];
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | sa | ];
       cbv beta iota zeta; try reflexivity.
     - destruct (compile_dfg_expr_aux ctx cost_limit tainted dfacts pi fuel a_idx
                   dfg arg bufs) as [ae ve] eqn:E1.
@@ -4214,6 +4218,8 @@ Section SchedulerSimulation.
                      (ppath tainted dfacts pi' cnd false)) as He.
       rewrite Ee, Ee' in He. cbn [fst] in He.
       cbn [fst]. rewrite Hc, Ht, He. reflexivity.
+    - (* DFG_Stall: a direct recursive call, so the IH is the whole proof. *)
+      apply IH.
   Qed.
 
   (* Packages the phi step of the VALUE component in one equation, so proofs
@@ -4293,7 +4299,7 @@ Section SchedulerSimulation.
     cbn [compile_dfg_expr_aux BitsToLists.list_assoc]. cbv beta iota.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | ].
+      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | sa | ].
     - reflexivity.
     - reflexivity.
     - destruct v; cbn [fst tf_eval_expr]; [ rewrite Hs | rewrite Ho ]; reflexivity.
@@ -4336,6 +4342,7 @@ Section SchedulerSimulation.
       rewrite Ec in Hcc. rewrite Et in Hct. rewrite Ee in Hce.
       cbn [fst] in Hcc, Hct, Hce.
       rewrite Hcc, Hct, Hce. reflexivity.
+    - (* DFG_Stall *) apply IH.
     - reflexivity.
   Qed.
 
@@ -4414,7 +4421,7 @@ Section SchedulerSimulation.
                 = compile_dfg_expr_aux ctx cost_limit tainted dfacts p f2' a_idx dfg x buffers).
       { intros x p Hx. destruct (Harg x Hx) as [Hx1 Hx2].
         apply (IH x Hx2 Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen)); lia. }
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | ] eqn:Hop.
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | sa | ] eqn:Hop.
       + reflexivity.
       + reflexivity.
       + destruct v; reflexivity.
@@ -4437,6 +4444,10 @@ Section SchedulerSimulation.
           by (unfold get_args; rewrite Hop; right; right; left; reflexivity).
         rewrite (Hrec cnd pi Hcin), (Hrec tid (ppath tainted dfacts pi cnd true) Htin),
                 (Hrec eid (ppath tainted dfacts pi cnd false) Hein). reflexivity.
+      + (* DFG_Stall: one argument, same shape as DFG_Unary / DFG_Resize. *)
+        assert (Hain : In sa (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        rewrite (Hrec sa pi Hain). reflexivity.
       + exfalso. apply (node_op_not_empty act n Hn1 Hnlen). exact Hop.
   Qed.
 
@@ -4584,7 +4595,7 @@ Section SchedulerSimulation.
         apply (IH x sx p Hx1 Hxlen);
           [ lia | lia | right; lia | symmetry; exact Hxsz ]. }
       pose proof (wfg_build_dfg act node Hnode_in) as Hfg.
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | sa | ]
         eqn:Hop.
       + (* Const *) reflexivity.
       + (* Input *) reflexivity.
@@ -4680,6 +4691,12 @@ Section SchedulerSimulation.
         rewrite Ec, Ec' in Hcc. rewrite Et, Et' in Hct. rewrite Ee, Ee' in Hce.
         cbn [fst] in Hcc, Hct, Hce.
         cbn [tf_eval_expr]. rewrite Hcc, Hct, Hce. reflexivity.
+      + (* DFG_Stall: pass-through, so the demanded size flows to the argument
+           unchanged and the compiler emits no conversion. *)
+        assert (Hain : In sa (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+        exact (Hchild sa (sz node) pi Hain Hfg).
       + (* Empty: impossible for a real node *)
         exfalso. apply (node_op_not_empty act n Hn1 Hnlen).
         unfold node in Hop. exact Hop.
@@ -4876,7 +4893,7 @@ Section SchedulerSimulation.
         destruct (wsz_node_sz act x sx Hwsz) as [Hxlen Hxsz].
         apply (IH x sx p Hx1 Hxlen ltac:(lia) (eq_sym Hxsz) Hxv). }
       pose proof (wfg_build_dfg act node Hnode_in) as Hfg.
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | sa | ]
         eqn:Hop.
       + (* Const *) reflexivity.
       + (* Input *) reflexivity.
@@ -5027,6 +5044,15 @@ Section SchedulerSimulation.
                by (rewrite Et; cbn [snd]; exact (Hthen Hcnz)).
              pose proof (Hchild tid (sz node) pt Htin Hf2 Hat) as Hct.
              rewrite Et, Et' in Hct. cbn [fst] in Hct. exact Hct.
+      + (* DFG_Stall: value AND validity both pass through, so this is the
+           DFG_Unary case with nothing to do.  A REAL W-b stall breaks exactly
+           here: its validity is not the argument's, so [Hval] would no longer
+           hand over the argument's validity and this bullet would need the
+           lag invariant instead. *)
+        assert (Hain : In sa (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+        exact (Hchild sa (sz node) pi Hain Hfg Hval).
       + (* Empty: impossible for a real node *)
         exfalso. apply (node_op_not_empty act n Hn1 Hnlen).
         unfold node in Hop. exact Hop.
@@ -5465,7 +5491,7 @@ Section SchedulerSimulation.
       { intros x p Hx. destruct (Harg x Hx) as [Hx1 Hx2].
         apply (IH x p Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen));
           [ lia | lia | right; lia ]. }
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | sa | ]
         eqn:Hop.
       + cbn [snd]. apply eval1_const1.
       + cbn [snd]. apply eval1_const1.
@@ -5517,6 +5543,17 @@ Section SchedulerSimulation.
           rewrite Bits.and_ones_l. apply Bits.and_ones_l.
         * rewrite valid_and_eval, Hcv, Bits.and_ones_l.
           apply (valid_if_eval ce tv ev _ input Htv Hev).
+      + (* DFG_Stall: validity passes through unchanged.  THIS is the bullet a
+           real W-b stall cannot discharge -- its validity is the argument's
+           delayed, so "the argument is valid now" does not give "the stall is
+           valid now", and the lemma would have to be restated over a cycle
+           index rather than proved pointwise. *)
+        assert (Hain : In sa (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        pose proof (Hchild sa pi Hain) as Ha.
+        destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                    sa bufs) as [ae ve] eqn:E1.
+        cbn [snd] in Ha |- *. exact Ha.
       + exfalso. apply (node_op_not_empty act n Hn1 Hnlen).
         unfold node in Hop. exact Hop.
   Qed.
@@ -6328,6 +6365,29 @@ Section SchedulerSimulation.
     destruct (compile_dfg_expr ctx cost_limit n a_idx (build_dfg ctx act) arg [])
       as [ae av] eqn:E.
     cbn [fst]. f_equal.
+    rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3), E. reflexivity.
+  Qed.
+
+  (* SPIKE (W-b feasibility): a stall's reference expression IS its argument's,
+     because the compiler emits no wrapper.  Same fuel-alignment argument as
+     [nre_unary]. *)
+  Lemma nre_stall (act: tfs_action sched) a_idx n arg :
+    1 <= n -> n < length (graph (build_dfg ctx act)) ->
+    op (nth n (graph (build_dfg ctx act))
+          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Stall arg ->
+    node_ref_expr act a_idx n = node_ref_expr act a_idx arg.
+  Proof.
+    intros H1 H2 Hop.
+    assert (Hain : In arg (get_args ctx (nth n (graph (build_dfg ctx act))
+                                           {| nid := 0; op := DFG_Empty; sz := 0 |})))
+      by (unfold get_args; rewrite Hop; left; reflexivity).
+    destruct (node_args_range act n H1 H2 arg Hain) as [Ha1 Ha3].
+    assert (Ha2 : arg < length (graph (build_dfg ctx act))) by lia.
+    rewrite (nre_unfold act a_idx n H1 H2).
+    cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
+    destruct (compile_dfg_expr ctx cost_limit n a_idx (build_dfg ctx act) arg [])
+      as [ae av] eqn:E.
+    cbn [fst].
     rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3), E. reflexivity.
   Qed.
 
