@@ -158,6 +158,7 @@ Section Rendering.
         | DFG_Phi c t e =>
             "(" +++ show_node_aux dfg d c +++ " ? " +++ show_node_aux dfg d t
                 +++ " : " +++ show_node_aux dfg d e +++ ")"
+        | DFG_Stall a => "stall(" +++ show_node_aux dfg d a +++ ")"
         | DFG_Empty => "<empty>"
         end
     end.
@@ -240,6 +241,7 @@ Section Rendering.
     | DFG_Resize _ => "resize"
     | DFG_Binary o _ _ => show_binop o
     | DFG_Phi _ _ _ => "phi"
+    | DFG_Stall _ => "stall"
     | DFG_Empty => "empty"
     end.
 
@@ -253,6 +255,7 @@ Section Rendering.
     | DFG_Binary _ a1 a2 => [dot_edge (nid nd) "l" a1; dot_edge (nid nd) "r" a2]
     | DFG_Phi c t e =>
         [dot_edge (nid nd) "c" c; dot_edge (nid nd) "t" t; dot_edge (nid nd) "e" e]
+    | DFG_Stall a => [dot_edge (nid nd) "" a]
     | _ => []
     end.
 

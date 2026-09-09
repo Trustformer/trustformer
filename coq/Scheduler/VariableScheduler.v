@@ -322,6 +322,7 @@ Section VariableScheduler.
     | DFG_Binary _ arg1 arg2 => [arg1; arg2]
     | DFG_Resize arg => [arg]
     | DFG_Phi cond then_id else_id => [cond; then_id; else_id]
+    | DFG_Stall arg => [arg]
     | DFG_Empty => []
     end.
 
@@ -351,6 +352,10 @@ Section VariableScheduler.
                         end
     | DFG_Resize _ => 0
     | DFG_Phi _ _ _ => 1
+    (* SPIKE: a stall is a register, not combinational logic.  The real W-b
+       design needs a separate [must_buffer] predicate rather than an inflated
+       cost -- see the archive's DEBT-2. *)
+    | DFG_Stall _ => 0
     | DFG_Empty => 0
     end.
 
@@ -759,6 +764,9 @@ Section VariableScheduler.
                 ++ crit_report_aux dfg tainted dfacts pi fuel' c bufs
                 ++ crit_report_aux dfg tainted dfacts (phi_path crit c true pi) fuel' t bufs
                 ++ crit_report_aux dfg tainted dfacts (phi_path crit c false pi) fuel' e bufs
+            (* Explicit, not falling through to [_]: the archive's DEBT-3 was a
+               silently under-reporting diagnostic caused by exactly that. *)
+            | DFG_Stall a => crit_report_aux dfg tainted dfacts pi fuel' a bufs
             | _ => []
             end
         end
@@ -839,6 +847,11 @@ Section VariableScheduler.
             let '(l1, u1) := node_bounds_w dfg tainted dfacts cycles pi fuel' a1 in
             let '(l2, u2) := node_bounds_w dfg tainted dfacts cycles pi fuel' a2 in
             (wbump here (wmax_lo l1 l2), wbump here (wmax u1 u2))
+        (* SPIKE: identity for now.  W-b would add its declared latency to BOTH
+           bounds here, which is exactly what keeps the latency derivable. *)
+        | DFG_Stall a =>
+            let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel' a in
+            (wbump here l, wbump here u)
         | DFG_Phi c t e =>
             let crit := phi_crit tainted dfacts c pi in
             let '(lc, uc) := node_bounds_w dfg tainted dfacts cycles pi fuel' c in
@@ -931,6 +944,13 @@ Section VariableScheduler.
                 else
                   valid_expr_and cond_val (valid_expr_if cond_expr then_val else_val)
               )
+          (* SPIKE (W-b feasibility): pass-through of BOTH value and validity,
+             i.e. an identity node.  This measures the churn of adding a DFG
+             constructor without perturbing any example.  The real W-b returns
+             the argument's value with a LAGGED validity -- that decoupling is
+             the part that needs a new register family. *)
+          | DFG_Stall arg1 =>
+              compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers
           | DFG_Empty => (tf_const 0, tf_const 0) (* should not happen *)
           end
         end
