@@ -26,10 +26,14 @@ Definition n_reg := Eval vm_compute in (length (graph dfg_reg)).
 Definition n_uns := Eval vm_compute in (length (graph dfg_uns)).
 
 (* The eleven-tag lookup is by far the biggest graph in the module; an excluded
-   command is the failure test, the constant, and the write. *)
-Example probe_nodes_cap : n_cap = 80. Proof. reflexivity. Qed.
+   command is the two [clear_results] writes, the failure test, the constant and
+   the rc write.  Clearing the result registers on every command cost +1 node on
+   CapabilityGet, +0 on RegRead (the clear replaces the hold-read in the
+   out-of-range branch) and +2 on an excluded command -- and nothing at all in
+   buffers or cycle bounds. *)
+Example probe_nodes_cap : n_cap = 81. Proof. reflexivity. Qed.
 Example probe_nodes_reg : n_reg = 24. Proof. reflexivity. Qed.
-Example probe_nodes_uns : n_uns = 7.  Proof. reflexivity. Qed.
+Example probe_nodes_uns : n_uns = 9.  Proof. reflexivity. Qed.
 
 (* Buffers per action, at the cost limit Mars.v ships with.  Action order is the
    [fs_action] constructor order, so index 1 is MARS_CapabilityGet: the only
