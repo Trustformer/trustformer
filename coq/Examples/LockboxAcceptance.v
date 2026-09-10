@@ -119,11 +119,11 @@ Section Contexts.
       tfs_spec_inputs := lb_inputs;
       tfs_spec_inputs_fin := _;
       tfs_spec_inputs_size := lb_inputs_size;
-
+      tfs_spec_inputs_class := fun _ => Public;
       tfs_spec_outputs := lb_outputs;
       tfs_spec_outputs_fin := _;
       tfs_spec_outputs_size := lb_outputs_size;
-
+      tfs_spec_outputs_class := fun _ => Public;
       tfs_spec_action := lb_action;
       tfs_spec_action_fin := _;
       tfs_spec_action_ops := ops;

@@ -9,6 +9,26 @@ Require Export Trustformer.Scheduler.DFG.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
+(* Confidentiality classification of a spec variable's port.
+
+   [Public]  attacker-visible by design.  The confidentiality guarantee
+             quantifies over exactly these, and only these may be memory-mapped.
+   [Secret]  may carry a secret, so it is outside that guarantee and must never
+             be attacker-visible.  Over-classifying is safe: a port that happens
+             to carry nothing sensitive but must not be host-driven -- a
+             protected reset request, say -- is [Secret] too, because "never
+             bus-mapped" is the protection wanted and a separate class would buy
+             vocabulary rather than safety.
+
+   The classification is DECLARED here and generated into the port name by
+   [TypedSynthesis.ext_fn_specs].  It is deliberately not part of the variable's
+   own name: a hand-written prefix can disagree with the declaration and nothing
+   would catch it. *)
+Inductive port_class := Public | Secret.
+
+Definition class_tag (c: port_class) : string :=
+  match c with Public => "pub" | Secret => "sec" end.
+
 Record TFSchedContext := {
   tfs_spec_states : Type;
   tfs_spec_states_eq_dec : EqDec tfs_spec_states;
@@ -22,12 +42,14 @@ Record TFSchedContext := {
   tfs_spec_inputs_fin : FiniteType tfs_spec_inputs;
   tfs_spec_inputs_names : Show tfs_spec_inputs;
   tfs_spec_inputs_size : tfs_spec_inputs -> nat;
+  tfs_spec_inputs_class : tfs_spec_inputs -> port_class;
 
   tfs_spec_outputs : Type;
   tfs_spec_outputs_eq_dec : EqDec tfs_spec_outputs;
   tfs_spec_outputs_fin : FiniteType tfs_spec_outputs;
   tfs_spec_outputs_names : Show tfs_spec_outputs;
   tfs_spec_outputs_size : tfs_spec_outputs -> nat;
+  tfs_spec_outputs_class : tfs_spec_outputs -> port_class;
 
   tfs_spec_action : Type;
   tfs_spec_action_eq_dec : EqDec tfs_spec_action;

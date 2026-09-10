@@ -1786,10 +1786,10 @@ Module Examples.
 
       tfs_spec_inputs := dfge_i;
       tfs_spec_inputs_size := dfge_i_size;
-
+      tfs_spec_inputs_class := fun _ => Public;
       tfs_spec_outputs := dfge_o;
       tfs_spec_outputs_size := dfge_o_size;
-
+      tfs_spec_outputs_class := fun _ => Public;
       tfs_spec_action := dfge_a;
       tfs_spec_action_ops := fun a =>
         match a with
@@ -1829,10 +1829,10 @@ Module Examples.
 
       tfs_spec_inputs := dfge_i;
       tfs_spec_inputs_size := dfge_i_size;
-
+      tfs_spec_inputs_class := fun _ => Public;
       tfs_spec_outputs := dfge_o;
       tfs_spec_outputs_size := dfge_o_size;
-
+      tfs_spec_outputs_class := fun _ => Public;
       tfs_spec_action := dfge_a;
       tfs_spec_action_ops := fun a =>
         match a with
@@ -1887,10 +1887,10 @@ Module Examples.
 
       tfs_spec_inputs := dfge_i;
       tfs_spec_inputs_size := dfge_i_size;
-
+      tfs_spec_inputs_class := fun _ => Public;
       tfs_spec_outputs := dfge_o;
       tfs_spec_outputs_size := dfge_o_size;
-
+      tfs_spec_outputs_class := fun _ => Public;
       tfs_spec_action := dfge_a;
       tfs_spec_action_ops := fun a =>
         match a with

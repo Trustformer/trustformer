@@ -122,11 +122,11 @@ Section TypedSynthesis.
         tfs_spec_inputs := fs_inputs;
         tfs_spec_inputs_fin := _;
         tfs_spec_inputs_size := fs_inputs_size;
-
+        tfs_spec_inputs_class := fun _ => Public;
         tfs_spec_outputs := fs_outputs;
         tfs_spec_outputs_fin := _;
         tfs_spec_outputs_size := fs_outputs_size;
-
+        tfs_spec_outputs_class := fun _ => Public;
         tfs_spec_action := fs_action;
         tfs_spec_action_fin := _;
         tfs_spec_action_ops := fs_transitions;

@@ -143,11 +143,11 @@ Section FigureB.
         tfs_spec_inputs := fsB_inputs;
         tfs_spec_inputs_fin := _;
         tfs_spec_inputs_size := fsB_inputs_size;
-
+        tfs_spec_inputs_class := fun _ => Public;
         tfs_spec_outputs := fsB_outputs;
         tfs_spec_outputs_fin := _;
         tfs_spec_outputs_size := fsB_outputs_size;
-
+        tfs_spec_outputs_class := fun _ => Public;
         tfs_spec_action := fs_action;
         tfs_spec_action_fin := _;
         tfs_spec_action_ops := fsB_transitions;
@@ -200,11 +200,11 @@ Section FigureB.
         tfs_spec_inputs := fs_inputs;
         tfs_spec_inputs_fin := _;
         tfs_spec_inputs_size := fs_inputs_size;
-
+        tfs_spec_inputs_class := fun _ => Public;
         tfs_spec_outputs := fs_outputs;
         tfs_spec_outputs_fin := _;
         tfs_spec_outputs_size := fs_outputs_size;
-
+        tfs_spec_outputs_class := fun _ => Public;
         tfs_spec_action := fs_action;
         tfs_spec_action_fin := _;
         tfs_spec_action_ops := fs_transitions;
@@ -411,9 +411,11 @@ Section BoundsContrast.
         tfs_spec_inputs := sk_inputs;
         tfs_spec_inputs_fin := _;
         tfs_spec_inputs_size := sk_isz;
+        tfs_spec_inputs_class := fun _ => Public;
         tfs_spec_outputs := sk_outputs;
         tfs_spec_outputs_fin := _;
         tfs_spec_outputs_size := sk_osz;
+        tfs_spec_outputs_class := fun _ => Public;
         tfs_spec_action := sk_action;
         tfs_spec_action_fin := _;
         tfs_spec_action_ops := fun _ => sk_ops cond;
