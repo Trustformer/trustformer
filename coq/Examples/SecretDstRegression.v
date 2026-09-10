@@ -36,7 +36,7 @@ Section FunctionalSpecification.
 
     Definition w := 32.
 
-    Inductive sd_action := act_leak.
+    Inductive sd_action := act_leak | act_read.
     Inductive sd_states := st_dp.
     Inductive sd_inputs := in_guess.
     Inductive sd_outputs := out_key | out_flag.
@@ -61,6 +61,17 @@ Section FunctionalSpecification.
         {[
             let $out_key := $st_dp;
             if ($st_dp ==[w] $in_guess)
+            then let $out_flag := #1
+            else let $out_flag := #0
+        ]}
+      (* The READ-side twin.  Nothing secret is written here: the branch reads
+         [out_key], an output.  If a read of an output were unconditionally
+         untainted -- as it was before the [self_tainted] fix -- the branch
+         would be non-critical and its latency would leak whatever [out_key]
+         holds, which for MARS is DP. *)
+      | act_read =>
+        {[
+            if ($out_key ==[w] $in_guess)
             then let $out_flag := #1
             else let $out_flag := #0
         ]}
@@ -120,6 +131,22 @@ Section Contrast.
     Example leaky_has_more_public_dsts :
       List.length (public_dsts ctx_leaky (build_dfg ctx_leaky act_leak))
       = S (List.length (public_dsts ctx_fixed (build_dfg ctx_fixed act_leak))).
+    Proof. vm_compute. reflexivity. Qed.
+
+    (* --- the read side ------------------------------------------------- *)
+
+    (* Branching on an output that is attacker-visible is fine: the attacker
+       already knows it, so variable latency reveals nothing new. *)
+    Example read_public_not_critical :
+      crit ctx_leaky (build_dfg ctx_leaky act_read) = 0.
+    Proof. vm_compute. reflexivity. Qed.
+
+    (* Branching on an output the attacker CANNOT see must be critical.  This
+       is the twin of the write-side hole: [self_tainted] used to mark only
+       [DFG_SVar] reads, so a read of [crypt_key] -- which holds DP -- was
+       treated as public. *)
+    Example read_secret_is_critical :
+      crit ctx_fixed (build_dfg ctx_fixed act_read) = 1.
     Proof. vm_compute. reflexivity. Qed.
 
 End Contrast.

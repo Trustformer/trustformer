@@ -162,8 +162,13 @@ Section TheoremInstantiation.
     { intros act a_idx' input'.
       apply (decl_sound_of_instances tfs_ctx cost Hdecls).
       intros i Hi. cbn in Hi. destruct Hi. }
+    (* This context declares every output [Public], so the stated hypotheses --
+       which quantify over ALL outputs -- are more than [L_public] now asks for.
+       Weakening them at the use site keeps this regression's statement
+       unchanged. *)
     exact (L_public tfs_ctx cost Hdecls Hdguard fs_check a_idx input
-             sp0 sp0' ss0 ss0' Halign Hst Hst' Hpre Hpost).
+             sp0 sp0' ss0 ss0' Halign Hst Hst'
+             (fun ov _ => Hpre ov) (fun ov _ => Hpost ov)).
   Qed.
 
 End TheoremInstantiation.
