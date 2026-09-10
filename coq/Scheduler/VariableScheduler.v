@@ -490,10 +490,28 @@ Section VariableScheduler.
   (* = Step 5: Taint Analysis     = *)
   (* ============================== *)
 
+  (* Declassification sites: the roots of assignments to destinations an
+     attacker can actually see.
+
+     [DFG_SVar] is excluded because a secret register is not a public
+     destination -- that was the fix for GENERAL_REQUIREMENTS.md section 1.1.
+     [DFG_OVar] is now filtered on the DECLARED class for the same reason one
+     step further out: an output the attacker cannot see is not a public
+     destination either.  Without this, writing a secret to a [Secret] output
+     untaints that secret for the whole action -- [read_var] shares read nodes,
+     so a top-level [crypt_key := dp] makes [var_map[crypt_key]] the
+     [DFG_Var (DFG_SVar dp)] node itself, [public_dsts] returns it,
+     [untainted_roots] contains it, and [get_tainted] drops it, including for a
+     branch condition reading [dp].  [crit_report] cannot detect this:
+     [phi_crit_reason] returns [None] exactly when the condition is untainted.
+     REVIEW.md section 2.3. *)
   Definition public_dsts (dfg: dfg_state) : list (nid_t) :=
     map snd (filter (fun '(v, _) =>
       match v with
-      | DFG_OVar _ => true
+      | DFG_OVar o => match outputs_var_class o with
+                      | Public => true
+                      | Secret => false
+                      end
       | DFG_SVar _ => false
       end) (var_map dfg)).
 
