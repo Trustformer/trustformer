@@ -37,3 +37,15 @@ Definition bounds20 := Eval vm_compute in (action_bounds tfs_ctx 20 dfg0).
    the choice of delay model is open. *)
 Example probe_bounds10 : bounds10 = (4, 4). Proof. reflexivity. Qed.
 Example probe_bounds20 : bounds20 = (2, 2). Proof. reflexivity. Qed.
+
+(* SPIKE: pin tf_concat's bit ORDER by computation.  MARS correctness depends on
+   this exactly (CryptSnapshot fixes regSelect big-endian first, then registers,
+   then ctx), and Koika's [Bits.app] is a notation with SWAPPED arguments
+   (vendor/koika/coq/Utils/Vect.v L935, flagged "!!" by its own authors), so the
+   order is not something to assume.  0xA concat 0x3 at width 8 must be 0xA3. *)
+Definition concat_test : bits_t 8 :=
+  tf_eval_expr fs_states_size fs_inputs_size fs_outputs_size (szB:=8)
+    (tf_op2 (tf_concat 4 4) (tf_const 10) (tf_const 3))
+    (ContextEnv.(create) fs_states_init, ContextEnv.(create) (fun _ => Bits.zero))
+    (fun _ => Bits.zero).
+Example concat_hi_first : concat_test = Bits.of_nat 8 163. Proof. reflexivity. Qed.

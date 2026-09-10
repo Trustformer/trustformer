@@ -1106,6 +1106,12 @@ Section SynthesisCorrectness.
                   end,
                   log_cmp_src2
                 )
+            (* SPIKE: mirrors tf_eval_expr's tf_concat case -- operands at their
+               own widths, threaded through the log like tf_cmp does. *)
+            | tf_concat hi_sz lo_sz =>
+                let (val_hi, log_hi) := (eval_expr_aux (szB:=hi_sz) src1 log sys_state input) in
+                let (val_lo, log_lo) := (eval_expr_aux (szB:=lo_sz) src2 log_hi sys_state input) in
+                (convert (Bits.app val_hi val_lo), log_lo)
             end
         | tf_expr_if cond then_expr else_expr =>
             let (val_cond, log_cond) := (eval_expr_aux (szB:=1) cond log sys_state input) in
@@ -1149,6 +1155,10 @@ Section SynthesisCorrectness.
         * apply IHexpr1.
         * apply IHexpr2.
       + let_to_projs. destr; match_eq; f_equal; try apply IHexpr1; try apply IHexpr2.
+      + (* tf_concat *)
+        let_to_projs. f_equal. f_equal.
+        * apply IHexpr2.
+        * apply IHexpr1.
     - cbn. let_to_projs. extract_match_term_lhs. extract_match_term_rhs.
       assert (MT = MT0). 2: { rewrite H. subst. destr; try apply IHexpr2; try apply IHexpr3. }
       subst. f_equal. apply (IHexpr1 log1 1).
@@ -1229,6 +1239,26 @@ Section SynthesisCorrectness.
         destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
         destruct (eval_expr_aux expr1 log2 sys input). cbn in *. subst.
         pose proof (IHexpr2 l3 l4 cmp_sz).
+        destruct (eval_expr_aux expr2 l3 sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr2 l4 sys input). cbn in *. subst. reflexivity.
+      + (* tf_concat.  Identical in shape to the tf_cmp bullet above: the
+           binary case of [eval_expr_aux] evaluates BOTH operands at [szB]
+           first, threading the log, and only then enters the operator match.
+           Those two szB evaluations are dead in this branch but their [let]s
+           still bind the log, so they must be destructed before the hi_sz /
+           lo_sz ones can reduce.  Only the two size arguments differ from
+           tf_cmp. *)
+        cbn.
+        pose proof (IHexpr1 log1 log2 szB).
+        destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr1 log2 sys input). cbn in *. subst.
+        pose proof (IHexpr2 l l0 szB).
+        destruct (eval_expr_aux expr2 l sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr2 l0 sys input). cbn in *. subst.
+        pose proof (IHexpr1 log1 log2 hi_sz).
+        destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr1 log2 sys input). cbn in *. subst.
+        pose proof (IHexpr2 l3 l4 lo_sz).
         destruct (eval_expr_aux expr2 l3 sys input). cbn in *. subst.
         destruct (eval_expr_aux expr2 l4 sys input). cbn in *. subst. reflexivity.
     - cbn.
@@ -1315,6 +1345,20 @@ Section SynthesisCorrectness.
         destruct (eval_expr_aux expr1 (log1 ++ log2) sys input). cbn in *. subst. 
         destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
         pose proof (IHexpr2 l1 log2 cmp_sz).
+        destruct (eval_expr_aux expr2 (l1 ++ log2) sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr2 l1 sys input). cbn in *. subst. reflexivity.
+      + (* tf_concat: as tf_cmp, only the two size arguments differ. *)
+        cbn.
+        pose proof (IHexpr1 log1 log2 szB).
+        destruct (eval_expr_aux expr1 (log1 ++ log2) sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
+        pose proof (IHexpr2 l log2 szB).
+        destruct (eval_expr_aux expr2 (l ++ log2) sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr2 l sys input). cbn in *. subst.
+        pose proof (IHexpr1 log1 log2 hi_sz).
+        destruct (eval_expr_aux expr1 (log1 ++ log2) sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
+        pose proof (IHexpr2 l1 log2 lo_sz).
         destruct (eval_expr_aux expr2 (l1 ++ log2) sys input). cbn in *. subst.
         destruct (eval_expr_aux expr2 l1 sys input). cbn in *. subst. reflexivity.
     - cbn.
@@ -1435,7 +1479,28 @@ Section SynthesisCorrectness.
         apply (f_equal snd) in Eq5.
         apply (f_equal snd) in Eq6.
         cbn in *. subst.
-        apply (snd_eval_expr_aux_app_log expr2_2 _ l sys input). 
+        apply (snd_eval_expr_aux_app_log expr2_2 _ l sys input).
+      + (* tf_concat: same shape as tf_cmp, with hi_sz in place of cmp_sz. *)
+        cbn in *.
+        pose proof (IHexpr2_1 szB1 szB2).
+        pose proof (IHexpr2_1 szB1 hi_sz).
+        destruct (eval_expr_aux expr1 [] sys input).
+        destruct (eval_expr_aux expr2_1 [] sys input).
+        destruct (eval_expr_aux expr2_1 l sys input).
+        cbn in *. subst.
+        destruct (eval_expr_aux expr2_2 l0 sys input) eqn:Eq1.
+        destruct (eval_expr_aux expr2_2 (l0 ++ l) sys input) eqn:Eq2.
+        destruct (eval_expr_aux expr2_1 [] sys input).
+        destruct (eval_expr_aux expr2_1 l sys input).
+        cbn in *. subst.
+        destruct (eval_expr_aux expr2_2 l3 sys input) eqn:Eq5.
+        destruct (eval_expr_aux expr2_2 (l3 ++ l) sys input) eqn:Eq6.
+        apply (f_equal snd) in Eq1.
+        apply (f_equal snd) in Eq2.
+        apply (f_equal snd) in Eq5.
+        apply (f_equal snd) in Eq6.
+        cbn in *. subst.
+        apply (snd_eval_expr_aux_app_log expr2_2 _ l sys input).
     - cbn.
       pose proof (IHexpr2_2 szB1 szB2).
       pose proof (IHexpr2_3 szB1 szB2).
@@ -1720,8 +1785,22 @@ Section SynthesisCorrectness.
               set (x1 := eval_expr_aux expr1 [] sys input) at 2. destruct x1.
               destruct (eval_expr_aux expr2 l sys input). cbn in *. 
               apply snd_eval_expr_aux_app2.
-            ++ unfold BitFuns.bitfun_of_predicate. destr. 
+            ++ unfold BitFuns.bitfun_of_predicate. destr.
           ** apply inputs_are_buffered_expr_log. exact Hin_buf.
+      - (* tf_concat: two evaluations at different widths like tf_cmp, but with
+           no operator sub-case to split on, so the tf_mul skeleton plus tf_cmp's
+           extra [set]/[destruct] for the second evaluation. *)
+        cbn. rewrite interp_synth_convert.
+        cbn. rewrite IHexpr1; clear IHexpr1; try assumption. cbn. rewrite IHexpr2; clear IHexpr2.
+        * cbn. f_equal. f_equal. f_equal.
+          unfold expr_log. rewrite <- fold_right_app. simpl. f_equal.
+          destruct (eval_expr_aux expr1 [] sys input) as [val1 log_expr1] eqn:Eq1.
+          destruct (eval_expr_aux expr2 log_expr1 sys input) as [val2 log_expr2] eqn:Eq2.
+          apply (f_equal snd) in Eq1. apply (f_equal snd) in Eq2. cbn in *. subst.
+          set (x1 := eval_expr_aux expr1 [] sys input) at 2. destruct x1.
+          destruct (eval_expr_aux expr2 l sys input). cbn in *.
+          apply snd_eval_expr_aux_app2.
+        * apply inputs_are_buffered_expr_log. exact Hin_buf.
     + (* If *)
       cbn. unfold opt_bind. rewrite IHexpr1; try assumption.
       destruct (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size expr1 sys input) eqn:Eq1.

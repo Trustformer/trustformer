@@ -189,6 +189,13 @@ Section VariableScheduler.
         let! id1 := dataflow_expr src1 szC in
         let! id2 := dataflow_expr src2 szC in
         emit (DFG_Binary op id1 id2) sz
+      (* SPIKE: the only binary op whose two operands have DIFFERENT declared
+         widths, which is why the uniform tactic in [dataflow_expr_fg] has to
+         gain a case rather than absorbing this one. *)
+      | tf_concat hz lz =>
+        let! id1 := dataflow_expr src1 hz in
+        let! id2 := dataflow_expr src2 lz in
+        emit (DFG_Binary op id1 id2) sz
       | _ =>
         let! id1 := dataflow_expr src1 sz in
         let! id2 := dataflow_expr src2 sz in
@@ -349,6 +356,8 @@ Section VariableScheduler.
                         | tf_sub => 2
                         | tf_mul => 5
                         | tf_cmp _ _ => 1
+                        (* SPIKE: concatenation is pure wiring. *)
+                        | tf_concat _ _ => 0
                         end
     | DFG_Resize _ => 0
     | DFG_Phi _ _ _ => 1
