@@ -255,9 +255,15 @@ Section FunctionalSpecification.
        [armed] is set ONLY while crypt_valid is low.  That is the whole
        two-phase arming fix (REVIEW.md section 2.1): a core that holds [done]
        high from its previous request cannot satisfy arm-and-fire, so the module
-       WEDGES instead of latching a stale result.  Wedging is the intended
-       failure -- at the KDF->SIGN step a stale result would publish the
-       Attestation Key on [dout]. *)
+       WEDGES instead of latching a stale result.
+
+       "Wedged" is this campaign's term (MVP.md section 6, REVIEW.md section
+       2.8) for the state where [pend] is nonzero forever: a step is recorded as
+       in flight, so every command is refused, and no Continue can clear it
+       because the completion guard can never be satisfied.  It is deliberate
+       and it is fail-stop -- at Stage 4's KDF->SIGN step, latching a stale
+       result instead would publish the Attestation Key on [dout].  The only
+       recovery is _MARS_Init, which clears [pend] unconditionally (Stage 4). *)
     Definition issue (op: nat) (pend: nat)
                      (msg: @tf_expr fs_states fs_inputs fs_outputs) (len: nat)
         : @tf_ops fs_states fs_inputs fs_outputs :=
