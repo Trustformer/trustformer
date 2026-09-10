@@ -190,7 +190,34 @@ Section FunctionalSpecification.
     Definition unsupported : @tf_ops fs_states fs_inputs fs_outputs :=
         guard_failure {[ let $fs_out_rc := #MARS_RC_COMMAND ]}.
 
-    Definition fs_transitions
+    (* An output variable HOLDS its value unless an action writes it, so a stale
+       result survives every command that does not overwrite it -- after a Quote,
+       [dout] would keep driving the signature on 256 wires until the next
+       RegRead.  Every command therefore clears the RESULT registers first.
+
+       Scope matters, and only these two (later [snap]) may be cleared:
+         - [pcr0]/[pcr1]/[failure] -- and later [st]/[pend]/[armed] -- are
+           outputs only because non-secret state is modelled that way
+           (MVP.md section 6.1).  Clearing them per command would wipe the
+           measurement chain on every command.
+         - the trusted crypt_* ports must stay STABLE from the request arm to
+           the completion arm, so clearing them at command start would destroy
+           an in-flight request.  Their rule is the opposite shape: zeroize at
+           sequence end and in every error arm (REVIEW.md section 2.7).
+
+       Measured free: +1 node on CapabilityGet, +0 on RegRead, +2 on an excluded
+       command; no change to buffers or to any action's cycle bounds. *)
+    Definition clear_results (body: @tf_ops fs_states fs_inputs fs_outputs)
+        : @tf_ops fs_states fs_inputs fs_outputs :=
+    {[
+        let $fs_out_dout := #0;
+        let $fs_out_cap  := #0;
+        `body`
+    ]}.
+
+    (* One arm per command code.  Wrapped by [fs_transitions] below, which is
+       the only definition the scheduler sees. *)
+    Definition fs_command
         (act: fs_action)
         :
         (@tf_ops fs_states fs_inputs fs_outputs)
@@ -240,8 +267,11 @@ Section FunctionalSpecification.
             ]}
 
         (* MARS_RegRead -- spec section 8.3.2.  An out-of-range index is
-           MARS_RC_REG (7), not MARS_RC_VALUE; [dout] is left untouched, as the
-           reference emulator leaves the caller's buffer untouched. *)
+           MARS_RC_REG (7), not MARS_RC_VALUE, and [dout] reads zero because
+           [clear_results] already cleared it.  The C emulator instead leaves
+           the CALLER's buffer untouched, which has no analogue on an MMIO
+           result register; either way the host contract is the same, "check rc
+           before using dout". *)
         | fs_act_regread =>
             guard_failure {[
                 if ($fs_in_idx ==[arg_sz] #0) then
@@ -266,6 +296,10 @@ Section FunctionalSpecification.
         | fs_act_sign             => unsupported
         | fs_act_signatureverify  => unsupported
         end.
+
+    Definition fs_transitions (act: fs_action)
+        : (@tf_ops fs_states fs_inputs fs_outputs) :=
+        clear_results (fs_command act).
 
     Definition fs_step := tf_ops_run fs_states_size fs_inputs_size fs_outputs_size.
 
@@ -351,13 +385,25 @@ Section Vectors.
                       = Bits.of_nat 16 MARS_RC_VALUE.
     Proof. reflexivity. Qed.
 
-    (* An invalid tag leaves [cap] untouched, exactly as the reference emulator
-       leaves the caller's buffer untouched -- oracle/stage1.expected shows the
-       0x0fff sentinel surviving pt = 0, 12 and 13. *)
+    (* An invalid tag clears [cap] rather than leaving it stale: no command may
+       return a previous command's result.  This is where the module and the C
+       emulator DIVERGE by design -- oracle/stage1.expected shows the 0x0fff
+       sentinel surviving pt = 0, 12 and 13, because there the sentinel lives in
+       the CALLER's buffer, which an MMIO result register has no analogue for.
+       Either way the host contract is the same: check rc before using cap. *)
     Definition o_cap_sentinel :=
         ContextEnv.(putenv) o_zero fs_out_cap (Bits.of_nat 16 4095).
-    Example cap_holds_on_invalid : cap_of fs_act_capabilityget 0 0 o_cap_sentinel
-                      = Bits.of_nat 16 4095.
+    Example cap_cleared_on_invalid : cap_of fs_act_capabilityget 0 0 o_cap_sentinel
+                      = Bits.zero.
+    Proof. reflexivity. Qed.
+
+    (* And a stale result never survives a command that does not produce one:
+       RegRead clears [cap], CapabilityGet clears [dout]. *)
+    Example regread_clears_cap : cap_of fs_act_regread 0 0 o_cap_sentinel
+                      = Bits.zero.
+    Proof. reflexivity. Qed.
+    Example unsupported_clears_cap : cap_of fs_act_sequencehash 0 0 o_cap_sentinel
+                      = Bits.zero.
     Proof. reflexivity. Qed.
 
     (* MARS_RegRead over two distinguishable PCRs. *)
@@ -385,6 +431,19 @@ Section Vectors.
                       = Bits.zero.
     Proof. reflexivity. Qed.
 
+    (* The three state-carrying outputs must SURVIVE every command unchanged --
+       they are outputs only because non-secret state is modelled that way, and
+       clearing them per command would wipe the measurement chain.  Pinned so
+       [clear_results] can never quietly grow to cover them. *)
+    Example pcr0_survives_regread :
+        ContextEnv.(getenv) (run fs_act_regread 0 2 o_pcrs) fs_out_pcr0
+        = Bits.of_nat digest_sz 42.
+    Proof. reflexivity. Qed.
+    Example pcr1_survives_capabilityget :
+        ContextEnv.(getenv) (run fs_act_capabilityget MARS_PT_PCR 0 o_pcrs) fs_out_pcr1
+        = Bits.of_nat digest_sz 99.
+    Proof. reflexivity. Qed.
+
     (* An excluded command answers MARS_RC_COMMAND, not the previous rc. *)
     Example unsupported_rc : rc_of fs_act_sequencehash 0 0 o_pcrs
                       = Bits.of_nat 16 MARS_RC_COMMAND.
@@ -409,6 +468,12 @@ Section Vectors.
     Proof. reflexivity. Qed.
     Example failed_capabilityget_cap : cap_of fs_act_capabilityget MARS_PT_PCR 0 o_failed
                       = Bits.of_nat 16 2.
+    Proof. reflexivity. Qed.
+
+    (* [failure] itself survives too -- it is state, not a result. *)
+    Example failure_survives_capabilityget :
+        ContextEnv.(getenv) (run fs_act_capabilityget MARS_PT_PCR 0 o_failed) fs_out_failure
+        = Ob~1.
     Proof. reflexivity. Qed.
 
 End Vectors.
