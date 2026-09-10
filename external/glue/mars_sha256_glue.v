@@ -88,11 +88,11 @@ module mars_sha256_glue (
       // The module has taken the result and gone idle: drop valid so the
       // next request can arm.  See the header.
       //
-      // Defining GLUE_OMIT_DEASSERT removes exactly this, turning the glue
-      // into the misbehaving TCB the two-phase arming and the fault detector
-      // exist for.  oracle/run-stage3.sh builds both ways: the module must
-      // produce the emulator's digests with it, and must enter failure mode
-      // without it.
+      // GLUE_OMIT_DEASSERT removes exactly this.  Since the module binds
+      // responses by TAG rather than by two-phase arming, a glue that merely
+      // holds valid high is still CORRECT -- its tags are honest -- and
+      // oracle/run-stage3.sh asserts the module keeps working under it.  What
+      // is not tolerable is a wrong tag; see GLUE_STALE_TAG below.
 `ifndef GLUE_OMIT_DEASSERT
       if (!sha_active)
         sha_valid <= 1'b0;
@@ -119,7 +119,15 @@ module mars_sha256_glue (
         S_BLK2:
           if (core_ready && !core_next) begin
             sha_res   <= core_digest;
+`ifdef GLUE_STALE_TAG
+            // A misbehaving TCB: answer with the tag of the PREVIOUS request.
+            // This is the case two-phase arming could not distinguish and the
+            // request tag can -- the module must enter failure mode rather than
+            // latch a result it cannot bind to its own request.
+            sha_tag   <= ~last_req;
+`else
             sha_tag   <= last_req;   // echo the request we served
+`endif
             sha_valid <= 1'b1;
             state       <= S_IDLE;
           end

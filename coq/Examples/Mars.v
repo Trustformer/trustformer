@@ -43,6 +43,15 @@ Section FunctionalSpecification.
     Definition PEND_EXT0   := 1.
     Definition PEND_EXT1   := 2.
     Definition PEND_DPINIT := 3.
+    Definition PEND_SNAP   := 4.
+    Definition PEND_KDF    := 5.
+    Definition PEND_SIGN   := 6.
+
+    (* Key-derivation labels, spec section 5.5.  The label is the ONLY thing
+       separating a restricted attestation key from an unrestricted signing
+       key, which is why the framing stays inside the verified module. *)
+    Definition MARS_LD := 68.   (* 'D' -- DP from PS *)
+    Definition MARS_LR := 82.   (* 'R' -- restricted AK, used by Quote *)
 
     (* Table 4 response codes (spec section 6.2). *)
     Definition MARS_RC_SUCCESS := 0.
@@ -161,6 +170,12 @@ Section FunctionalSpecification.
        "never bus-mapped", which is the protection wanted. *)
     | in_ps
     | in_init_req
+    (* MARS_Quote *)
+    | in_regsel
+    | in_nonce
+    | in_ctx
+    | in_nlen
+    | in_ctxlen
     .
 
     (* PCRs are OUTPUT variables, not state variables: they are meant to be
@@ -176,8 +191,13 @@ Section FunctionalSpecification.
     | out_pcr1
     | out_failure
     | out_pend       (* which crypto step is in flight; 0 = idle *)
-    | out_armed      (* two-phase arming, REVIEW.md section 2.1  *)
     | out_st         (* 0 = uninitialized, 1 = DP is valid       *)
+    | out_snap       (* MARS_Quote: the device snapshot           *)
+    (* MARS_Quote's context, latched at issue.  Inputs are re-sampled on every
+       step (MVP.md section 5.3), so a multi-step command would otherwise be
+       able to mix arguments from two different invocations.  [in_nonce] needs
+       no latch -- it is consumed in the snapshot at step 1. *)
+    | out_ctx
     | out_sha_req       (* toggles on each new SHA-256 request      *)
     | out_sha_active    (* a SHA-256 request is outstanding         *)
     | out_hmac_req
@@ -216,6 +236,11 @@ Section FunctionalSpecification.
     | in_hmac_tag   => 1
     | in_ps         => digest_sz
     | in_init_req   => 1
+    | in_regsel     => 32
+    | in_nonce      => digest_sz
+    | in_ctx        => digest_sz
+    | in_nlen       => arg_sz
+    | in_ctxlen     => arg_sz
     end.
 
     Definition fs_outputs_size (x: fs_outputs) : nat :=
@@ -227,8 +252,9 @@ Section FunctionalSpecification.
     | out_pcr1      => digest_sz
     | out_failure   => 1
     | out_pend      => pend_sz
-    | out_armed     => 1
     | out_st        => 1
+    | out_snap      => digest_sz
+    | out_ctx       => digest_sz
     | out_sha_req     => 1
     | out_sha_active  => 1
     | out_hmac_req    => 1
@@ -258,13 +284,15 @@ Section FunctionalSpecification.
     | in_sha_res  | in_sha_valid  | in_sha_tag  => Secret
     | in_hmac_res | in_hmac_valid | in_hmac_tag => Secret
     | in_ps | in_init_req                      => Secret
+    (* Quote's arguments are the host's own; nothing secret about them. *)
+    | in_regsel | in_nonce | in_ctx | in_nlen | in_ctxlen => Public
     end.
 
     Definition fs_outputs_class (x: fs_outputs) : port_class :=
     match x with
     (* handshake bits an observer could see on the bus edge anyway *)
     | out_rc | out_cap | out_dout | out_pcr0 | out_pcr1 | out_failure
-    | out_pend | out_armed | out_st
+    | out_pend | out_st | out_snap | out_ctx
     | out_sha_req | out_sha_active | out_hmac_req | out_hmac_active => Public
     (* everything carrying data *)
     | out_sha_msg | out_sha_len
@@ -315,41 +343,54 @@ Section FunctionalSpecification.
           (tf_op2 (tf_concat digest_sz digest_sz) (tf_ovar pcr) (tf_ivar in_dig))
           (tf_const 0).
 
-    (* Per-group handshake predicates.  [out_armed] stays global -- [out_pend]
-       holds one value, so at most one group is ever outstanding -- while
-       [_active] says WHICH group, and doubles as the signal the adapter watches
-       to know the result was consumed (MVP.md section 9, A7). *)
+    (* Per-group handshake predicates: a response counts when the group has a
+       request outstanding, the IP asserts valid, AND the tag echoes the request
+       bit that was driven at issue.  [tf_ovar] reads the pre-cycle value, so
+       [_req] here is the one that was sent.
+
+       There is no [armed] bit any more, and its removal is a fix rather than a
+       simplification.  Two-phase arming -- arm only while valid is low -- was
+       REVIEW.md section 2.1's "no DSL change" fallback, offered BEFORE the
+       request tag existed; that section calls the tag the proper fix.  With
+       both, two consecutive requests to the SAME group deadlock: MARS_Quote's
+       KDF step completes and immediately issues SIGN, so [_active] never drops,
+       the adapter never deasserts valid (A7), and the second request can never
+       arm.  Quote would wedge at step 3 every time.
+
+       The tag alone is sound and strictly more informative.  A core holding
+       [done] from the previous request echoes the PREVIOUS tag, which no longer
+       equals [_req] -- so instead of silently failing to arm, the module now
+       raises a protocol violation and enters failure mode.  Detected beats
+       stuck. *)
     Definition resp_ok (v_valid v_tag: fs_inputs) (o_req o_active: fs_outputs)
         : @tf_expr fs_states fs_inputs fs_outputs :=
         tf_op2 tf_and
-          (tf_op2 tf_and (tf_ovar out_armed) (tf_ovar o_active))
-          (tf_op2 tf_and (tf_ivar v_valid)
-            (tf_op2 (tf_cmp 1 tf_eq) (tf_ivar v_tag) (tf_ovar o_req))).
+          (tf_op2 tf_and (tf_ovar o_active) (tf_ivar v_valid))
+          (tf_op2 (tf_cmp 1 tf_eq) (tf_ivar v_tag) (tf_ovar o_req)).
 
-    (* A response for a request that is not the outstanding one.  Keyed on
-       [_active], not [out_armed]: the core that holds [done] high across
-       requests is precisely the one the module never armed, so an armed-keyed
-       test would miss the case it exists for. *)
+    (* A response for a request that is not the outstanding one: the group has
+       something in flight, the IP says valid, and the tag names a DIFFERENT
+       request.  Spec section 5.6 requires failure mode on "any other internal
+       error", and answering a request that is not outstanding is one. *)
     Definition violation (v_valid v_tag: fs_inputs) (o_req o_active: fs_outputs)
         : @tf_expr fs_states fs_inputs fs_outputs :=
         tf_op2 tf_and
           (tf_op2 tf_and (tf_ovar o_active) (tf_ivar v_valid))
           (tf_op2 (tf_cmp 1 tf_neq) (tf_ivar v_tag) (tf_ovar o_req)).
 
-    (* Issue a request: drive the port, flip the request bit, record the step.
+    (* Issue a request: drive the port, flip the request bit, mark the group
+       active, record the step.  Flipping [_req] is what makes the next response
+       bindable: a leftover answer to the previous request carries the previous
+       tag and can no longer match.
 
-       [out_armed] is set ONLY while in_sha_valid is low.  That is the whole
-       two-phase arming fix (REVIEW.md section 2.1): a core that holds [done]
-       high from its previous request cannot satisfy arm-and-fire, so the module
-       WEDGES instead of latching a stale result.
-
-       "Wedged" is this campaign's term (MVP.md section 6, REVIEW.md section
-       2.8) for the state where [out_pend] is nonzero forever: a step is recorded as
-       in flight, so every command is refused, and no Continue can clear it
-       because the completion guard can never be satisfied.  It is deliberate
-       and it is fail-stop -- at Stage 4's KDF->SIGN step, latching a stale
-       result instead would publish the Attestation Key on [out_dout].  The only
-       recovery is _MARS_Init, which clears [out_pend] unconditionally (Stage 4). *)
+       If the IP misbehaves anyway, the module is fail-stop.  Either the tag
+       mismatches and it enters failure mode, or no valid ever arrives and it
+       WEDGES -- this campaign's term (MVP.md section 6, REVIEW.md section 2.8)
+       for [out_pend] nonzero forever: a step is recorded in flight, every
+       command is refused, and no Continue can clear it because the completion
+       guard can never be satisfied.  Deliberate, because at the KDF->SIGN step
+       latching an unbound result would publish the Attestation Key on
+       [out_dout].  The only recovery is _MARS_Init. *)
     Definition issue_sha (step: nat)
                      (msg: @tf_expr fs_states fs_inputs fs_outputs) (len: nat)
         : @tf_ops fs_states fs_inputs fs_outputs :=
@@ -359,11 +400,10 @@ Section FunctionalSpecification.
         let $out_sha_active := #1;
         let $out_sha_req    := !$out_sha_req;
         let $out_pend       := #step;
-        let $out_armed      := ($in_sha_valid ==[1] #0);
         let $out_rc         := #MARS_RC_SUCCESS
     ]}.
 
-    (* A response counts only if the module out_armed it, the IP asserts valid, AND
+    (* A response for a request that is not the outstanding one.
        the tag echoes the request bit that was driven at issue.  [tf_ovar] reads
        the pre-cycle value, so [out_sha_req] here is the one that was sent. *)
 
@@ -372,10 +412,9 @@ Section FunctionalSpecification.
        requires out_failure mode on "any other internal error", and an answer to a
        request that is not the outstanding one is exactly that.
 
-       Keyed on [out_pend], not on [out_armed], deliberately.  The dangerous case is the
-       core that holds [done] high across requests: the module then never out_armed,
-       so an out_armed-keyed test would miss it and the device would sit silently
-       wedged.  Keying on [out_pend] catches both that and a genuine mismatch, while
+       Keyed on [_active], deliberately: it is true exactly while a request is
+       outstanding on that group, which is what makes a mismatched tag an
+       error rather than noise.  Keying on [out_pend] catches both that and a genuine mismatch, while
        still excluding the two harmless cases -- an early Continue (valid low)
        and a spurious Continue with nothing outstanding (out_pend = 0). *)
 
@@ -400,7 +439,6 @@ Section FunctionalSpecification.
     {[
         `zeroize`;
         let $out_pend    := #PEND_IDLE;
-        let $out_armed   := #0;
         let $out_failure := #1;
         let $out_rc      := #MARS_RC_FAILURE
     ]}.
@@ -412,7 +450,6 @@ Section FunctionalSpecification.
     {[
         `zeroize`;
         let $out_pend  := #PEND_IDLE;
-        let $out_armed := #0;
         let $out_rc    := #MARS_RC_SUCCESS
     ]}.
 
@@ -450,13 +487,68 @@ Section FunctionalSpecification.
     Definition dpinit_msg : @tf_expr fs_states fs_inputs fs_outputs :=
         tf_op2 (tf_concat 104 408)
           (tf_op2 (tf_concat 32 72) (tf_const 1)
-            (tf_op2 (tf_concat 8 64) (tf_const 68)          (* 'D' = MARS_LD *)
+            (tf_op2 (tf_concat 8 64) (tf_const MARS_LD)     (* 'D' *)
               (tf_op2 (tf_concat 8 56) (tf_const 0)
                 (tf_op2 (tf_concat 8 48) (tf_const 112)     (* 'p' *)
                   (tf_op2 (tf_concat 8 40) (tf_const 114)   (* 'r' *)
                     (tf_op2 (tf_concat 8 32) (tf_const 100) (* 'd' *)
                       (tf_const 8192)))))))                 (* [L]_4, L = 8192 *)
           (tf_const 0).
+
+    (* CryptSnapshot, spec section 5.6.9 / reference mars.c:
+
+         regSelect (4 bytes, BIG ENDIAN) || REG[i] for each selected i || nonce
+
+       Big-endian regSelect is informative in the spec and comes from the
+       reference implementation, so the Profile pins it (MVP.md section 2).
+       Four shapes over two PCRs, three distinct lengths: 36 / 68 / 68 / 100
+       bytes, left-aligned in the 1024-bit SHA port.
+
+       Note the trailing field is the NONCE, not the context: MARS_Quote calls
+       CryptSnapshot(snapshot, regSelect, nonce, nlen).  The context goes to the
+       KDF at the next step, which is a different message entirely. *)
+    Definition snap_none : @tf_expr fs_states fs_inputs fs_outputs :=
+        tf_op2 (tf_concat 288 736)
+          (tf_op2 (tf_concat 32 256) (tf_ivar in_regsel) (tf_ivar in_nonce))
+          (tf_const 0).
+
+    Definition snap_one (pcr: fs_outputs) : @tf_expr fs_states fs_inputs fs_outputs :=
+        tf_op2 (tf_concat 544 480)
+          (tf_op2 (tf_concat 32 512) (tf_ivar in_regsel)
+            (tf_op2 (tf_concat digest_sz digest_sz) (tf_ovar pcr) (tf_ivar in_nonce)))
+          (tf_const 0).
+
+    Definition snap_both : @tf_expr fs_states fs_inputs fs_outputs :=
+        tf_op2 (tf_concat 800 224)
+          (tf_op2 (tf_concat 32 768) (tf_ivar in_regsel)
+            (tf_op2 (tf_concat digest_sz 512) (tf_ovar out_pcr0)
+              (tf_op2 (tf_concat digest_sz digest_sz) (tf_ovar out_pcr1)
+                (tf_ivar in_nonce))))
+          (tf_const 0).
+
+    (* The AK derivation frame: same CryptSkdf shape as [dpinit_msg], with a
+       32-byte context instead of the three-byte "prd".  42 bytes. *)
+    Definition ak_kdf_msg : @tf_expr fs_states fs_inputs fs_outputs :=
+        tf_op2 (tf_concat 336 176)
+          (tf_op2 (tf_concat 32 304) (tf_const 1)
+            (tf_op2 (tf_concat 8 296) (tf_const MARS_LR)
+              (tf_op2 (tf_concat 8 288) (tf_const 0)
+                (tf_op2 (tf_concat digest_sz 32) (tf_ovar out_ctx)
+                  (tf_const 8192)))))
+          (tf_const 0).
+
+    (* CryptSign's message is the 32-byte snapshot, left-aligned. *)
+    Definition sign_msg : @tf_expr fs_states fs_inputs fs_outputs :=
+        tf_op2 (tf_concat digest_sz 256) (tf_ovar out_snap) (tf_const 0).
+
+    (* Hand a completed group back to idle so its adapter drops valid (A7) and
+       the next request can arm. *)
+    Definition done_sha : @tf_ops fs_states fs_inputs fs_outputs :=
+    {[ let $out_sha_msg := #0; let $out_sha_active := #0 ]}.
+
+    Definition done_hmac : @tf_ops fs_states fs_inputs fs_outputs :=
+    {[ let $out_hmac_key := #0; let $out_hmac_msg := #0;
+       let $out_hmac_active := #0 ]}.
 
     Definition issue_hmac (step: nat)
                      (key msg: @tf_expr fs_states fs_inputs fs_outputs) (len: nat)
@@ -468,7 +560,6 @@ Section FunctionalSpecification.
         let $out_hmac_active := #1;
         let $out_hmac_req    := !$out_hmac_req;
         let $out_pend        := #step;
-        let $out_armed       := ($in_hmac_valid ==[1] #0);
         let $out_rc          := #MARS_RC_SUCCESS
     ]}.
 
@@ -484,7 +575,7 @@ Section FunctionalSpecification.
        RegRead.  Every command therefore clears the RESULT registers first.
 
        Scope matters, and only these two (later [snap]) may be cleared:
-         - [out_pcr0]/[out_pcr1]/[out_failure] -- and later [st]/[out_pend]/[out_armed] -- are
+         - [out_pcr0]/[out_pcr1]/[out_failure] -- and later [out_st]/[out_pend] -- are
            outputs only because non-secret state is modelled that way
            (MVP.md section 6.1).  Clearing them per command would wipe the
            measurement chain on every command.
@@ -606,6 +697,11 @@ Section FunctionalSpecification.
                     else if ($out_pend ==[pend_sz] #PEND_EXT1) then
                         let $out_pcr1 := $in_sha_res;
                         `finish`
+                    else if ($out_pend ==[pend_sz] #PEND_SNAP) then
+                        (* step 2: snapshot taken, now derive the AK *)
+                        let $out_snap := $in_sha_res;
+                        `done_sha`;
+                        `issue_hmac PEND_KDF (tf_svar st_dp) ak_kdf_msg 42`
                     else
                         let $out_rc := #MARS_RC_VALUE
                 else if `violation in_hmac_valid in_hmac_tag out_hmac_req out_hmac_active` then
@@ -616,6 +712,19 @@ Section FunctionalSpecification.
                            reset sequence: DP is valid from here on *)
                         let $st_dp  := $in_hmac_res;
                         let $out_st := #1;
+                        `finish`
+                    else if ($out_pend ==[pend_sz] #PEND_KDF) then
+                        (* step 3: AK derived.  It goes to a state variable and
+                           straight back out as the signing key -- never to a
+                           Public output. *)
+                        let $st_ak := $in_hmac_res;
+                        `issue_hmac PEND_SIGN (tf_svar st_ak) sign_msg 32`
+                    else if ($out_pend ==[pend_sz] #PEND_SIGN) then
+                        (* step 4: the signature is the result.  AK is zeroized
+                           here rather than left in a register, per MVP.md
+                           section 2.2 deviation 5. *)
+                        let $out_dout := $in_hmac_res;
+                        let $st_ak    := #0;
                         `finish`
                     else
                         let $out_rc := #MARS_RC_VALUE
@@ -663,7 +772,40 @@ Section FunctionalSpecification.
         | act_derive           => unsupported
         | act_dpderive         => unsupported
         | act_publicread       => unsupported
-        | act_quote            => unsupported
+        (* MARS_Quote -- spec section 8.5.1.  Four strobes, three round trips:
+             1  this arm      -> SNAP : hash regSelect || REGs || nonce
+             2  Continue      -> KDF  : AK  = HMAC(DP, [1]||'R'||0||ctx||[L])
+             3  Continue      -> SIGN : sig = HMAC(AK, snapshot)
+             4  Continue      -> idle : dout := sig, AK zeroized
+
+           Step 3 -> 4 is the one REVIEW.md section 2.1 is about: consecutive
+           arms assign the result to [st_ak] and then to [out_dout], which is
+           Public, so one cycle of staleness would publish the Attestation Key
+           in clear.  Arming plus tag binding is what stops it, and the
+           adversarial vectors below attack exactly that. *)
+        | act_quote =>
+            guard_failure (guard_init (guard_busy {[
+                if ($in_nlen !=[arg_sz] #32) then
+                    let $out_rc := #MARS_RC_VALUE
+                else if ($in_ctxlen !=[arg_sz] #32) then
+                    let $out_rc := #MARS_RC_VALUE
+                else
+                    (* latch the context: step 2 needs it, and by then the
+                       inputs may carry another command's arguments *)
+                    let $out_ctx := $in_ctx;
+                    if ($in_regsel ==[32] #0) then
+                        `issue_sha PEND_SNAP snap_none 36`
+                    else if ($in_regsel ==[32] #1) then
+                        `issue_sha PEND_SNAP (snap_one out_pcr0) 68`
+                    else if ($in_regsel ==[32] #2) then
+                        `issue_sha PEND_SNAP (snap_one out_pcr1) 68`
+                    else if ($in_regsel ==[32] #3) then
+                        `issue_sha PEND_SNAP snap_both 100`
+                    else
+                        (* regSelect names a register this Profile does not
+                           implement -- mars.c: regSelect >> PROFILE_COUNT_REG *)
+                        let $out_rc := #MARS_RC_REG
+            ]}))
         | act_sign             => unsupported
         | act_signatureverify  => unsupported
         end.
@@ -702,6 +844,7 @@ Section Vectors.
     Definition arg_full (pt idx dig res: nat) (valid tag: bool)
                         (hres: nat) (hvalid htag: bool)
                         (ps: nat) (ireq: bool)
+                        (rsel nonce ctx nlen ctxlen: nat)
         (x : fs_inputs) : bits_t (fs_inputs_size x) :=
         match x with
         | in_pt         => Bits.of_nat arg_sz pt
@@ -715,10 +858,15 @@ Section Vectors.
         | in_hmac_tag   => if htag then Ob~1 else Ob~0
         | in_ps         => Bits.of_nat digest_sz ps
         | in_init_req   => if ireq then Ob~1 else Ob~0
+        | in_regsel     => Bits.of_nat 32 rsel
+        | in_nonce      => Bits.of_nat digest_sz nonce
+        | in_ctx        => Bits.of_nat digest_sz ctx
+        | in_nlen       => Bits.of_nat arg_sz nlen
+        | in_ctxlen     => Bits.of_nat arg_sz ctxlen
         end.
 
     Definition arg (pt idx : nat) :=
-        arg_full pt idx 0 0 false false 0 false false 0 false.
+        arg_full pt idx 0 0 false false 0 false false 0 false 0 0 0 32 32.
 
     Definition step (act: fs_action)
         (input: forall x, bits_t (fs_inputs_size x)) (sys: sys_t) : sys_t :=
@@ -744,9 +892,9 @@ Section Vectors.
        when the HMAC core answers.  Everything after this point starts from a
        device that has actually been initialized -- which it must, because the
        [st] gate refuses every command except MARS_CapabilityGet before it. *)
-    Definition arg_boot := arg_full 0 0 0 0 false false 0 false false 5 true.
+    Definition arg_boot := arg_full 0 0 0 0 false false 0 false false 5 true 0 0 0 32 32.
     Definition arg_hmac (r: nat) (v t: bool) :=
-        arg_full 0 0 0 0 false false r v t 0 false.
+        arg_full 0 0 0 0 false false r v t 0 false 0 0 0 32 32.
 
     Definition sys_init  : sys_t := step act_init arg_boot sys_zero.
     Definition sys_ready : sys_t := step act_continue (arg_hmac 77 true true) sys_init.
@@ -869,9 +1017,6 @@ Section Vectors.
     Example unsupported_rc : rc_of act_sequencehash 0 0 o_pcrs
                       = Bits.of_nat 16 MARS_RC_COMMAND.
     Proof. reflexivity. Qed.
-    Example quote_not_yet : rc_of act_quote 0 0 o_pcrs
-                      = Bits.of_nat 16 MARS_RC_COMMAND.
-    Proof. reflexivity. Qed.
 
     (* Failure mode (spec section 5.3.1): everything except MARS_CapabilityGet
        answers MARS_RC_FAILURE, and the out_failure answer preempts
@@ -908,12 +1053,12 @@ Section Vectors.
     (* Step 1: host issues PcrExtend(in_idx, in_dig). *)
     Definition ext (idx dig: nat) out :=
         run_in act_pcrextend
-          (arg_full 0 idx dig 0 false false 0 false false 0 false) out.
+          (arg_full 0 idx dig 0 false false 0 false false 0 false 0 0 0 32 32) out.
 
     (* Step 2: glue pulses Continue with whatever the SHA core is driving. *)
     Definition cont (res: nat) (valid tag: bool) out :=
         run_in act_continue
-          (arg_full 0 0 0 res valid tag 0 false false 0 false) out.
+          (arg_full 0 0 0 res valid tag 0 false false 0 false 0 0 0 32 32) out.
 
     (* Any other command, for the interleaving tests. *)
     Definition other (act: fs_action) (pt idx: nat) out := run act pt idx out.
@@ -933,8 +1078,7 @@ Section Vectors.
     (* out_sha_req toggled 0 -> 1, so a matching tag is 1. *)
     Example issue_req       : get issued out_sha_req = Ob~1.
     Proof. reflexivity. Qed.
-    (* in_sha_valid was low at issue, so the request is out_armed. *)
-    Example issue_armed     : get issued out_armed     = Ob~1.
+    Example issue_active    : get issued out_sha_active = Ob~1.
     Proof. reflexivity. Qed.
 
     (* The message is PCR[0] || in_dig, left-aligned: out_pcr0 in the top 256 bits,
@@ -972,7 +1116,7 @@ Section Vectors.
     Proof. reflexivity. Qed.
     Example done_pend  : get completed out_pend      = Bits.of_nat pend_sz PEND_IDLE.
     Proof. reflexivity. Qed.
-    Example done_armed : get completed out_armed     = Ob~0.
+    Example done_inactive : get completed out_sha_active = Ob~0.
     Proof. reflexivity. Qed.
     (* Zeroized, so nothing stays driven on the trusted port. *)
     Example done_op    : get completed out_sha_active = Ob~0.
@@ -1008,7 +1152,7 @@ Section Vectors.
     (* One unambiguous stuck state, not two: failed, not also wedged. *)
     Example stale_tag_pend    : get faulted out_pend      = Bits.of_nat pend_sz PEND_IDLE.
     Proof. reflexivity. Qed.
-    Example stale_tag_armed   : get faulted out_armed     = Ob~0.
+    Example stale_tag_inactive : get faulted out_sha_active = Ob~0.
     Proof. reflexivity. Qed.
     (* Nothing left driven on the trusted port. *)
     Example stale_tag_op      : get faulted out_sha_active = Ob~0.
@@ -1043,7 +1187,7 @@ Section Vectors.
     Proof. reflexivity. Qed.
 
     (* --- ATTACK: Continue twice ------------------------------------------ *)
-    (* The second one finds out_pend = 0 and out_armed = 0 and does nothing. *)
+    (* The second one finds the group inactive and does nothing. *)
     Example twice_pcr0 : get (cont 666 true true completed) out_pcr0 = Bits.of_nat digest_sz 123.
     Proof. reflexivity. Qed.
     Example twice_rc   : get (cont 666 true true completed) out_rc   = Bits.of_nat 16 MARS_RC_VALUE.
@@ -1057,35 +1201,22 @@ Section Vectors.
 
     (* --- ATTACK: the IP holds done high across requests ------------------- *)
     (* A real core (secworks/sha256, OpenTitan hmac) holds [done] until the next
-       start.  Arming only while in_sha_valid is LOW means such a core leaves the
-       module unarmed: it WEDGES rather than latching a result it cannot bind to
-       its request.  Fail-stop is the intended outcome -- at Stage 4 the stale
-       result would be published as the Attestation Key. *)
+       start.  It therefore answers the NEW request while still showing the tag
+       of the OLD one, and that mismatch is now a detected protocol violation
+       rather than a silent failure to arm.  This is why two-phase arming was
+       dropped in favour of the tag: the tag turns the same situation from
+       "stuck" into "failure mode, with a reason". *)
     Definition issued_stuck :=
         run_in act_pcrextend
-          (arg_full 0 0 7 0 true false 0 false false 0 false) o_pcrs.
+          (arg_full 0 0 7 0 true false 0 false false 0 false 0 0 0 32 32) o_pcrs.
 
-    Example stuck_pend    : get issued_stuck out_pend  = Bits.of_nat pend_sz PEND_EXT0.
+    Example stuck_pend   : get issued_stuck out_pend = Bits.of_nat pend_sz PEND_EXT0.
     Proof. reflexivity. Qed.
-    Example stuck_unarmed : get issued_stuck out_armed = Ob~0.
-    Proof. reflexivity. Qed.
-    (* ...and no later Continue, however well-formed, can complete it. *)
-    Example stuck_wedged_pcr0 : get (cont 666 true true issued_stuck) out_pcr0
-                              = Bits.of_nat digest_sz 42.
-    Proof. reflexivity. Qed.
-    Example stuck_wedged_rc   : get (cont 666 true true issued_stuck) out_rc
-                              = Bits.of_nat 16 MARS_RC_VALUE.
-    Proof. reflexivity. Qed.
-    Example stuck_wedged_pend : get (cont 666 true true issued_stuck) out_pend
-                              = Bits.of_nat pend_sz PEND_EXT0.
+    Example stuck_active : get issued_stuck out_sha_active = Ob~1.
     Proof. reflexivity. Qed.
 
-    (* That vector gives the core the benefit of the doubt: it holds done AND
-       echoes a matching tag, which we cannot distinguish from a real answer we
-       failed to arm, so the module stays conservatively wedged.  A core that
-       really is showing its PREVIOUS result echoes the PREVIOUS tag, and then
-       [out_pend]-keyed detection catches it -- which is why the violation test is
-       keyed on [out_pend] and not on [out_armed]. *)
+    (* The core is still showing its PREVIOUS result, so its tag is the previous
+       request bit -- which no longer matches. *)
     Example stuck_stale_tag_failure : get (cont 666 true false issued_stuck) out_failure = Ob~1.
     Proof. reflexivity. Qed.
     Example stuck_stale_tag_rc      : get (cont 666 true false issued_stuck) out_rc
@@ -1146,7 +1277,7 @@ Section Vectors.
     Proof. reflexivity. Qed.
     Example init_hmac_req    : get sys_init out_hmac_req = Ob~1.
     Proof. reflexivity. Qed.
-    Example init_armed       : get sys_init out_armed = Ob~1.
+    Example init_active      : get sys_init out_hmac_active = Ob~1.
     Proof. reflexivity. Qed.
     Example init_st_still_0  : get sys_init out_st = Ob~0.
     Proof. reflexivity. Qed.
@@ -1246,7 +1377,7 @@ Section Vectors.
 
     (* --- Init is not host-reachable ------------------------------------- *)
     (* Without the protected request line it does nothing at all. *)
-    Definition arg_noreq := arg_full 0 0 0 0 false false 0 false false 5 false.
+    Definition arg_noreq := arg_full 0 0 0 0 false false 0 false false 5 false 0 0 0 32 32.
     Example init_needs_req_rc :
       get (step act_init arg_noreq sys_zero) out_rc = Bits.of_nat 16 MARS_RC_VALUE.
     Proof. reflexivity. Qed.
@@ -1255,6 +1386,190 @@ Section Vectors.
     Proof. reflexivity. Qed.
     Example init_needs_req_pend :
       get (step act_init arg_noreq sys_zero) out_pend = Bits.of_nat pend_sz PEND_IDLE.
+    Proof. reflexivity. Qed.
+
+    (* ---------------------------------------------------------------------
+       MARS_Quote.  Four strobes, three round trips.
+       --------------------------------------------------------------------- *)
+
+    Definition arg_quote (rsel nonce ctx: nat) :=
+        arg_full 0 0 0 0 false false 0 false false 0 false rsel nonce ctx 32 32.
+    Definition arg_quote_len (rsel nl cl: nat) :=
+        arg_full 0 0 0 0 false false 0 false false 0 false rsel 0 0 nl cl.
+    Definition cont_h (r: nat) (v t: bool) sys := step act_continue (arg_hmac r v t) sys.
+
+    (* regSelect = 3 selects both PCRs: the 100-byte shape. *)
+    Definition q1 := step act_quote (arg_quote 3 9 11) o_pcrs.
+
+    Example q1_pend   : get q1 out_pend = Bits.of_nat pend_sz PEND_SNAP.
+    Proof. reflexivity. Qed.
+    Example q1_active : get q1 out_sha_active = Ob~1.
+    Proof. reflexivity. Qed.
+    Example q1_len    : get q1 out_sha_len = Bits.of_nat 16 100.
+    Proof. reflexivity. Qed.
+    (* the context is latched at issue, because step 2 needs it and the inputs
+       will have moved on by then *)
+    Example q1_ctx_latched : get q1 out_ctx = Bits.of_nat digest_sz 11.
+    Proof. reflexivity. Qed.
+
+    (* The snapshot's field order, which is what MARS correctness rests on:
+       regSelect big-endian first, then each selected register in index order,
+       then the nonce.  100 bytes left-aligned in the 1024-bit port. *)
+    Example snap3_regsel : Bits.slice 992 32 (get q1 out_sha_msg) = Bits.of_nat 32 3.
+    Proof. reflexivity. Qed.
+    Example snap3_pcr0   : Bits.slice 736 digest_sz (get q1 out_sha_msg)
+                         = Bits.of_nat digest_sz 42.
+    Proof. reflexivity. Qed.
+    Example snap3_pcr1   : Bits.slice 480 digest_sz (get q1 out_sha_msg)
+                         = Bits.of_nat digest_sz 99.
+    Proof. reflexivity. Qed.
+    Example snap3_nonce  : Bits.slice 224 digest_sz (get q1 out_sha_msg)
+                         = Bits.of_nat digest_sz 9.
+    Proof. reflexivity. Qed.
+    Example snap3_pad    : Bits.slice 0 224 (get q1 out_sha_msg) = Bits.zero.
+    Proof. reflexivity. Qed.
+
+    (* The other three shapes, by length and by which register lands where. *)
+    Definition q1_none := step act_quote (arg_quote 0 9 11) o_pcrs.
+    Example snap0_len   : get q1_none out_sha_len = Bits.of_nat 16 36.
+    Proof. reflexivity. Qed.
+    Example snap0_nonce : Bits.slice 736 digest_sz (get q1_none out_sha_msg)
+                        = Bits.of_nat digest_sz 9.
+    Proof. reflexivity. Qed.
+
+    Definition q1_pcr0 := step act_quote (arg_quote 1 9 11) o_pcrs.
+    Example snap1_len  : get q1_pcr0 out_sha_len = Bits.of_nat 16 68.
+    Proof. reflexivity. Qed.
+    Example snap1_reg  : Bits.slice 736 digest_sz (get q1_pcr0 out_sha_msg)
+                       = Bits.of_nat digest_sz 42.
+    Proof. reflexivity. Qed.
+
+    Definition q1_pcr1 := step act_quote (arg_quote 2 9 11) o_pcrs.
+    Example snap2_len  : get q1_pcr1 out_sha_len = Bits.of_nat 16 68.
+    Proof. reflexivity. Qed.
+    (* regSelect = 2 selects PCR1 only, so PCR1 -- not PCR0 -- sits in the slot
+       right after the selector.  Getting this wrong is the classic snapshot
+       bug and it would still hash to something plausible. *)
+    Example snap2_reg  : Bits.slice 736 digest_sz (get q1_pcr1 out_sha_msg)
+                       = Bits.of_nat digest_sz 99.
+    Proof. reflexivity. Qed.
+
+    (* --- argument validation -------------------------------------------- *)
+    Example quote_bad_regsel : get (step act_quote (arg_quote 4 9 11) o_pcrs) out_rc
+                             = Bits.of_nat 16 MARS_RC_REG.
+    Proof. reflexivity. Qed.
+    Example quote_bad_regsel_issues_nothing :
+      get (step act_quote (arg_quote 4 9 11) o_pcrs) out_sha_active = Ob~0.
+    Proof. reflexivity. Qed.
+    Example quote_bad_nlen : get (step act_quote (arg_quote_len 3 16 32) o_pcrs) out_rc
+                           = Bits.of_nat 16 MARS_RC_VALUE.
+    Proof. reflexivity. Qed.
+    Example quote_bad_ctxlen : get (step act_quote (arg_quote_len 3 32 16) o_pcrs) out_rc
+                             = Bits.of_nat 16 MARS_RC_VALUE.
+    Proof. reflexivity. Qed.
+    Example quote_before_init : get (step act_quote (arg_quote 3 9 11) sys_zero) out_rc
+                              = Bits.of_nat 16 MARS_RC_VALUE.
+    Proof. reflexivity. Qed.
+
+    (* --- the honest sequence -------------------------------------------- *)
+    (* sha_req was 0, so the snapshot answer carries tag = 1.  hmac_req was 1
+       after Init, so the KDF answer carries tag = 0 and the sign answer tag = 1;
+       the alternation is exactly what binds each response to its request. *)
+    Definition q2 := cont 1000 true true  q1.   (* snapshot back  *)
+    Definition q3 := cont_h 2000 true false q2.  (* AK back        *)
+    Definition q4 := cont_h 3000 true true  q3.  (* signature back *)
+
+    Example q2_snap    : get q2 out_snap = Bits.of_nat digest_sz 1000.
+    Proof. reflexivity. Qed.
+    Example q2_pend    : get q2 out_pend = Bits.of_nat pend_sz PEND_KDF.
+    Proof. reflexivity. Qed.
+    (* the KDF is keyed with DP, and DP came from Init *)
+    Example q2_key_is_dp : get q2 out_hmac_key = Bits.of_nat digest_sz 77.
+    Proof. reflexivity. Qed.
+    Example q2_len     : get q2 out_hmac_len = Bits.of_nat 16 42.
+    Proof. reflexivity. Qed.
+    (* the SHA group is handed back so its adapter drops valid (A7) *)
+    Example q2_sha_idle : get q2 out_sha_active = Ob~0.
+    Proof. reflexivity. Qed.
+
+    (* The AK frame: [1]_4 || 'R' || 0x00 || ctx_32 || [8192]_4.  The label is
+       the ONLY thing separating a restricted attestation key from an
+       unrestricted signing key (spec section 5.5), which is why it is built
+       here and not in the adapter. *)
+    Example akkdf_counter : Bits.slice 480 32 (get q2 out_hmac_msg) = Bits.of_nat 32 1.
+    Proof. reflexivity. Qed.
+    Example akkdf_label   : Bits.slice 472 8 (get q2 out_hmac_msg)
+                          = Bits.of_nat 8 MARS_LR.
+    Proof. reflexivity. Qed.
+    Example akkdf_sep     : Bits.slice 464 8 (get q2 out_hmac_msg) = Bits.zero.
+    Proof. reflexivity. Qed.
+    Example akkdf_ctx     : Bits.slice 208 digest_sz (get q2 out_hmac_msg)
+                          = Bits.of_nat digest_sz 11.
+    Proof. reflexivity. Qed.
+    Example akkdf_L       : Bits.slice 176 32 (get q2 out_hmac_msg)
+                          = Bits.of_nat 32 8192.
+    Proof. reflexivity. Qed.
+
+    Example q3_pend  : get q3 out_pend = Bits.of_nat pend_sz PEND_SIGN.
+    Proof. reflexivity. Qed.
+    Example q3_ak    : get_st q3 st_ak = Bits.of_nat digest_sz 2000.
+    Proof. reflexivity. Qed.
+    (* the AK becomes the signing key, and the message is the snapshot *)
+    Example q3_key_is_ak : get q3 out_hmac_key = Bits.of_nat digest_sz 2000.
+    Proof. reflexivity. Qed.
+    Example q3_msg_is_snap : Bits.slice 256 digest_sz (get q3 out_hmac_msg)
+                           = Bits.of_nat digest_sz 1000.
+    Proof. reflexivity. Qed.
+    Example q3_len   : get q3 out_hmac_len = Bits.of_nat 16 32.
+    Proof. reflexivity. Qed.
+
+    (* THE step that matters: at pend = KDF the AK is in flight, and [out_dout]
+       is Public.  It must not have moved. *)
+    Example q3_ak_not_published : get q3 out_dout = Bits.zero.
+    Proof. reflexivity. Qed.
+
+    Example q4_sig   : get q4 out_dout = Bits.of_nat digest_sz 3000.
+    Proof. reflexivity. Qed.
+    Example q4_pend  : get q4 out_pend = Bits.of_nat pend_sz PEND_IDLE.
+    Proof. reflexivity. Qed.
+    (* AK zeroized at sequence end rather than left in a register -- MVP.md
+       section 2.2 deviation 5, mitigating the section 5.5 departure. *)
+    Example q4_ak_zeroized  : get_st q4 st_ak = Bits.zero.
+    Proof. reflexivity. Qed.
+    Example q4_key_zeroized : get q4 out_hmac_key = Bits.zero.
+    Proof. reflexivity. Qed.
+    Example q4_msg_zeroized : get q4 out_hmac_msg = Bits.zero.
+    Proof. reflexivity. Qed.
+    Example q4_snap_visible : get q4 out_snap = Bits.of_nat digest_sz 1000.
+    Proof. reflexivity. Qed.
+
+    (* --- ATTACK: publish the AK at step 3 -> 4 --------------------------- *)
+    (* REVIEW.md section 2.1's escalation.  At pend = SIGN the next result lands
+       on [out_dout], which is Public.  A response the module cannot bind to its
+       own request must never get there -- otherwise the value on [out_dout] is
+       the Attestation Key in clear. *)
+    Example sign_stale_tag_faults : get (cont_h 2000 true false q3) out_failure = Ob~1.
+    Proof. reflexivity. Qed.
+    Example sign_stale_tag_no_publish :
+      get (cont_h 2000 true false q3) out_dout = Bits.zero.
+    Proof. reflexivity. Qed.
+    Example sign_no_valid_no_publish :
+      get (cont_h 2000 false true q3) out_dout = Bits.zero.
+    Proof. reflexivity. Qed.
+    Example sign_no_valid_still_pending :
+      get (cont_h 2000 false true q3) out_pend = Bits.of_nat pend_sz PEND_SIGN.
+    Proof. reflexivity. Qed.
+    (* and the SHA group answering while an HMAC step is outstanding does
+       nothing either -- the groups are bound separately *)
+    Example sign_wrong_group : get (cont 2000 true true q3) out_dout = Bits.zero.
+    Proof. reflexivity. Qed.
+
+    (* --- ATTACK: interleave into a Quote --------------------------------- *)
+    Example quote_busy_refuses_regread :
+      get (run act_regread 0 0 q1) out_rc = Bits.of_nat 16 MARS_RC_VALUE.
+    Proof. reflexivity. Qed.
+    Example quote_busy_keeps_pend :
+      get (run act_regread 0 0 q1) out_pend = Bits.of_nat pend_sz PEND_SNAP.
     Proof. reflexivity. Qed.
 
 End Vectors.

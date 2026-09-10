@@ -30,7 +30,7 @@ module tb_mars_pcrextend;
   wire [15:0] rc, cap;
   wire [255:0] dout, pcr0, pcr1;
   wire [7:0]  pend;
-  wire        armed, failure, st;
+  wire        failure, st;
 
   // SHA-256 group
   wire          sha_req, sha_active;
@@ -77,8 +77,17 @@ module tb_mars_pcrextend;
       .out_param_pub_out_pcr1_arg(pcr1),             .out_param_pub_out_pcr1_out(1'b0),
       .out_param_pub_out_failure_arg(failure),       .out_param_pub_out_failure_out(1'b0),
       .out_param_pub_out_pend_arg(pend),             .out_param_pub_out_pend_out(1'b0),
-      .out_param_pub_out_armed_arg(armed),           .out_param_pub_out_armed_out(1'b0),
       .out_param_pub_out_st_arg(st),                 .out_param_pub_out_st_out(1'b0),
+      .out_param_pub_out_snap_arg(),                 .out_param_pub_out_snap_out(1'b0),
+      .out_param_pub_out_ctx_arg(),                  .out_param_pub_out_ctx_out(1'b0),
+
+      // MARS_Quote arguments -- tied to a legal-but-unused vector; Quote itself
+      // is exercised in Coq and, byte-exactly, at Stage 4c against a real HMAC.
+      .in_param_pub_in_regsel_out(32'd0),  .in_param_pub_in_regsel_arg(),
+      .in_param_pub_in_nonce_out(256'd0),  .in_param_pub_in_nonce_arg(),
+      .in_param_pub_in_ctx_out(256'd0),    .in_param_pub_in_ctx_arg(),
+      .in_param_pub_in_nlen_out(16'd32),   .in_param_pub_in_nlen_arg(),
+      .in_param_pub_in_ctxlen_out(16'd32), .in_param_pub_in_ctxlen_arg(),
 
       .out_param_pub_out_sha_req_arg(sha_req),       .out_param_pub_out_sha_req_out(1'b0),
       .out_param_pub_out_sha_active_arg(sha_active), .out_param_pub_out_sha_active_out(1'b0),
@@ -215,7 +224,7 @@ module tb_mars_pcrextend;
     reg_read(16'd0);
     $display("RegRead      i =0  rc=%0d dig=%064x", rc, dout);
 
-    $display("FINAL        failure=%0d pend=%0d armed=%0d sha_active=%0d", failure, pend, armed, sha_active);
+    $display("FINAL        failure=%0d pend=%0d st=%0d sha_active=%0d", failure, pend, st, sha_active);
     $finish;
   end
 
