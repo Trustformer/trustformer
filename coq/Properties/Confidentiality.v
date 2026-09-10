@@ -25,21 +25,30 @@ Import ListNotations.
     survives composition is "every Public output is secret-free; Secret outputs
     may be arbitrary", carried across the whole sequence.
 
-    WHAT IS PROVED, precisely.  Two runs whose SECRET STATE differs arbitrarily,
-    starting from Public outputs that agree and driven by the same inputs, end
-    with Public outputs that still agree -- after any sequence of actions.  So
-    no secret register ever reaches an attacker-visible port through the
-    module's own wiring.
+    WHAT IS PROVED is a FACTORISATION, not an indistinguishability.  Read it as:
 
-    WHAT IS NOT PROVED, and cannot be.  The input is shared between the two
-    runs, which models "the crypto IP returned the same answer to both".  For
-    MARS that is the assume-guarantee surface made concrete: MVP.md section 9 A1
-    says crypt_res is the HMAC of the presented message, i.e. a FUNCTION of what
-    the module sent.  Two runs with different DP send different keys and would
-    get different answers back, so this theorem says nothing about them -- and
-    it must not, because [dout = HMAC(AK, snap)] IS a function of AK by
-    construction and exporting a DP-derived MAC is the entire point of
-    MARS_Quote.
+      the Public outputs are a function of the public data and the IP's
+      responses; the secret registers are not among the arguments.
+
+    Formally: two runs whose SECRET STATE differs arbitrarily, starting from
+    Public outputs that agree and driven by the SAME inputs, end with Public
+    outputs that still agree.  Fixing the inputs is what isolates the module's
+    own contribution -- so the content is that the only route from ps/dp/ak to
+    an attacker-visible port is out through a Secret port and back in as an IP
+    response.  The module's wiring adds nothing.
+
+    IT DOES NOT SAY TWO DEVICES WITH DIFFERENT SECRETS LOOK THE SAME.  They do
+    not, and obviously so: different DP means a different crypt_key, so the IP
+    returns a different hmac_res and MARS_Quote returns a different signature.
+    Those two runs violate the shared-input hypothesis and the theorem says
+    nothing whatever about them -- correctly, because [dout = HMAC(AK, snap)] IS
+    a function of AK by construction and exporting a DP-derived MAC is the
+    entire point of MARS_Quote.
+
+    The shared input is MVP.md section 9 A1 made concrete: A1 says crypt_res is
+    the HMAC of the presented message, i.e. a FUNCTION of what the module sent.
+    Quantifying over runs where that function returned the same value is how the
+    module's own dataflow is separated from the cryptography's.
 
     The honest reading is therefore ROADMAP.md's tiers: the only route from a
     secret to a Public port is through the crypto oracle.  Everything the module
@@ -302,9 +311,12 @@ Section Confidentiality.
       exact (sf_ops_sound _ false (Hall a) sys sys' input Hpub).
   Qed.
 
-  (* The reading that matters: two devices whose SECRETS differ arbitrarily are
-     indistinguishable on their Public ports, for any command sequence. *)
-  Corollary secrets_never_reach_public
+  (* The reading that matters: with the IP's responses held fixed, the secret
+     registers contribute NOTHING to any Public port -- for any command
+     sequence.  Named for what it rules out, a direct flow, rather than for
+     indistinguishability, which is a different and false claim: two devices
+     with different DP produce different quotes, and are meant to. *)
+  Corollary no_direct_secret_flow
       (acts: list (tfs_spec_action ctx)) (input: input_t)
       (secrets secrets': ContextEnv.(env_t) (tf_states_type s_sz))
       (pub: ContextEnv.(env_t) (tf_outputs_type o_sz)) :
@@ -324,4 +336,4 @@ Print Assumptions sf_expr_sound.
 Print Assumptions sf_ops_guarded_frozen.
 Print Assumptions sf_ops_sound.
 Print Assumptions seq_confidential.
-Print Assumptions secrets_never_reach_public.
+Print Assumptions no_direct_secret_flow.
