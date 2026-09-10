@@ -21,15 +21,19 @@ Section MarsDischarge.
   Theorem mars_secret_free : forall a, sf_action tfs_ctx a = true.
   Proof. intro a; destruct a; vm_compute; reflexivity. Qed.
 
-  (* Hence: two MARS devices whose PS, DP and AK differ arbitrarily are
-     indistinguishable on their Public ports, for any command sequence.
+  (* Hence, for MARS: with the crypto IP's responses held fixed, PS, DP and AK
+     contribute nothing to any Public port, for any command sequence.  The
+     module's Public outputs are a function of the public data and what the IP
+     handed back -- the secret registers are not among the arguments.
 
-     Read it with MVP.md section 9 A1 in hand: the inputs are shared, which
-     models "the crypto IP answered both the same".  What this rules out is the
-     module routing a secret to an attacker-visible port through its own wiring.
-     It does not rule out -- and must not -- [dout] depending on AK, because
-     [dout = HMAC(AK, snap)] and exporting that MAC is what MARS_Quote is for. *)
-  Theorem mars_secrets_never_reach_public
+     This is NOT "two MARS devices with different seeds look alike".  They do
+     not: a different DP yields a different AK and therefore a different
+     MARS_Quote signature, which is the entire purpose of the command.  Those
+     runs violate the shared-input hypothesis.  What is ruled out is the module
+     routing a secret to an attacker-visible port through its own wiring, so
+     that every DP-dependence of [dout] factors through the IP (MVP.md
+     section 9, A1). *)
+  Theorem mars_no_direct_secret_flow
       (acts: list (tfs_spec_action tfs_ctx))
       (input: forall x, bits_t (fs_inputs_size x))
       (secrets secrets': ContextEnv.(env_t) (tf_states_type fs_states_size))
@@ -38,7 +42,7 @@ Section MarsDischarge.
       (snd (run_seq tfs_ctx acts (secrets, pub) input)).[o]
       = (snd (run_seq tfs_ctx acts (secrets', pub) input)).[o].
   Proof.
-    exact (secrets_never_reach_public tfs_ctx acts input secrets secrets' pub
+    exact (no_direct_secret_flow tfs_ctx acts input secrets secrets' pub
              mars_secret_free).
   Qed.
 
@@ -125,4 +129,4 @@ Section NotVacuous.
 End NotVacuous.
 
 Print Assumptions mars_secret_free.
-Print Assumptions mars_secrets_never_reach_public.
+Print Assumptions mars_no_direct_secret_flow.
