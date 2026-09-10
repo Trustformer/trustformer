@@ -308,21 +308,43 @@ Section TypedSynthesis.
       | ext_output x => {$ spec_outputs_t x ~> bits_t 1 $}
       end.
 
+    (* Port names carry the DECLARED confidentiality class.
+
+       The class is composed in here rather than typed into the variable's own
+       name on purpose: a hand-written prefix can disagree with
+       [tfs_spec_*_class] and nothing would catch it, whereas a generated one
+       cannot.  A reader of the netlist -- or a wrapper generator deciding what
+       may be memory-mapped -- can then see the classification without a sidecar
+       file, and users stay free to name their variables whatever they like.
+
+       The tag is emitted unconditionally, including for an all-[Public] module:
+       an optional tag would make "nothing declared" and "everything public"
+       indistinguishable from the name. *)
+    Definition port_name (prefix: string) (c: port_class) (n: string) : string :=
+      String.append prefix
+        (String.append (class_tag c) (String.append "_" n)).
+
+    Definition in_name (x: spec_inputs) : string :=
+      port_name "in_param_" (tfs_inputs_class (tf_sched_ctx tf_ctx) x) (show x).
+
+    Definition out_name (y: spec_outputs) : string :=
+      port_name "out_param_" (tfs_outputs_class (tf_sched_ctx tf_ctx) y) (show y).
+
     Definition ext_fn_specs (fn : ext_fn_t) := 
       match fn with
       | ext_in_cmd => {| efr_name := "in_cmd"; 
                         efr_internal := false |}
-      | ext_input x => {| efr_name := String.append "in_param_" (show x); 
+      | ext_input x => {| efr_name := in_name x; 
                           efr_internal := false |}
-      | ext_output x => {| efr_name := String.append "out_param_" (show x); 
+      | ext_output x => {| efr_name := out_name x; 
                            efr_internal := false |}
       end.
 
     Instance ext_fn_names : Show ext_fn_t :=
       { show := fun r => match r with
           | ext_in_cmd => "in_cmd"
-          | ext_input x => String.append "in_param_" (show x)
-          | ext_output x => String.append "out_param_" (show x)
+          | ext_input x => in_name x
+          | ext_output x => out_name x
           end
       }.
     

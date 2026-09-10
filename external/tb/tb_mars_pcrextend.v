@@ -42,27 +42,27 @@ module tb_mars_pcrextend;
       .CLK(CLK), .RST_N(RST_N),
       .in_cmd_out(in_cmd), .in_cmd_arg(ready),
 
-      .in_param_fs_in_pt_out(a_pt),   .in_param_fs_in_pt_arg(),
-      .in_param_fs_in_idx_out(a_idx), .in_param_fs_in_idx_arg(),
-      .in_param_fs_in_dig_out(a_dig), .in_param_fs_in_dig_arg(),
+      .in_param_pub_in_pt_out(a_pt),   .in_param_pub_in_pt_arg(),
+      .in_param_pub_in_idx_out(a_idx), .in_param_pub_in_idx_arg(),
+      .in_param_pub_in_dig_out(a_dig), .in_param_pub_in_dig_arg(),
 
-      .in_param_fs_in_crypt_res_out(crypt_res),     .in_param_fs_in_crypt_res_arg(),
-      .in_param_fs_in_crypt_valid_out(crypt_valid), .in_param_fs_in_crypt_valid_arg(),
-      .in_param_fs_in_crypt_tag_out(crypt_tag),     .in_param_fs_in_crypt_tag_arg(),
+      .in_param_sec_in_crypt_res_out(crypt_res),     .in_param_sec_in_crypt_res_arg(),
+      .in_param_sec_in_crypt_valid_out(crypt_valid), .in_param_sec_in_crypt_valid_arg(),
+      .in_param_sec_in_crypt_tag_out(crypt_tag),     .in_param_sec_in_crypt_tag_arg(),
 
-      .out_param_fs_out_rc_arg(rc),             .out_param_fs_out_rc_out(1'b0),
-      .out_param_fs_out_cap_arg(cap),           .out_param_fs_out_cap_out(1'b0),
-      .out_param_fs_out_dout_arg(dout),         .out_param_fs_out_dout_out(1'b0),
-      .out_param_fs_out_pcr0_arg(pcr0),         .out_param_fs_out_pcr0_out(1'b0),
-      .out_param_fs_out_pcr1_arg(pcr1),         .out_param_fs_out_pcr1_out(1'b0),
-      .out_param_fs_out_failure_arg(failure),   .out_param_fs_out_failure_out(1'b0),
-      .out_param_fs_out_pend_arg(pend),         .out_param_fs_out_pend_out(1'b0),
-      .out_param_fs_out_armed_arg(armed),       .out_param_fs_out_armed_out(1'b0),
-      .out_param_fs_out_crypt_req_arg(crypt_req), .out_param_fs_out_crypt_req_out(1'b0),
-      .out_param_fs_out_crypt_op_arg(crypt_op), .out_param_fs_out_crypt_op_out(1'b0),
-      .out_param_fs_out_crypt_key_arg(crypt_key), .out_param_fs_out_crypt_key_out(1'b0),
-      .out_param_fs_out_crypt_msg_arg(crypt_msg), .out_param_fs_out_crypt_msg_out(1'b0),
-      .out_param_fs_out_crypt_len_arg(crypt_len), .out_param_fs_out_crypt_len_out(1'b0)
+      .out_param_pub_out_rc_arg(rc),             .out_param_pub_out_rc_out(1'b0),
+      .out_param_pub_out_cap_arg(cap),           .out_param_pub_out_cap_out(1'b0),
+      .out_param_pub_out_dout_arg(dout),         .out_param_pub_out_dout_out(1'b0),
+      .out_param_pub_out_pcr0_arg(pcr0),         .out_param_pub_out_pcr0_out(1'b0),
+      .out_param_pub_out_pcr1_arg(pcr1),         .out_param_pub_out_pcr1_out(1'b0),
+      .out_param_pub_out_failure_arg(failure),   .out_param_pub_out_failure_out(1'b0),
+      .out_param_pub_out_pend_arg(pend),         .out_param_pub_out_pend_out(1'b0),
+      .out_param_pub_out_armed_arg(armed),       .out_param_pub_out_armed_out(1'b0),
+      .out_param_pub_out_crypt_req_arg(crypt_req), .out_param_pub_out_crypt_req_out(1'b0),
+      .out_param_sec_out_crypt_op_arg(crypt_op), .out_param_sec_out_crypt_op_out(1'b0),
+      .out_param_sec_out_crypt_key_arg(crypt_key), .out_param_sec_out_crypt_key_out(1'b0),
+      .out_param_sec_out_crypt_msg_arg(crypt_msg), .out_param_sec_out_crypt_msg_out(1'b0),
+      .out_param_sec_out_crypt_len_arg(crypt_len), .out_param_sec_out_crypt_len_out(1'b0)
   );
 
   mars_sha256_glue glue (

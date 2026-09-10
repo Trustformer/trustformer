@@ -36,11 +36,13 @@ Section VariableScheduler.
   Local Notation inputs_var_eq_dec := (tfs_spec_inputs_eq_dec ctx).
   Local Notation inputs_var_fin := (tfs_spec_inputs_fin ctx).
   Local Notation inputs_var_size := (tfs_spec_inputs_size ctx).
+  Local Notation inputs_var_class := (tfs_spec_inputs_class ctx).
 
   Local Notation outputs_var := (tfs_spec_outputs ctx).
   Local Notation outputs_var_eq_dec := (tfs_spec_outputs_eq_dec ctx).
   Local Notation outputs_var_fin := (tfs_spec_outputs_fin ctx).
   Local Notation outputs_var_size := (tfs_spec_outputs_size ctx).
+  Local Notation outputs_var_class := (tfs_spec_outputs_class ctx).
 
   Local Notation spec_action := (tfs_spec_action ctx).
   Local Notation spec_action_eq_dec := (tfs_spec_action_eq_dec ctx).
@@ -1731,10 +1733,12 @@ Section VariableScheduler.
       tfs_inputs := inputs_var;
       tfs_inputs_size := inputs_var_size;
       tfs_inputs_fin := inputs_var_fin;
+      tfs_inputs_class := inputs_var_class;
 
       tfs_outputs := outputs_var;
       tfs_outputs_size := outputs_var_size;
       tfs_outputs_fin := outputs_var_fin;
+      tfs_outputs_class := outputs_var_class;
 
       tfs_action := spec_action;
       tfs_action_fin := spec_action_fin;
