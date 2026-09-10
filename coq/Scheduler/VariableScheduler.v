@@ -590,8 +590,18 @@ Section VariableScheduler.
       let args := get_args node in
       (* Only a read of pre-action secret state is a taint source: inputs and reads of
          the pre-action output state are both visible to the attacker. *)
+      (* Taint SOURCES: a read of pre-action secret state, and -- symmetrically
+         with the [public_dsts] filter on the write side -- a read of an output
+         the attacker cannot see.  Both are values not derivable from the public
+         view.  Leaving [DFG_OVar] unconditionally untainted here would be the
+         exact twin of the declassification hole: [crypt_key] holds DP, so a
+         read of it would be treated as public. *)
       let self_tainted := match op node with
         | DFG_Var (DFG_SVar _) => true
+        | DFG_Var (DFG_OVar o) => match outputs_var_class o with
+                                  | Public => false
+                                  | Secret => true
+                                  end
         | _ => false
         end in
       (* If node depends on secrets it is tainted *)

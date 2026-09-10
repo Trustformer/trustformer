@@ -262,6 +262,36 @@ Section IPR.
     rewrite Hop. cbn [orb]. left. reflexivity.
   Qed.
 
+  (* The read-side twin of [svar_tainted]: a read of an output the attacker
+     cannot see is a taint source too.  Same proof, one extra rewrite to compute
+     [self_tainted] through the class. *)
+  Lemma ovar_secret_tainted (act: tfs_action sched) (node: node_t) (ov: o_var) :
+    List.In node (graph (build_dfg ctx act)) ->
+    op node = DFG_Var (DFG_OVar ov) ->
+    tfs_spec_outputs_class ctx ov = Secret ->
+    ~ List.In (nid node) (untainted_roots ctx (build_dfg ctx act)) ->
+    List.In (nid node) (get_tainted ctx (build_dfg ctx act)).
+  Proof.
+    intros Hnode Hop Hcls Hnd.
+    destruct (in_split _ _ Hnode) as [pre [post Hsplit]].
+    unfold get_tainted. cbv zeta.
+    set (U := untainted_roots ctx (build_dfg ctx act)) in *.
+    match goal with |- context [fold_left ?F _ _] => set (aux := F) in * end.
+
+    assert (Hgrow : forall acc (b: node_t), incl acc (aux acc b)).
+    { intros acc b. unfold aux; cbn beta.
+      destruct (mem (nid b) U); [ apply incl_refl | ].
+      destruct (_ || _)%bool; [ apply incl_tl, incl_refl | apply incl_refl ]. }
+
+    rewrite Hsplit, fold_left_app. simpl.
+    set (accP := fold_left aux pre []).
+    apply (fold_left_grows aux Hgrow post (aux accP node)).
+    unfold aux; cbn beta.
+    destruct (mem (nid node) U) as [m | _].
+    { exfalso. apply Hnd. exact (member_In _ _ m). }
+    rewrite Hop, Hcls. cbn [orb]. left. reflexivity.
+  Qed.
+
   (* ------------------------------------------------------------------- *)
   (* PHASE 0: the public view, and what it means for a node to be         *)
   (* derivable from it.                                                    *)
@@ -285,8 +315,9 @@ Section IPR.
      is implied by plain equality of the observable outputs. *)
   Definition pub_eq (act: tfs_action sched) (a_idx: a_index) (input: input_t)
       (ss ss': sched_sys_state) : Prop :=
-    (forall o : o_var, (snd ss).[o] = (snd ss').[o])
-    /\ (forall (o: o_var) (r: nid_t),
+    (forall o : o_var, tfs_spec_outputs_class ctx o = Public ->
+        (snd ss).[o] = (snd ss').[o])
+    /\ (forall (o: o_var) (r: nid_t), tfs_spec_outputs_class ctx o = Public ->
           List.In (DFG_OVar o, r) (var_map (build_dfg ctx act)) ->
           nval ctx cost_limit act a_idx ss input (nsz act r) r
           = nval ctx cost_limit act a_idx ss' input (nsz act r) r).
@@ -305,11 +336,16 @@ Section IPR.
   (* [untainted_roots].                                                     *)
   (* ------------------------------------------------------------------- *)
 
+  (* Only a PUBLIC destination declassifies.  The [Public] hypothesis is what
+     keeps this lemma honest after V2a: an output the attacker cannot see is not
+     part of the public view, so its root is not derivable from it, and a secret
+     written there must stay tainted (REVIEW.md section 2.3). *)
   Lemma public_dst_derivable (act: tfs_action sched) (a_idx: a_index)
       (input: input_t) (o: o_var) (r: nid_t) :
+    tfs_spec_outputs_class ctx o = Public ->
     List.In (DFG_OVar o, r) (var_map (build_dfg ctx act)) ->
     derivable act a_idx input r.
-  Proof. intros Hin ss ss' [_ Hroots]. exact (Hroots o r Hin). Qed.
+  Proof. intros Hpub Hin ss ss' [_ Hroots]. exact (Hroots o r Hpub Hin). Qed.
 
   Lemma public_dsts_derivable (act: tfs_action sched) (a_idx: a_index)
       (input: input_t) (n: nid_t) :
@@ -321,7 +357,10 @@ Section IPR.
     simpl in Hsnd. subst r.
     apply filter_In in Hfil. destruct Hfil as [Hvm Hv].
     destruct v as [sv | ov]; [ discriminate Hv | ].
-    exact (public_dst_derivable act a_idx input ov n Hvm).
+    (* The filter now carries the class, so the hypothesis is available here
+       rather than having to be assumed. *)
+    destruct (tfs_spec_outputs_class ctx ov) eqn:Hcls; [ | discriminate Hv ].
+    exact (public_dst_derivable act a_idx input ov n Hcls Hvm).
   Qed.
 
   (* ------------------------------------------------------------------- *)
@@ -467,8 +506,8 @@ Section IPR.
     (forall o : o_var, (snd ss).[o] = (snd ss').[o]) ->
     pub_eq act a_idx input ss ss'.
   Proof.
-    intros Hno Hout. split; [ exact Hout | ].
-    intros o r Hin. destruct (Hno o r Hin).
+    intros Hno Hout. split; [ intros o _; exact (Hout o) | ].
+    intros o r _ Hin. destruct (Hno o r Hin).
   Qed.
 
   Lemma svar_nval (act: tfs_action sched) (a_idx: a_index)
@@ -617,7 +656,15 @@ Section IPR.
     - rewrite (nre_ovar ctx cost_limit act a_idx n ov H1 Hlen Eop).
       (* [nval] reads outputs at [tfs_outputs_size sched], [pub_eq] at the
          convertible [tfs_spec_outputs_size ctx], so [apply] not [rewrite]. *)
-      cbn [tf_eval_expr]. destruct Hpub as [Hout _]. f_equal. apply Hout.
+      cbn [tf_eval_expr]. destruct Hpub as [Hout _].
+      destruct (tfs_spec_outputs_class ctx ov) eqn:Hcls.
+      + f_equal. apply Hout. exact Hcls.
+      + (* reading an output the attacker cannot see is itself a taint source,
+           so an untainted node cannot be one -- the read-side twin of the
+           [DFG_SVar] case above *)
+        exfalso.
+        assert (Ht := ovar_secret_tainted act _ ov Hin Eop Hcls Hnr').
+        rewrite Hnid in Ht. exact (Hnt Ht).
 
     - assert (Ha : List.In arg (get_args ctx (nth n (graph (build_dfg ctx act))
                                                 {| nid := 0; op := DFG_Empty; sz := 0 |})))
@@ -1558,8 +1605,15 @@ Section IPR.
     (forall ov, (snd ss ).[ov] = (snd sp ).[ov]) ->
     (forall sv, (fst ss').[tf_dfg_s sv] = (fst sp').[sv]) ->
     (forall ov, (snd ss').[ov] = (snd sp').[ov]) ->
-    (forall ov, (snd sp).[ov] = (snd sp').[ov]) ->
-    (forall ov, (snd (spec_run act sp  input)).[ov]
+    (* PUBLIC outputs only, before and after.  An attacker cannot see a
+       [Secret] output, so requiring the two runs to agree on one would weaken
+       the hypothesis and, with it, the theorem: [crypt_key] holds DP, and two
+       runs differing in DP would simply fall outside a statement quantified
+       over all outputs. *)
+    (forall ov, tfs_spec_outputs_class ctx ov = Public ->
+                (snd sp).[ov] = (snd sp').[ov]) ->
+    (forall ov, tfs_spec_outputs_class ctx ov = Public ->
+                (snd (spec_run act sp  input)).[ov]
               = (snd (spec_run act sp' input)).[ov]) ->
     pub_eq act a_idx input ss ss'.
   Proof.
@@ -1569,10 +1623,10 @@ Section IPR.
     destruct (dfg_action_semantics ctx cost_limit act a_idx sp' ss' input
                 Halign Hs' Ho') as [_ [Hout' _]].
     split.
-    - intro o. rewrite (Ho o), (Ho' o). exact (Hpre o).
-    - intros o r Hin. unfold nval, node_ref_expr.
+    - intros o Hc. rewrite (Ho o), (Ho' o). exact (Hpre o Hc).
+    - intros o r Hc Hin. unfold nval, node_ref_expr.
       rewrite (pub_eq_root_width act o r Hin).
-      rewrite (Hout o r Hin), (Hout' o r Hin). exact (Hpost o).
+      rewrite (Hout o r Hin), (Hout' o r Hin). exact (Hpost o Hc).
   Qed.
 
   (* The campaign's headline, in observable terms: the cycle count depends only
@@ -1583,8 +1637,12 @@ Section IPR.
     act_idx_aligned ctx cost_limit act a_idx ->
     start_rel ctx cost_limit sp0  ss0  ->
     start_rel ctx cost_limit sp0' ss0' ->
-    (forall ov, (snd sp0).[ov] = (snd sp0').[ov]) ->
-    (forall ov, (snd (spec_run act sp0  input)).[ov]
+    (* Public outputs only -- see [obs_eq_pub_eq].  This is what makes the
+       corollary say something an attacker could actually exploit. *)
+    (forall ov, tfs_spec_outputs_class ctx ov = Public ->
+                (snd sp0).[ov] = (snd sp0').[ov]) ->
+    (forall ov, tfs_spec_outputs_class ctx ov = Public ->
+                (snd (spec_run act sp0  input)).[ov]
               = (snd (spec_run act sp0' input)).[ov]) ->
     first_done act input ss0  N ->
     first_done act input ss0' N' ->
@@ -1699,8 +1757,11 @@ Section IPR.
     act_idx_aligned ctx cost_limit act a_idx ->
     start_rel ctx cost_limit sp0  ss0  ->
     start_rel ctx cost_limit sp0' ss0' ->
-    (forall ov, (snd sp0).[ov] = (snd sp0').[ov]) ->
-    (forall ov, (snd (spec_run act sp0  input)).[ov]
+    (* Public outputs only -- see [obs_eq_pub_eq]. *)
+    (forall ov, tfs_spec_outputs_class ctx ov = Public ->
+                (snd sp0).[ov] = (snd sp0').[ov]) ->
+    (forall ov, tfs_spec_outputs_class ctx ov = Public ->
+                (snd (spec_run act sp0  input)).[ov]
               = (snd (spec_run act sp0' input)).[ov]) ->
     L act input ss0 = L act input ss0'.
   Proof.
