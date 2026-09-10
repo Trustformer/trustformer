@@ -292,6 +292,37 @@ Section IPR.
     rewrite Hop, Hcls. cbn [orb]. left. reflexivity.
   Qed.
 
+  (* The input-side sibling of [svar_tainted] and [ovar_secret_tainted].  Same
+     proof; [DFG_Input] is a different constructor from [DFG_Var], which is
+     exactly why it needed its own arm in [self_tainted] rather than being
+     covered by the existing ones. *)
+  Lemma input_secret_tainted (act: tfs_action sched) (node: node_t) (iv: i_var) :
+    List.In node (graph (build_dfg ctx act)) ->
+    op node = DFG_Input iv ->
+    tfs_spec_inputs_class ctx iv = Secret ->
+    ~ List.In (nid node) (untainted_roots ctx (build_dfg ctx act)) ->
+    List.In (nid node) (get_tainted ctx (build_dfg ctx act)).
+  Proof.
+    intros Hnode Hop Hcls Hnd.
+    destruct (in_split _ _ Hnode) as [pre [post Hsplit]].
+    unfold get_tainted. cbv zeta.
+    set (U := untainted_roots ctx (build_dfg ctx act)) in *.
+    match goal with |- context [fold_left ?F _ _] => set (aux := F) in * end.
+
+    assert (Hgrow : forall acc (b: node_t), incl acc (aux acc b)).
+    { intros acc b. unfold aux; cbn beta.
+      destruct (mem (nid b) U); [ apply incl_refl | ].
+      destruct (_ || _)%bool; [ apply incl_tl, incl_refl | apply incl_refl ]. }
+
+    rewrite Hsplit, fold_left_app. simpl.
+    set (accP := fold_left aux pre []).
+    apply (fold_left_grows aux Hgrow post (aux accP node)).
+    unfold aux; cbn beta.
+    destruct (mem (nid node) U) as [m | _].
+    { exfalso. apply Hnd. exact (member_In _ _ m). }
+    rewrite Hop, Hcls. cbn [orb]. left. reflexivity.
+  Qed.
+
   (* ------------------------------------------------------------------- *)
   (* PHASE 0: the public view, and what it means for a node to be         *)
   (* derivable from it.                                                    *)
@@ -313,21 +344,40 @@ Section IPR.
      every consumer reads its arguments at exactly their declared size, so this
      is no weaker than quantifying over all widths -- and unlike that version it
      is implied by plain equality of the observable outputs. *)
-  Definition pub_eq (act: tfs_action sched) (a_idx: a_index) (input: input_t)
-      (ss ss': sched_sys_state) : Prop :=
-    (forall o : o_var, tfs_spec_outputs_class ctx o = Public ->
+  (* The public view, over TWO runs.  The runs may differ in secret state and in
+     secret inputs; they agree on exactly what an attacker drives or observes.
+
+     Secret inputs are free to differ, and get no different treatment from
+     secret state.  Sharing one [input] across both runs would make every input
+     trivially derivable and the statement would say nothing about
+     input-dependent timing -- the analysis would then be stricter than the
+     theorem, which is the failure mode this file has already been bitten by
+     once on the output side.
+
+     What this does NOT model, deliberately: [crypt_res] is a free value here,
+     whereas physically it is whatever the IP returned for the request we sent
+     (MVP.md section 9, A1).  Free is STRONGER than oracle-determined, so the
+     latency result is not weakened by it -- but the value-level confidentiality
+     theorem cannot be stated this way and must consume A1 instead. *)
+  Definition pub_eq (act: tfs_action sched) (a_idx: a_index)
+      (input input': input_t) (ss ss': sched_sys_state) : Prop :=
+    (forall v : i_var, tfs_spec_inputs_class ctx v = Public -> input v = input' v)
+    /\ (forall o : o_var, tfs_spec_outputs_class ctx o = Public ->
         (snd ss).[o] = (snd ss').[o])
     /\ (forall (o: o_var) (r: nid_t), tfs_spec_outputs_class ctx o = Public ->
           List.In (DFG_OVar o, r) (var_map (build_dfg ctx act)) ->
           nval ctx cost_limit act a_idx ss input (nsz act r) r
-          = nval ctx cost_limit act a_idx ss' input (nsz act r) r).
+          = nval ctx cost_limit act a_idx ss' input' (nsz act r) r).
 
+  (* [derivable]'s signature is unchanged: the second run's input is quantified
+     INSIDE, so every lemma stated about derivability keeps its statement and
+     only the proofs that inspect [pub_eq] move. *)
   Definition derivable (act: tfs_action sched) (a_idx: a_index) (input: input_t)
       (n: nid_t) : Prop :=
-    forall ss ss',
-      pub_eq act a_idx input ss ss' ->
+    forall ss ss' input',
+      pub_eq act a_idx input input' ss ss' ->
       nval ctx cost_limit act a_idx ss input (nsz act n) n
-      = nval ctx cost_limit act a_idx ss' input (nsz act n) n.
+      = nval ctx cost_limit act a_idx ss' input' (nsz act n) n.
 
   (* ------------------------------------------------------------------- *)
   (* (D1) for the blackbox instantiation: the seed of the taint fold is    *)
@@ -345,7 +395,7 @@ Section IPR.
     tfs_spec_outputs_class ctx o = Public ->
     List.In (DFG_OVar o, r) (var_map (build_dfg ctx act)) ->
     derivable act a_idx input r.
-  Proof. intros Hpub Hin ss ss' [_ Hroots]. exact (Hroots o r Hpub Hin). Qed.
+  Proof. intros Hpub Hin ss ss' input' [_ [_ Hroots]]. exact (Hroots o r Hpub Hin). Qed.
 
   Lemma public_dsts_derivable (act: tfs_action sched) (a_idx: a_index)
       (input: input_t) (n: nid_t) :
@@ -437,7 +487,9 @@ Section IPR.
     - exact (IH _ (saturate_step_derivable act a_idx input acc Hacc) n Hin).
   Qed.
 
-  (* Constants and inputs are the same in any two runs. *)
+  (* Constants are the same in any two runs; a PUBLIC input is too, because the
+     attacker drives it and [pub_eq] makes the two runs agree on it.  A secret
+     input is not, which is why [trivially_public] no longer admits one. *)
   Lemma trivial_derivable (act: tfs_action sched) (a_idx: a_index)
       (input: input_t) (n: nid_t) :
     List.In n (trivially_public ctx (build_dfg ctx act)) ->
@@ -447,13 +499,17 @@ Section IPR.
     apply filter_In in Hin. destruct Hin as [Hseq Hop].
     apply in_seq in Hseq. destruct Hseq as [Hn1 Hn2].
     assert (Hlen : n < length (graph (build_dfg ctx act))) by lia.
-    intros ss ss' _. unfold nval.
+    intros ss ss' input' Hpe. unfold nval.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
       as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | sa | ] eqn:Hopn;
       try discriminate.
     - rewrite (nre_const ctx cost_limit act a_idx n c Hn1 Hlen Hopn). reflexivity.
-    - rewrite (nre_input ctx cost_limit act a_idx n v Hn1 Hlen Hopn). reflexivity.
+    - rewrite (nre_input ctx cost_limit act a_idx n v Hn1 Hlen Hopn).
+      (* the filter admitted this node, so the input is Public *)
+      destruct (tfs_spec_inputs_class ctx v) eqn:Hcls; [ | discriminate Hop ].
+      destruct Hpe as [Hipub _]. cbn [tf_eval_expr]. f_equal.
+      exact (Hipub v Hcls).
   Qed.
 
   Lemma untainted_roots_derivable (act: tfs_action sched) (a_idx: a_index)
@@ -501,13 +557,15 @@ Section IPR.
       ~ List.In (DFG_OVar o, r) (var_map (build_dfg ctx act)).
 
   Lemma pub_eq_publishes_nothing (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (ss ss': sched_sys_state) :
+      (input input': input_t) (ss ss': sched_sys_state) :
     publishes_nothing act ->
+    (forall v : i_var, tfs_spec_inputs_class ctx v = Public -> input v = input' v) ->
     (forall o : o_var, (snd ss).[o] = (snd ss').[o]) ->
-    pub_eq act a_idx input ss ss'.
+    pub_eq act a_idx input input' ss ss'.
   Proof.
-    intros Hno Hout. split; [ intros o _; exact (Hout o) | ].
-    intros o r _ Hin. destruct (Hno o r Hin).
+    intros Hno Hipub Hout. split; [ exact Hipub | split ].
+    - intros o _; exact (Hout o).
+    - intros o r _ Hin. destruct (Hno o r Hin).
   Qed.
 
   Lemma svar_nval (act: tfs_action sched) (a_idx: a_index)
@@ -541,7 +599,11 @@ Section IPR.
     intros Hno H1 H2 Hop Hder ss ss' Hout.
     rewrite <- (svar_nval act a_idx ss  input _ n sv H1 H2 Hop).
     rewrite <- (svar_nval act a_idx ss' input _ n sv H1 H2 Hop).
-    apply Hder. apply pub_eq_publishes_nothing; assumption.
+    (* both runs here use the SAME input, so the public-input agreement is
+       reflexivity; the content of the lemma is about differing secret STATE *)
+    apply (Hder ss ss' input).
+    apply pub_eq_publishes_nothing;
+      [ assumption | intros v _; reflexivity | assumption ].
   Qed.
 
   (* ... and that consequent is false as soon as the register can hold two
@@ -620,7 +682,7 @@ Section IPR.
       assert (Ht := taint_propagates act _ x Hin Hx Hxt Hnr').
       rewrite Hnid in Ht. exact (Hnt Ht). }
 
-    intros ss ss' Hpub. unfold nval.
+    intros ss ss' input' Hpub. unfold nval.
     pose proof (wfg_build_dfg ctx cost_limit act _ Hin) as Hfg.
 
     (* [node_args_sz] pins the width each argument is consumed at, so a fact at
@@ -632,10 +694,10 @@ Section IPR.
               tf_eval_expr (tfs_states_size sched) i_sz (tfs_outputs_size sched)
                 (szB := W) (node_ref_expr ctx cost_limit act a_idx x) ss input
               = tf_eval_expr (tfs_states_size sched) i_sz (tfs_outputs_size sched)
-                (szB := W) (node_ref_expr ctx cost_limit act a_idx x) ss' input).
+                (szB := W) (node_ref_expr ctx cost_limit act a_idx x) ss' input').
     { intros x W Hx Hwsz.
       destruct (wsz_node_sz ctx cost_limit act x W Hwsz) as [_ Hxsz].
-      rewrite <- Hxsz. exact (Hargder x Hx ss ss' Hpub). }
+      rewrite <- Hxsz. exact (Hargder x Hx ss ss' input' Hpub). }
 
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
@@ -646,7 +708,14 @@ Section IPR.
       cbn [tf_eval_expr]. reflexivity.
 
     - rewrite (nre_input ctx cost_limit act a_idx n iv H1 Hlen Eop).
-      cbn [tf_eval_expr]. reflexivity.
+      cbn [tf_eval_expr]. destruct Hpub as [Hipub _].
+      destruct (tfs_spec_inputs_class ctx iv) eqn:Hcls.
+      + f_equal. exact (Hipub iv Hcls).
+      + (* a secret input is a taint source, exactly like a secret state read,
+           so an untainted node cannot be one *)
+        exfalso.
+        assert (Ht := input_secret_tainted act _ iv Hin Eop Hcls Hnr').
+        rewrite Hnid in Ht. exact (Hnt Ht).
 
     - (* a secret read is always tainted, so this case cannot arise *)
       exfalso.
@@ -656,7 +725,7 @@ Section IPR.
     - rewrite (nre_ovar ctx cost_limit act a_idx n ov H1 Hlen Eop).
       (* [nval] reads outputs at [tfs_outputs_size sched], [pub_eq] at the
          convertible [tfs_spec_outputs_size ctx], so [apply] not [rewrite]. *)
-      cbn [tf_eval_expr]. destruct Hpub as [Hout _].
+      cbn [tf_eval_expr]. destruct Hpub as [_ [Hout _]].
       destruct (tfs_spec_outputs_class ctx ov) eqn:Hcls.
       + f_equal. apply Hout. exact Hcls.
       + (* reading an output the attacker cannot see is itself a taint source,
@@ -691,7 +760,7 @@ Section IPR.
         by (unfold get_args; rewrite Eop; left; reflexivity).
       (* [DFG_Resize] resizes from the argument's declared width by construction,
          which is why [node_args_sz] records no constraint for it. *)
-      pose proof (Hargder src Ha ss ss' Hpub) as E. unfold nval in E.
+      pose proof (Hargder src Ha ss ss' input' Hpub) as E. unfold nval in E.
       rewrite (nre_resize ctx cost_limit act a_idx n src H1 Hlen Eop).
       cbn [tf_eval_expr]. rewrite E. reflexivity.
 
@@ -772,14 +841,17 @@ Section IPR.
       [ left | right ]; exact Hin.
   Qed.
 
+  (* Guarded derivability, same shape as [derivable]: the second run's input is
+     quantified inside, and each run's guard is evaluated against its OWN
+     input. *)
   Definition gderivable (act: tfs_action sched) (a_idx: a_index)
       (input: input_t) (g: list lit) (n: nid_t) : Prop :=
-    forall ss ss',
-      pub_eq act a_idx input ss ss' ->
-      pi_holds act a_idx input g ss ->
-      pi_holds act a_idx input g ss' ->
-      nval ctx cost_limit act a_idx ss  input (nsz act n) n
-      = nval ctx cost_limit act a_idx ss' input (nsz act n) n.
+    forall ss ss' input',
+      pub_eq act a_idx input input' ss ss' ->
+      pi_holds act a_idx input  g ss ->
+      pi_holds act a_idx input' g ss' ->
+      nval ctx cost_limit act a_idx ss  input  (nsz act n) n
+      = nval ctx cost_limit act a_idx ss' input' (nsz act n) n.
 
   (* A fact learned under fewer conditions still holds under more. *)
   Lemma gderivable_weaken (act: tfs_action sched) (a_idx: a_index)
@@ -788,16 +860,16 @@ Section IPR.
     gderivable act a_idx input g n ->
     gderivable act a_idx input g' n.
   Proof.
-    intros Hincl Hg ss ss' Hpub Hp Hp'.
-    exact (Hg ss ss' Hpub
-             (guard_incl_holds act a_idx input g g' ss  Hincl Hp)
-             (guard_incl_holds act a_idx input g g' ss' Hincl Hp')).
+    intros Hincl Hg ss ss' input' Hpub Hp Hp'.
+    exact (Hg ss ss' input' Hpub
+             (guard_incl_holds act a_idx input  g g' ss  Hincl Hp)
+             (guard_incl_holds act a_idx input' g g' ss' Hincl Hp')).
   Qed.
 
   Lemma derivable_gderivable (act: tfs_action sched) (a_idx: a_index)
       (input: input_t) (g: list lit) (n: nid_t) :
     derivable act a_idx input n -> gderivable act a_idx input g n.
-  Proof. intros Hd ss ss' Hpub _ _. exact (Hd ss ss' Hpub). Qed.
+  Proof. intros Hd ss ss' input' Hpub _ _. exact (Hd ss ss' input' Hpub). Qed.
 
   (* An unconditionally derivable node is derivable under any guard. *)
   Lemma untainted_gderivable (act: tfs_action sched) (a_idx: a_index)
@@ -816,15 +888,15 @@ Section IPR.
      [uncond_sound]'s premise plus the instance's own guard. *)
   Definition instance_sound (act: tfs_action sched) (a_idx: a_index)
       (input: input_t) (i: decl_instance) : Prop :=
-    forall ss ss',
-      pub_eq act a_idx input ss ss' ->
-      pi_holds act a_idx input (di_guard i) ss ->
-      pi_holds act a_idx input (di_guard i) ss' ->
+    forall ss ss' input',
+      pub_eq act a_idx input input' ss ss' ->
+      pi_holds act a_idx input  (di_guard i) ss ->
+      pi_holds act a_idx input' (di_guard i) ss' ->
       (forall s, List.In s (di_sources i) ->
-         nval ctx cost_limit act a_idx ss  input (nsz act s) s
-         = nval ctx cost_limit act a_idx ss' input (nsz act s) s) ->
-      nval ctx cost_limit act a_idx ss  input (nsz act (di_target i)) (di_target i)
-      = nval ctx cost_limit act a_idx ss' input (nsz act (di_target i)) (di_target i).
+         nval ctx cost_limit act a_idx ss  input  (nsz act s) s
+         = nval ctx cost_limit act a_idx ss' input' (nsz act s) s) ->
+      nval ctx cost_limit act a_idx ss  input  (nsz act (di_target i)) (di_target i)
+      = nval ctx cost_limit act a_idx ss' input' (nsz act (di_target i)) (di_target i).
 
   (* CHAINING.  A rule whose sources are themselves only known under [g]
      yields its target under both guards. *)
@@ -834,11 +906,11 @@ Section IPR.
     (forall s, List.In s (di_sources i) -> gderivable act a_idx input g s) ->
     gderivable act a_idx input (di_guard i ++ g) (di_target i).
   Proof.
-    intros Hi Hsrc ss ss' Hpub Hp Hp'.
-    destruct (pi_holds_app act a_idx input _ _ ss  Hp)  as [Hp1  Hp2 ].
-    destruct (pi_holds_app act a_idx input _ _ ss' Hp') as [Hp1' Hp2'].
-    exact (Hi ss ss' Hpub Hp1 Hp1'
-             (fun s Hs => Hsrc s Hs ss ss' Hpub Hp2 Hp2')).
+    intros Hi Hsrc ss ss' input' Hpub Hp Hp'.
+    destruct (pi_holds_app act a_idx input  _ _ ss  Hp)  as [Hp1  Hp2 ].
+    destruct (pi_holds_app act a_idx input' _ _ ss' Hp') as [Hp1' Hp2'].
+    exact (Hi ss ss' input' Hpub Hp1 Hp1'
+             (fun s Hs => Hsrc s Hs ss ss' input' Hpub Hp2 Hp2')).
   Qed.
 
   Lemma guard_incl_refl (g: list lit) : guard_incl g g = true.
@@ -894,12 +966,12 @@ Section IPR.
        instance_sound act a_idx input i) ->
     uncond_sound act a_idx input.
   Proof.
-    intros Hall i Hi Hsrc ss ss' Hpub.
+    intros Hall i Hi Hsrc ss ss' input' Hpub.
     pose proof (uncond_guard_nil (build_dfg ctx act) i Hi) as Hg.
-    apply (Hall i Hi ss ss' Hpub);
+    apply (Hall i Hi ss ss' input' Hpub);
       [ rewrite Hg; intros c b Hin; destruct Hin
       | rewrite Hg; intros c b Hin; destruct Hin
-      | intros s Hs; exact (Hsrc s Hs ss ss' Hpub) ].
+      | intros s Hs; exact (Hsrc s Hs ss ss' input' Hpub) ].
   Qed.
 
   (* And to the guarded one, which is what the compiler's producer emits.
@@ -1098,20 +1170,21 @@ Section IPR.
       apply Hnd. lia.
   Qed.
 
-  Theorem pub_eq_run (act: tfs_action sched) (a_idx: a_index) (input: input_t)
-      (ss ss': sched_sys_state) (k: nat) :
-    (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input ss)) ->
-    (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input ss')) ->
-    pub_eq act a_idx input ss ss' ->
-    pub_eq act a_idx input (ss_run k act input ss) (ss_run k act input ss').
+  Theorem pub_eq_run (act: tfs_action sched) (a_idx: a_index)
+      (input input': input_t) (ss ss': sched_sys_state) (k: nat) :
+    (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input  ss)) ->
+    (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input' ss')) ->
+    pub_eq act a_idx input input' ss ss' ->
+    pub_eq act a_idx input input'
+      (ss_run k act input ss) (ss_run k act input' ss').
   Proof.
-    intros Hnd Hnd' [Hout Hroots]. split.
-    - intro o. rewrite (out_run_stable act ss input o k Hnd).
-      rewrite (out_run_stable act ss' input o k Hnd'). exact (Hout o).
-    - intros o r Hin.
-      rewrite (nval_run_stable act a_idx ss  input _ r k Hnd).
-      rewrite (nval_run_stable act a_idx ss' input _ r k Hnd').
-      exact (Hroots o r Hin).
+    intros Hnd Hnd' [Hipub [Hout Hroots]]. split; [ exact Hipub | split ].
+    - intros o Hc. rewrite (out_run_stable act ss  input  o k Hnd).
+      rewrite (out_run_stable act ss' input' o k Hnd'). exact (Hout o Hc).
+    - intros o r Hc Hin.
+      rewrite (nval_run_stable act a_idx ss  input  _ r k Hnd).
+      rewrite (nval_run_stable act a_idx ss' input' _ r k Hnd').
+      exact (Hroots o r Hc Hin).
   Qed.
 
   (* ------------------------------------------------------------------- *)
@@ -1144,12 +1217,12 @@ Section IPR.
     rewrite H in Hex. discriminate.
   Qed.
 
-  Lemma valid_public_gen (act: tfs_action sched) (a_idx: a_index) (input: input_t)
-      (ss ss': sched_sys_state) :
+  Lemma valid_public_gen (act: tfs_action sched) (a_idx: a_index)
+      (input input': input_t) (ss ss': sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
-    valid_settled ctx cost_limit act a_idx ss input ->
-    valid_settled ctx cost_limit act a_idx ss' input ->
-    pub_eq act a_idx input ss ss' ->
+    valid_settled ctx cost_limit act a_idx ss  input  ->
+    valid_settled ctx cost_limit act a_idx ss' input' ->
+    pub_eq act a_idx input input' ss ss' ->
     (forall n_idx, (fst ss).[tf_dfg_v a_idx n_idx]
                  = (fst ss').[tf_dfg_v a_idx n_idx]) ->
     forall bufs,
@@ -1159,12 +1232,12 @@ Section IPR.
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
         n < fuel ->
-        pi_holds act a_idx input pi ss ->
-        pi_holds act a_idx input pi ss' ->
+        pi_holds act a_idx input  pi ss ->
+        pi_holds act a_idx input' pi ss' ->
         eval1 (snd (compile_dfg_expr_at ctx cost_limit pi fuel a_idx
                       (build_dfg ctx act) n bufs)) ss input
         = eval1 (snd (compile_dfg_expr_at ctx cost_limit pi fuel a_idx
-                      (build_dfg ctx act) n bufs)) ss' input.
+                      (build_dfg ctx act) n bufs)) ss' input'.
   Proof.
     intros Halign Hvs Hvs' Hpub Hveq bufs Hsub fuel.
     induction fuel as [| fuel IH]; intros n pi Hn1 Hnlen Hnfuel Hpi Hpi'; [ lia | ].
@@ -1265,19 +1338,19 @@ Section IPR.
             exact (gderivable_weaken act a_idx input g pi cnd Hincl
                      (Hdguard act a_idx input cnd g (gfacts_of_In _ _ _ Hg))). }
         rewrite !valid_and_eval. rewrite Hcc.
-        destruct (bits1_cases (eval1 cv ss' input)) as [Hones | Hzero];
+        destruct (bits1_cases (eval1 cv ss' input')) as [Hones | Hzero];
           [ | rewrite Hzero, !and1_zero_l; reflexivity ].
         f_equal.
         assert (Hvalc : eval1 (snd (compile_dfg_expr_at ctx cost_limit pi fuel a_idx
                           (build_dfg ctx act) cnd bufs)) ss input = Bits.ones 1)
           by (rewrite Ec; cbn [snd]; rewrite Hcc; exact Hones).
         assert (Hvalc' : eval1 (snd (compile_dfg_expr_at ctx cost_limit pi fuel a_idx
-                          (build_dfg ctx act) cnd bufs)) ss' input = Bits.ones 1)
+                          (build_dfg ctx act) cnd bufs)) ss' input' = Bits.ones 1)
           by (rewrite Ec; cbn [snd]; exact Hones).
         pose proof (compile_subst_valid_gen ctx cost_limit act a_idx ss input
                       Halign Hvs bufs Hsub fuel cnd 1 pi Hc1 Hclen ltac:(lia)
                       (eq_sym Hcsz) Hvalc) as S1.
-        pose proof (compile_subst_valid_gen ctx cost_limit act a_idx ss' input
+        pose proof (compile_subst_valid_gen ctx cost_limit act a_idx ss' input'
                       Halign Hvs' bufs Hsub fuel cnd 1 pi Hc1 Hclen ltac:(lia)
                       (eq_sym Hcsz) Hvalc') as S2.
         rewrite Ec in S1, S2. cbn [fst] in S1, S2.
@@ -1289,12 +1362,12 @@ Section IPR.
         assert (Href : eval1 ce ss input
                        = nval ctx cost_limit act a_idx ss input 1 cnd)
           by (rewrite S1; unfold nval, node_ref_expr; reflexivity).
-        assert (Href' : eval1 ce ss' input
-                        = nval ctx cost_limit act a_idx ss' input 1 cnd)
+        assert (Href' : eval1 ce ss' input'
+                        = nval ctx cost_limit act a_idx ss' input' 1 cnd)
           by (rewrite S2; unfold nval, node_ref_expr; reflexivity).
-        assert (Hcev : eval1 ce ss input = eval1 ce ss' input).
+        assert (Hcev : eval1 ce ss input = eval1 ce ss' input').
         { rewrite Href, Href'.
-          pose proof (Hcder ss ss' Hpub Hpi Hpi') as Hcd.
+          pose proof (Hcder ss ss' input' Hpub Hpi Hpi') as Hcd.
           rewrite Hcsz in Hcd. exact Hcd. }
         assert (Hcase : (tv = tf_const 1 /\ ev = tf_const 1)
                         \/ valid_expr_if ctx cost_limit ce tv ev
@@ -1308,16 +1381,16 @@ Section IPR.
         destruct Hcase as [[Htc Hec] | Hcs].
         * subst tv ev. reflexivity.
         * rewrite Hcs. cbn [tf_eval_expr]. rewrite Hcev.
-          destruct (beq_dec (eval1 ce ss' input) Bits.zero) eqn:Hb.
+          destruct (beq_dec (eval1 ce ss' input') Bits.zero) eqn:Hb.
           -- (* else branch selected: extend the path with [cnd = 0] *)
-             assert (Hz : eval1 ce ss' input = Bits.zero)
+             assert (Hz : eval1 ce ss' input' = Bits.zero)
                by (apply beq_dec_iff in Hb; exact Hb).
              assert (Hp0 : pi_holds act a_idx input ((cnd, false) :: pi) ss).
              { intros c b Hin. destruct Hin as [Heq | Hin].
                - injection Heq as Hc Hbv. subst c b. unfold bit_of.
                  rewrite <- Href, Hcev. exact Hz.
                - exact (Hpi _ _ Hin). }
-             assert (Hp0' : pi_holds act a_idx input ((cnd, false) :: pi) ss').
+             assert (Hp0' : pi_holds act a_idx input' ((cnd, false) :: pi) ss').
              { intros c b Hin. destruct Hin as [Heq | Hin].
                - injection Heq as Hc Hbv. subst c b. unfold bit_of.
                  rewrite <- Href'. exact Hz.
@@ -1326,8 +1399,8 @@ Section IPR.
                            Hp0 Hp0') as Hce.
              rewrite Ee in Hce. cbn [snd] in Hce. exact Hce.
           -- (* then branch selected: extend the path with [cnd = 1] *)
-             assert (Hz : eval1 ce ss' input = Bits.ones 1).
-             { destruct (bits1_cases (eval1 ce ss' input)) as [Ho | Hzz];
+             assert (Hz : eval1 ce ss' input' = Bits.ones 1).
+             { destruct (bits1_cases (eval1 ce ss' input')) as [Ho | Hzz];
                  [ exact Ho | ].
                rewrite Hzz, beq_dec_refl in Hb. discriminate. }
              assert (Hp1 : pi_holds act a_idx input ((cnd, true) :: pi) ss).
@@ -1335,7 +1408,7 @@ Section IPR.
                - injection Heq as Hc Hbv. subst c b. unfold bit_of.
                  rewrite <- Href, Hcev. exact Hz.
                - exact (Hpi _ _ Hin). }
-             assert (Hp1' : pi_holds act a_idx input ((cnd, true) :: pi) ss').
+             assert (Hp1' : pi_holds act a_idx input' ((cnd, true) :: pi) ss').
              { intros c b Hin. destruct Hin as [Heq | Hin].
                - injection Heq as Hc Hbv. subst c b. unfold bit_of.
                  rewrite <- Href'. exact Hz.
@@ -1354,12 +1427,12 @@ Section IPR.
     - reflexivity.
   Qed.
 
-  Lemma valid_public (act: tfs_action sched) (a_idx: a_index) (input: input_t)
-      (ss ss': sched_sys_state) :
+  Lemma valid_public (act: tfs_action sched) (a_idx: a_index)
+      (input input': input_t) (ss ss': sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
-    valid_settled ctx cost_limit act a_idx ss input ->
-    valid_settled ctx cost_limit act a_idx ss' input ->
-    pub_eq act a_idx input ss ss' ->
+    valid_settled ctx cost_limit act a_idx ss  input  ->
+    valid_settled ctx cost_limit act a_idx ss' input' ->
+    pub_eq act a_idx input input' ss ss' ->
     (forall n_idx, (fst ss).[tf_dfg_v a_idx n_idx]
                  = (fst ss').[tf_dfg_v a_idx n_idx]) ->
     forall bufs,
@@ -1372,12 +1445,12 @@ Section IPR.
         eval1 (snd (compile_dfg_expr ctx cost_limit fuel a_idx
                       (build_dfg ctx act) n bufs)) ss input
         = eval1 (snd (compile_dfg_expr ctx cost_limit fuel a_idx
-                      (build_dfg ctx act) n bufs)) ss' input.
+                      (build_dfg ctx act) n bufs)) ss' input'.
   Proof.
     intros Halign Hvs Hvs' Hpub Hveq bufs Hsub fuel n Hn1 Hnlen Hnfuel.
-    exact (valid_public_gen act a_idx input ss ss' Halign Hvs Hvs' Hpub Hveq
+    exact (valid_public_gen act a_idx input input' ss ss' Halign Hvs Hvs' Hpub Hveq
              bufs Hsub fuel n [] Hn1 Hnlen Hnfuel
-             (pi_holds_nil act a_idx input ss) (pi_holds_nil act a_idx input ss')).
+             (pi_holds_nil act a_idx input ss) (pi_holds_nil act a_idx input' ss')).
   Qed.
 
   (* ------------------------------------------------------------------- *)
@@ -1387,34 +1460,34 @@ Section IPR.
   (* ------------------------------------------------------------------- *)
 
   Theorem valid_lockstep (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (ss0 ss0': sched_sys_state) :
+      (input input': input_t) (ss0 ss0': sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
     (forall n_idx, (fst ss0).[tf_dfg_v a_idx n_idx] = Bits.zero) ->
     (forall n_idx, (fst ss0').[tf_dfg_v a_idx n_idx] = Bits.zero) ->
-    pub_eq act a_idx input ss0 ss0' ->
+    pub_eq act a_idx input input' ss0 ss0' ->
     forall k,
-      (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input ss0)) ->
-      (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input ss0')) ->
+      (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input  ss0)) ->
+      (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input' ss0')) ->
       forall n_idx,
-        (fst (ss_run k act input ss0)).[tf_dfg_v a_idx n_idx]
-        = (fst (ss_run k act input ss0')).[tf_dfg_v a_idx n_idx].
+        (fst (ss_run k act input  ss0)).[tf_dfg_v a_idx n_idx]
+        = (fst (ss_run k act input' ss0')).[tf_dfg_v a_idx n_idx].
   Proof.
     intros Halign Hz Hz' Hpub k.
     induction k as [| k IH]; intros Hnd Hnd' n_idx.
     { cbn [run_n]. rewrite Hz, Hz'. reflexivity. }
     assert (Hndk : forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input ss0))
       by (intros i Hi; apply Hnd; lia).
-    assert (Hndk' : forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input ss0'))
+    assert (Hndk' : forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input' ss0'))
       by (intros i Hi; apply Hnd'; lia).
-    set (ssk  := ss_run k act input ss0)  in *.
-    set (ssk' := ss_run k act input ss0') in *.
-    assert (Hs  : ~ ss_done (ss_step act ssk  input)) by (apply (Hnd  (S k)); lia).
-    assert (Hs' : ~ ss_done (ss_step act ssk' input)) by (apply (Hnd' (S k)); lia).
-    change (ss_run (S k) act input ss0)  with (ss_step act ssk  input).
-    change (ss_run (S k) act input ss0') with (ss_step act ssk' input).
+    set (ssk  := ss_run k act input  ss0)  in *.
+    set (ssk' := ss_run k act input' ss0') in *.
+    assert (Hs  : ~ ss_done (ss_step act ssk  input))  by (apply (Hnd  (S k)); lia).
+    assert (Hs' : ~ ss_done (ss_step act ssk' input')) by (apply (Hnd' (S k)); lia).
+    change (ss_run (S k) act input  ss0)  with (ss_step act ssk  input).
+    change (ss_run (S k) act input' ss0') with (ss_step act ssk' input').
     pose proof (buffer_after_cycle ctx cost_limit act a_idx n_idx ssk input
                   Halign Hs) as Hb.
-    pose proof (buffer_after_cycle ctx cost_limit act a_idx n_idx ssk' input
+    pose proof (buffer_after_cycle ctx cost_limit act a_idx n_idx ssk' input'
                   Halign Hs') as Hb'.
     cbv zeta in Hb, Hb'.
     destruct Hb as [_ Hv]. destruct Hb' as [_ Hv'].
@@ -1422,10 +1495,10 @@ Section IPR.
     destruct (vreg_nid_node_range ctx cost_limit act a_idx n_idx Halign)
       as [Hn1 Hnlen].
     unfold vreg_nid in Hn1, Hnlen.
-    apply (valid_public act a_idx input ssk ssk' Halign
-             (valid_settled_run ctx cost_limit act a_idx input ss0  k Halign Hz)
-             (valid_settled_run ctx cost_limit act a_idx input ss0' k Halign Hz')
-             (pub_eq_run act a_idx input ss0 ss0' k Hndk Hndk' Hpub)
+    apply (valid_public act a_idx input input' ssk ssk' Halign
+             (valid_settled_run ctx cost_limit act a_idx input  ss0  k Halign Hz)
+             (valid_settled_run ctx cost_limit act a_idx input' ss0' k Halign Hz')
+             (pub_eq_run act a_idx input input' ss0 ss0' k Hndk Hndk' Hpub)
              (IH Hndk Hndk')).
     - intros e He. exact (proj1 (proj1 (filter_In _ e _) He)).
     - exact Hn1.
@@ -1463,57 +1536,57 @@ Section IPR.
     rewrite find_st_update_assign_head. apply combine_valid_eval.
   Qed.
 
-  Theorem done_public (act: tfs_action sched) (a_idx: a_index) (input: input_t)
-      (ss ss': sched_sys_state) :
+  Theorem done_public (act: tfs_action sched) (a_idx: a_index)
+      (input input': input_t) (ss ss': sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
-    valid_settled ctx cost_limit act a_idx ss input ->
-    valid_settled ctx cost_limit act a_idx ss' input ->
-    pub_eq act a_idx input ss ss' ->
+    valid_settled ctx cost_limit act a_idx ss  input  ->
+    valid_settled ctx cost_limit act a_idx ss' input' ->
+    pub_eq act a_idx input input' ss ss' ->
     (forall n_idx, (fst ss).[tf_dfg_v a_idx n_idx]
                  = (fst ss').[tf_dfg_v a_idx n_idx]) ->
-    (fst (ss_step act ss input)).[tfs_done_signal sched]
-    = (fst (ss_step act ss' input)).[tfs_done_signal sched].
+    (fst (ss_step act ss  input )).[tfs_done_signal sched]
+    = (fst (ss_step act ss' input')).[tfs_done_signal sched].
   Proof.
     intros Halign Hvs Hvs' Hpub Hveq.
-    rewrite (done_val_concrete act a_idx ss input Halign).
-    rewrite (done_val_concrete act a_idx ss' input Halign).
+    rewrite (done_val_concrete act a_idx ss  input  Halign).
+    rewrite (done_val_concrete act a_idx ss' input' Halign).
     f_equal. rewrite !map_map. apply map_ext_in. intros n Hn.
     apply nodup_In in Hn.
     destruct (var_map_node_range ctx cost_limit act n Hn) as [Hn1 Hnlen].
-    exact (valid_public act a_idx input ss ss' Halign Hvs Hvs' Hpub Hveq
+    exact (valid_public act a_idx input input' ss ss' Halign Hvs Hvs' Hpub Hveq
              _ (fun e He => He) _ n Hn1 Hnlen Hnlen).
   Qed.
 
   Theorem done_lockstep (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (ss0 ss0': sched_sys_state) :
+      (input input': input_t) (ss0 ss0': sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
     (fst ss0 ).[tfs_done_signal sched] = Bits.zero ->
     (fst ss0').[tfs_done_signal sched] = Bits.zero ->
     (forall n_idx, (fst ss0 ).[tf_dfg_v a_idx n_idx] = Bits.zero) ->
     (forall n_idx, (fst ss0').[tf_dfg_v a_idx n_idx] = Bits.zero) ->
-    pub_eq act a_idx input ss0 ss0' ->
+    pub_eq act a_idx input input' ss0 ss0' ->
     forall k,
-      (forall i, 1 <= i < k -> ~ ss_done (ss_run i act input ss0 )) ->
-      (forall i, 1 <= i < k -> ~ ss_done (ss_run i act input ss0')) ->
-      (ss_done (ss_run k act input ss0) <-> ss_done (ss_run k act input ss0')).
+      (forall i, 1 <= i < k -> ~ ss_done (ss_run i act input  ss0 )) ->
+      (forall i, 1 <= i < k -> ~ ss_done (ss_run i act input' ss0')) ->
+      (ss_done (ss_run k act input ss0) <-> ss_done (ss_run k act input' ss0')).
   Proof.
     intros Halign Hd0 Hd0' Hz Hz' Hpub k Hnd Hnd'.
     destruct k as [| k].
     { unfold done_set. cbn [run_n]. rewrite Hd0, Hd0'. reflexivity. }
     assert (Hndk : forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input ss0))
       by (intros i Hi; apply Hnd; lia).
-    assert (Hndk' : forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input ss0'))
+    assert (Hndk' : forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input' ss0'))
       by (intros i Hi; apply Hnd'; lia).
-    set (ssk  := ss_run k act input ss0)  in *.
-    set (ssk' := ss_run k act input ss0') in *.
-    change (ss_run (S k) act input ss0)  with (ss_step act ssk  input).
-    change (ss_run (S k) act input ss0') with (ss_step act ssk' input).
+    set (ssk  := ss_run k act input  ss0)  in *.
+    set (ssk' := ss_run k act input' ss0') in *.
+    change (ss_run (S k) act input  ss0)  with (ss_step act ssk  input).
+    change (ss_run (S k) act input' ss0') with (ss_step act ssk' input').
     unfold done_set.
-    rewrite (done_public act a_idx input ssk ssk' Halign
-               (valid_settled_run ctx cost_limit act a_idx input ss0  k Halign Hz)
-               (valid_settled_run ctx cost_limit act a_idx input ss0' k Halign Hz')
-               (pub_eq_run act a_idx input ss0 ss0' k Hndk Hndk' Hpub)
-               (valid_lockstep act a_idx input ss0 ss0' Halign Hz Hz' Hpub k
+    rewrite (done_public act a_idx input input' ssk ssk' Halign
+               (valid_settled_run ctx cost_limit act a_idx input  ss0  k Halign Hz)
+               (valid_settled_run ctx cost_limit act a_idx input' ss0' k Halign Hz')
+               (pub_eq_run act a_idx input input' ss0 ss0' k Hndk Hndk' Hpub)
+               (valid_lockstep act a_idx input input' ss0 ss0' Halign Hz Hz' Hpub k
                   Hndk Hndk')).
     reflexivity.
   Qed.
@@ -1544,26 +1617,28 @@ Section IPR.
   Local Notation src_sys_state := (src_st_env * src_out_env)%type.
 
   Theorem latency_noninterference (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (ss0 ss0': sched_sys_state) (N N': nat) :
+      (input input': input_t) (ss0 ss0': sched_sys_state) (N N': nat) :
     act_idx_aligned ctx cost_limit act a_idx ->
     (fst ss0 ).[tfs_done_signal sched] = Bits.zero ->
     (fst ss0').[tfs_done_signal sched] = Bits.zero ->
     (forall n_idx, (fst ss0 ).[tf_dfg_v a_idx n_idx] = Bits.zero) ->
     (forall n_idx, (fst ss0').[tf_dfg_v a_idx n_idx] = Bits.zero) ->
-    pub_eq act a_idx input ss0 ss0' ->
-    first_done act input ss0  N ->
-    first_done act input ss0' N' ->
+    pub_eq act a_idx input input' ss0 ss0' ->
+    first_done act input  ss0  N ->
+    first_done act input' ss0' N' ->
     N = N'.
   Proof.
     intros Halign Hd0 Hd0' Hz Hz' Hpub [HN HltN] [HN' HltN'].
     destruct (Nat.lt_trichotomy N N') as [Hlt | [Heq | Hgt]]; [ | exact Heq | ].
     - destruct (HltN' N Hlt).
-      apply (done_lockstep act a_idx input ss0 ss0' Halign Hd0 Hd0' Hz Hz' Hpub N
+      apply (done_lockstep act a_idx input input' ss0 ss0'
+               Halign Hd0 Hd0' Hz Hz' Hpub N
                (fun i Hi => HltN  i (proj2 Hi))
                (fun i Hi => HltN' i (Nat.lt_trans _ _ _ (proj2 Hi) Hlt))).
       exact HN.
     - destruct (HltN N' Hgt).
-      apply (done_lockstep act a_idx input ss0 ss0' Halign Hd0 Hd0' Hz Hz' Hpub N'
+      apply (done_lockstep act a_idx input input' ss0 ss0'
+               Halign Hd0 Hd0' Hz Hz' Hpub N'
                (fun i Hi => HltN  i (Nat.lt_trans _ _ _ (proj2 Hi) Hgt))
                (fun i Hi => HltN' i (proj2 Hi))).
       exact HN'.
@@ -1571,18 +1646,18 @@ Section IPR.
 
   (* The zeroing side conditions are exactly what [start_rel] provides. *)
   Corollary latency_noninterference_start (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (sp0 sp0': src_sys_state) (ss0 ss0': sched_sys_state)
-      (N N': nat) :
+      (input input': input_t) (sp0 sp0': src_sys_state)
+      (ss0 ss0': sched_sys_state) (N N': nat) :
     act_idx_aligned ctx cost_limit act a_idx ->
     start_rel ctx cost_limit sp0  ss0  ->
     start_rel ctx cost_limit sp0' ss0' ->
-    pub_eq act a_idx input ss0 ss0' ->
-    first_done act input ss0  N ->
-    first_done act input ss0' N' ->
+    pub_eq act a_idx input input' ss0 ss0' ->
+    first_done act input  ss0  N ->
+    first_done act input' ss0' N' ->
     N = N'.
   Proof.
     intros Halign [_ [_ Hz]] [_ [_ Hz']] Hpub HN HN'.
-    exact (latency_noninterference act a_idx input ss0 ss0' N N' Halign
+    exact (latency_noninterference act a_idx input input' ss0 ss0' N N' Halign
              (Hz  (tfs_done_signal sched) I) (Hz' (tfs_done_signal sched) I)
              (fun n_idx => Hz  (tf_dfg_v a_idx n_idx) I)
              (fun n_idx => Hz' (tf_dfg_v a_idx n_idx) I)
@@ -1598,7 +1673,8 @@ Section IPR.
   Local Notation spec_run act sp input :=
     (tf_ops_run s_sz i_sz o_sz (tfs_spec_action_ops ctx act) sp input).
 
-  Theorem obs_eq_pub_eq (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+  Theorem obs_eq_pub_eq (act: tfs_action sched) (a_idx: a_index)
+      (input input': input_t)
       (sp sp': src_sys_state) (ss ss': sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
     (forall sv, (fst ss ).[tf_dfg_s sv] = (fst sp ).[sv]) ->
@@ -1613,16 +1689,19 @@ Section IPR.
     (forall ov, tfs_spec_outputs_class ctx ov = Public ->
                 (snd sp).[ov] = (snd sp').[ov]) ->
     (forall ov, tfs_spec_outputs_class ctx ov = Public ->
-                (snd (spec_run act sp  input)).[ov]
-              = (snd (spec_run act sp' input)).[ov]) ->
-    pub_eq act a_idx input ss ss'.
+                (snd (spec_run act sp  input )).[ov]
+              = (snd (spec_run act sp' input')).[ov]) ->
+    (* ...and the attacker drives the same PUBLIC inputs in both runs.  Secret
+       inputs are free: they come from inside the trust boundary. *)
+    (forall v, tfs_spec_inputs_class ctx v = Public -> input v = input' v) ->
+    pub_eq act a_idx input input' ss ss'.
   Proof.
-    intros Halign Hs Ho Hs' Ho' Hpre Hpost.
+    intros Halign Hs Ho Hs' Ho' Hpre Hpost Hipub.
     destruct (dfg_action_semantics ctx cost_limit act a_idx sp ss input
                 Halign Hs Ho) as [_ [Hout _]].
-    destruct (dfg_action_semantics ctx cost_limit act a_idx sp' ss' input
+    destruct (dfg_action_semantics ctx cost_limit act a_idx sp' ss' input'
                 Halign Hs' Ho') as [_ [Hout' _]].
-    split.
+    split; [ exact Hipub | split ].
     - intros o Hc. rewrite (Ho o), (Ho' o). exact (Hpre o Hc).
     - intros o r Hc Hin. unfold nval, node_ref_expr.
       rewrite (pub_eq_root_width act o r Hin).
@@ -1632,23 +1711,26 @@ Section IPR.
   (* The campaign's headline, in observable terms: the cycle count depends only
      on the action, the input, and the outputs before and after. *)
   Corollary latency_from_outputs (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (sp0 sp0': src_sys_state) (ss0 ss0': sched_sys_state)
-      (N N': nat) :
+      (input input': input_t) (sp0 sp0': src_sys_state)
+      (ss0 ss0': sched_sys_state) (N N': nat) :
     act_idx_aligned ctx cost_limit act a_idx ->
     start_rel ctx cost_limit sp0  ss0  ->
     start_rel ctx cost_limit sp0' ss0' ->
-    (* Public outputs only -- see [obs_eq_pub_eq].  This is what makes the
-       corollary say something an attacker could actually exploit. *)
+    (* PUBLIC data only, and nothing else: the two runs may differ in secret
+       state AND in secret inputs.  This is the statement an attacker could
+       actually try to exploit -- everything it constrains is something they
+       already drive or observe. *)
+    (forall v,  tfs_spec_inputs_class  ctx v  = Public -> input v = input' v) ->
     (forall ov, tfs_spec_outputs_class ctx ov = Public ->
                 (snd sp0).[ov] = (snd sp0').[ov]) ->
     (forall ov, tfs_spec_outputs_class ctx ov = Public ->
-                (snd (spec_run act sp0  input)).[ov]
-              = (snd (spec_run act sp0' input)).[ov]) ->
-    first_done act input ss0  N ->
-    first_done act input ss0' N' ->
+                (snd (spec_run act sp0  input )).[ov]
+              = (snd (spec_run act sp0' input')).[ov]) ->
+    first_done act input  ss0  N ->
+    first_done act input' ss0' N' ->
     N = N'.
   Proof.
-    intros Halign Hst Hst' Hpre Hpost HN HN'.
+    intros Halign Hst Hst' Hipub Hpre Hpost HN HN'.
     assert (Hsr : forall (sp: src_sys_state) (ss: sched_sys_state),
               start_rel ctx cost_limit sp ss ->
               (forall sv, (fst ss).[tf_dfg_s sv] = (fst sp).[sv])
@@ -1658,10 +1740,11 @@ Section IPR.
       - intro ov. rewrite Hsnd. reflexivity. }
     destruct (Hsr sp0  ss0  Hst)  as [Hs0  Ho0 ].
     destruct (Hsr sp0' ss0' Hst') as [Hs0' Ho0'].
-    exact (latency_noninterference_start act a_idx input sp0 sp0' ss0 ss0' N N'
+    exact (latency_noninterference_start act a_idx input input'
+             sp0 sp0' ss0 ss0' N N'
              Halign Hst Hst'
-             (obs_eq_pub_eq act a_idx input sp0 sp0' ss0 ss0'
-                Halign Hs0 Ho0 Hs0' Ho0' Hpre Hpost)
+             (obs_eq_pub_eq act a_idx input input' sp0 sp0' ss0 ss0'
+                Halign Hs0 Ho0 Hs0' Ho0' Hpre Hpost Hipub)
              HN HN').
   Qed.
 
@@ -1750,26 +1833,29 @@ Section IPR.
       discriminate Hfalse.
   Qed.
 
-  (* [L] is a function of the action, the input, and the outputs before and
-     after -- never of the secret state. *)
-  Corollary L_public (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+  (* [L] is a function of the action and the PUBLIC data -- the public inputs
+     and the public outputs before and after.  Never of the secret state, and
+     never of a secret input. *)
+  Corollary L_public (act: tfs_action sched) (a_idx: a_index)
+      (input input': input_t)
       (sp0 sp0': src_sys_state) (ss0 ss0': sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
     start_rel ctx cost_limit sp0  ss0  ->
     start_rel ctx cost_limit sp0' ss0' ->
-    (* Public outputs only -- see [obs_eq_pub_eq]. *)
+    (* Public data only -- see [obs_eq_pub_eq]. *)
+    (forall v,  tfs_spec_inputs_class  ctx v  = Public -> input v = input' v) ->
     (forall ov, tfs_spec_outputs_class ctx ov = Public ->
                 (snd sp0).[ov] = (snd sp0').[ov]) ->
     (forall ov, tfs_spec_outputs_class ctx ov = Public ->
-                (snd (spec_run act sp0  input)).[ov]
-              = (snd (spec_run act sp0' input)).[ov]) ->
-    L act input ss0 = L act input ss0'.
+                (snd (spec_run act sp0  input )).[ov]
+              = (snd (spec_run act sp0' input')).[ov]) ->
+    L act input ss0 = L act input' ss0'.
   Proof.
-    intros Halign Hst Hst' Hpre Hpost.
-    exact (latency_from_outputs act a_idx input sp0 sp0' ss0 ss0' _ _
-             Halign Hst Hst' Hpre Hpost
-             (L_first_done act sp0  ss0  input Hst)
-             (L_first_done act sp0' ss0' input Hst')).
+    intros Halign Hst Hst' Hipub Hpre Hpost.
+    exact (latency_from_outputs act a_idx input input' sp0 sp0' ss0 ss0' _ _
+             Halign Hst Hst' Hipub Hpre Hpost
+             (L_first_done act sp0  ss0  input  Hst)
+             (L_first_done act sp0' ss0' input' Hst')).
   Qed.
 
   Corollary emulator_correct_L (act: tfs_action sched) (sp0: src_sys_state)
