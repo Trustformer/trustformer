@@ -127,26 +127,27 @@ Section Soundness.
     destruct (wsz_node_sz ctx cost_limit act eid _ Hfe) as [_ Hesz].
 
     (* the guard names the selector, so [pi_holds] is exactly its value *)
-    assert (Hsel : forall (b: bool) (ss: sched_sys_state),
-              pi_holds ctx cost_limit act a_idx input [(cnd, b)] ss ->
-              nval ctx cost_limit act a_idx ss input
+    (* generalised over the input: the two runs no longer share one *)
+    assert (Hsel : forall (b: bool) (inp: input_t) (ss: sched_sys_state),
+              pi_holds ctx cost_limit act a_idx inp [(cnd, b)] ss ->
+              nval ctx cost_limit act a_idx ss inp
                 (nsz act n) n
-              = nval ctx cost_limit act a_idx ss input
+              = nval ctx cost_limit act a_idx ss inp
                 (nsz act n) (if b then tid else eid)).
-    { intros b ss Hp.
-      exact (phi_selects act a_idx input ss n cnd tid eid b Hn1 Hlen Hop
+    { intros b inp ss Hp.
+      exact (phi_selects act a_idx inp ss n cnd tid eid b Hn1 Hlen Hop
                (Hp cnd b (or_introl eq_refl))). }
 
     destruct Hi as [Hi | [Hi | [Hi | [Hi | []]]]]; subst i;
-      intros ss ss' Hpub Hp Hp' Hsrc;
+      intros ss ss' input' Hpub Hp Hp' Hsrc;
       cbn [di_sources di_target di_guard] in Hsrc, Hp, Hp' |- *.
-    - rewrite (Hsel true ss Hp), (Hsel true ss' Hp'), <- Htsz.
+    - rewrite (Hsel true input ss Hp), (Hsel true input' ss' Hp'), <- Htsz.
       exact (Hsrc tid (or_introl eq_refl)).
-    - rewrite Htsz, <- (Hsel true ss Hp), <- (Hsel true ss' Hp').
+    - rewrite Htsz, <- (Hsel true input ss Hp), <- (Hsel true input' ss' Hp').
       exact (Hsrc n (or_introl eq_refl)).
-    - rewrite (Hsel false ss Hp), (Hsel false ss' Hp'), <- Hesz.
+    - rewrite (Hsel false input ss Hp), (Hsel false input' ss' Hp'), <- Hesz.
       exact (Hsrc eid (or_introl eq_refl)).
-    - rewrite Hesz, <- (Hsel false ss Hp), <- (Hsel false ss' Hp').
+    - rewrite Hesz, <- (Hsel false input ss Hp), <- (Hsel false input' ss' Hp').
       exact (Hsrc n (or_introl eq_refl)).
   Qed.
 

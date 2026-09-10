@@ -115,7 +115,7 @@ Section Soundness.
       as Hnre.
     (* both instances: recover one operand from the node and the other *)
     destruct Hi as [Hi | [Hi | []]]; subst i;
-      intros ss ss' Hpub _ _ Hsrc;
+      intros ss ss' input' Hpub _ _ Hsrc;
       cbn [di_sources di_target] in Hsrc |- *;
       pose proof (Hsrc n (or_introl eq_refl)) as Hn;
       unfold nval in Hn; rewrite Hnre in Hn; cbn [tf_eval_expr] in Hn.

@@ -93,7 +93,7 @@ Section Soundness.
                                     {| nid := 0; op := DFG_Empty; sz := 0 |})) ke))
       eqn:Hdistinct; [ contradiction | ].
     destruct Hi as [Hi | []]. subst i.
-    intros ss ss' Hpub _ _ Hsrc.
+    intros ss ss' input' Hpub _ _ Hsrc.
     cbn [di_sources di_target] in Hsrc |- *.
     specialize (Hsrc n (or_introl eq_refl)).
 

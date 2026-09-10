@@ -110,16 +110,17 @@ Section Soundness.
   (* Both DFG encodings reduce to this: the node evaluates to [convert] of the
      argument at width [src], so a widening [convert] being injective is the
      whole content of the rule. *)
-  Lemma widen_step (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+  Lemma widen_step (act: tfs_action sched) (a_idx: a_index)
+      (input input': input_t)
       (n arg src: nid_t) (ss ss': sched_sys_state) :
     node_ref_expr ctx cost_limit act a_idx n
       = tf_op1 (tf_resize src) (node_ref_expr ctx cost_limit act a_idx arg) ->
     nsz act arg = src ->
     src <= nsz act n ->
-    nval ctx cost_limit act a_idx ss  input (nsz act n) n
-    = nval ctx cost_limit act a_idx ss' input (nsz act n) n ->
-    nval ctx cost_limit act a_idx ss  input (nsz act arg) arg
-    = nval ctx cost_limit act a_idx ss' input (nsz act arg) arg.
+    nval ctx cost_limit act a_idx ss  input  (nsz act n) n
+    = nval ctx cost_limit act a_idx ss' input' (nsz act n) n ->
+    nval ctx cost_limit act a_idx ss  input  (nsz act arg) arg
+    = nval ctx cost_limit act a_idx ss' input' (nsz act arg) arg.
   Proof.
     intros Hnre Hsz Hle Hn.
     unfold nval in Hn |- *. rewrite Hnre in Hn. cbn [tf_eval_expr] in Hn.
@@ -184,9 +185,9 @@ Section Soundness.
         + symmetry; exact Hi. }
 
     destruct Hcase as [arg [src [Hnre [Hsz [Hle Hieq]]]]]. subst i.
-    intros ss ss' Hpub _ _ Hsrc.
+    intros ss ss' input' Hpub _ _ Hsrc.
     cbn [di_sources di_target] in Hsrc |- *.
-    exact (widen_step act a_idx input n arg src ss ss' Hnre Hsz Hle
+    exact (widen_step act a_idx input input' n arg src ss ss' Hnre Hsz Hle
              (Hsrc n (or_introl eq_refl))).
   Qed.
 

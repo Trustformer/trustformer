@@ -75,7 +75,7 @@ Section Soundness.
       cbn [List.In] in Hi; try (destruct Hi).
     destruct uop as [| source_size]; cbn [List.In] in Hi; [ | destruct Hi ].
     destruct Hi as [Hi | []]. subst i.
-    intros ss ss' Hpub _ _ Hsrc.
+    intros ss ss' input' Hpub _ _ Hsrc.
     cbn [di_sources di_target] in Hsrc |- *.
     specialize (Hsrc n (or_introl eq_refl)).
     assert (Hnode_in : List.In (nth n (graph (build_dfg ctx act))
