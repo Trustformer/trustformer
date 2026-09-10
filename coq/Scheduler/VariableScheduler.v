@@ -555,11 +555,19 @@ Section VariableScheduler.
      unconditional rule whose source is an input -- the paper's "binary
      operations under the condition that one operand is known" -- could never
      fire, and a shared constant would become a hub in [decl_facts]. *)
+  (* Values that enter the graph already known to the attacker.  A constant is
+     in the source text; an input is one the attacker drives -- but only if it
+     is declared [Public].  A [Secret] input is driven by the environment inside
+     the trust boundary (the crypto IP's result), never by the attacker, so it
+     is not trivially public and belongs with the other taint sources. *)
   Definition trivially_public (dfg: dfg_state) : list nid_t :=
     filter (fun k => match op (nth k (graph dfg)
                                  {| nid := 0; op := DFG_Empty; sz := 0 |}) with
                      | DFG_Const _ => true
-                     | DFG_Input _ => true
+                     | DFG_Input v => match inputs_var_class v with
+                                      | Public => true
+                                      | Secret => false
+                                      end
                      | _ => false
                      end)
            (List.seq 1 (length (graph dfg) - 1)).
@@ -590,18 +598,30 @@ Section VariableScheduler.
       let args := get_args node in
       (* Only a read of pre-action secret state is a taint source: inputs and reads of
          the pre-action output state are both visible to the attacker. *)
-      (* Taint SOURCES: a read of pre-action secret state, and -- symmetrically
-         with the [public_dsts] filter on the write side -- a read of an output
-         the attacker cannot see.  Both are values not derivable from the public
-         view.  Leaving [DFG_OVar] unconditionally untainted here would be the
-         exact twin of the declassification hole: [crypt_key] holds DP, so a
-         read of it would be treated as public. *)
+      (* Taint SOURCES.  One rule at every point a value enters the graph: it is
+         public exactly when it is declared public.
+
+           DFG_Const            always public -- it is in the source text
+           DFG_Input v          by [inputs_var_class]
+           DFG_Var (DFG_SVar _) always secret -- states ARE the secrets under
+                                the attacker model
+           DFG_Var (DFG_OVar o) by [outputs_var_class]
+
+         and symmetrically only a [Public] destination declassifies
+         ([public_dsts]).  A secret input is treated no differently from secret
+         state: both are values the attacker neither drives nor observes.
+         [DFG_Const] and public [DFG_Input] are seeded untainted by
+         [trivially_public] rather than here. *)
       let self_tainted := match op node with
         | DFG_Var (DFG_SVar _) => true
         | DFG_Var (DFG_OVar o) => match outputs_var_class o with
                                   | Public => false
                                   | Secret => true
                                   end
+        | DFG_Input v => match inputs_var_class v with
+                         | Public => false
+                         | Secret => true
+                         end
         | _ => false
         end in
       (* If node depends on secrets it is tainted *)

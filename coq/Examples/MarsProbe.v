@@ -92,3 +92,26 @@ Example probe_bounds_cont : b_cont = (1, 1). Proof. reflexivity. Qed.
    latency reveals is the property tag, which is a public command argument the
    host chose itself.  No secret reaches this command at all. *)
 Example probe_bounds_cap : b_cap = (1, 2). Proof. reflexivity. Qed.
+
+(* Criticality, after V2b made Secret inputs taint sources.
+
+   MARS_Continue guards on [crypt_valid] and [crypt_tag], both Secret inputs
+   from the crypto IP, so every phi under those guards is now forced
+   constant-time -- 17 occurrences, up from 0.  REVIEW.md section 2.6 predicted
+   exactly this ("V2b does not yield a byte-identical module") and it is the
+   whole observable effect of the change.
+
+   Note the action BOUNDS did not move: Continue was already (1,1), so both
+   branches always took one cycle.  What changed is which valid signal feeds
+   each phi -- the schedule is the same length, the logic differs.  The other
+   commands are untouched: neither reads a Secret input. *)
+Definition crit_cont := Eval vm_compute in
+  (List.length (crit_report_all tfs_ctx (build_dfg tfs_ctx act_continue))).
+Definition crit_ext  := Eval vm_compute in
+  (List.length (crit_report_all tfs_ctx (build_dfg tfs_ctx act_pcrextend))).
+Definition crit_cap  := Eval vm_compute in
+  (List.length (crit_report_all tfs_ctx (build_dfg tfs_ctx act_capabilityget))).
+
+Example probe_crit_cont : crit_cont = 17. Proof. reflexivity. Qed.
+Example probe_crit_ext  : crit_ext  = 0.  Proof. reflexivity. Qed.
+Example probe_crit_cap  : crit_cap  = 0.  Proof. reflexivity. Qed.
