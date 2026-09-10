@@ -78,11 +78,11 @@ Section Contrast.
         tfs_spec_inputs := fs_inputs;
         tfs_spec_inputs_fin := _;
         tfs_spec_inputs_size := fs_inputs_size;
-
+        tfs_spec_inputs_class := fun _ => Public;
         tfs_spec_outputs := fs_outputs;
         tfs_spec_outputs_fin := _;
         tfs_spec_outputs_size := fs_outputs_size;
-
+        tfs_spec_outputs_class := fun _ => Public;
         tfs_spec_action := fs_action;
         tfs_spec_action_fin := _;
         tfs_spec_action_ops := fs_transitions;
@@ -219,11 +219,11 @@ Section GuardedContrast.
         tfs_spec_inputs := gs_inputs;
         tfs_spec_inputs_fin := _;
         tfs_spec_inputs_size := gs_inputs_size;
-
+        tfs_spec_inputs_class := fun _ => Public;
         tfs_spec_outputs := gs_outputs;
         tfs_spec_outputs_fin := _;
         tfs_spec_outputs_size := gs_outputs_size;
-
+        tfs_spec_outputs_class := fun _ => Public;
         tfs_spec_action := gs_action;
         tfs_spec_action_fin := _;
         tfs_spec_action_ops := gs_transitions;
