@@ -35,10 +35,7 @@ Section FunctionalSpecification.
     Definition msg_sz    := 1024.       (* widest MARS message: the 100-byte snapshot *)
     Definition pend_sz   := 8.
 
-    (* out_crypt_op -- what the attached IP is being asked for (MVP.md section 5.2). *)
-    Definition CRYPT_IDLE   := 0.
-    Definition CRYPT_SHA256 := 1.
-    Definition CRYPT_HMAC   := 2.
+    Definition hmac_msg_sz := 512.      (* longest HMAC message: the 42-byte KDF frame *)
 
     (* out_pend -- which step of which command is in flight; 0 is idle.  DPINIT,
        SNAP, KDF and SIGN arrive with Init and Quote at Stage 4. *)
@@ -142,10 +139,14 @@ Section FunctionalSpecification.
     | in_pt            (* MARS_CapabilityGet: property tag        *)
     | in_idx           (* MARS_RegRead / MARS_PcrExtend: index    *)
     | in_dig           (* MARS_PcrExtend: the digest to extend    *)
-    (* From the crypto IP.  Trusted, and NOT to be memory-mapped. *)
-    | in_crypt_res
-    | in_crypt_valid
-    | in_crypt_tag     (* echoes the out_crypt_req the result answers *)
+    (* From the crypto IPs.  Secret, and NOT to be memory-mapped -- the port
+       names now say so (_sec_). *)
+    | in_sha_res
+    | in_sha_valid
+    | in_sha_tag       (* echoes the out_sha_req this result answers  *)
+    | in_hmac_res
+    | in_hmac_valid
+    | in_hmac_tag
     .
 
     (* PCRs are OUTPUT variables, not state variables: they are meant to be
@@ -162,14 +163,22 @@ Section FunctionalSpecification.
     | out_failure
     | out_pend       (* which crypto step is in flight; 0 = idle *)
     | out_armed      (* two-phase arming, REVIEW.md section 2.1  *)
-    | out_crypt_req  (* toggles on each new request              *)
-    (* Trusted: the crypto port.  The netlist does not record this -- keeping
-       these four off the MMIO map is the integrator's obligation (MVP.md
-       section 9, A5), which spec section 5.8 imposes independently. *)
-    | out_crypt_op
-    | out_crypt_key
-    | out_crypt_msg
-    | out_crypt_len
+    | out_sha_req       (* toggles on each new SHA-256 request      *)
+    | out_sha_active    (* a SHA-256 request is outstanding         *)
+    | out_hmac_req
+    | out_hmac_active
+    (* Secret: the crypto ports.  ONE GROUP PER ATTACHED IP, not one group
+       multiplexed by an opcode: the two cores genuinely differ (sha256_core
+       takes raw blocks and needs no key; hmac_core takes finalize/final_len and
+       does), a shared group would force a lowest-common-denominator interface,
+       and per-IP groups are the shape V3/V4 converges on anyway.  It also lets
+       each group be right-sized -- SHA needs no key, HMAC's longest message is
+       the 42-byte KDF frame. *)
+    | out_sha_msg
+    | out_sha_len
+    | out_hmac_key
+    | out_hmac_msg
+    | out_hmac_len
     .
 
     Definition fs_states_size (x: fs_states) : nat :=
@@ -184,9 +193,12 @@ Section FunctionalSpecification.
     | in_pt          => arg_sz
     | in_idx         => arg_sz
     | in_dig         => digest_sz
-    | in_crypt_res   => digest_sz
-    | in_crypt_valid => 1
-    | in_crypt_tag   => 1
+    | in_sha_res    => digest_sz
+    | in_sha_valid  => 1
+    | in_sha_tag    => 1
+    | in_hmac_res   => digest_sz
+    | in_hmac_valid => 1
+    | in_hmac_tag   => 1
     end.
 
     Definition fs_outputs_size (x: fs_outputs) : nat :=
@@ -199,11 +211,15 @@ Section FunctionalSpecification.
     | out_failure   => 1
     | out_pend      => pend_sz
     | out_armed     => 1
-    | out_crypt_req => 1
-    | out_crypt_op  => 4
-    | out_crypt_key => digest_sz
-    | out_crypt_msg => msg_sz
-    | out_crypt_len => 16
+    | out_sha_req     => 1
+    | out_sha_active  => 1
+    | out_hmac_req    => 1
+    | out_hmac_active => 1
+    | out_sha_msg     => msg_sz
+    | out_sha_len     => 16
+    | out_hmac_key    => digest_sz
+    | out_hmac_msg    => hmac_msg_sz
+    | out_hmac_len    => 16
     end.
 
     (* Confidentiality classification (Contract.v [port_class]).  [Secret] means
@@ -211,23 +227,29 @@ Section FunctionalSpecification.
        carry a secret, therefore never memory-mapped".  Spec section 5.8 requires
        exactly this for the crypto port: DP and AK cross it.
 
-       [out_crypt_len] and [out_crypt_op] carry nothing sensitive today and are still
+       [out_sha_len] and [out_sha_active] carry nothing sensitive today and are still
        [Secret] -- they are part of the port group, over-classifying costs
        nothing, and the guarantee is about which ports are COVERED.
 
-       [out_crypt_req] is genuinely [Public]: it is one toggle bit an attacker may
-       observe.  Note that class and wiring are independent -- [out_crypt_req] is
+       [out_sha_req] is genuinely [Public]: it is one toggle bit an attacker may
+       observe.  Note that class and wiring are independent -- [out_sha_req] is
        Public and goes to the IP; [out_rc] is Public and goes to the bus. *)
     Definition fs_inputs_class (x: fs_inputs) : port_class :=
     match x with
     | in_pt | in_idx | in_dig => Public
-    | in_crypt_res | in_crypt_valid | in_crypt_tag => Secret
+    | in_sha_res  | in_sha_valid  | in_sha_tag  => Secret
+    | in_hmac_res | in_hmac_valid | in_hmac_tag => Secret
     end.
 
     Definition fs_outputs_class (x: fs_outputs) : port_class :=
     match x with
-    | out_rc | out_cap | out_dout | out_pcr0 | out_pcr1 | out_failure | out_pend | out_armed | out_crypt_req => Public
-    | out_crypt_op | out_crypt_key | out_crypt_msg | out_crypt_len => Secret
+    (* handshake bits an observer could see on the bus edge anyway *)
+    | out_rc | out_cap | out_dout | out_pcr0 | out_pcr1 | out_failure
+    | out_pend | out_armed
+    | out_sha_req | out_sha_active | out_hmac_req | out_hmac_active => Public
+    (* everything carrying data *)
+    | out_sha_msg | out_sha_len
+    | out_hmac_key | out_hmac_msg | out_hmac_len => Secret
     end.
 
     Definition fs_states_t := tf_states_type fs_states_size.
@@ -274,9 +296,30 @@ Section FunctionalSpecification.
           (tf_op2 (tf_concat digest_sz digest_sz) (tf_ovar pcr) (tf_ivar in_dig))
           (tf_const 0).
 
+    (* Per-group handshake predicates.  [out_armed] stays global -- [out_pend]
+       holds one value, so at most one group is ever outstanding -- while
+       [_active] says WHICH group, and doubles as the signal the adapter watches
+       to know the result was consumed (MVP.md section 9, A7). *)
+    Definition resp_ok (v_valid v_tag: fs_inputs) (o_req o_active: fs_outputs)
+        : @tf_expr fs_states fs_inputs fs_outputs :=
+        tf_op2 tf_and
+          (tf_op2 tf_and (tf_ovar out_armed) (tf_ovar o_active))
+          (tf_op2 tf_and (tf_ivar v_valid)
+            (tf_op2 (tf_cmp 1 tf_eq) (tf_ivar v_tag) (tf_ovar o_req))).
+
+    (* A response for a request that is not the outstanding one.  Keyed on
+       [_active], not [out_armed]: the core that holds [done] high across
+       requests is precisely the one the module never armed, so an armed-keyed
+       test would miss the case it exists for. *)
+    Definition violation (v_valid v_tag: fs_inputs) (o_req o_active: fs_outputs)
+        : @tf_expr fs_states fs_inputs fs_outputs :=
+        tf_op2 tf_and
+          (tf_op2 tf_and (tf_ovar o_active) (tf_ivar v_valid))
+          (tf_op2 (tf_cmp 1 tf_neq) (tf_ivar v_tag) (tf_ovar o_req)).
+
     (* Issue a request: drive the port, flip the request bit, record the step.
 
-       [out_armed] is set ONLY while in_crypt_valid is low.  That is the whole
+       [out_armed] is set ONLY while in_sha_valid is low.  That is the whole
        two-phase arming fix (REVIEW.md section 2.1): a core that holds [done]
        high from its previous request cannot satisfy arm-and-fire, so the module
        WEDGES instead of latching a stale result.
@@ -288,26 +331,22 @@ Section FunctionalSpecification.
        and it is fail-stop -- at Stage 4's KDF->SIGN step, latching a stale
        result instead would publish the Attestation Key on [out_dout].  The only
        recovery is _MARS_Init, which clears [out_pend] unconditionally (Stage 4). *)
-    Definition issue (op: nat) (step: nat)
+    Definition issue_sha (step: nat)
                      (msg: @tf_expr fs_states fs_inputs fs_outputs) (len: nat)
         : @tf_ops fs_states fs_inputs fs_outputs :=
     {[
-        let $out_crypt_msg := `msg`;
-        let $out_crypt_len := #len;
-        let $out_crypt_op  := #op;
-        let $out_crypt_req := !$out_crypt_req;
-        let $out_pend      := #step;
-        let $out_armed     := ($in_crypt_valid ==[1] #0);
-        let $out_rc        := #MARS_RC_SUCCESS
+        let $out_sha_msg    := `msg`;
+        let $out_sha_len    := #len;
+        let $out_sha_active := #1;
+        let $out_sha_req    := !$out_sha_req;
+        let $out_pend       := #step;
+        let $out_armed      := ($in_sha_valid ==[1] #0);
+        let $out_rc         := #MARS_RC_SUCCESS
     ]}.
 
     (* A response counts only if the module out_armed it, the IP asserts valid, AND
        the tag echoes the request bit that was driven at issue.  [tf_ovar] reads
-       the pre-cycle value, so [out_crypt_req] here is the one that was sent. *)
-    Definition response_ok : @tf_expr fs_states fs_inputs fs_outputs :=
-        tf_op2 tf_and
-          (tf_op2 tf_and (tf_ovar out_armed) (tf_ivar in_crypt_valid))
-          (tf_op2 (tf_cmp 1 tf_eq) (tf_ivar in_crypt_tag) (tf_ovar out_crypt_req)).
+       the pre-cycle value, so [out_sha_req] here is the one that was sent. *)
 
     (* A protocol violation by the crypto IP or its glue: a step IS outstanding
        and the IP asserts valid for a DIFFERENT request.  Spec section 5.6
@@ -320,12 +359,6 @@ Section FunctionalSpecification.
        wedged.  Keying on [out_pend] catches both that and a genuine mismatch, while
        still excluding the two harmless cases -- an early Continue (valid low)
        and a spurious Continue with nothing outstanding (out_pend = 0). *)
-    Definition protocol_violation : @tf_expr fs_states fs_inputs fs_outputs :=
-        tf_op2 tf_and
-          (tf_op2 tf_and
-            (tf_op2 (tf_cmp pend_sz tf_neq) (tf_ovar out_pend) (tf_const PEND_IDLE))
-            (tf_ivar in_crypt_valid))
-          (tf_op2 (tf_cmp 1 tf_neq) (tf_ivar in_crypt_tag) (tf_ovar out_crypt_req)).
 
     (* Enter out_failure mode.  Zeroizes like [finish] -- a faulting IP is precisely
        when nothing should be left driven on the trusted port (REVIEW.md section
@@ -333,15 +366,24 @@ Section FunctionalSpecification.
        (failed) rather than two overlapping ones (failed and wedged).  Every
        command except MARS_CapabilityGet now answers MARS_RC_FAILURE until
        _MARS_Init reinitializes (spec section 5.3.1). *)
+    (* Zeroize every group, whichever one misbehaved: a faulting IP is exactly
+       when nothing should be left driven on any trusted port. *)
+    Definition zeroize : @tf_ops fs_states fs_inputs fs_outputs :=
+    {[
+        let $out_sha_msg     := #0;
+        let $out_sha_active  := #0;
+        let $out_hmac_key    := #0;
+        let $out_hmac_msg    := #0;
+        let $out_hmac_active := #0
+    ]}.
+
     Definition fault : @tf_ops fs_states fs_inputs fs_outputs :=
     {[
-        let $out_crypt_key := #0;
-        let $out_crypt_msg := #0;
-        let $out_crypt_op  := #CRYPT_IDLE;
-        let $out_pend      := #PEND_IDLE;
-        let $out_armed     := #0;
-        let $out_failure   := #1;
-        let $out_rc        := #MARS_RC_FAILURE
+        `zeroize`;
+        let $out_pend    := #PEND_IDLE;
+        let $out_armed   := #0;
+        let $out_failure := #1;
+        let $out_rc      := #MARS_RC_FAILURE
     ]}.
 
     (* End of a sequence: zeroize the trusted ports and disarm.  The ports hold
@@ -349,12 +391,10 @@ Section FunctionalSpecification.
        256 wires after a Quote (REVIEW.md section 2.7). *)
     Definition finish : @tf_ops fs_states fs_inputs fs_outputs :=
     {[
-        let $out_crypt_key := #0;
-        let $out_crypt_msg := #0;
-        let $out_crypt_op  := #CRYPT_IDLE;
-        let $out_pend      := #PEND_IDLE;
-        let $out_armed     := #0;
-        let $out_rc        := #MARS_RC_SUCCESS
+        `zeroize`;
+        let $out_pend  := #PEND_IDLE;
+        let $out_armed := #0;
+        let $out_rc    := #MARS_RC_SUCCESS
     ]}.
 
     (* A command this Profile excludes (spec section 7).  Eight of the thirteen
@@ -464,9 +504,9 @@ Section FunctionalSpecification.
         | act_pcrextend =>
             guard_failure (guard_busy {[
                 if ($in_idx ==[arg_sz] #0) then
-                    `issue CRYPT_SHA256 PEND_EXT0 (ext_msg out_pcr0) 64`
+                    `issue_sha PEND_EXT0 (ext_msg out_pcr0) 64`
                 else if ($in_idx ==[arg_sz] #1) then
-                    `issue CRYPT_SHA256 PEND_EXT1 (ext_msg out_pcr1) 64`
+                    `issue_sha PEND_EXT1 (ext_msg out_pcr1) 64`
                 else
                     let $out_rc := #MARS_RC_REG
             ]})
@@ -478,14 +518,14 @@ Section FunctionalSpecification.
            completed step finds out_pend = 0 and is refused. *)
         | act_continue =>
             guard_failure {[
-                if `protocol_violation` then
+                if `violation in_sha_valid in_sha_tag out_sha_req out_sha_active` then
                     `fault`
-                else if `response_ok` then
+                else if `resp_ok in_sha_valid in_sha_tag out_sha_req out_sha_active` then
                     if ($out_pend ==[pend_sz] #PEND_EXT0) then
-                        let $out_pcr0 := $in_crypt_res;
+                        let $out_pcr0 := $in_sha_res;
                         `finish`
                     else if ($out_pend ==[pend_sz] #PEND_EXT1) then
-                        let $out_pcr1 := $in_crypt_res;
+                        let $out_pcr1 := $in_sha_res;
                         `finish`
                     else
                         let $out_rc := #MARS_RC_VALUE
@@ -526,16 +566,20 @@ Section Vectors.
         ContextEnv.(create) fs_states_init.
 
     (* Full input vector.  [arg] keeps the two-argument form the Stage 1
-       vectors use; [arg_crypt] adds what the IP drives back. *)
+       vectors use; the crypto arguments drive the SHA group, which is the only
+       one MARS_PcrExtend uses.  The HMAC group arrives with Init. *)
     Definition arg_full (pt idx dig res: nat) (valid tag: bool)
         (x : fs_inputs) : bits_t (fs_inputs_size x) :=
         match x with
-        | in_pt          => Bits.of_nat arg_sz pt
-        | in_idx         => Bits.of_nat arg_sz idx
-        | in_dig         => Bits.of_nat digest_sz dig
-        | in_crypt_res   => Bits.of_nat digest_sz res
-        | in_crypt_valid => if valid then Ob~1 else Ob~0
-        | in_crypt_tag   => if tag then Ob~1 else Ob~0
+        | in_pt         => Bits.of_nat arg_sz pt
+        | in_idx        => Bits.of_nat arg_sz idx
+        | in_dig        => Bits.of_nat digest_sz dig
+        | in_sha_res    => Bits.of_nat digest_sz res
+        | in_sha_valid  => if valid then Ob~1 else Ob~0
+        | in_sha_tag    => if tag then Ob~1 else Ob~0
+        | in_hmac_res   => Bits.zero
+        | in_hmac_valid => Ob~0
+        | in_hmac_tag   => Ob~0
         end.
 
     Definition arg (pt idx : nat) := arg_full pt idx 0 0 false false.
@@ -701,7 +745,7 @@ Section Vectors.
        Stage 2: the crypto handshake.
 
        These are the cases REVIEW.md section 2.1 is about.  A mock IP is just a
-       choice of (in_crypt_res, in_crypt_valid, in_crypt_tag) on the input vector, so
+       choice of (in_sha_res, in_sha_valid, in_sha_tag) on the input vector, so
        every attack below is expressible here, before any real crypto exists.
        --------------------------------------------------------------------- *)
 
@@ -727,27 +771,27 @@ Section Vectors.
     Proof. reflexivity. Qed.
     Example issue_pend      : get issued out_pend      = Bits.of_nat pend_sz PEND_EXT0.
     Proof. reflexivity. Qed.
-    Example issue_op        : get issued out_crypt_op  = Bits.of_nat 4 CRYPT_SHA256.
+    Example issue_op        : get issued out_sha_active = Ob~1.
     Proof. reflexivity. Qed.
-    Example issue_len       : get issued out_crypt_len = Bits.of_nat 16 64.
+    Example issue_len       : get issued out_sha_len = Bits.of_nat 16 64.
     Proof. reflexivity. Qed.
-    (* out_crypt_req toggled 0 -> 1, so a matching tag is 1. *)
-    Example issue_req       : get issued out_crypt_req = Ob~1.
+    (* out_sha_req toggled 0 -> 1, so a matching tag is 1. *)
+    Example issue_req       : get issued out_sha_req = Ob~1.
     Proof. reflexivity. Qed.
-    (* in_crypt_valid was low at issue, so the request is out_armed. *)
+    (* in_sha_valid was low at issue, so the request is out_armed. *)
     Example issue_armed     : get issued out_armed     = Ob~1.
     Proof. reflexivity. Qed.
 
     (* The message is PCR[0] || in_dig, left-aligned: out_pcr0 in the top 256 bits,
        in_dig below it, zero padding in the low 512.  This pins the byte ORDER,
        which is where MARS correctness actually lives (MVP.md section 3.1). *)
-    Example issue_msg_pcr : Bits.slice 768 digest_sz (get issued out_crypt_msg)
+    Example issue_msg_pcr : Bits.slice 768 digest_sz (get issued out_sha_msg)
                           = Bits.of_nat digest_sz 42.
     Proof. reflexivity. Qed.
-    Example issue_msg_dig : Bits.slice 512 digest_sz (get issued out_crypt_msg)
+    Example issue_msg_dig : Bits.slice 512 digest_sz (get issued out_sha_msg)
                           = Bits.of_nat digest_sz 7.
     Proof. reflexivity. Qed.
-    Example issue_msg_pad : Bits.slice 0 512 (get issued out_crypt_msg)
+    Example issue_msg_pad : Bits.slice 0 512 (get issued out_sha_msg)
                           = Bits.zero.
     Proof. reflexivity. Qed.
 
@@ -756,9 +800,9 @@ Section Vectors.
     Proof. reflexivity. Qed.
     Example ext_bad_idx_pend : get (ext 2 7 o_pcrs) out_pend      = Bits.of_nat pend_sz PEND_IDLE.
     Proof. reflexivity. Qed.
-    Example ext_bad_idx_req  : get (ext 2 7 o_pcrs) out_crypt_req = Ob~0.
+    Example ext_bad_idx_req  : get (ext 2 7 o_pcrs) out_sha_req = Ob~0.
     Proof. reflexivity. Qed.
-    Example ext_bad_idx_op   : get (ext 2 7 o_pcrs) out_crypt_op  = Bits.of_nat 4 CRYPT_IDLE.
+    Example ext_bad_idx_op   : get (ext 2 7 o_pcrs) out_sha_active = Ob~0.
     Proof. reflexivity. Qed.
 
     (* --- the honest completion ------------------------------------------ *)
@@ -776,14 +820,14 @@ Section Vectors.
     Example done_armed : get completed out_armed     = Ob~0.
     Proof. reflexivity. Qed.
     (* Zeroized, so nothing stays driven on the trusted port. *)
-    Example done_op    : get completed out_crypt_op  = Bits.of_nat 4 CRYPT_IDLE.
+    Example done_op    : get completed out_sha_active = Ob~0.
     Proof. reflexivity. Qed.
-    Example done_key   : get completed out_crypt_key = Bits.zero.
+    Example done_key   : get completed out_hmac_key = Bits.zero.
     Proof. reflexivity. Qed.
-    Example done_msg   : get completed out_crypt_msg = Bits.zero.
+    Example done_msg   : get completed out_sha_msg = Bits.zero.
     Proof. reflexivity. Qed.
 
-    (* --- ATTACK: Continue without in_crypt_valid ---------------------------- *)
+    (* --- ATTACK: Continue without in_sha_valid ---------------------------- *)
     (* The PCR must not move, and the request must stay pending. *)
     Example no_valid_pcr0  : get (cont 666 false true issued) out_pcr0 = Bits.of_nat digest_sz 42.
     Proof. reflexivity. Qed.
@@ -812,11 +856,11 @@ Section Vectors.
     Example stale_tag_armed   : get faulted out_armed     = Ob~0.
     Proof. reflexivity. Qed.
     (* Nothing left driven on the trusted port. *)
-    Example stale_tag_op      : get faulted out_crypt_op  = Bits.of_nat 4 CRYPT_IDLE.
+    Example stale_tag_op      : get faulted out_sha_active = Ob~0.
     Proof. reflexivity. Qed.
-    Example stale_tag_key     : get faulted out_crypt_key = Bits.zero.
+    Example stale_tag_key     : get faulted out_hmac_key = Bits.zero.
     Proof. reflexivity. Qed.
-    Example stale_tag_msg     : get faulted out_crypt_msg = Bits.zero.
+    Example stale_tag_msg     : get faulted out_sha_msg = Bits.zero.
     Proof. reflexivity. Qed.
 
     (* And out_failure mode then behaves as spec section 5.3.1 requires: everything
@@ -827,7 +871,7 @@ Section Vectors.
     Example faulted_ext     : get (ext 0 7 faulted) out_rc
                             = Bits.of_nat 16 MARS_RC_FAILURE.
     Proof. reflexivity. Qed.
-    Example faulted_ext_req : get (ext 0 7 faulted) out_crypt_req = Ob~1.
+    Example faulted_ext_req : get (ext 0 7 faulted) out_sha_req = Ob~1.
     Proof. reflexivity. Qed.
     Example faulted_capget  : get (other act_capabilityget MARS_PT_PCR 0 faulted) out_cap
                             = Bits.of_nat 16 2.
@@ -858,7 +902,7 @@ Section Vectors.
 
     (* --- ATTACK: the IP holds done high across requests ------------------- *)
     (* A real core (secworks/sha256, OpenTitan hmac) holds [done] until the next
-       start.  Arming only while in_crypt_valid is LOW means such a core leaves the
+       start.  Arming only while in_sha_valid is LOW means such a core leaves the
        module unarmed: it WEDGES rather than latching a result it cannot bind to
        its request.  Fail-stop is the intended outcome -- at Stage 4 the stale
        result would be published as the Attestation Key. *)
@@ -910,10 +954,10 @@ Section Vectors.
     Example busy_ext_pend    : get (ext 1 9 issued) out_pend
                              = Bits.of_nat pend_sz PEND_EXT0.
     Proof. reflexivity. Qed.
-    Example busy_ext_req     : get (ext 1 9 issued) out_crypt_req = Ob~1.
+    Example busy_ext_req     : get (ext 1 9 issued) out_sha_req = Ob~1.
     Proof. reflexivity. Qed.
     (* A refused command must not disturb the in-flight message either. *)
-    Example busy_ext_msg_dig : Bits.slice 512 digest_sz (get (ext 1 9 issued) out_crypt_msg)
+    Example busy_ext_msg_dig : Bits.slice 512 digest_sz (get (ext 1 9 issued) out_sha_msg)
                              = Bits.of_nat digest_sz 7.
     Proof. reflexivity. Qed.
 
@@ -922,7 +966,7 @@ Section Vectors.
     Definition completed1 := cont 55 true true issued1.
     Example ext1_pend  : get issued1 out_pend  = Bits.of_nat pend_sz PEND_EXT1.
     Proof. reflexivity. Qed.
-    Example ext1_msg   : Bits.slice 768 digest_sz (get issued1 out_crypt_msg)
+    Example ext1_msg   : Bits.slice 768 digest_sz (get issued1 out_sha_msg)
                        = Bits.of_nat digest_sz 99.
     Proof. reflexivity. Qed.
     Example done1_pcr1 : get completed1 out_pcr1 = Bits.of_nat digest_sz 55.

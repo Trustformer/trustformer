@@ -19,10 +19,10 @@
 //      the next start" behaviour REVIEW.md section 2.1 is about.
 //
 // (2) forces an interface obligation that MVP.md section 6.3 does not state:
-// the module arms a request only while crypt_valid is LOW, so the glue MUST
-// deassert crypt_valid once the module has consumed the result -- otherwise
+// the module arms a request only while sha_valid is LOW, so the glue MUST
+// deassert sha_valid once the module has consumed the result -- otherwise
 // the SECOND command never arms.  The module announces consumption by
-// driving crypt_op back to IDLE in its completion arm, so that is the signal
+// driving sha_active back to IDLE in its completion arm, so that is the signal
 // used here.  Without this the second PcrExtend wedges, and with the Stage 3
 // fault detector it faults.
 //======================================================================
@@ -32,19 +32,16 @@ module mars_sha256_glue (
     input  wire           RST_N,
 
     // From the MARS module (Trusted outputs).
-    input  wire [3:0]     crypt_op,
-    input  wire [1023:0]  crypt_msg,
-    input  wire [15:0]    crypt_len,
-    input  wire           crypt_req,
+    input  wire           sha_active,
+    input  wire [1023:0]  sha_msg,
+    input  wire [15:0]    sha_len,
+    input  wire           sha_req,
 
     // To the MARS module (Trusted inputs).
-    output reg  [255:0]   crypt_res,
-    output reg            crypt_valid,
-    output reg            crypt_tag
+    output reg  [255:0]   sha_res,
+    output reg            sha_valid,
+    output reg            sha_tag
 );
-
-  localparam OP_IDLE   = 4'd0;
-  localparam OP_SHA256 = 4'd1;
 
   localparam S_IDLE = 2'd0;
   localparam S_BLK1 = 2'd1;
@@ -72,7 +69,7 @@ module mars_sha256_glue (
       .ready(core_ready), .digest(core_digest), .digest_valid(core_dv)
   );
 
-  wire new_request = (crypt_op == OP_SHA256) && (crypt_req != last_req);
+  wire new_request = sha_active && (sha_req != last_req);
 
   always @(posedge CLK) begin
     if (!RST_N) begin
@@ -80,9 +77,9 @@ module mars_sha256_glue (
       last_req    <= 1'b0;
       core_init   <= 1'b0;
       core_next   <= 1'b0;
-      crypt_res   <= 256'd0;
-      crypt_valid <= 1'b0;
-      crypt_tag   <= 1'b0;
+      sha_res   <= 256'd0;
+      sha_valid <= 1'b0;
+      sha_tag   <= 1'b0;
       block       <= 512'd0;
     end else begin
       core_init <= 1'b0;
@@ -97,16 +94,16 @@ module mars_sha256_glue (
       // produce the emulator's digests with it, and must enter failure mode
       // without it.
 `ifndef GLUE_OMIT_DEASSERT
-      if (crypt_op == OP_IDLE)
-        crypt_valid <= 1'b0;
+      if (!sha_active)
+        sha_valid <= 1'b0;
 `endif
 
       case (state)
         S_IDLE:
           if (new_request && core_ready) begin
-            last_req    <= crypt_req;
-            crypt_valid <= 1'b0;
-            block       <= crypt_msg[1023:512];   // message, left-aligned
+            last_req    <= sha_req;
+            sha_valid <= 1'b0;
+            block       <= sha_msg[1023:512];   // message, left-aligned
             core_init   <= 1'b1;
             state       <= S_BLK1;
           end
@@ -121,9 +118,9 @@ module mars_sha256_glue (
 
         S_BLK2:
           if (core_ready && !core_next) begin
-            crypt_res   <= core_digest;
-            crypt_tag   <= last_req;   // echo the request we served
-            crypt_valid <= 1'b1;
+            sha_res   <= core_digest;
+            sha_tag   <= last_req;   // echo the request we served
+            sha_valid <= 1'b1;
             state       <= S_IDLE;
           end
       endcase
