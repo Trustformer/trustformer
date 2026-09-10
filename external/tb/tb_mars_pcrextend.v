@@ -16,6 +16,7 @@ module tb_mars_pcrextend;
   localparam CC_PCREXTEND     = 16'd5;
   localparam CC_REGREAD       = 16'd6;
   localparam CC_CONTINUE      = 16'd13;
+  localparam CC_INIT          = 16'hFFFF;
 
   reg CLK = 1'b0;
   reg RST_N = 1'b0;
@@ -29,7 +30,7 @@ module tb_mars_pcrextend;
   wire [15:0] rc, cap;
   wire [255:0] dout, pcr0, pcr1;
   wire [7:0]  pend;
-  wire        armed, failure;
+  wire        armed, failure, st;
 
   // SHA-256 group
   wire          sha_req, sha_active;
@@ -38,12 +39,16 @@ module tb_mars_pcrextend;
   wire [255:0]  sha_res;
   wire          sha_valid, sha_tag;
 
-  // HMAC group -- declared, unused until Init lands.  Tied off so the
-  // module's own guards, not a floating input, decide what happens.
+  // HMAC group -- driven by the STAND-IN core (external/glue/mars_hmac_mock.v)
+  // so _MARS_Init can complete and the SHA differential can still run.  DP is
+  // therefore wrong, which matters only from MARS_Quote onward.
   wire          hmac_req, hmac_active;
   wire [255:0]  hmac_key;
   wire [511:0]  hmac_msg;
   wire [15:0]   hmac_len;
+  wire [255:0]  hmac_res;
+  wire          hmac_valid, hmac_tag;
+  reg           init_req;
 
   Example_Mars dut (
       .CLK(CLK), .RST_N(RST_N),
@@ -57,9 +62,13 @@ module tb_mars_pcrextend;
       .in_param_sec_in_sha_valid_out(sha_valid), .in_param_sec_in_sha_valid_arg(),
       .in_param_sec_in_sha_tag_out(sha_tag),     .in_param_sec_in_sha_tag_arg(),
 
-      .in_param_sec_in_hmac_res_out(256'b0),  .in_param_sec_in_hmac_res_arg(),
-      .in_param_sec_in_hmac_valid_out(1'b0),  .in_param_sec_in_hmac_valid_arg(),
-      .in_param_sec_in_hmac_tag_out(1'b0),    .in_param_sec_in_hmac_tag_arg(),
+      .in_param_sec_in_hmac_res_out(hmac_res),     .in_param_sec_in_hmac_res_arg(),
+      .in_param_sec_in_hmac_valid_out(hmac_valid), .in_param_sec_in_hmac_valid_arg(),
+      .in_param_sec_in_hmac_tag_out(hmac_tag),     .in_param_sec_in_hmac_tag_arg(),
+
+      // platform side: the Primary Seed and the protected init request
+      .in_param_sec_in_ps_out(256'd5),         .in_param_sec_in_ps_arg(),
+      .in_param_sec_in_init_req_out(init_req), .in_param_sec_in_init_req_arg(),
 
       .out_param_pub_out_rc_arg(rc),                 .out_param_pub_out_rc_out(1'b0),
       .out_param_pub_out_cap_arg(cap),               .out_param_pub_out_cap_out(1'b0),
@@ -69,6 +78,7 @@ module tb_mars_pcrextend;
       .out_param_pub_out_failure_arg(failure),       .out_param_pub_out_failure_out(1'b0),
       .out_param_pub_out_pend_arg(pend),             .out_param_pub_out_pend_out(1'b0),
       .out_param_pub_out_armed_arg(armed),           .out_param_pub_out_armed_out(1'b0),
+      .out_param_pub_out_st_arg(st),                 .out_param_pub_out_st_out(1'b0),
 
       .out_param_pub_out_sha_req_arg(sha_req),       .out_param_pub_out_sha_req_out(1'b0),
       .out_param_pub_out_sha_active_arg(sha_active), .out_param_pub_out_sha_active_out(1'b0),
@@ -80,6 +90,13 @@ module tb_mars_pcrextend;
       .out_param_sec_out_hmac_key_arg(hmac_key),       .out_param_sec_out_hmac_key_out(1'b0),
       .out_param_sec_out_hmac_msg_arg(hmac_msg),       .out_param_sec_out_hmac_msg_out(1'b0),
       .out_param_sec_out_hmac_len_arg(hmac_len),       .out_param_sec_out_hmac_len_out(1'b0)
+  );
+
+  mars_hmac_mock hmac (
+      .CLK(CLK), .RST_N(RST_N),
+      .hmac_active(hmac_active), .hmac_key(hmac_key),
+      .hmac_msg(hmac_msg), .hmac_len(hmac_len), .hmac_req(hmac_req),
+      .hmac_res(hmac_res), .hmac_valid(hmac_valid), .hmac_tag(hmac_tag)
   );
 
   mars_sha256_glue glue (
@@ -135,6 +152,25 @@ module tb_mars_pcrextend;
     end
   endtask
 
+  // The reset sequence of MVP.md section 6.3: the platform asserts init_req,
+  // the wrapper strobes Init, and the glue advances it when the KDF answers.
+  task automatic boot;
+    integer guard;
+    begin
+      init_req = 1'b1;
+      issue(CC_INIT);
+      guard = 0;
+      while (hmac_valid !== 1'b1 && guard < 2000) begin
+        @(posedge CLK);
+        guard = guard + 1;
+      end
+      if (guard >= 2000) $display("TIMEOUT waiting for hmac_valid");
+      issue(CC_CONTINUE);
+      init_req = 1'b0;
+      $display("Init               rc=%0d st=%0d pend=%0d", rc, st, pend);
+    end
+  endtask
+
   task automatic reg_read(input [15:0] idx);
     begin
       a_idx = idx;
@@ -146,10 +182,12 @@ module tb_mars_pcrextend;
 
   integer i;
   initial begin
-    in_cmd = 17'b0; a_pt = 16'b0; a_idx = 16'b0; a_dig = 256'b0;
+    in_cmd = 17'b0; a_pt = 16'b0; a_idx = 16'b0; a_dig = 256'b0; init_req = 1'b0;
     repeat (4) @(posedge CLK);
     RST_N = 1'b1;
     repeat (2) @(posedge CLK);
+
+    boot;
 
     // A fresh device: both PCRs zero, as after _MARS_Init.
     reg_read(16'd0);

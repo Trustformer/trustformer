@@ -37,12 +37,14 @@ Definition dfg_reg  := build_dfg tfs_ctx act_regread.
 Definition dfg_uns  := build_dfg tfs_ctx act_selftest.
 Definition dfg_ext  := build_dfg tfs_ctx act_pcrextend.
 Definition dfg_cont := build_dfg tfs_ctx act_continue.
+Definition dfg_init := build_dfg tfs_ctx act_init.
 
 Definition n_cap  := Eval vm_compute in (length (graph dfg_cap)).
 Definition n_reg  := Eval vm_compute in (length (graph dfg_reg)).
 Definition n_uns  := Eval vm_compute in (length (graph dfg_uns)).
 Definition n_ext  := Eval vm_compute in (length (graph dfg_ext)).
 Definition n_cont := Eval vm_compute in (length (graph dfg_cont)).
+Definition n_init := Eval vm_compute in (length (graph dfg_init)).
 
 (* The eleven-tag lookup is no longer the biggest graph: PcrExtend's message
    construction and Continue's guard chain both overtake it in NODE COUNT --
@@ -54,10 +56,11 @@ Definition n_cont := Eval vm_compute in (length (graph dfg_cont)).
    smaller graph is the one that needs buffers.  An excluded command is the two
    [clear_results] writes, the failure test, the constant and the rc write. *)
 Example probe_nodes_cap  : n_cap  = 87. Proof. reflexivity. Qed.
-Example probe_nodes_reg  : n_reg  = 30. Proof. reflexivity. Qed.
+Example probe_nodes_reg  : n_reg  = 36. Proof. reflexivity. Qed.
 Example probe_nodes_uns  : n_uns  = 9.  Proof. reflexivity. Qed.
-Example probe_nodes_ext  : n_ext  = 91. Proof. reflexivity. Qed.
-Example probe_nodes_cont : n_cont = 138. Proof. reflexivity. Qed.
+Example probe_nodes_ext  : n_ext  = 108. Proof. reflexivity. Qed.
+Example probe_nodes_cont : n_cont = 230. Proof. reflexivity. Qed.
+Example probe_nodes_init : n_init = 70. Proof. reflexivity. Qed.
 
 (* Buffers per action, in [fs_action] constructor order, at the cost limit
    Mars.v ships with.  Index 1 is MARS_CapabilityGet -- still the only command
@@ -66,7 +69,7 @@ Example probe_nodes_cont : n_cont = 138. Proof. reflexivity. Qed.
    eleven-deep phi CHAIN in the tag lookup that costs cycles, and that chain is
    16 bits wide. *)
 Definition nbufs := Eval vm_compute in (map (@length _) (buffer_needs tfs_ctx 10)).
-Example probe_bufs : nbufs = [0; 3; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0].
+Example probe_bufs : nbufs = [0; 3; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0].
 Proof. reflexivity. Qed.
 
 (* Cycles per command: (lower bound, upper bound). *)
@@ -75,6 +78,7 @@ Definition b_reg  := Eval vm_compute in (action_bounds tfs_ctx 10 dfg_reg).
 Definition b_uns  := Eval vm_compute in (action_bounds tfs_ctx 10 dfg_uns).
 Definition b_ext  := Eval vm_compute in (action_bounds tfs_ctx 10 dfg_ext).
 Definition b_cont := Eval vm_compute in (action_bounds tfs_ctx 10 dfg_cont).
+Definition b_init := Eval vm_compute in (action_bounds tfs_ctx 10 dfg_init).
 
 (* fst = snd certifies constant time for the command itself.  Note this says
    nothing about how long the IP takes -- that latency lives between the issue
@@ -84,6 +88,7 @@ Example probe_bounds_reg  : b_reg  = (1, 1). Proof. reflexivity. Qed.
 Example probe_bounds_uns  : b_uns  = (1, 1). Proof. reflexivity. Qed.
 Example probe_bounds_ext  : b_ext  = (1, 1). Proof. reflexivity. Qed.
 Example probe_bounds_cont : b_cont = (1, 1). Proof. reflexivity. Qed.
+Example probe_bounds_init : b_init = (1, 1). Proof. reflexivity. Qed.
 
 (* MARS_CapabilityGet is the module's one variable-latency command: fst <> snd,
    because an early Table 6 tag resolves in the first cycle and a late one has to
@@ -96,10 +101,10 @@ Example probe_bounds_cap : b_cap = (1, 2). Proof. reflexivity. Qed.
 
 (* Criticality, after V2b made Secret inputs taint sources.
 
-   MARS_Continue guards on [in_sha_valid] and [in_sha_tag], both Secret inputs
-   from the crypto IP, so every phi under those guards is forced
-   constant-time -- 21 occurrences (17 before the per-IP port split), up from 0
-   before V2b.  REVIEW.md section 2.6 predicted
+   MARS_Continue guards on the valid and tag lines of BOTH crypto groups, all
+   Secret inputs, so every phi under those guards is forced constant-time -- 47
+   occurrences, up from 0 before V2b (17 with one group, 21 after the per-IP
+   split, 47 once Init added the HMAC arm).  REVIEW.md section 2.6 predicted
    exactly this ("V2b does not yield a byte-identical module") and it is the
    whole observable effect of the change.
 
@@ -113,7 +118,15 @@ Definition crit_ext  := Eval vm_compute in
   (List.length (crit_report_all tfs_ctx (build_dfg tfs_ctx act_pcrextend))).
 Definition crit_cap  := Eval vm_compute in
   (List.length (crit_report_all tfs_ctx (build_dfg tfs_ctx act_capabilityget))).
+(* _MARS_Init branches on [in_init_req], a Secret input, so its phis are
+   critical too.  That is the over-classification predicted when [plat_] was
+   folded into [Secret]: init_req leaks nothing, its requirement is integrity,
+   and treating it as secret is conservative but sound.  16 occurrences is what
+   that costs, and it costs nothing in cycles -- bounds stay (1,1). *)
+Definition crit_init := Eval vm_compute in
+  (List.length (crit_report_all tfs_ctx (build_dfg tfs_ctx act_init))).
+Example probe_crit_init : crit_init = 16. Proof. reflexivity. Qed.
 
-Example probe_crit_cont : crit_cont = 21. Proof. reflexivity. Qed.
+Example probe_crit_cont : crit_cont = 47. Proof. reflexivity. Qed.
 Example probe_crit_ext  : crit_ext  = 0.  Proof. reflexivity. Qed.
 Example probe_crit_cap  : crit_cap  = 0.  Proof. reflexivity. Qed.

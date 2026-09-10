@@ -42,6 +42,7 @@ Section FunctionalSpecification.
     Definition PEND_IDLE   := 0.
     Definition PEND_EXT0   := 1.
     Definition PEND_EXT1   := 2.
+    Definition PEND_DPINIT := 3.
 
     (* Table 4 response codes (spec section 6.2). *)
     Definition MARS_RC_SUCCESS := 0.
@@ -96,6 +97,7 @@ Section FunctionalSpecification.
     | act_sign               (* MARS_CC_Sign             11 *)
     | act_signatureverify    (* MARS_CC_SignatureVerify  12 *)
     | act_continue           (* Profile-specific         13 *)
+    | act_init               (* Profile-specific     0xFFFF *)
     .
 
     (* MSB first, 16 bits. *)
@@ -115,6 +117,12 @@ Section FunctionalSpecification.
     | act_sign             => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~0~1~1
     | act_signatureverify  => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~1~0~0
     | act_continue         => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~1~0~1
+    (* 0xFFFF, deliberately not adjacent to the 0..12 range.  MARS_Init is a
+       PERMANENT Profile command; MARS_Continue is scaffolding that disappears
+       at V4.  Parking Init at the far end means removing Continue leaves a
+       clean 0..12 + 0xFFFF space instead of a hole, and Init never has to be
+       renumbered -- which would be a breaking change for any host. *)
+    | act_init             => Ob~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1
     end.
 
     Lemma fs_action_encoding_inj :
@@ -147,6 +155,12 @@ Section FunctionalSpecification.
     | in_hmac_res
     | in_hmac_valid
     | in_hmac_tag
+    (* From the platform, not from software.  [in_ps] is the Primary Seed and is
+       secret outright; [in_init_req] leaks nothing, but software must never be
+       able to drive it (spec section 5.8) -- and [Secret] already delivers
+       "never bus-mapped", which is the protection wanted. *)
+    | in_ps
+    | in_init_req
     .
 
     (* PCRs are OUTPUT variables, not state variables: they are meant to be
@@ -163,6 +177,7 @@ Section FunctionalSpecification.
     | out_failure
     | out_pend       (* which crypto step is in flight; 0 = idle *)
     | out_armed      (* two-phase arming, REVIEW.md section 2.1  *)
+    | out_st         (* 0 = uninitialized, 1 = DP is valid       *)
     | out_sha_req       (* toggles on each new SHA-256 request      *)
     | out_sha_active    (* a SHA-256 request is outstanding         *)
     | out_hmac_req
@@ -199,6 +214,8 @@ Section FunctionalSpecification.
     | in_hmac_res   => digest_sz
     | in_hmac_valid => 1
     | in_hmac_tag   => 1
+    | in_ps         => digest_sz
+    | in_init_req   => 1
     end.
 
     Definition fs_outputs_size (x: fs_outputs) : nat :=
@@ -211,6 +228,7 @@ Section FunctionalSpecification.
     | out_failure   => 1
     | out_pend      => pend_sz
     | out_armed     => 1
+    | out_st        => 1
     | out_sha_req     => 1
     | out_sha_active  => 1
     | out_hmac_req    => 1
@@ -239,13 +257,14 @@ Section FunctionalSpecification.
     | in_pt | in_idx | in_dig => Public
     | in_sha_res  | in_sha_valid  | in_sha_tag  => Secret
     | in_hmac_res | in_hmac_valid | in_hmac_tag => Secret
+    | in_ps | in_init_req                      => Secret
     end.
 
     Definition fs_outputs_class (x: fs_outputs) : port_class :=
     match x with
     (* handshake bits an observer could see on the bus edge anyway *)
     | out_rc | out_cap | out_dout | out_pcr0 | out_pcr1 | out_failure
-    | out_pend | out_armed
+    | out_pend | out_armed | out_st
     | out_sha_req | out_sha_active | out_hmac_req | out_hmac_active => Public
     (* everything carrying data *)
     | out_sha_msg | out_sha_len
@@ -397,6 +416,62 @@ Section FunctionalSpecification.
         let $out_rc    := #MARS_RC_SUCCESS
     ]}.
 
+    (* Commands are refused until _MARS_Init has COMPLETED.  This is what stops
+       MARS_Quote deriving AK = KDF(0,'R',ctx) from a zero DP, which anyone could
+       compute (REVIEW.md section 2.2).
+
+       [out_st] is not redundant with [in_init_req]: the request authorises
+       STARTING an initialization, [out_st] records that one finished, and Init
+       is a KDF round trip -- so there is a window where the request is asserted
+       and DP is still zero.  MVP.md section 2.2 deviation 3.
+
+       MARS_CapabilityGet is exempt, on the same rule that exempts it from
+       failure mode: it always answers.  It reads no state a pending step or an
+       uninitialized DP could affect -- every value it returns is a Profile
+       constant. *)
+    Definition guard_init (body: @tf_ops fs_states fs_inputs fs_outputs)
+        : @tf_ops fs_states fs_inputs fs_outputs :=
+    {[
+        if ($out_st ==[1] #0)
+        then let $out_rc := #MARS_RC_VALUE
+        else `body`
+    ]}.
+
+    (* CryptSkdf's framing, from reference-emulator/c/hw_sha2.c -- the spec text
+       does not give it, so the Profile pins it (MVP.md section 2):
+
+         HMAC(parent, [1]_4 || label || 0x00 || ctx || [8192]_4)
+
+       For CryptDpInit the parent is PS, the label is MARS_LD = 'D' and the
+       context is the three bytes "prd".  13 bytes, left-aligned in the 512-bit
+       port.  Built from byte-sized constants on purpose: [tf_const] carries a
+       unary nat, so "prd" as one 24-bit literal (7369828) would be ~1s of
+       [N.of_nat] per elaboration where three 8-bit ones are free. *)
+    Definition dpinit_msg : @tf_expr fs_states fs_inputs fs_outputs :=
+        tf_op2 (tf_concat 104 408)
+          (tf_op2 (tf_concat 32 72) (tf_const 1)
+            (tf_op2 (tf_concat 8 64) (tf_const 68)          (* 'D' = MARS_LD *)
+              (tf_op2 (tf_concat 8 56) (tf_const 0)
+                (tf_op2 (tf_concat 8 48) (tf_const 112)     (* 'p' *)
+                  (tf_op2 (tf_concat 8 40) (tf_const 114)   (* 'r' *)
+                    (tf_op2 (tf_concat 8 32) (tf_const 100) (* 'd' *)
+                      (tf_const 8192)))))))                 (* [L]_4, L = 8192 *)
+          (tf_const 0).
+
+    Definition issue_hmac (step: nat)
+                     (key msg: @tf_expr fs_states fs_inputs fs_outputs) (len: nat)
+        : @tf_ops fs_states fs_inputs fs_outputs :=
+    {[
+        let $out_hmac_key    := `key`;
+        let $out_hmac_msg    := `msg`;
+        let $out_hmac_len    := #len;
+        let $out_hmac_active := #1;
+        let $out_hmac_req    := !$out_hmac_req;
+        let $out_pend        := #step;
+        let $out_armed       := ($in_hmac_valid ==[1] #0);
+        let $out_rc          := #MARS_RC_SUCCESS
+    ]}.
+
     (* A command this Profile excludes (spec section 7).  Eight of the thirteen
        codes are excluded outright; PcrExtend and Quote are in the Profile but
        not yet built, and answer MARS_RC_COMMAND until they are. *)
@@ -486,7 +561,7 @@ Section FunctionalSpecification.
            result register; either way the host contract is the same, "check out_rc
            before using out_dout". *)
         | act_regread =>
-            guard_failure (guard_busy {[
+            guard_failure (guard_init (guard_busy {[
                 if ($in_idx ==[arg_sz] #0) then
                     let $out_dout := $out_pcr0;
                     let $out_rc   := #MARS_RC_SUCCESS
@@ -495,27 +570,31 @@ Section FunctionalSpecification.
                     let $out_rc   := #MARS_RC_SUCCESS
                 else
                     let $out_rc := #MARS_RC_REG
-            ]})
+            ]}))
 
         (* MARS_PcrExtend -- spec section 8.3.1.  Step 1 of 2: validate, build
            PCR[i] || in_dig, and issue.  Step 2 is MARS_Continue.  [out_pend] carries
            which PCR, so the index needs no separate latch -- which matters,
            because an input is re-sampled on every step. *)
         | act_pcrextend =>
-            guard_failure (guard_busy {[
+            guard_failure (guard_init (guard_busy {[
                 if ($in_idx ==[arg_sz] #0) then
                     `issue_sha PEND_EXT0 (ext_msg out_pcr0) 64`
                 else if ($in_idx ==[arg_sz] #1) then
                     `issue_sha PEND_EXT1 (ext_msg out_pcr1) 64`
                 else
                     let $out_rc := #MARS_RC_REG
-            ]})
+            ]}))
 
         (* MARS_Continue -- Profile-specific, not a TCG command.  Advances
            whatever [out_pend] names, and does NOTHING otherwise: glue that pulses
            Continue spuriously, repeatedly or never cannot make the module do
            anything it did not itself start.  A second Continue after a
            completed step finds out_pend = 0 and is refused. *)
+        (* NOT gated on [out_st]: the Continue that completes _MARS_Init runs
+           while st is still 0, so an init gate here would make initialization
+           impossible.  Safe, because Continue only ever advances something the
+           module itself started -- with [out_pend] = 0 it does nothing. *)
         | act_continue =>
             guard_failure {[
                 if `violation in_sha_valid in_sha_tag out_sha_req out_sha_active` then
@@ -529,6 +608,50 @@ Section FunctionalSpecification.
                         `finish`
                     else
                         let $out_rc := #MARS_RC_VALUE
+                else if `violation in_hmac_valid in_hmac_tag out_hmac_req out_hmac_active` then
+                    `fault`
+                else if `resp_ok in_hmac_valid in_hmac_tag out_hmac_req out_hmac_active` then
+                    if ($out_pend ==[pend_sz] #PEND_DPINIT) then
+                        (* the only writer of [out_st], and the last step of the
+                           reset sequence: DP is valid from here on *)
+                        let $st_dp  := $in_hmac_res;
+                        let $out_st := #1;
+                        `finish`
+                    else
+                        let $out_rc := #MARS_RC_VALUE
+                else
+                    let $out_rc := #MARS_RC_VALUE
+            ]}
+
+        (* _MARS_Init -- spec section 5.4.  Not a TCG command: it is gated on a
+           protected input the platform drives, never software (section 5.8).
+
+           Exempt from all three guards, and each exemption is load-bearing:
+             - from [guard_failure], because section 5.3.1 says failure mode
+               persists "until reinitialized" -- so Init is what clears it;
+             - from [guard_busy] and from [guard_init], because Init is the ONLY
+               recovery from a wedged crypto step (REVIEW.md section 2.8), and a
+               gate on [out_st = 0] would make the wedge permanent.
+
+           Protection therefore comes entirely from [in_init_req] being a Secret
+           input that is never memory-mapped, which is exactly where spec
+           section 5.8 puts it.  This refines MVP.md section 6.3 step 3, which
+           also gated Init on [st = 0]. *)
+        | act_init =>
+            {[
+                if ($in_init_req ==[1] #1) then
+                    let $st_ps          := $in_ps;
+                    let $st_ak          := #0;
+                    let $out_st         := #0;
+                    let $out_failure    := #0;
+                    let $out_pcr0       := #0;
+                    let $out_pcr1       := #0;
+                    let $out_sha_msg    := #0;
+                    let $out_sha_active := #0;
+                    (* [st_ps] was just assigned, and statement order is
+                       genuinely sequential (REVIEW.md section 4), so this reads
+                       the NEW seed rather than the previous one. *)
+                    `issue_hmac PEND_DPINIT (tf_svar st_ps) dpinit_msg 13`
                 else
                     let $out_rc := #MARS_RC_VALUE
             ]}
@@ -559,16 +682,26 @@ End FunctionalSpecification.
    checks; the Verilog-level ones run against python/ in the test bench. *)
 Section Vectors.
 
-    Definition o_zero : ContextEnv.(env_t) (tf_outputs_type fs_outputs_size) :=
-        ContextEnv.(create) (fun _ => Bits.zero).
+    (* Vectors thread the WHOLE system state, not just the outputs: DP is a
+       state variable, so it has to survive from the Init request to the
+       Continue that completes it. *)
+    Definition sys_t := (ContextEnv.(env_t) (tf_states_type fs_states_size)
+                         * ContextEnv.(env_t) (tf_outputs_type fs_outputs_size))%type.
 
     Definition s_zero : ContextEnv.(env_t) (tf_states_type fs_states_size) :=
         ContextEnv.(create) fs_states_init.
 
-    (* Full input vector.  [arg] keeps the two-argument form the Stage 1
-       vectors use; the crypto arguments drive the SHA group, which is the only
-       one MARS_PcrExtend uses.  The HMAC group arrives with Init. *)
+    Definition sys_zero : sys_t :=
+        (s_zero, ContextEnv.(create) (fun _ => Bits.zero)).
+
+    Definition with_out (sys: sys_t) (v: fs_outputs)
+        (x: bits_t (fs_outputs_size v)) : sys_t :=
+        (fst sys, ContextEnv.(putenv) (snd sys) v x).
+
+    (* Full input vector. *)
     Definition arg_full (pt idx dig res: nat) (valid tag: bool)
+                        (hres: nat) (hvalid htag: bool)
+                        (ps: nat) (ireq: bool)
         (x : fs_inputs) : bits_t (fs_inputs_size x) :=
         match x with
         | in_pt         => Bits.of_nat arg_sz pt
@@ -577,27 +710,51 @@ Section Vectors.
         | in_sha_res    => Bits.of_nat digest_sz res
         | in_sha_valid  => if valid then Ob~1 else Ob~0
         | in_sha_tag    => if tag then Ob~1 else Ob~0
-        | in_hmac_res   => Bits.zero
-        | in_hmac_valid => Ob~0
-        | in_hmac_tag   => Ob~0
+        | in_hmac_res   => Bits.of_nat digest_sz hres
+        | in_hmac_valid => if hvalid then Ob~1 else Ob~0
+        | in_hmac_tag   => if htag then Ob~1 else Ob~0
+        | in_ps         => Bits.of_nat digest_sz ps
+        | in_init_req   => if ireq then Ob~1 else Ob~0
         end.
 
-    Definition arg (pt idx : nat) := arg_full pt idx 0 0 false false.
+    Definition arg (pt idx : nat) :=
+        arg_full pt idx 0 0 false false 0 false false 0 false.
 
-    Definition run_in (act: fs_action) (input: forall x, bits_t (fs_inputs_size x))
-        (out: ContextEnv.(env_t) (tf_outputs_type fs_outputs_size)) :=
-        snd (fs_step (fs_transitions act) (s_zero, out) input).
+    Definition step (act: fs_action)
+        (input: forall x, bits_t (fs_inputs_size x)) (sys: sys_t) : sys_t :=
+        fs_step (fs_transitions act) sys input.
 
-    Definition run (act: fs_action) (pt idx : nat)
-        (out: ContextEnv.(env_t) (tf_outputs_type fs_outputs_size)) :=
-        run_in act (arg pt idx) out.
+    Definition run_in := step.
 
-    Definition rc_of (act: fs_action) (pt idx : nat) out :=
-        ContextEnv.(getenv) (run act pt idx out) out_rc.
-    Definition cap_of (act: fs_action) (pt idx : nat) out :=
-        ContextEnv.(getenv) (run act pt idx out) out_cap.
-    Definition dout_of (act: fs_action) (pt idx : nat) out :=
-        ContextEnv.(getenv) (run act pt idx out) out_dout.
+    Definition run (act: fs_action) (pt idx : nat) (sys: sys_t) : sys_t :=
+        step act (arg pt idx) sys.
+
+    Definition get (sys: sys_t) v := ContextEnv.(getenv) (snd sys) v.
+
+    Definition rc_of (act: fs_action) (pt idx : nat) sys :=
+        get (run act pt idx sys) out_rc.
+    Definition cap_of (act: fs_action) (pt idx : nat) sys :=
+        get (run act pt idx sys) out_cap.
+    Definition dout_of (act: fs_action) (pt idx : nat) sys :=
+        get (run act pt idx sys) out_dout.
+
+    (* ---- boot ---------------------------------------------------------- *)
+    (* The reset sequence of spec section 5.4, as two strobes: the platform
+       asserts init_req and the wrapper issues Init, then the glue advances it
+       when the HMAC core answers.  Everything after this point starts from a
+       device that has actually been initialized -- which it must, because the
+       [st] gate refuses every command except MARS_CapabilityGet before it. *)
+    Definition arg_boot := arg_full 0 0 0 0 false false 0 false false 5 true.
+    Definition arg_hmac (r: nat) (v t: bool) :=
+        arg_full 0 0 0 0 false false r v t 0 false.
+
+    Definition sys_init  : sys_t := step act_init arg_boot sys_zero.
+    Definition sys_ready : sys_t := step act_continue (arg_hmac 77 true true) sys_init.
+
+    (* [o_zero] keeps its name: it is still the uninitialized device, which is
+       the right base for the MARS_CapabilityGet vectors, since that command is
+       exempt from the init gate. *)
+    Definition o_zero := sys_zero.
 
     (* MARS_CapabilityGet: all eleven Table 6 tags. *)
     Example cap_pcr : cap_of act_capabilityget MARS_PT_PCR 0 o_zero
@@ -656,8 +813,7 @@ Section Vectors.
        sentinel surviving in_pt = 0, 12 and 13, because there the sentinel lives in
        the CALLER's buffer, which an MMIO result register has no analogue for.
        Either way the host contract is the same: check out_rc before using out_cap. *)
-    Definition o_cap_sentinel :=
-        ContextEnv.(putenv) o_zero out_cap (Bits.of_nat 16 4095).
+    Definition o_cap_sentinel := with_out o_zero out_cap (Bits.of_nat 16 4095).
     Example cap_cleared_on_invalid : cap_of act_capabilityget 0 0 o_cap_sentinel
                       = Bits.zero.
     Proof. reflexivity. Qed.
@@ -671,11 +827,11 @@ Section Vectors.
                       = Bits.zero.
     Proof. reflexivity. Qed.
 
-    (* MARS_RegRead over two distinguishable PCRs. *)
+    (* MARS_RegRead over two distinguishable PCRs, on an INITIALIZED device --
+       every command but MARS_CapabilityGet needs one now. *)
     Definition o_pcrs :=
-        ContextEnv.(putenv)
-          (ContextEnv.(putenv) o_zero out_pcr0 (Bits.of_nat digest_sz 42))
-          out_pcr1 (Bits.of_nat digest_sz 99).
+        with_out (with_out sys_ready out_pcr0 (Bits.of_nat digest_sz 42))
+                 out_pcr1 (Bits.of_nat digest_sz 99).
 
     Example reg_read_0 : dout_of act_regread 0 0 o_pcrs
                       = Bits.of_nat digest_sz 42.
@@ -701,11 +857,11 @@ Section Vectors.
        clearing them per command would wipe the measurement chain.  Pinned so
        [clear_results] can never quietly grow to cover them. *)
     Example pcr0_survives_regread :
-        ContextEnv.(getenv) (run act_regread 0 2 o_pcrs) out_pcr0
+        get (run act_regread 0 2 o_pcrs) out_pcr0
         = Bits.of_nat digest_sz 42.
     Proof. reflexivity. Qed.
     Example pcr1_survives_capabilityget :
-        ContextEnv.(getenv) (run act_capabilityget MARS_PT_PCR 0 o_pcrs) out_pcr1
+        get (run act_capabilityget MARS_PT_PCR 0 o_pcrs) out_pcr1
         = Bits.of_nat digest_sz 99.
     Proof. reflexivity. Qed.
 
@@ -720,7 +876,7 @@ Section Vectors.
     (* Failure mode (spec section 5.3.1): everything except MARS_CapabilityGet
        answers MARS_RC_FAILURE, and the out_failure answer preempts
        MARS_RC_COMMAND. *)
-    Definition o_failed := ContextEnv.(putenv) o_pcrs out_failure Ob~1.
+    Definition o_failed := with_out o_pcrs out_failure Ob~1.
 
     Example failed_regread : rc_of act_regread 0 0 o_failed
                       = Bits.of_nat 16 MARS_RC_FAILURE.
@@ -737,7 +893,7 @@ Section Vectors.
 
     (* [out_failure] itself survives too -- it is state, not a result. *)
     Example failure_survives_capabilityget :
-        ContextEnv.(getenv) (run act_capabilityget MARS_PT_PCR 0 o_failed) out_failure
+        get (run act_capabilityget MARS_PT_PCR 0 o_failed) out_failure
         = Ob~1.
     Proof. reflexivity. Qed.
 
@@ -749,16 +905,15 @@ Section Vectors.
        every attack below is expressible here, before any real crypto exists.
        --------------------------------------------------------------------- *)
 
-    Definition get (o: ContextEnv.(env_t) (tf_outputs_type fs_outputs_size)) v :=
-        ContextEnv.(getenv) o v.
-
     (* Step 1: host issues PcrExtend(in_idx, in_dig). *)
     Definition ext (idx dig: nat) out :=
-        run_in act_pcrextend (arg_full 0 idx dig 0 false false) out.
+        run_in act_pcrextend
+          (arg_full 0 idx dig 0 false false 0 false false 0 false) out.
 
-    (* Step 2: glue pulses Continue with whatever the IP is driving. *)
+    (* Step 2: glue pulses Continue with whatever the SHA core is driving. *)
     Definition cont (res: nat) (valid tag: bool) out :=
-        run_in act_continue (arg_full 0 0 0 res valid tag) out.
+        run_in act_continue
+          (arg_full 0 0 0 res valid tag 0 false false 0 false) out.
 
     (* Any other command, for the interleaving tests. *)
     Definition other (act: fs_action) (pt idx: nat) out := run act pt idx out.
@@ -907,7 +1062,8 @@ Section Vectors.
        its request.  Fail-stop is the intended outcome -- at Stage 4 the stale
        result would be published as the Attestation Key. *)
     Definition issued_stuck :=
-        run_in act_pcrextend (arg_full 0 0 7 0 true false) o_pcrs.
+        run_in act_pcrextend
+          (arg_full 0 0 7 0 true false 0 false false 0 false) o_pcrs.
 
     Example stuck_pend    : get issued_stuck out_pend  = Bits.of_nat pend_sz PEND_EXT0.
     Proof. reflexivity. Qed.
@@ -972,6 +1128,133 @@ Section Vectors.
     Example done1_pcr1 : get completed1 out_pcr1 = Bits.of_nat digest_sz 55.
     Proof. reflexivity. Qed.
     Example done1_pcr0 : get completed1 out_pcr0 = Bits.of_nat digest_sz 42.
+    Proof. reflexivity. Qed.
+
+    (* ---------------------------------------------------------------------
+       _MARS_Init and the st gate.
+       --------------------------------------------------------------------- *)
+
+    Definition get_st (sys: sys_t) v := ContextEnv.(getenv) (fst sys) v.
+
+    (* --- the request ---------------------------------------------------- *)
+
+    Example init_takes_seed  : get_st sys_init st_ps = Bits.of_nat digest_sz 5.
+    Proof. reflexivity. Qed.
+    Example init_pend        : get sys_init out_pend = Bits.of_nat pend_sz PEND_DPINIT.
+    Proof. reflexivity. Qed.
+    Example init_hmac_active : get sys_init out_hmac_active = Ob~1.
+    Proof. reflexivity. Qed.
+    Example init_hmac_req    : get sys_init out_hmac_req = Ob~1.
+    Proof. reflexivity. Qed.
+    Example init_armed       : get sys_init out_armed = Ob~1.
+    Proof. reflexivity. Qed.
+    Example init_st_still_0  : get sys_init out_st = Ob~0.
+    Proof. reflexivity. Qed.
+    Example init_len         : get sys_init out_hmac_len = Bits.of_nat 16 13.
+    Proof. reflexivity. Qed.
+
+    (* The KDF key is the seed just latched -- the NEW one, since statement
+       order is sequential. *)
+    Example init_key_is_seed : get sys_init out_hmac_key = Bits.of_nat digest_sz 5.
+    Proof. reflexivity. Qed.
+
+    (* The framing, field by field:
+         [1]_4 || 'D' || 0x00 || "prd" || [8192]_4,  13 bytes, left-aligned.
+       Implemented from reference-emulator/c/hw_sha2.c, NOT from its comments --
+       those say [i]_2 and [L]_2 while the code emits four bytes for each
+       (REVIEW.md section 3.5).  These slices are what would catch that. *)
+    Example kdf_counter : Bits.slice 480 32 (get sys_init out_hmac_msg)
+                        = Bits.of_nat 32 1.
+    Proof. reflexivity. Qed.
+    Example kdf_label   : Bits.slice 472 8 (get sys_init out_hmac_msg)
+                        = Bits.of_nat 8 68.    (* 'D' = MARS_LD *)
+    Proof. reflexivity. Qed.
+    Example kdf_sep     : Bits.slice 464 8 (get sys_init out_hmac_msg)
+                        = Bits.zero.
+    Proof. reflexivity. Qed.
+    Example kdf_ctx_p   : Bits.slice 456 8 (get sys_init out_hmac_msg)
+                        = Bits.of_nat 8 112.
+    Proof. reflexivity. Qed.
+    Example kdf_ctx_r   : Bits.slice 448 8 (get sys_init out_hmac_msg)
+                        = Bits.of_nat 8 114.
+    Proof. reflexivity. Qed.
+    Example kdf_ctx_d   : Bits.slice 440 8 (get sys_init out_hmac_msg)
+                        = Bits.of_nat 8 100.
+    Proof. reflexivity. Qed.
+    Example kdf_L       : Bits.slice 408 32 (get sys_init out_hmac_msg)
+                        = Bits.of_nat 32 8192.
+    Proof. reflexivity. Qed.
+    Example kdf_pad     : Bits.slice 0 408 (get sys_init out_hmac_msg)
+                        = Bits.zero.
+    Proof. reflexivity. Qed.
+
+    (* --- completion ----------------------------------------------------- *)
+
+    Example ready_dp   : get_st sys_ready st_dp = Bits.of_nat digest_sz 77.
+    Proof. reflexivity. Qed.
+    Example ready_st   : get sys_ready out_st = Ob~1.
+    Proof. reflexivity. Qed.
+    Example ready_pend : get sys_ready out_pend = Bits.of_nat pend_sz PEND_IDLE.
+    Proof. reflexivity. Qed.
+    (* the seed must NOT be left driven on the HMAC key port *)
+    Example ready_key_zeroized : get sys_ready out_hmac_key = Bits.zero.
+    Proof. reflexivity. Qed.
+    Example ready_msg_zeroized : get sys_ready out_hmac_msg = Bits.zero.
+    Proof. reflexivity. Qed.
+
+    (* --- the gate ------------------------------------------------------- *)
+    (* Before Init, everything except MARS_CapabilityGet is refused. *)
+    Example uninit_regread : rc_of act_regread 0 0 sys_zero
+                           = Bits.of_nat 16 MARS_RC_VALUE.
+    Proof. reflexivity. Qed.
+    Example uninit_pcrextend : get (ext 0 7 sys_zero) out_rc
+                             = Bits.of_nat 16 MARS_RC_VALUE.
+    Proof. reflexivity. Qed.
+    Example uninit_pcrextend_issues_nothing :
+      get (ext 0 7 sys_zero) out_sha_active = Ob~0.
+    Proof. reflexivity. Qed.
+    (* ...and MARS_CapabilityGet still answers, as it does in failure mode. *)
+    Example uninit_capget : cap_of act_capabilityget MARS_PT_PCR 0 sys_zero
+                          = Bits.of_nat 16 2.
+    Proof. reflexivity. Qed.
+
+    (* --- Init is the recovery path -------------------------------------- *)
+    (* Spec section 5.3.1: failure mode persists "until reinitialized", so Init
+       is exempt from the failure guard and clears it. *)
+    Example init_clears_failure :
+      get (step act_init arg_boot o_failed) out_failure = Ob~0.
+    Proof. reflexivity. Qed.
+    Example init_reissues_from_failed :
+      get (step act_init arg_boot o_failed) out_pend
+      = Bits.of_nat pend_sz PEND_DPINIT.
+    Proof. reflexivity. Qed.
+
+    (* REVIEW.md section 2.8: Init is the only way out of a wedged crypto step,
+       so it is exempt from the busy guard AND from the st gate -- gating it on
+       st = 0 would make the wedge permanent. *)
+    Example init_unwedges :
+      get (step act_init arg_boot issued_stuck) out_pend
+      = Bits.of_nat pend_sz PEND_DPINIT.
+    Proof. reflexivity. Qed.
+    Example init_clears_stale_sha :
+      get (step act_init arg_boot issued_stuck) out_sha_active = Ob~0.
+    Proof. reflexivity. Qed.
+    (* and it re-zeroes the PCRs, as spec section 5.4 requires *)
+    Example init_zeroes_pcr0 :
+      get (step act_init arg_boot o_pcrs) out_pcr0 = Bits.zero.
+    Proof. reflexivity. Qed.
+
+    (* --- Init is not host-reachable ------------------------------------- *)
+    (* Without the protected request line it does nothing at all. *)
+    Definition arg_noreq := arg_full 0 0 0 0 false false 0 false false 5 false.
+    Example init_needs_req_rc :
+      get (step act_init arg_noreq sys_zero) out_rc = Bits.of_nat 16 MARS_RC_VALUE.
+    Proof. reflexivity. Qed.
+    Example init_needs_req_st :
+      get (step act_init arg_noreq sys_ready) out_st = Ob~1.
+    Proof. reflexivity. Qed.
+    Example init_needs_req_pend :
+      get (step act_init arg_noreq sys_zero) out_pend = Bits.of_nat pend_sz PEND_IDLE.
     Proof. reflexivity. Qed.
 
 End Vectors.
