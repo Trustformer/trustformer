@@ -285,6 +285,41 @@ Section FunctionalSpecification.
           (tf_op2 tf_and (tf_ovar fs_out_armed) (tf_ivar fs_in_crypt_valid))
           (tf_op2 (tf_cmp 1 tf_eq) (tf_ivar fs_in_crypt_tag) (tf_ovar fs_out_crypt_req)).
 
+    (* A protocol violation by the crypto IP or its glue: a step IS outstanding
+       and the IP asserts valid for a DIFFERENT request.  Spec section 5.6
+       requires failure mode on "any other internal error", and an answer to a
+       request that is not the outstanding one is exactly that.
+
+       Keyed on [pend], not on [armed], deliberately.  The dangerous case is the
+       core that holds [done] high across requests: the module then never armed,
+       so an armed-keyed test would miss it and the device would sit silently
+       wedged.  Keying on [pend] catches both that and a genuine mismatch, while
+       still excluding the two harmless cases -- an early Continue (valid low)
+       and a spurious Continue with nothing outstanding (pend = 0). *)
+    Definition protocol_violation : @tf_expr fs_states fs_inputs fs_outputs :=
+        tf_op2 tf_and
+          (tf_op2 tf_and
+            (tf_op2 (tf_cmp pend_sz tf_neq) (tf_ovar fs_out_pend) (tf_const PEND_IDLE))
+            (tf_ivar fs_in_crypt_valid))
+          (tf_op2 (tf_cmp 1 tf_neq) (tf_ivar fs_in_crypt_tag) (tf_ovar fs_out_crypt_req)).
+
+    (* Enter failure mode.  Zeroizes like [finish] -- a faulting IP is precisely
+       when nothing should be left driven on the trusted port (REVIEW.md section
+       2.7) -- and clears [pend] so the device is in ONE unambiguous stuck state
+       (failed) rather than two overlapping ones (failed and wedged).  Every
+       command except MARS_CapabilityGet now answers MARS_RC_FAILURE until
+       _MARS_Init reinitializes (spec section 5.3.1). *)
+    Definition fault : @tf_ops fs_states fs_inputs fs_outputs :=
+    {[
+        let $fs_out_crypt_key := #0;
+        let $fs_out_crypt_msg := #0;
+        let $fs_out_crypt_op  := #CRYPT_IDLE;
+        let $fs_out_pend      := #PEND_IDLE;
+        let $fs_out_armed     := #0;
+        let $fs_out_failure   := #1;
+        let $fs_out_rc        := #MARS_RC_FAILURE
+    ]}.
+
     (* End of a sequence: zeroize the trusted ports and disarm.  The ports hold
        their value indefinitely otherwise, which is how AK would stay driven on
        256 wires after a Quote (REVIEW.md section 2.7). *)
@@ -419,7 +454,9 @@ Section FunctionalSpecification.
            completed step finds pend = 0 and is refused. *)
         | fs_act_continue =>
             guard_failure {[
-                if `response_ok` then
+                if `protocol_violation` then
+                    `fault`
+                else if `response_ok` then
                     if ($fs_out_pend ==[pend_sz] #PEND_EXT0) then
                         let $fs_out_pcr0 := $fs_in_crypt_res;
                         `finish`
@@ -733,12 +770,53 @@ Section Vectors.
 
     (* --- ATTACK: a stale tag -------------------------------------------- *)
     (* valid is high and the result looks fine, but it answers the PREVIOUS
-       request.  This is the escalation path to AK disclosure at Stage 4. *)
-    Example stale_tag_pcr0 : get (cont 666 true false issued) fs_out_pcr0 = Bits.of_nat digest_sz 42.
+       request.  This is the escalation path to AK disclosure at Stage 4.
+       The PCR must not move -- and beyond refusing, this is an internal error
+       (spec section 5.6), so the device enters failure mode rather than sitting
+       there silently. *)
+    Definition faulted := cont 666 true false issued.
+
+    Example stale_tag_pcr0    : get faulted fs_out_pcr0      = Bits.of_nat digest_sz 42.
     Proof. reflexivity. Qed.
-    Example stale_tag_rc   : get (cont 666 true false issued) fs_out_rc   = Bits.of_nat 16 MARS_RC_VALUE.
+    Example stale_tag_rc      : get faulted fs_out_rc        = Bits.of_nat 16 MARS_RC_FAILURE.
     Proof. reflexivity. Qed.
-    Example stale_tag_pend : get (cont 666 true false issued) fs_out_pend = Bits.of_nat pend_sz PEND_EXT0.
+    Example stale_tag_failure : get faulted fs_out_failure   = Ob~1.
+    Proof. reflexivity. Qed.
+    (* One unambiguous stuck state, not two: failed, not also wedged. *)
+    Example stale_tag_pend    : get faulted fs_out_pend      = Bits.of_nat pend_sz PEND_IDLE.
+    Proof. reflexivity. Qed.
+    Example stale_tag_armed   : get faulted fs_out_armed     = Ob~0.
+    Proof. reflexivity. Qed.
+    (* Nothing left driven on the trusted port. *)
+    Example stale_tag_op      : get faulted fs_out_crypt_op  = Bits.of_nat 4 CRYPT_IDLE.
+    Proof. reflexivity. Qed.
+    Example stale_tag_key     : get faulted fs_out_crypt_key = Bits.zero.
+    Proof. reflexivity. Qed.
+    Example stale_tag_msg     : get faulted fs_out_crypt_msg = Bits.zero.
+    Proof. reflexivity. Qed.
+
+    (* And failure mode then behaves as spec section 5.3.1 requires: everything
+       answers MARS_RC_FAILURE except MARS_CapabilityGet, which still works. *)
+    Example faulted_regread : get (other fs_act_regread 0 0 faulted) fs_out_rc
+                            = Bits.of_nat 16 MARS_RC_FAILURE.
+    Proof. reflexivity. Qed.
+    Example faulted_ext     : get (ext 0 7 faulted) fs_out_rc
+                            = Bits.of_nat 16 MARS_RC_FAILURE.
+    Proof. reflexivity. Qed.
+    Example faulted_ext_req : get (ext 0 7 faulted) fs_out_crypt_req = Ob~1.
+    Proof. reflexivity. Qed.
+    Example faulted_capget  : get (other fs_act_capabilityget MARS_PT_PCR 0 faulted) fs_out_cap
+                            = Bits.of_nat 16 2.
+    Proof. reflexivity. Qed.
+
+    (* An EARLY Continue is not a violation -- valid is low, the glue simply
+       pulsed too soon -- so it must NOT trip failure mode. *)
+    Example no_valid_no_failure : get (cont 666 false true issued) fs_out_failure = Ob~0.
+    Proof. reflexivity. Qed.
+    (* Nor is a spurious Continue with nothing outstanding. *)
+    Example cont_idle_no_failure : get (cont 666 true false o_pcrs) fs_out_failure = Ob~0.
+    Proof. reflexivity. Qed.
+    Example twice_no_failure     : get (cont 666 true false completed) fs_out_failure = Ob~0.
     Proof. reflexivity. Qed.
 
     (* --- ATTACK: Continue twice ------------------------------------------ *)
@@ -776,6 +854,21 @@ Section Vectors.
     Proof. reflexivity. Qed.
     Example stuck_wedged_pend : get (cont 666 true true issued_stuck) fs_out_pend
                               = Bits.of_nat pend_sz PEND_EXT0.
+    Proof. reflexivity. Qed.
+
+    (* That vector gives the core the benefit of the doubt: it holds done AND
+       echoes a matching tag, which we cannot distinguish from a real answer we
+       failed to arm, so the module stays conservatively wedged.  A core that
+       really is showing its PREVIOUS result echoes the PREVIOUS tag, and then
+       [pend]-keyed detection catches it -- which is why the violation test is
+       keyed on [pend] and not on [armed]. *)
+    Example stuck_stale_tag_failure : get (cont 666 true false issued_stuck) fs_out_failure = Ob~1.
+    Proof. reflexivity. Qed.
+    Example stuck_stale_tag_rc      : get (cont 666 true false issued_stuck) fs_out_rc
+                                    = Bits.of_nat 16 MARS_RC_FAILURE.
+    Proof. reflexivity. Qed.
+    Example stuck_stale_tag_pcr0    : get (cont 666 true false issued_stuck) fs_out_pcr0
+                                    = Bits.of_nat digest_sz 42.
     Proof. reflexivity. Qed.
 
     (* --- ATTACK: interleave a command into a pending sequence ------------- *)

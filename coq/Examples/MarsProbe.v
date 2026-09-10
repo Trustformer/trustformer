@@ -45,7 +45,9 @@ Definition n_ext  := Eval vm_compute in (length (graph dfg_ext)).
 Definition n_cont := Eval vm_compute in (length (graph dfg_cont)).
 
 (* The eleven-tag lookup is no longer the biggest graph: PcrExtend's message
-   construction and Continue's guard chain both overtake it in NODE COUNT.
+   construction and Continue's guard chain both overtake it in NODE COUNT --
+   Continue by a distance, since it carries three outcomes (fault, completion,
+   refusal) each writing most of the crypto port.
    Node count is not depth -- PcrExtend's extra nodes are wiring and wide muxes
    in parallel, while CapabilityGet's are a serial phi chain, which is why the
    smaller graph is the one that needs buffers.  An excluded command is the two
@@ -54,7 +56,7 @@ Example probe_nodes_cap  : n_cap  = 87. Proof. reflexivity. Qed.
 Example probe_nodes_reg  : n_reg  = 30. Proof. reflexivity. Qed.
 Example probe_nodes_uns  : n_uns  = 9.  Proof. reflexivity. Qed.
 Example probe_nodes_ext  : n_ext  = 91. Proof. reflexivity. Qed.
-Example probe_nodes_cont : n_cont = 88. Proof. reflexivity. Qed.
+Example probe_nodes_cont : n_cont = 116. Proof. reflexivity. Qed.
 
 (* Buffers per action, in [fs_action] constructor order, at the cost limit
    Mars.v ships with.  Index 1 is MARS_CapabilityGet -- still the only command
