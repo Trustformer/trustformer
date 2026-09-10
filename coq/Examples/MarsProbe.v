@@ -47,7 +47,8 @@ Definition n_cont := Eval vm_compute in (length (graph dfg_cont)).
 (* The eleven-tag lookup is no longer the biggest graph: PcrExtend's message
    construction and Continue's guard chain both overtake it in NODE COUNT --
    Continue by a distance, since it carries three outcomes (fault, completion,
-   refusal) each writing most of the crypto port.
+   refusal) each writing most of the crypto ports -- and the per-IP split
+   widened it again, because [zeroize] now clears both groups.
    Node count is not depth -- PcrExtend's extra nodes are wiring and wide muxes
    in parallel, while CapabilityGet's are a serial phi chain, which is why the
    smaller graph is the one that needs buffers.  An excluded command is the two
@@ -56,7 +57,7 @@ Example probe_nodes_cap  : n_cap  = 87. Proof. reflexivity. Qed.
 Example probe_nodes_reg  : n_reg  = 30. Proof. reflexivity. Qed.
 Example probe_nodes_uns  : n_uns  = 9.  Proof. reflexivity. Qed.
 Example probe_nodes_ext  : n_ext  = 91. Proof. reflexivity. Qed.
-Example probe_nodes_cont : n_cont = 116. Proof. reflexivity. Qed.
+Example probe_nodes_cont : n_cont = 138. Proof. reflexivity. Qed.
 
 (* Buffers per action, in [fs_action] constructor order, at the cost limit
    Mars.v ships with.  Index 1 is MARS_CapabilityGet -- still the only command
@@ -95,9 +96,10 @@ Example probe_bounds_cap : b_cap = (1, 2). Proof. reflexivity. Qed.
 
 (* Criticality, after V2b made Secret inputs taint sources.
 
-   MARS_Continue guards on [crypt_valid] and [crypt_tag], both Secret inputs
-   from the crypto IP, so every phi under those guards is now forced
-   constant-time -- 17 occurrences, up from 0.  REVIEW.md section 2.6 predicted
+   MARS_Continue guards on [in_sha_valid] and [in_sha_tag], both Secret inputs
+   from the crypto IP, so every phi under those guards is forced
+   constant-time -- 21 occurrences (17 before the per-IP port split), up from 0
+   before V2b.  REVIEW.md section 2.6 predicted
    exactly this ("V2b does not yield a byte-identical module") and it is the
    whole observable effect of the change.
 
@@ -112,6 +114,6 @@ Definition crit_ext  := Eval vm_compute in
 Definition crit_cap  := Eval vm_compute in
   (List.length (crit_report_all tfs_ctx (build_dfg tfs_ctx act_capabilityget))).
 
-Example probe_crit_cont : crit_cont = 17. Proof. reflexivity. Qed.
+Example probe_crit_cont : crit_cont = 21. Proof. reflexivity. Qed.
 Example probe_crit_ext  : crit_ext  = 0.  Proof. reflexivity. Qed.
 Example probe_crit_cap  : crit_cap  = 0.  Proof. reflexivity. Qed.

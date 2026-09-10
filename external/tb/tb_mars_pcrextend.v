@@ -29,14 +29,21 @@ module tb_mars_pcrextend;
   wire [15:0] rc, cap;
   wire [255:0] dout, pcr0, pcr1;
   wire [7:0]  pend;
-  wire        armed, failure, crypt_req;
-  wire [3:0]  crypt_op;
-  wire [1023:0] crypt_msg;
-  wire [15:0] crypt_len;
-  wire [255:0] crypt_key;
+  wire        armed, failure;
 
-  wire [255:0] crypt_res;
-  wire         crypt_valid, crypt_tag;
+  // SHA-256 group
+  wire          sha_req, sha_active;
+  wire [1023:0] sha_msg;
+  wire [15:0]   sha_len;
+  wire [255:0]  sha_res;
+  wire          sha_valid, sha_tag;
+
+  // HMAC group -- declared, unused until Init lands.  Tied off so the
+  // module's own guards, not a floating input, decide what happens.
+  wire          hmac_req, hmac_active;
+  wire [255:0]  hmac_key;
+  wire [511:0]  hmac_msg;
+  wire [15:0]   hmac_len;
 
   Example_Mars dut (
       .CLK(CLK), .RST_N(RST_N),
@@ -46,30 +53,40 @@ module tb_mars_pcrextend;
       .in_param_pub_in_idx_out(a_idx), .in_param_pub_in_idx_arg(),
       .in_param_pub_in_dig_out(a_dig), .in_param_pub_in_dig_arg(),
 
-      .in_param_sec_in_crypt_res_out(crypt_res),     .in_param_sec_in_crypt_res_arg(),
-      .in_param_sec_in_crypt_valid_out(crypt_valid), .in_param_sec_in_crypt_valid_arg(),
-      .in_param_sec_in_crypt_tag_out(crypt_tag),     .in_param_sec_in_crypt_tag_arg(),
+      .in_param_sec_in_sha_res_out(sha_res),     .in_param_sec_in_sha_res_arg(),
+      .in_param_sec_in_sha_valid_out(sha_valid), .in_param_sec_in_sha_valid_arg(),
+      .in_param_sec_in_sha_tag_out(sha_tag),     .in_param_sec_in_sha_tag_arg(),
 
-      .out_param_pub_out_rc_arg(rc),             .out_param_pub_out_rc_out(1'b0),
-      .out_param_pub_out_cap_arg(cap),           .out_param_pub_out_cap_out(1'b0),
-      .out_param_pub_out_dout_arg(dout),         .out_param_pub_out_dout_out(1'b0),
-      .out_param_pub_out_pcr0_arg(pcr0),         .out_param_pub_out_pcr0_out(1'b0),
-      .out_param_pub_out_pcr1_arg(pcr1),         .out_param_pub_out_pcr1_out(1'b0),
-      .out_param_pub_out_failure_arg(failure),   .out_param_pub_out_failure_out(1'b0),
-      .out_param_pub_out_pend_arg(pend),         .out_param_pub_out_pend_out(1'b0),
-      .out_param_pub_out_armed_arg(armed),       .out_param_pub_out_armed_out(1'b0),
-      .out_param_pub_out_crypt_req_arg(crypt_req), .out_param_pub_out_crypt_req_out(1'b0),
-      .out_param_sec_out_crypt_op_arg(crypt_op), .out_param_sec_out_crypt_op_out(1'b0),
-      .out_param_sec_out_crypt_key_arg(crypt_key), .out_param_sec_out_crypt_key_out(1'b0),
-      .out_param_sec_out_crypt_msg_arg(crypt_msg), .out_param_sec_out_crypt_msg_out(1'b0),
-      .out_param_sec_out_crypt_len_arg(crypt_len), .out_param_sec_out_crypt_len_out(1'b0)
+      .in_param_sec_in_hmac_res_out(256'b0),  .in_param_sec_in_hmac_res_arg(),
+      .in_param_sec_in_hmac_valid_out(1'b0),  .in_param_sec_in_hmac_valid_arg(),
+      .in_param_sec_in_hmac_tag_out(1'b0),    .in_param_sec_in_hmac_tag_arg(),
+
+      .out_param_pub_out_rc_arg(rc),                 .out_param_pub_out_rc_out(1'b0),
+      .out_param_pub_out_cap_arg(cap),               .out_param_pub_out_cap_out(1'b0),
+      .out_param_pub_out_dout_arg(dout),             .out_param_pub_out_dout_out(1'b0),
+      .out_param_pub_out_pcr0_arg(pcr0),             .out_param_pub_out_pcr0_out(1'b0),
+      .out_param_pub_out_pcr1_arg(pcr1),             .out_param_pub_out_pcr1_out(1'b0),
+      .out_param_pub_out_failure_arg(failure),       .out_param_pub_out_failure_out(1'b0),
+      .out_param_pub_out_pend_arg(pend),             .out_param_pub_out_pend_out(1'b0),
+      .out_param_pub_out_armed_arg(armed),           .out_param_pub_out_armed_out(1'b0),
+
+      .out_param_pub_out_sha_req_arg(sha_req),       .out_param_pub_out_sha_req_out(1'b0),
+      .out_param_pub_out_sha_active_arg(sha_active), .out_param_pub_out_sha_active_out(1'b0),
+      .out_param_sec_out_sha_msg_arg(sha_msg),       .out_param_sec_out_sha_msg_out(1'b0),
+      .out_param_sec_out_sha_len_arg(sha_len),       .out_param_sec_out_sha_len_out(1'b0),
+
+      .out_param_pub_out_hmac_req_arg(hmac_req),       .out_param_pub_out_hmac_req_out(1'b0),
+      .out_param_pub_out_hmac_active_arg(hmac_active), .out_param_pub_out_hmac_active_out(1'b0),
+      .out_param_sec_out_hmac_key_arg(hmac_key),       .out_param_sec_out_hmac_key_out(1'b0),
+      .out_param_sec_out_hmac_msg_arg(hmac_msg),       .out_param_sec_out_hmac_msg_out(1'b0),
+      .out_param_sec_out_hmac_len_arg(hmac_len),       .out_param_sec_out_hmac_len_out(1'b0)
   );
 
   mars_sha256_glue glue (
       .CLK(CLK), .RST_N(RST_N),
-      .crypt_op(crypt_op), .crypt_msg(crypt_msg),
-      .crypt_len(crypt_len), .crypt_req(crypt_req),
-      .crypt_res(crypt_res), .crypt_valid(crypt_valid), .crypt_tag(crypt_tag)
+      .sha_active(sha_active), .sha_msg(sha_msg),
+      .sha_len(sha_len), .sha_req(sha_req),
+      .sha_res(sha_res), .sha_valid(sha_valid), .sha_tag(sha_tag)
   );
 
   // ---- host helpers --------------------------------------------------
@@ -101,7 +118,7 @@ module tb_mars_pcrextend;
     end
   endtask
 
-  // The glue raises crypt_valid when the core finishes; the host then
+  // The glue raises sha_valid when the core finishes; the host then
   // advances the command.  A real integration lets the glue pulse Continue
   // itself (MVP.md section 6.3 step 5); doing it here keeps the bench free of
   // an arbiter on the command port.
@@ -109,11 +126,11 @@ module tb_mars_pcrextend;
     integer guard;
     begin
       guard = 0;
-      while (crypt_valid !== 1'b1 && guard < 2000) begin
+      while (sha_valid !== 1'b1 && guard < 2000) begin
         @(posedge CLK);
         guard = guard + 1;
       end
-      if (guard >= 2000) $display("TIMEOUT waiting for crypt_valid");
+      if (guard >= 2000) $display("TIMEOUT waiting for sha_valid");
       issue(CC_CONTINUE);
     end
   endtask
@@ -142,7 +159,7 @@ module tb_mars_pcrextend;
 
     // Extend PCR0 three times with distinct digests, reading back each time.
     // Three, not one, because the second is what catches a glue that leaves
-    // crypt_valid asserted.
+    // sha_valid asserted.
     for (i = 1; i <= 3; i = i + 1) begin
       pcr_extend(16'd0, {248'd0, i[7:0]});
       $display("PcrExtend    i =0  dig=%064x rc=%0d", {248'd0, i[7:0]}, rc);
@@ -160,7 +177,7 @@ module tb_mars_pcrextend;
     reg_read(16'd0);
     $display("RegRead      i =0  rc=%0d dig=%064x", rc, dout);
 
-    $display("FINAL        failure=%0d pend=%0d armed=%0d crypt_op=%0d", failure, pend, armed, crypt_op);
+    $display("FINAL        failure=%0d pend=%0d armed=%0d sha_active=%0d", failure, pend, armed, sha_active);
     $finish;
   end
 
