@@ -85,11 +85,16 @@ Record TFSchedule := {
   tfs_inputs_size : tfs_inputs -> nat;
   tfs_inputs_names : Show tfs_inputs;
   tfs_inputs_fin : FiniteType tfs_inputs;
+  (* Mirrored from the context, like size and names: [tfs_inputs] is the spec's
+     input type, but that is not definitionally visible through an abstract
+     [TFSchedule], so the classification has to be carried across. *)
+  tfs_inputs_class : tfs_inputs -> port_class;
 
   tfs_outputs : Type;
   tfs_outputs_size : tfs_outputs -> nat;
   tfs_outputs_names : Show tfs_outputs;
   tfs_outputs_fin : FiniteType tfs_outputs;
+  tfs_outputs_class : tfs_outputs -> port_class;
 
   tfs_action : Type;
   tfs_action_fin : FiniteType tfs_action;

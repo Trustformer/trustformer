@@ -20,7 +20,7 @@ Set Hammer GSMode 63.
     STAGE 1 of agents/mars/MVP.md section 8: the two crypto-free commands,
     [MARS_CapabilityGet] and [MARS_RegRead], over two PCRs.  Every other
     MARS_CC code has an explicit arm returning MARS_RC_COMMAND -- an
-    unrecognized code fires no rule, and [rc] would then retain the previous
+    unrecognized code fires no rule, and [out_rc] would then retain the previous
     command's value (REVIEW.md section 3.4).
 
     Normative sources: spec/mars-library-v1r14.md sections 5.3.1, 8.1.2, 8.3.2;
@@ -35,12 +35,12 @@ Section FunctionalSpecification.
     Definition msg_sz    := 1024.       (* widest MARS message: the 100-byte snapshot *)
     Definition pend_sz   := 8.
 
-    (* crypt_op -- what the attached IP is being asked for (MVP.md section 5.2). *)
+    (* out_crypt_op -- what the attached IP is being asked for (MVP.md section 5.2). *)
     Definition CRYPT_IDLE   := 0.
     Definition CRYPT_SHA256 := 1.
     Definition CRYPT_HMAC   := 2.
 
-    (* pend -- which step of which command is in flight; 0 is idle.  DPINIT,
+    (* out_pend -- which step of which command is in flight; 0 is idle.  DPINIT,
        SNAP, KDF and SIGN arrive with Init and Quote at Stage 4. *)
     Definition PEND_IDLE   := 0.
     Definition PEND_EXT0   := 1.
@@ -85,39 +85,39 @@ Section FunctionalSpecification.
        specification's; MARS_Init and MARS_Continue take Profile-declared codes
        >= 13 and arrive in Stage 2. *)
     Inductive fs_action :=
-    | fs_act_selftest           (* MARS_CC_SelfTest          0 *)
-    | fs_act_capabilityget      (* MARS_CC_CapabilityGet     1 *)
-    | fs_act_sequencehash       (* MARS_CC_SequenceHash      2 *)
-    | fs_act_sequenceupdate     (* MARS_CC_SequenceUpdate    3 *)
-    | fs_act_sequencecomplete   (* MARS_CC_SequenceComplete  4 *)
-    | fs_act_pcrextend          (* MARS_CC_PcrExtend         5 *)
-    | fs_act_regread            (* MARS_CC_RegRead           6 *)
-    | fs_act_derive             (* MARS_CC_Derive            7 *)
-    | fs_act_dpderive           (* MARS_CC_DpDerive          8 *)
-    | fs_act_publicread         (* MARS_CC_PublicRead        9 *)
-    | fs_act_quote              (* MARS_CC_Quote            10 *)
-    | fs_act_sign               (* MARS_CC_Sign             11 *)
-    | fs_act_signatureverify    (* MARS_CC_SignatureVerify  12 *)
-    | fs_act_continue           (* Profile-specific         13 *)
+    | act_selftest           (* MARS_CC_SelfTest          0 *)
+    | act_capabilityget      (* MARS_CC_CapabilityGet     1 *)
+    | act_sequencehash       (* MARS_CC_SequenceHash      2 *)
+    | act_sequenceupdate     (* MARS_CC_SequenceUpdate    3 *)
+    | act_sequencecomplete   (* MARS_CC_SequenceComplete  4 *)
+    | act_pcrextend          (* MARS_CC_PcrExtend         5 *)
+    | act_regread            (* MARS_CC_RegRead           6 *)
+    | act_derive             (* MARS_CC_Derive            7 *)
+    | act_dpderive           (* MARS_CC_DpDerive          8 *)
+    | act_publicread         (* MARS_CC_PublicRead        9 *)
+    | act_quote              (* MARS_CC_Quote            10 *)
+    | act_sign               (* MARS_CC_Sign             11 *)
+    | act_signatureverify    (* MARS_CC_SignatureVerify  12 *)
+    | act_continue           (* Profile-specific         13 *)
     .
 
     (* MSB first, 16 bits. *)
     Definition fs_action_encoding (a: fs_action) : bits_t 16 :=
     match a with
-    | fs_act_selftest         => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0
-    | fs_act_capabilityget    => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~1
-    | fs_act_sequencehash     => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~0~1~0
-    | fs_act_sequenceupdate   => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~0~1~1
-    | fs_act_sequencecomplete => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~1~0~0
-    | fs_act_pcrextend        => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~1~0~1
-    | fs_act_regread          => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~1~1~0
-    | fs_act_derive           => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~1~1~1
-    | fs_act_dpderive         => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~0~0~0
-    | fs_act_publicread       => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~0~0~1
-    | fs_act_quote            => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~0~1~0
-    | fs_act_sign             => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~0~1~1
-    | fs_act_signatureverify  => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~1~0~0
-    | fs_act_continue         => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~1~0~1
+    | act_selftest         => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0
+    | act_capabilityget    => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~1
+    | act_sequencehash     => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~0~1~0
+    | act_sequenceupdate   => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~0~1~1
+    | act_sequencecomplete => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~1~0~0
+    | act_pcrextend        => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~1~0~1
+    | act_regread          => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~1~1~0
+    | act_derive           => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~1~1~1
+    | act_dpderive         => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~0~0~0
+    | act_publicread       => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~0~0~1
+    | act_quote            => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~0~1~0
+    | act_sign             => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~0~1~1
+    | act_signatureverify  => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~1~0~0
+    | act_continue         => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~1~0~1
     end.
 
     Lemma fs_action_encoding_inj :
@@ -133,19 +133,19 @@ Section FunctionalSpecification.
        the crypto port, both of which are Stage 2 onwards.  Declared here so the
        attacker model (secrets = states_var) is fixed from the first commit. *)
     Inductive fs_states :=
-    | fs_st_ps
-    | fs_st_dp
-    | fs_st_ak
+    | st_ps
+    | st_dp
+    | st_ak
     .
 
     Inductive fs_inputs :=
-    | fs_in_pt            (* MARS_CapabilityGet: property tag        *)
-    | fs_in_idx           (* MARS_RegRead / MARS_PcrExtend: index    *)
-    | fs_in_dig           (* MARS_PcrExtend: the digest to extend    *)
+    | in_pt            (* MARS_CapabilityGet: property tag        *)
+    | in_idx           (* MARS_RegRead / MARS_PcrExtend: index    *)
+    | in_dig           (* MARS_PcrExtend: the digest to extend    *)
     (* From the crypto IP.  Trusted, and NOT to be memory-mapped. *)
-    | fs_in_crypt_res
-    | fs_in_crypt_valid
-    | fs_in_crypt_tag     (* echoes the crypt_req the result answers *)
+    | in_crypt_res
+    | in_crypt_valid
+    | in_crypt_tag     (* echoes the out_crypt_req the result answers *)
     .
 
     (* PCRs are OUTPUT variables, not state variables: they are meant to be
@@ -153,171 +153,195 @@ Section FunctionalSpecification.
        the whole Quote datapath.  MVP.md section 6.1. *)
     Inductive fs_outputs :=
     (* Public: results *)
-    | fs_out_rc
-    | fs_out_cap
-    | fs_out_dout
+    | out_rc
+    | out_cap
+    | out_dout
     (* Public: device state *)
-    | fs_out_pcr0
-    | fs_out_pcr1
-    | fs_out_failure
-    | fs_out_pend       (* which crypto step is in flight; 0 = idle *)
-    | fs_out_armed      (* two-phase arming, REVIEW.md section 2.1  *)
-    | fs_out_crypt_req  (* toggles on each new request              *)
+    | out_pcr0
+    | out_pcr1
+    | out_failure
+    | out_pend       (* which crypto step is in flight; 0 = idle *)
+    | out_armed      (* two-phase arming, REVIEW.md section 2.1  *)
+    | out_crypt_req  (* toggles on each new request              *)
     (* Trusted: the crypto port.  The netlist does not record this -- keeping
        these four off the MMIO map is the integrator's obligation (MVP.md
        section 9, A5), which spec section 5.8 imposes independently. *)
-    | fs_out_crypt_op
-    | fs_out_crypt_key
-    | fs_out_crypt_msg
-    | fs_out_crypt_len
+    | out_crypt_op
+    | out_crypt_key
+    | out_crypt_msg
+    | out_crypt_len
     .
 
     Definition fs_states_size (x: fs_states) : nat :=
     match x with
-    | fs_st_ps => digest_sz
-    | fs_st_dp => digest_sz
-    | fs_st_ak => digest_sz
+    | st_ps => digest_sz
+    | st_dp => digest_sz
+    | st_ak => digest_sz
     end.
 
     Definition fs_inputs_size (x: fs_inputs) : nat :=
     match x with
-    | fs_in_pt          => arg_sz
-    | fs_in_idx         => arg_sz
-    | fs_in_dig         => digest_sz
-    | fs_in_crypt_res   => digest_sz
-    | fs_in_crypt_valid => 1
-    | fs_in_crypt_tag   => 1
+    | in_pt          => arg_sz
+    | in_idx         => arg_sz
+    | in_dig         => digest_sz
+    | in_crypt_res   => digest_sz
+    | in_crypt_valid => 1
+    | in_crypt_tag   => 1
     end.
 
     Definition fs_outputs_size (x: fs_outputs) : nat :=
     match x with
-    | fs_out_rc        => rc_sz
-    | fs_out_cap       => 16
-    | fs_out_dout      => digest_sz
-    | fs_out_pcr0      => digest_sz
-    | fs_out_pcr1      => digest_sz
-    | fs_out_failure   => 1
-    | fs_out_pend      => pend_sz
-    | fs_out_armed     => 1
-    | fs_out_crypt_req => 1
-    | fs_out_crypt_op  => 4
-    | fs_out_crypt_key => digest_sz
-    | fs_out_crypt_msg => msg_sz
-    | fs_out_crypt_len => 16
+    | out_rc        => rc_sz
+    | out_cap       => 16
+    | out_dout      => digest_sz
+    | out_pcr0      => digest_sz
+    | out_pcr1      => digest_sz
+    | out_failure   => 1
+    | out_pend      => pend_sz
+    | out_armed     => 1
+    | out_crypt_req => 1
+    | out_crypt_op  => 4
+    | out_crypt_key => digest_sz
+    | out_crypt_msg => msg_sz
+    | out_crypt_len => 16
+    end.
+
+    (* Confidentiality classification (Contract.v [port_class]).  [Secret] means
+       "outside what the confidentiality guarantee quantifies over, therefore may
+       carry a secret, therefore never memory-mapped".  Spec section 5.8 requires
+       exactly this for the crypto port: DP and AK cross it.
+
+       [out_crypt_len] and [out_crypt_op] carry nothing sensitive today and are still
+       [Secret] -- they are part of the port group, over-classifying costs
+       nothing, and the guarantee is about which ports are COVERED.
+
+       [out_crypt_req] is genuinely [Public]: it is one toggle bit an attacker may
+       observe.  Note that class and wiring are independent -- [out_crypt_req] is
+       Public and goes to the IP; [out_rc] is Public and goes to the bus. *)
+    Definition fs_inputs_class (x: fs_inputs) : port_class :=
+    match x with
+    | in_pt | in_idx | in_dig => Public
+    | in_crypt_res | in_crypt_valid | in_crypt_tag => Secret
+    end.
+
+    Definition fs_outputs_class (x: fs_outputs) : port_class :=
+    match x with
+    | out_rc | out_cap | out_dout | out_pcr0 | out_pcr1 | out_failure | out_pend | out_armed | out_crypt_req => Public
+    | out_crypt_op | out_crypt_key | out_crypt_msg | out_crypt_len => Secret
     end.
 
     Definition fs_states_t := tf_states_type fs_states_size.
 
     Definition fs_states_init (x: fs_states) : (fs_states_t x) :=
     match x with
-    | fs_st_ps => Bits.zero
-    | fs_st_dp => Bits.zero
-    | fs_st_ak => Bits.zero
+    | st_ps => Bits.zero
+    | st_dp => Bits.zero
+    | st_ak => Bits.zero
     end.
 
-    (* The dispatcher's failure-mode rule (spec section 8, informative comment;
-       normative in section 5.3.1): in failure mode every command except
+    (* The dispatcher's out_failure-mode rule (spec section 8, informative comment;
+       normative in section 5.3.1): in out_failure mode every command except
        MARS_CapabilityGet returns MARS_RC_FAILURE, and it does so BEFORE the
        unsupported-command check. *)
     Definition guard_failure (body: @tf_ops fs_states fs_inputs fs_outputs)
         : @tf_ops fs_states fs_inputs fs_outputs :=
     {[
-        if ($fs_out_failure ==[1] #1)
-        then let $fs_out_rc := #MARS_RC_FAILURE
+        if ($out_failure ==[1] #1)
+        then let $out_rc := #MARS_RC_FAILURE
         else `body`
     ]}.
 
     (* Interleaving is refused, not merely discouraged: any command issued while
-       a crypto step is in flight is rejected and leaves [pend] and the request
+       a crypto step is in flight is rejected and leaves [out_pend] and the request
        untouched (MVP.md section 5.3).  MARS_Continue is the exception by
-       construction -- it is the thing that advances [pend] -- and an excluded
+       construction -- it is the thing that advances [out_pend] -- and an excluded
        command answers MARS_RC_COMMAND regardless, since there is nothing to
-       refuse.  Busy is never an rc of its own: section 6.2 has no BUSY code and
-       3 is Reserved, so the host reads busy from [pend] (REVIEW.md 3.2). *)
+       refuse.  Busy is never an out_rc of its own: section 6.2 has no BUSY code and
+       3 is Reserved, so the host reads busy from [out_pend] (REVIEW.md 3.2). *)
     Definition guard_busy (body: @tf_ops fs_states fs_inputs fs_outputs)
         : @tf_ops fs_states fs_inputs fs_outputs :=
     {[
-        if ($fs_out_pend !=[pend_sz] #PEND_IDLE)
-        then let $fs_out_rc := #MARS_RC_VALUE
+        if ($out_pend !=[pend_sz] #PEND_IDLE)
+        then let $out_rc := #MARS_RC_VALUE
         else `body`
     ]}.
 
-    (* PcrExtend hashes PCR[i] || dig -- 64 bytes -- left-aligned in the
+    (* PcrExtend hashes PCR[i] || in_dig -- 64 bytes -- left-aligned in the
        1024-bit port.  Two concatenations: the 512-bit message, then the
        zero padding out to the port width. *)
     Definition ext_msg (pcr: fs_outputs) : @tf_expr fs_states fs_inputs fs_outputs :=
         tf_op2 (tf_concat 512 512)
-          (tf_op2 (tf_concat digest_sz digest_sz) (tf_ovar pcr) (tf_ivar fs_in_dig))
+          (tf_op2 (tf_concat digest_sz digest_sz) (tf_ovar pcr) (tf_ivar in_dig))
           (tf_const 0).
 
     (* Issue a request: drive the port, flip the request bit, record the step.
 
-       [armed] is set ONLY while crypt_valid is low.  That is the whole
+       [out_armed] is set ONLY while in_crypt_valid is low.  That is the whole
        two-phase arming fix (REVIEW.md section 2.1): a core that holds [done]
        high from its previous request cannot satisfy arm-and-fire, so the module
        WEDGES instead of latching a stale result.
 
        "Wedged" is this campaign's term (MVP.md section 6, REVIEW.md section
-       2.8) for the state where [pend] is nonzero forever: a step is recorded as
+       2.8) for the state where [out_pend] is nonzero forever: a step is recorded as
        in flight, so every command is refused, and no Continue can clear it
        because the completion guard can never be satisfied.  It is deliberate
        and it is fail-stop -- at Stage 4's KDF->SIGN step, latching a stale
-       result instead would publish the Attestation Key on [dout].  The only
-       recovery is _MARS_Init, which clears [pend] unconditionally (Stage 4). *)
-    Definition issue (op: nat) (pend: nat)
+       result instead would publish the Attestation Key on [out_dout].  The only
+       recovery is _MARS_Init, which clears [out_pend] unconditionally (Stage 4). *)
+    Definition issue (op: nat) (step: nat)
                      (msg: @tf_expr fs_states fs_inputs fs_outputs) (len: nat)
         : @tf_ops fs_states fs_inputs fs_outputs :=
     {[
-        let $fs_out_crypt_msg := `msg`;
-        let $fs_out_crypt_len := #len;
-        let $fs_out_crypt_op  := #op;
-        let $fs_out_crypt_req := !$fs_out_crypt_req;
-        let $fs_out_pend      := #pend;
-        let $fs_out_armed     := ($fs_in_crypt_valid ==[1] #0);
-        let $fs_out_rc        := #MARS_RC_SUCCESS
+        let $out_crypt_msg := `msg`;
+        let $out_crypt_len := #len;
+        let $out_crypt_op  := #op;
+        let $out_crypt_req := !$out_crypt_req;
+        let $out_pend      := #step;
+        let $out_armed     := ($in_crypt_valid ==[1] #0);
+        let $out_rc        := #MARS_RC_SUCCESS
     ]}.
 
-    (* A response counts only if the module armed it, the IP asserts valid, AND
+    (* A response counts only if the module out_armed it, the IP asserts valid, AND
        the tag echoes the request bit that was driven at issue.  [tf_ovar] reads
-       the pre-cycle value, so [crypt_req] here is the one that was sent. *)
+       the pre-cycle value, so [out_crypt_req] here is the one that was sent. *)
     Definition response_ok : @tf_expr fs_states fs_inputs fs_outputs :=
         tf_op2 tf_and
-          (tf_op2 tf_and (tf_ovar fs_out_armed) (tf_ivar fs_in_crypt_valid))
-          (tf_op2 (tf_cmp 1 tf_eq) (tf_ivar fs_in_crypt_tag) (tf_ovar fs_out_crypt_req)).
+          (tf_op2 tf_and (tf_ovar out_armed) (tf_ivar in_crypt_valid))
+          (tf_op2 (tf_cmp 1 tf_eq) (tf_ivar in_crypt_tag) (tf_ovar out_crypt_req)).
 
     (* A protocol violation by the crypto IP or its glue: a step IS outstanding
        and the IP asserts valid for a DIFFERENT request.  Spec section 5.6
-       requires failure mode on "any other internal error", and an answer to a
+       requires out_failure mode on "any other internal error", and an answer to a
        request that is not the outstanding one is exactly that.
 
-       Keyed on [pend], not on [armed], deliberately.  The dangerous case is the
-       core that holds [done] high across requests: the module then never armed,
-       so an armed-keyed test would miss it and the device would sit silently
-       wedged.  Keying on [pend] catches both that and a genuine mismatch, while
+       Keyed on [out_pend], not on [out_armed], deliberately.  The dangerous case is the
+       core that holds [done] high across requests: the module then never out_armed,
+       so an out_armed-keyed test would miss it and the device would sit silently
+       wedged.  Keying on [out_pend] catches both that and a genuine mismatch, while
        still excluding the two harmless cases -- an early Continue (valid low)
-       and a spurious Continue with nothing outstanding (pend = 0). *)
+       and a spurious Continue with nothing outstanding (out_pend = 0). *)
     Definition protocol_violation : @tf_expr fs_states fs_inputs fs_outputs :=
         tf_op2 tf_and
           (tf_op2 tf_and
-            (tf_op2 (tf_cmp pend_sz tf_neq) (tf_ovar fs_out_pend) (tf_const PEND_IDLE))
-            (tf_ivar fs_in_crypt_valid))
-          (tf_op2 (tf_cmp 1 tf_neq) (tf_ivar fs_in_crypt_tag) (tf_ovar fs_out_crypt_req)).
+            (tf_op2 (tf_cmp pend_sz tf_neq) (tf_ovar out_pend) (tf_const PEND_IDLE))
+            (tf_ivar in_crypt_valid))
+          (tf_op2 (tf_cmp 1 tf_neq) (tf_ivar in_crypt_tag) (tf_ovar out_crypt_req)).
 
-    (* Enter failure mode.  Zeroizes like [finish] -- a faulting IP is precisely
+    (* Enter out_failure mode.  Zeroizes like [finish] -- a faulting IP is precisely
        when nothing should be left driven on the trusted port (REVIEW.md section
-       2.7) -- and clears [pend] so the device is in ONE unambiguous stuck state
+       2.7) -- and clears [out_pend] so the device is in ONE unambiguous stuck state
        (failed) rather than two overlapping ones (failed and wedged).  Every
        command except MARS_CapabilityGet now answers MARS_RC_FAILURE until
        _MARS_Init reinitializes (spec section 5.3.1). *)
     Definition fault : @tf_ops fs_states fs_inputs fs_outputs :=
     {[
-        let $fs_out_crypt_key := #0;
-        let $fs_out_crypt_msg := #0;
-        let $fs_out_crypt_op  := #CRYPT_IDLE;
-        let $fs_out_pend      := #PEND_IDLE;
-        let $fs_out_armed     := #0;
-        let $fs_out_failure   := #1;
-        let $fs_out_rc        := #MARS_RC_FAILURE
+        let $out_crypt_key := #0;
+        let $out_crypt_msg := #0;
+        let $out_crypt_op  := #CRYPT_IDLE;
+        let $out_pend      := #PEND_IDLE;
+        let $out_armed     := #0;
+        let $out_failure   := #1;
+        let $out_rc        := #MARS_RC_FAILURE
     ]}.
 
     (* End of a sequence: zeroize the trusted ports and disarm.  The ports hold
@@ -325,27 +349,27 @@ Section FunctionalSpecification.
        256 wires after a Quote (REVIEW.md section 2.7). *)
     Definition finish : @tf_ops fs_states fs_inputs fs_outputs :=
     {[
-        let $fs_out_crypt_key := #0;
-        let $fs_out_crypt_msg := #0;
-        let $fs_out_crypt_op  := #CRYPT_IDLE;
-        let $fs_out_pend      := #PEND_IDLE;
-        let $fs_out_armed     := #0;
-        let $fs_out_rc        := #MARS_RC_SUCCESS
+        let $out_crypt_key := #0;
+        let $out_crypt_msg := #0;
+        let $out_crypt_op  := #CRYPT_IDLE;
+        let $out_pend      := #PEND_IDLE;
+        let $out_armed     := #0;
+        let $out_rc        := #MARS_RC_SUCCESS
     ]}.
 
     (* A command this Profile excludes (spec section 7).  Eight of the thirteen
        codes are excluded outright; PcrExtend and Quote are in the Profile but
        not yet built, and answer MARS_RC_COMMAND until they are. *)
     Definition unsupported : @tf_ops fs_states fs_inputs fs_outputs :=
-        guard_failure {[ let $fs_out_rc := #MARS_RC_COMMAND ]}.
+        guard_failure {[ let $out_rc := #MARS_RC_COMMAND ]}.
 
     (* An output variable HOLDS its value unless an action writes it, so a stale
        result survives every command that does not overwrite it -- after a Quote,
-       [dout] would keep driving the signature on 256 wires until the next
+       [out_dout] would keep driving the signature on 256 wires until the next
        RegRead.  Every command therefore clears the RESULT registers first.
 
        Scope matters, and only these two (later [snap]) may be cleared:
-         - [pcr0]/[pcr1]/[failure] -- and later [st]/[pend]/[armed] -- are
+         - [out_pcr0]/[out_pcr1]/[out_failure] -- and later [st]/[out_pend]/[out_armed] -- are
            outputs only because non-secret state is modelled that way
            (MVP.md section 6.1).  Clearing them per command would wipe the
            measurement chain on every command.
@@ -359,8 +383,8 @@ Section FunctionalSpecification.
     Definition clear_results (body: @tf_ops fs_states fs_inputs fs_outputs)
         : @tf_ops fs_states fs_inputs fs_outputs :=
     {[
-        let $fs_out_dout := #0;
-        let $fs_out_cap  := #0;
+        let $out_dout := #0;
+        let $out_cap  := #0;
         `body`
     ]}.
 
@@ -373,112 +397,112 @@ Section FunctionalSpecification.
         :=
         match act with
 
-        (* MARS_CapabilityGet -- spec section 8.1.2.  Note there is NO failure
-           guard: section 5.3.1 excludes this command from failure mode.  All
+        (* MARS_CapabilityGet -- spec section 8.1.2.  Note there is NO out_failure
+           guard: section 5.3.1 excludes this command from out_failure mode.  All
            eleven Table 6 tags, then MARS_RC_VALUE. *)
-        | fs_act_capabilityget =>
+        | act_capabilityget =>
             guard_busy {[
-                if ($fs_in_pt ==[arg_sz] #MARS_PT_PCR) then
-                    let $fs_out_cap := #PROFILE_COUNT_PCR;
-                    let $fs_out_rc  := #MARS_RC_SUCCESS
-                else if ($fs_in_pt ==[arg_sz] #MARS_PT_TSR) then
-                    let $fs_out_cap := #PROFILE_COUNT_TSR;
-                    let $fs_out_rc  := #MARS_RC_SUCCESS
-                else if ($fs_in_pt ==[arg_sz] #MARS_PT_LEN_DIGEST) then
-                    let $fs_out_cap := #PROFILE_LEN_DIGEST;
-                    let $fs_out_rc  := #MARS_RC_SUCCESS
-                else if ($fs_in_pt ==[arg_sz] #MARS_PT_LEN_SIGN) then
-                    let $fs_out_cap := #PROFILE_LEN_SIGN;
-                    let $fs_out_rc  := #MARS_RC_SUCCESS
-                else if ($fs_in_pt ==[arg_sz] #MARS_PT_LEN_KSYM) then
-                    let $fs_out_cap := #PROFILE_LEN_KSYM;
-                    let $fs_out_rc  := #MARS_RC_SUCCESS
-                else if ($fs_in_pt ==[arg_sz] #MARS_PT_LEN_KPUB) then
-                    let $fs_out_cap := #PROFILE_LEN_KPUB;
-                    let $fs_out_rc  := #MARS_RC_SUCCESS
-                else if ($fs_in_pt ==[arg_sz] #MARS_PT_LEN_KPRV) then
-                    let $fs_out_cap := #PROFILE_LEN_KPRV;
-                    let $fs_out_rc  := #MARS_RC_SUCCESS
-                else if ($fs_in_pt ==[arg_sz] #MARS_PT_ALG_HASH) then
-                    let $fs_out_cap := #PROFILE_ALG_HASH;
-                    let $fs_out_rc  := #MARS_RC_SUCCESS
-                else if ($fs_in_pt ==[arg_sz] #MARS_PT_ALG_SIGN) then
-                    let $fs_out_cap := #PROFILE_ALG_SIGN;
-                    let $fs_out_rc  := #MARS_RC_SUCCESS
-                else if ($fs_in_pt ==[arg_sz] #MARS_PT_ALG_SKDF) then
-                    let $fs_out_cap := #PROFILE_ALG_SKDF;
-                    let $fs_out_rc  := #MARS_RC_SUCCESS
-                else if ($fs_in_pt ==[arg_sz] #MARS_PT_ALG_AKDF) then
-                    let $fs_out_cap := #PROFILE_ALG_AKDF;
-                    let $fs_out_rc  := #MARS_RC_SUCCESS
+                if ($in_pt ==[arg_sz] #MARS_PT_PCR) then
+                    let $out_cap := #PROFILE_COUNT_PCR;
+                    let $out_rc  := #MARS_RC_SUCCESS
+                else if ($in_pt ==[arg_sz] #MARS_PT_TSR) then
+                    let $out_cap := #PROFILE_COUNT_TSR;
+                    let $out_rc  := #MARS_RC_SUCCESS
+                else if ($in_pt ==[arg_sz] #MARS_PT_LEN_DIGEST) then
+                    let $out_cap := #PROFILE_LEN_DIGEST;
+                    let $out_rc  := #MARS_RC_SUCCESS
+                else if ($in_pt ==[arg_sz] #MARS_PT_LEN_SIGN) then
+                    let $out_cap := #PROFILE_LEN_SIGN;
+                    let $out_rc  := #MARS_RC_SUCCESS
+                else if ($in_pt ==[arg_sz] #MARS_PT_LEN_KSYM) then
+                    let $out_cap := #PROFILE_LEN_KSYM;
+                    let $out_rc  := #MARS_RC_SUCCESS
+                else if ($in_pt ==[arg_sz] #MARS_PT_LEN_KPUB) then
+                    let $out_cap := #PROFILE_LEN_KPUB;
+                    let $out_rc  := #MARS_RC_SUCCESS
+                else if ($in_pt ==[arg_sz] #MARS_PT_LEN_KPRV) then
+                    let $out_cap := #PROFILE_LEN_KPRV;
+                    let $out_rc  := #MARS_RC_SUCCESS
+                else if ($in_pt ==[arg_sz] #MARS_PT_ALG_HASH) then
+                    let $out_cap := #PROFILE_ALG_HASH;
+                    let $out_rc  := #MARS_RC_SUCCESS
+                else if ($in_pt ==[arg_sz] #MARS_PT_ALG_SIGN) then
+                    let $out_cap := #PROFILE_ALG_SIGN;
+                    let $out_rc  := #MARS_RC_SUCCESS
+                else if ($in_pt ==[arg_sz] #MARS_PT_ALG_SKDF) then
+                    let $out_cap := #PROFILE_ALG_SKDF;
+                    let $out_rc  := #MARS_RC_SUCCESS
+                else if ($in_pt ==[arg_sz] #MARS_PT_ALG_AKDF) then
+                    let $out_cap := #PROFILE_ALG_AKDF;
+                    let $out_rc  := #MARS_RC_SUCCESS
                 else
-                    let $fs_out_rc := #MARS_RC_VALUE
+                    let $out_rc := #MARS_RC_VALUE
             ]}
 
         (* MARS_RegRead -- spec section 8.3.2.  An out-of-range index is
-           MARS_RC_REG (7), not MARS_RC_VALUE, and [dout] reads zero because
+           MARS_RC_REG (7), not MARS_RC_VALUE, and [out_dout] reads zero because
            [clear_results] already cleared it.  The C emulator instead leaves
            the CALLER's buffer untouched, which has no analogue on an MMIO
-           result register; either way the host contract is the same, "check rc
-           before using dout". *)
-        | fs_act_regread =>
+           result register; either way the host contract is the same, "check out_rc
+           before using out_dout". *)
+        | act_regread =>
             guard_failure (guard_busy {[
-                if ($fs_in_idx ==[arg_sz] #0) then
-                    let $fs_out_dout := $fs_out_pcr0;
-                    let $fs_out_rc   := #MARS_RC_SUCCESS
-                else if ($fs_in_idx ==[arg_sz] #1) then
-                    let $fs_out_dout := $fs_out_pcr1;
-                    let $fs_out_rc   := #MARS_RC_SUCCESS
+                if ($in_idx ==[arg_sz] #0) then
+                    let $out_dout := $out_pcr0;
+                    let $out_rc   := #MARS_RC_SUCCESS
+                else if ($in_idx ==[arg_sz] #1) then
+                    let $out_dout := $out_pcr1;
+                    let $out_rc   := #MARS_RC_SUCCESS
                 else
-                    let $fs_out_rc := #MARS_RC_REG
+                    let $out_rc := #MARS_RC_REG
             ]})
 
         (* MARS_PcrExtend -- spec section 8.3.1.  Step 1 of 2: validate, build
-           PCR[i] || dig, and issue.  Step 2 is MARS_Continue.  [pend] carries
+           PCR[i] || in_dig, and issue.  Step 2 is MARS_Continue.  [out_pend] carries
            which PCR, so the index needs no separate latch -- which matters,
            because an input is re-sampled on every step. *)
-        | fs_act_pcrextend =>
+        | act_pcrextend =>
             guard_failure (guard_busy {[
-                if ($fs_in_idx ==[arg_sz] #0) then
-                    `issue CRYPT_SHA256 PEND_EXT0 (ext_msg fs_out_pcr0) 64`
-                else if ($fs_in_idx ==[arg_sz] #1) then
-                    `issue CRYPT_SHA256 PEND_EXT1 (ext_msg fs_out_pcr1) 64`
+                if ($in_idx ==[arg_sz] #0) then
+                    `issue CRYPT_SHA256 PEND_EXT0 (ext_msg out_pcr0) 64`
+                else if ($in_idx ==[arg_sz] #1) then
+                    `issue CRYPT_SHA256 PEND_EXT1 (ext_msg out_pcr1) 64`
                 else
-                    let $fs_out_rc := #MARS_RC_REG
+                    let $out_rc := #MARS_RC_REG
             ]})
 
         (* MARS_Continue -- Profile-specific, not a TCG command.  Advances
-           whatever [pend] names, and does NOTHING otherwise: glue that pulses
+           whatever [out_pend] names, and does NOTHING otherwise: glue that pulses
            Continue spuriously, repeatedly or never cannot make the module do
            anything it did not itself start.  A second Continue after a
-           completed step finds pend = 0 and is refused. *)
-        | fs_act_continue =>
+           completed step finds out_pend = 0 and is refused. *)
+        | act_continue =>
             guard_failure {[
                 if `protocol_violation` then
                     `fault`
                 else if `response_ok` then
-                    if ($fs_out_pend ==[pend_sz] #PEND_EXT0) then
-                        let $fs_out_pcr0 := $fs_in_crypt_res;
+                    if ($out_pend ==[pend_sz] #PEND_EXT0) then
+                        let $out_pcr0 := $in_crypt_res;
                         `finish`
-                    else if ($fs_out_pend ==[pend_sz] #PEND_EXT1) then
-                        let $fs_out_pcr1 := $fs_in_crypt_res;
+                    else if ($out_pend ==[pend_sz] #PEND_EXT1) then
+                        let $out_pcr1 := $in_crypt_res;
                         `finish`
                     else
-                        let $fs_out_rc := #MARS_RC_VALUE
+                        let $out_rc := #MARS_RC_VALUE
                 else
-                    let $fs_out_rc := #MARS_RC_VALUE
+                    let $out_rc := #MARS_RC_VALUE
             ]}
 
-        | fs_act_selftest         => unsupported
-        | fs_act_sequencehash     => unsupported
-        | fs_act_sequenceupdate   => unsupported
-        | fs_act_sequencecomplete => unsupported
-        | fs_act_derive           => unsupported
-        | fs_act_dpderive         => unsupported
-        | fs_act_publicread       => unsupported
-        | fs_act_quote            => unsupported
-        | fs_act_sign             => unsupported
-        | fs_act_signatureverify  => unsupported
+        | act_selftest         => unsupported
+        | act_sequencehash     => unsupported
+        | act_sequenceupdate   => unsupported
+        | act_sequencecomplete => unsupported
+        | act_derive           => unsupported
+        | act_dpderive         => unsupported
+        | act_publicread       => unsupported
+        | act_quote            => unsupported
+        | act_sign             => unsupported
+        | act_signatureverify  => unsupported
         end.
 
     Definition fs_transitions (act: fs_action)
@@ -506,12 +530,12 @@ Section Vectors.
     Definition arg_full (pt idx dig res: nat) (valid tag: bool)
         (x : fs_inputs) : bits_t (fs_inputs_size x) :=
         match x with
-        | fs_in_pt          => Bits.of_nat arg_sz pt
-        | fs_in_idx         => Bits.of_nat arg_sz idx
-        | fs_in_dig         => Bits.of_nat digest_sz dig
-        | fs_in_crypt_res   => Bits.of_nat digest_sz res
-        | fs_in_crypt_valid => if valid then Ob~1 else Ob~0
-        | fs_in_crypt_tag   => if tag then Ob~1 else Ob~0
+        | in_pt          => Bits.of_nat arg_sz pt
+        | in_idx         => Bits.of_nat arg_sz idx
+        | in_dig         => Bits.of_nat digest_sz dig
+        | in_crypt_res   => Bits.of_nat digest_sz res
+        | in_crypt_valid => if valid then Ob~1 else Ob~0
+        | in_crypt_tag   => if tag then Ob~1 else Ob~0
         end.
 
     Definition arg (pt idx : nat) := arg_full pt idx 0 0 false false.
@@ -525,106 +549,106 @@ Section Vectors.
         run_in act (arg pt idx) out.
 
     Definition rc_of (act: fs_action) (pt idx : nat) out :=
-        ContextEnv.(getenv) (run act pt idx out) fs_out_rc.
+        ContextEnv.(getenv) (run act pt idx out) out_rc.
     Definition cap_of (act: fs_action) (pt idx : nat) out :=
-        ContextEnv.(getenv) (run act pt idx out) fs_out_cap.
+        ContextEnv.(getenv) (run act pt idx out) out_cap.
     Definition dout_of (act: fs_action) (pt idx : nat) out :=
-        ContextEnv.(getenv) (run act pt idx out) fs_out_dout.
+        ContextEnv.(getenv) (run act pt idx out) out_dout.
 
     (* MARS_CapabilityGet: all eleven Table 6 tags. *)
-    Example cap_pcr : cap_of fs_act_capabilityget MARS_PT_PCR 0 o_zero
+    Example cap_pcr : cap_of act_capabilityget MARS_PT_PCR 0 o_zero
                       = Bits.of_nat 16 2.
     Proof. reflexivity. Qed.
-    Example cap_tsr : cap_of fs_act_capabilityget MARS_PT_TSR 0 o_zero
+    Example cap_tsr : cap_of act_capabilityget MARS_PT_TSR 0 o_zero
                       = Bits.of_nat 16 0.
     Proof. reflexivity. Qed.
-    Example cap_len_digest : cap_of fs_act_capabilityget MARS_PT_LEN_DIGEST 0 o_zero
+    Example cap_len_digest : cap_of act_capabilityget MARS_PT_LEN_DIGEST 0 o_zero
                       = Bits.of_nat 16 32.
     Proof. reflexivity. Qed.
-    Example cap_len_sign : cap_of fs_act_capabilityget MARS_PT_LEN_SIGN 0 o_zero
+    Example cap_len_sign : cap_of act_capabilityget MARS_PT_LEN_SIGN 0 o_zero
                       = Bits.of_nat 16 32.
     Proof. reflexivity. Qed.
-    Example cap_len_ksym : cap_of fs_act_capabilityget MARS_PT_LEN_KSYM 0 o_zero
+    Example cap_len_ksym : cap_of act_capabilityget MARS_PT_LEN_KSYM 0 o_zero
                       = Bits.of_nat 16 32.
     Proof. reflexivity. Qed.
-    Example cap_len_kpub : cap_of fs_act_capabilityget MARS_PT_LEN_KPUB 0 o_zero
+    Example cap_len_kpub : cap_of act_capabilityget MARS_PT_LEN_KPUB 0 o_zero
                       = Bits.of_nat 16 0.
     Proof. reflexivity. Qed.
-    Example cap_len_kprv : cap_of fs_act_capabilityget MARS_PT_LEN_KPRV 0 o_zero
+    Example cap_len_kprv : cap_of act_capabilityget MARS_PT_LEN_KPRV 0 o_zero
                       = Bits.of_nat 16 0.
     Proof. reflexivity. Qed.
-    Example cap_alg_hash : cap_of fs_act_capabilityget MARS_PT_ALG_HASH 0 o_zero
+    Example cap_alg_hash : cap_of act_capabilityget MARS_PT_ALG_HASH 0 o_zero
                       = Bits.of_nat 16 11.
     Proof. reflexivity. Qed.
-    Example cap_alg_sign : cap_of fs_act_capabilityget MARS_PT_ALG_SIGN 0 o_zero
+    Example cap_alg_sign : cap_of act_capabilityget MARS_PT_ALG_SIGN 0 o_zero
                       = Bits.of_nat 16 5.
     Proof. reflexivity. Qed.
-    Example cap_alg_skdf : cap_of fs_act_capabilityget MARS_PT_ALG_SKDF 0 o_zero
+    Example cap_alg_skdf : cap_of act_capabilityget MARS_PT_ALG_SKDF 0 o_zero
                       = Bits.of_nat 16 34.
     Proof. reflexivity. Qed.
-    Example cap_alg_akdf : cap_of fs_act_capabilityget MARS_PT_ALG_AKDF 0 o_zero
+    Example cap_alg_akdf : cap_of act_capabilityget MARS_PT_ALG_AKDF 0 o_zero
                       = Bits.of_nat 16 0.
     Proof. reflexivity. Qed.
 
-    Example cap_rc_success : rc_of fs_act_capabilityget MARS_PT_ALG_AKDF 0 o_zero
+    Example cap_rc_success : rc_of act_capabilityget MARS_PT_ALG_AKDF 0 o_zero
                       = Bits.of_nat 16 MARS_RC_SUCCESS.
     Proof. reflexivity. Qed.
 
-    (* pt = 0 and pt = 12 bracket Table 6: both MARS_RC_VALUE. *)
-    Example cap_rc_value_low : rc_of fs_act_capabilityget 0 0 o_zero
+    (* in_pt = 0 and in_pt = 12 bracket Table 6: both MARS_RC_VALUE. *)
+    Example cap_rc_value_low : rc_of act_capabilityget 0 0 o_zero
                       = Bits.of_nat 16 MARS_RC_VALUE.
     Proof. reflexivity. Qed.
-    Example cap_rc_value_high : rc_of fs_act_capabilityget 12 0 o_zero
-                      = Bits.of_nat 16 MARS_RC_VALUE.
-    Proof. reflexivity. Qed.
-
-    Example cap_rc_value_13 : rc_of fs_act_capabilityget 13 0 o_zero
+    Example cap_rc_value_high : rc_of act_capabilityget 12 0 o_zero
                       = Bits.of_nat 16 MARS_RC_VALUE.
     Proof. reflexivity. Qed.
 
-    (* An invalid tag clears [cap] rather than leaving it stale: no command may
+    Example cap_rc_value_13 : rc_of act_capabilityget 13 0 o_zero
+                      = Bits.of_nat 16 MARS_RC_VALUE.
+    Proof. reflexivity. Qed.
+
+    (* An invalid tag clears [out_cap] rather than leaving it stale: no command may
        return a previous command's result.  This is where the module and the C
        emulator DIVERGE by design -- oracle/stage1.expected shows the 0x0fff
-       sentinel surviving pt = 0, 12 and 13, because there the sentinel lives in
+       sentinel surviving in_pt = 0, 12 and 13, because there the sentinel lives in
        the CALLER's buffer, which an MMIO result register has no analogue for.
-       Either way the host contract is the same: check rc before using cap. *)
+       Either way the host contract is the same: check out_rc before using out_cap. *)
     Definition o_cap_sentinel :=
-        ContextEnv.(putenv) o_zero fs_out_cap (Bits.of_nat 16 4095).
-    Example cap_cleared_on_invalid : cap_of fs_act_capabilityget 0 0 o_cap_sentinel
+        ContextEnv.(putenv) o_zero out_cap (Bits.of_nat 16 4095).
+    Example cap_cleared_on_invalid : cap_of act_capabilityget 0 0 o_cap_sentinel
                       = Bits.zero.
     Proof. reflexivity. Qed.
 
     (* And a stale result never survives a command that does not produce one:
-       RegRead clears [cap], CapabilityGet clears [dout]. *)
-    Example regread_clears_cap : cap_of fs_act_regread 0 0 o_cap_sentinel
+       RegRead clears [out_cap], CapabilityGet clears [out_dout]. *)
+    Example regread_clears_cap : cap_of act_regread 0 0 o_cap_sentinel
                       = Bits.zero.
     Proof. reflexivity. Qed.
-    Example unsupported_clears_cap : cap_of fs_act_sequencehash 0 0 o_cap_sentinel
+    Example unsupported_clears_cap : cap_of act_sequencehash 0 0 o_cap_sentinel
                       = Bits.zero.
     Proof. reflexivity. Qed.
 
     (* MARS_RegRead over two distinguishable PCRs. *)
     Definition o_pcrs :=
         ContextEnv.(putenv)
-          (ContextEnv.(putenv) o_zero fs_out_pcr0 (Bits.of_nat digest_sz 42))
-          fs_out_pcr1 (Bits.of_nat digest_sz 99).
+          (ContextEnv.(putenv) o_zero out_pcr0 (Bits.of_nat digest_sz 42))
+          out_pcr1 (Bits.of_nat digest_sz 99).
 
-    Example reg_read_0 : dout_of fs_act_regread 0 0 o_pcrs
+    Example reg_read_0 : dout_of act_regread 0 0 o_pcrs
                       = Bits.of_nat digest_sz 42.
     Proof. reflexivity. Qed.
-    Example reg_read_1 : dout_of fs_act_regread 0 1 o_pcrs
+    Example reg_read_1 : dout_of act_regread 0 1 o_pcrs
                       = Bits.of_nat digest_sz 99.
     Proof. reflexivity. Qed.
-    Example reg_read_0_rc : rc_of fs_act_regread 0 0 o_pcrs
+    Example reg_read_0_rc : rc_of act_regread 0 0 o_pcrs
                       = Bits.of_nat 16 MARS_RC_SUCCESS.
     Proof. reflexivity. Qed.
 
     (* regIndex = 2 is out of range for PROFILE_COUNT_REG = 2: MARS_RC_REG,
-       and [dout] must not change. *)
-    Example reg_read_2_rc : rc_of fs_act_regread 0 2 o_pcrs
+       and [out_dout] must not change. *)
+    Example reg_read_2_rc : rc_of act_regread 0 2 o_pcrs
                       = Bits.of_nat 16 MARS_RC_REG.
     Proof. reflexivity. Qed.
-    Example reg_read_2_dout : dout_of fs_act_regread 0 2 o_pcrs
+    Example reg_read_2_dout : dout_of act_regread 0 2 o_pcrs
                       = Bits.zero.
     Proof. reflexivity. Qed.
 
@@ -633,43 +657,43 @@ Section Vectors.
        clearing them per command would wipe the measurement chain.  Pinned so
        [clear_results] can never quietly grow to cover them. *)
     Example pcr0_survives_regread :
-        ContextEnv.(getenv) (run fs_act_regread 0 2 o_pcrs) fs_out_pcr0
+        ContextEnv.(getenv) (run act_regread 0 2 o_pcrs) out_pcr0
         = Bits.of_nat digest_sz 42.
     Proof. reflexivity. Qed.
     Example pcr1_survives_capabilityget :
-        ContextEnv.(getenv) (run fs_act_capabilityget MARS_PT_PCR 0 o_pcrs) fs_out_pcr1
+        ContextEnv.(getenv) (run act_capabilityget MARS_PT_PCR 0 o_pcrs) out_pcr1
         = Bits.of_nat digest_sz 99.
     Proof. reflexivity. Qed.
 
-    (* An excluded command answers MARS_RC_COMMAND, not the previous rc. *)
-    Example unsupported_rc : rc_of fs_act_sequencehash 0 0 o_pcrs
+    (* An excluded command answers MARS_RC_COMMAND, not the previous out_rc. *)
+    Example unsupported_rc : rc_of act_sequencehash 0 0 o_pcrs
                       = Bits.of_nat 16 MARS_RC_COMMAND.
     Proof. reflexivity. Qed.
-    Example quote_not_yet : rc_of fs_act_quote 0 0 o_pcrs
+    Example quote_not_yet : rc_of act_quote 0 0 o_pcrs
                       = Bits.of_nat 16 MARS_RC_COMMAND.
     Proof. reflexivity. Qed.
 
     (* Failure mode (spec section 5.3.1): everything except MARS_CapabilityGet
-       answers MARS_RC_FAILURE, and the failure answer preempts
+       answers MARS_RC_FAILURE, and the out_failure answer preempts
        MARS_RC_COMMAND. *)
-    Definition o_failed := ContextEnv.(putenv) o_pcrs fs_out_failure Ob~1.
+    Definition o_failed := ContextEnv.(putenv) o_pcrs out_failure Ob~1.
 
-    Example failed_regread : rc_of fs_act_regread 0 0 o_failed
+    Example failed_regread : rc_of act_regread 0 0 o_failed
                       = Bits.of_nat 16 MARS_RC_FAILURE.
     Proof. reflexivity. Qed.
-    Example failed_unsupported : rc_of fs_act_sequencehash 0 0 o_failed
+    Example failed_unsupported : rc_of act_sequencehash 0 0 o_failed
                       = Bits.of_nat 16 MARS_RC_FAILURE.
     Proof. reflexivity. Qed.
-    Example failed_capabilityget : rc_of fs_act_capabilityget MARS_PT_PCR 0 o_failed
+    Example failed_capabilityget : rc_of act_capabilityget MARS_PT_PCR 0 o_failed
                       = Bits.of_nat 16 MARS_RC_SUCCESS.
     Proof. reflexivity. Qed.
-    Example failed_capabilityget_cap : cap_of fs_act_capabilityget MARS_PT_PCR 0 o_failed
+    Example failed_capabilityget_cap : cap_of act_capabilityget MARS_PT_PCR 0 o_failed
                       = Bits.of_nat 16 2.
     Proof. reflexivity. Qed.
 
-    (* [failure] itself survives too -- it is state, not a result. *)
+    (* [out_failure] itself survives too -- it is state, not a result. *)
     Example failure_survives_capabilityget :
-        ContextEnv.(getenv) (run fs_act_capabilityget MARS_PT_PCR 0 o_failed) fs_out_failure
+        ContextEnv.(getenv) (run act_capabilityget MARS_PT_PCR 0 o_failed) out_failure
         = Ob~1.
     Proof. reflexivity. Qed.
 
@@ -677,20 +701,20 @@ Section Vectors.
        Stage 2: the crypto handshake.
 
        These are the cases REVIEW.md section 2.1 is about.  A mock IP is just a
-       choice of (crypt_res, crypt_valid, crypt_tag) on the input vector, so
+       choice of (in_crypt_res, in_crypt_valid, in_crypt_tag) on the input vector, so
        every attack below is expressible here, before any real crypto exists.
        --------------------------------------------------------------------- *)
 
     Definition get (o: ContextEnv.(env_t) (tf_outputs_type fs_outputs_size)) v :=
         ContextEnv.(getenv) o v.
 
-    (* Step 1: host issues PcrExtend(idx, dig). *)
+    (* Step 1: host issues PcrExtend(in_idx, in_dig). *)
     Definition ext (idx dig: nat) out :=
-        run_in fs_act_pcrextend (arg_full 0 idx dig 0 false false) out.
+        run_in act_pcrextend (arg_full 0 idx dig 0 false false) out.
 
     (* Step 2: glue pulses Continue with whatever the IP is driving. *)
     Definition cont (res: nat) (valid tag: bool) out :=
-        run_in fs_act_continue (arg_full 0 0 0 res valid tag) out.
+        run_in act_continue (arg_full 0 0 0 res valid tag) out.
 
     (* Any other command, for the interleaving tests. *)
     Definition other (act: fs_action) (pt idx: nat) out := run act pt idx out.
@@ -699,160 +723,160 @@ Section Vectors.
 
     (* --- the request ---------------------------------------------------- *)
 
-    Example issue_rc        : get issued fs_out_rc        = Bits.of_nat 16 MARS_RC_SUCCESS.
+    Example issue_rc        : get issued out_rc        = Bits.of_nat 16 MARS_RC_SUCCESS.
     Proof. reflexivity. Qed.
-    Example issue_pend      : get issued fs_out_pend      = Bits.of_nat pend_sz PEND_EXT0.
+    Example issue_pend      : get issued out_pend      = Bits.of_nat pend_sz PEND_EXT0.
     Proof. reflexivity. Qed.
-    Example issue_op        : get issued fs_out_crypt_op  = Bits.of_nat 4 CRYPT_SHA256.
+    Example issue_op        : get issued out_crypt_op  = Bits.of_nat 4 CRYPT_SHA256.
     Proof. reflexivity. Qed.
-    Example issue_len       : get issued fs_out_crypt_len = Bits.of_nat 16 64.
+    Example issue_len       : get issued out_crypt_len = Bits.of_nat 16 64.
     Proof. reflexivity. Qed.
-    (* crypt_req toggled 0 -> 1, so a matching tag is 1. *)
-    Example issue_req       : get issued fs_out_crypt_req = Ob~1.
+    (* out_crypt_req toggled 0 -> 1, so a matching tag is 1. *)
+    Example issue_req       : get issued out_crypt_req = Ob~1.
     Proof. reflexivity. Qed.
-    (* crypt_valid was low at issue, so the request is armed. *)
-    Example issue_armed     : get issued fs_out_armed     = Ob~1.
+    (* in_crypt_valid was low at issue, so the request is out_armed. *)
+    Example issue_armed     : get issued out_armed     = Ob~1.
     Proof. reflexivity. Qed.
 
-    (* The message is PCR[0] || dig, left-aligned: pcr0 in the top 256 bits,
-       dig below it, zero padding in the low 512.  This pins the byte ORDER,
+    (* The message is PCR[0] || in_dig, left-aligned: out_pcr0 in the top 256 bits,
+       in_dig below it, zero padding in the low 512.  This pins the byte ORDER,
        which is where MARS correctness actually lives (MVP.md section 3.1). *)
-    Example issue_msg_pcr : Bits.slice 768 digest_sz (get issued fs_out_crypt_msg)
+    Example issue_msg_pcr : Bits.slice 768 digest_sz (get issued out_crypt_msg)
                           = Bits.of_nat digest_sz 42.
     Proof. reflexivity. Qed.
-    Example issue_msg_dig : Bits.slice 512 digest_sz (get issued fs_out_crypt_msg)
+    Example issue_msg_dig : Bits.slice 512 digest_sz (get issued out_crypt_msg)
                           = Bits.of_nat digest_sz 7.
     Proof. reflexivity. Qed.
-    Example issue_msg_pad : Bits.slice 0 512 (get issued fs_out_crypt_msg)
+    Example issue_msg_pad : Bits.slice 0 512 (get issued out_crypt_msg)
                           = Bits.zero.
     Proof. reflexivity. Qed.
 
     (* An out-of-range index issues NOTHING: no request, no pending step. *)
-    Example ext_bad_idx_rc   : get (ext 2 7 o_pcrs) fs_out_rc        = Bits.of_nat 16 MARS_RC_REG.
+    Example ext_bad_idx_rc   : get (ext 2 7 o_pcrs) out_rc        = Bits.of_nat 16 MARS_RC_REG.
     Proof. reflexivity. Qed.
-    Example ext_bad_idx_pend : get (ext 2 7 o_pcrs) fs_out_pend      = Bits.of_nat pend_sz PEND_IDLE.
+    Example ext_bad_idx_pend : get (ext 2 7 o_pcrs) out_pend      = Bits.of_nat pend_sz PEND_IDLE.
     Proof. reflexivity. Qed.
-    Example ext_bad_idx_req  : get (ext 2 7 o_pcrs) fs_out_crypt_req = Ob~0.
+    Example ext_bad_idx_req  : get (ext 2 7 o_pcrs) out_crypt_req = Ob~0.
     Proof. reflexivity. Qed.
-    Example ext_bad_idx_op   : get (ext 2 7 o_pcrs) fs_out_crypt_op  = Bits.of_nat 4 CRYPT_IDLE.
+    Example ext_bad_idx_op   : get (ext 2 7 o_pcrs) out_crypt_op  = Bits.of_nat 4 CRYPT_IDLE.
     Proof. reflexivity. Qed.
 
     (* --- the honest completion ------------------------------------------ *)
 
     Definition completed := cont 123 true true issued.
 
-    Example done_pcr0  : get completed fs_out_pcr0      = Bits.of_nat digest_sz 123.
+    Example done_pcr0  : get completed out_pcr0      = Bits.of_nat digest_sz 123.
     Proof. reflexivity. Qed.
-    Example done_pcr1  : get completed fs_out_pcr1      = Bits.of_nat digest_sz 99.
+    Example done_pcr1  : get completed out_pcr1      = Bits.of_nat digest_sz 99.
     Proof. reflexivity. Qed.
-    Example done_rc    : get completed fs_out_rc        = Bits.of_nat 16 MARS_RC_SUCCESS.
+    Example done_rc    : get completed out_rc        = Bits.of_nat 16 MARS_RC_SUCCESS.
     Proof. reflexivity. Qed.
-    Example done_pend  : get completed fs_out_pend      = Bits.of_nat pend_sz PEND_IDLE.
+    Example done_pend  : get completed out_pend      = Bits.of_nat pend_sz PEND_IDLE.
     Proof. reflexivity. Qed.
-    Example done_armed : get completed fs_out_armed     = Ob~0.
+    Example done_armed : get completed out_armed     = Ob~0.
     Proof. reflexivity. Qed.
     (* Zeroized, so nothing stays driven on the trusted port. *)
-    Example done_op    : get completed fs_out_crypt_op  = Bits.of_nat 4 CRYPT_IDLE.
+    Example done_op    : get completed out_crypt_op  = Bits.of_nat 4 CRYPT_IDLE.
     Proof. reflexivity. Qed.
-    Example done_key   : get completed fs_out_crypt_key = Bits.zero.
+    Example done_key   : get completed out_crypt_key = Bits.zero.
     Proof. reflexivity. Qed.
-    Example done_msg   : get completed fs_out_crypt_msg = Bits.zero.
+    Example done_msg   : get completed out_crypt_msg = Bits.zero.
     Proof. reflexivity. Qed.
 
-    (* --- ATTACK: Continue without crypt_valid ---------------------------- *)
+    (* --- ATTACK: Continue without in_crypt_valid ---------------------------- *)
     (* The PCR must not move, and the request must stay pending. *)
-    Example no_valid_pcr0  : get (cont 666 false true issued) fs_out_pcr0 = Bits.of_nat digest_sz 42.
+    Example no_valid_pcr0  : get (cont 666 false true issued) out_pcr0 = Bits.of_nat digest_sz 42.
     Proof. reflexivity. Qed.
-    Example no_valid_rc    : get (cont 666 false true issued) fs_out_rc   = Bits.of_nat 16 MARS_RC_VALUE.
+    Example no_valid_rc    : get (cont 666 false true issued) out_rc   = Bits.of_nat 16 MARS_RC_VALUE.
     Proof. reflexivity. Qed.
-    Example no_valid_pend  : get (cont 666 false true issued) fs_out_pend = Bits.of_nat pend_sz PEND_EXT0.
+    Example no_valid_pend  : get (cont 666 false true issued) out_pend = Bits.of_nat pend_sz PEND_EXT0.
     Proof. reflexivity. Qed.
 
     (* --- ATTACK: a stale tag -------------------------------------------- *)
     (* valid is high and the result looks fine, but it answers the PREVIOUS
        request.  This is the escalation path to AK disclosure at Stage 4.
        The PCR must not move -- and beyond refusing, this is an internal error
-       (spec section 5.6), so the device enters failure mode rather than sitting
+       (spec section 5.6), so the device enters out_failure mode rather than sitting
        there silently. *)
     Definition faulted := cont 666 true false issued.
 
-    Example stale_tag_pcr0    : get faulted fs_out_pcr0      = Bits.of_nat digest_sz 42.
+    Example stale_tag_pcr0    : get faulted out_pcr0      = Bits.of_nat digest_sz 42.
     Proof. reflexivity. Qed.
-    Example stale_tag_rc      : get faulted fs_out_rc        = Bits.of_nat 16 MARS_RC_FAILURE.
+    Example stale_tag_rc      : get faulted out_rc        = Bits.of_nat 16 MARS_RC_FAILURE.
     Proof. reflexivity. Qed.
-    Example stale_tag_failure : get faulted fs_out_failure   = Ob~1.
+    Example stale_tag_failure : get faulted out_failure   = Ob~1.
     Proof. reflexivity. Qed.
     (* One unambiguous stuck state, not two: failed, not also wedged. *)
-    Example stale_tag_pend    : get faulted fs_out_pend      = Bits.of_nat pend_sz PEND_IDLE.
+    Example stale_tag_pend    : get faulted out_pend      = Bits.of_nat pend_sz PEND_IDLE.
     Proof. reflexivity. Qed.
-    Example stale_tag_armed   : get faulted fs_out_armed     = Ob~0.
+    Example stale_tag_armed   : get faulted out_armed     = Ob~0.
     Proof. reflexivity. Qed.
     (* Nothing left driven on the trusted port. *)
-    Example stale_tag_op      : get faulted fs_out_crypt_op  = Bits.of_nat 4 CRYPT_IDLE.
+    Example stale_tag_op      : get faulted out_crypt_op  = Bits.of_nat 4 CRYPT_IDLE.
     Proof. reflexivity. Qed.
-    Example stale_tag_key     : get faulted fs_out_crypt_key = Bits.zero.
+    Example stale_tag_key     : get faulted out_crypt_key = Bits.zero.
     Proof. reflexivity. Qed.
-    Example stale_tag_msg     : get faulted fs_out_crypt_msg = Bits.zero.
+    Example stale_tag_msg     : get faulted out_crypt_msg = Bits.zero.
     Proof. reflexivity. Qed.
 
-    (* And failure mode then behaves as spec section 5.3.1 requires: everything
+    (* And out_failure mode then behaves as spec section 5.3.1 requires: everything
        answers MARS_RC_FAILURE except MARS_CapabilityGet, which still works. *)
-    Example faulted_regread : get (other fs_act_regread 0 0 faulted) fs_out_rc
+    Example faulted_regread : get (other act_regread 0 0 faulted) out_rc
                             = Bits.of_nat 16 MARS_RC_FAILURE.
     Proof. reflexivity. Qed.
-    Example faulted_ext     : get (ext 0 7 faulted) fs_out_rc
+    Example faulted_ext     : get (ext 0 7 faulted) out_rc
                             = Bits.of_nat 16 MARS_RC_FAILURE.
     Proof. reflexivity. Qed.
-    Example faulted_ext_req : get (ext 0 7 faulted) fs_out_crypt_req = Ob~1.
+    Example faulted_ext_req : get (ext 0 7 faulted) out_crypt_req = Ob~1.
     Proof. reflexivity. Qed.
-    Example faulted_capget  : get (other fs_act_capabilityget MARS_PT_PCR 0 faulted) fs_out_cap
+    Example faulted_capget  : get (other act_capabilityget MARS_PT_PCR 0 faulted) out_cap
                             = Bits.of_nat 16 2.
     Proof. reflexivity. Qed.
 
     (* An EARLY Continue is not a violation -- valid is low, the glue simply
-       pulsed too soon -- so it must NOT trip failure mode. *)
-    Example no_valid_no_failure : get (cont 666 false true issued) fs_out_failure = Ob~0.
+       pulsed too soon -- so it must NOT trip out_failure mode. *)
+    Example no_valid_no_failure : get (cont 666 false true issued) out_failure = Ob~0.
     Proof. reflexivity. Qed.
     (* Nor is a spurious Continue with nothing outstanding. *)
-    Example cont_idle_no_failure : get (cont 666 true false o_pcrs) fs_out_failure = Ob~0.
+    Example cont_idle_no_failure : get (cont 666 true false o_pcrs) out_failure = Ob~0.
     Proof. reflexivity. Qed.
-    Example twice_no_failure     : get (cont 666 true false completed) fs_out_failure = Ob~0.
+    Example twice_no_failure     : get (cont 666 true false completed) out_failure = Ob~0.
     Proof. reflexivity. Qed.
 
     (* --- ATTACK: Continue twice ------------------------------------------ *)
-    (* The second one finds pend = 0 and armed = 0 and does nothing. *)
-    Example twice_pcr0 : get (cont 666 true true completed) fs_out_pcr0 = Bits.of_nat digest_sz 123.
+    (* The second one finds out_pend = 0 and out_armed = 0 and does nothing. *)
+    Example twice_pcr0 : get (cont 666 true true completed) out_pcr0 = Bits.of_nat digest_sz 123.
     Proof. reflexivity. Qed.
-    Example twice_rc   : get (cont 666 true true completed) fs_out_rc   = Bits.of_nat 16 MARS_RC_VALUE.
+    Example twice_rc   : get (cont 666 true true completed) out_rc   = Bits.of_nat 16 MARS_RC_VALUE.
     Proof. reflexivity. Qed.
 
     (* --- ATTACK: Continue with nothing pending --------------------------- *)
-    Example cont_idle_rc   : get (cont 666 true true o_pcrs) fs_out_rc   = Bits.of_nat 16 MARS_RC_VALUE.
+    Example cont_idle_rc   : get (cont 666 true true o_pcrs) out_rc   = Bits.of_nat 16 MARS_RC_VALUE.
     Proof. reflexivity. Qed.
-    Example cont_idle_pcr0 : get (cont 666 true true o_pcrs) fs_out_pcr0 = Bits.of_nat digest_sz 42.
+    Example cont_idle_pcr0 : get (cont 666 true true o_pcrs) out_pcr0 = Bits.of_nat digest_sz 42.
     Proof. reflexivity. Qed.
 
     (* --- ATTACK: the IP holds done high across requests ------------------- *)
     (* A real core (secworks/sha256, OpenTitan hmac) holds [done] until the next
-       start.  Arming only while crypt_valid is LOW means such a core leaves the
+       start.  Arming only while in_crypt_valid is LOW means such a core leaves the
        module unarmed: it WEDGES rather than latching a result it cannot bind to
        its request.  Fail-stop is the intended outcome -- at Stage 4 the stale
        result would be published as the Attestation Key. *)
     Definition issued_stuck :=
-        run_in fs_act_pcrextend (arg_full 0 0 7 0 true false) o_pcrs.
+        run_in act_pcrextend (arg_full 0 0 7 0 true false) o_pcrs.
 
-    Example stuck_pend    : get issued_stuck fs_out_pend  = Bits.of_nat pend_sz PEND_EXT0.
+    Example stuck_pend    : get issued_stuck out_pend  = Bits.of_nat pend_sz PEND_EXT0.
     Proof. reflexivity. Qed.
-    Example stuck_unarmed : get issued_stuck fs_out_armed = Ob~0.
+    Example stuck_unarmed : get issued_stuck out_armed = Ob~0.
     Proof. reflexivity. Qed.
     (* ...and no later Continue, however well-formed, can complete it. *)
-    Example stuck_wedged_pcr0 : get (cont 666 true true issued_stuck) fs_out_pcr0
+    Example stuck_wedged_pcr0 : get (cont 666 true true issued_stuck) out_pcr0
                               = Bits.of_nat digest_sz 42.
     Proof. reflexivity. Qed.
-    Example stuck_wedged_rc   : get (cont 666 true true issued_stuck) fs_out_rc
+    Example stuck_wedged_rc   : get (cont 666 true true issued_stuck) out_rc
                               = Bits.of_nat 16 MARS_RC_VALUE.
     Proof. reflexivity. Qed.
-    Example stuck_wedged_pend : get (cont 666 true true issued_stuck) fs_out_pend
+    Example stuck_wedged_pend : get (cont 666 true true issued_stuck) out_pend
                               = Bits.of_nat pend_sz PEND_EXT0.
     Proof. reflexivity. Qed.
 
@@ -860,50 +884,50 @@ Section Vectors.
        echoes a matching tag, which we cannot distinguish from a real answer we
        failed to arm, so the module stays conservatively wedged.  A core that
        really is showing its PREVIOUS result echoes the PREVIOUS tag, and then
-       [pend]-keyed detection catches it -- which is why the violation test is
-       keyed on [pend] and not on [armed]. *)
-    Example stuck_stale_tag_failure : get (cont 666 true false issued_stuck) fs_out_failure = Ob~1.
+       [out_pend]-keyed detection catches it -- which is why the violation test is
+       keyed on [out_pend] and not on [out_armed]. *)
+    Example stuck_stale_tag_failure : get (cont 666 true false issued_stuck) out_failure = Ob~1.
     Proof. reflexivity. Qed.
-    Example stuck_stale_tag_rc      : get (cont 666 true false issued_stuck) fs_out_rc
+    Example stuck_stale_tag_rc      : get (cont 666 true false issued_stuck) out_rc
                                     = Bits.of_nat 16 MARS_RC_FAILURE.
     Proof. reflexivity. Qed.
-    Example stuck_stale_tag_pcr0    : get (cont 666 true false issued_stuck) fs_out_pcr0
+    Example stuck_stale_tag_pcr0    : get (cont 666 true false issued_stuck) out_pcr0
                                     = Bits.of_nat digest_sz 42.
     Proof. reflexivity. Qed.
 
     (* --- ATTACK: interleave a command into a pending sequence ------------- *)
-    (* Refused, and -- the part that matters -- [pend] and the outstanding
+    (* Refused, and -- the part that matters -- [out_pend] and the outstanding
        request are left untouched, so the sequence can still complete. *)
-    Example busy_regread_rc  : get (other fs_act_regread 0 0 issued) fs_out_rc
+    Example busy_regread_rc  : get (other act_regread 0 0 issued) out_rc
                              = Bits.of_nat 16 MARS_RC_VALUE.
     Proof. reflexivity. Qed.
-    Example busy_capget_rc   : get (other fs_act_capabilityget MARS_PT_PCR 0 issued) fs_out_rc
+    Example busy_capget_rc   : get (other act_capabilityget MARS_PT_PCR 0 issued) out_rc
                              = Bits.of_nat 16 MARS_RC_VALUE.
     Proof. reflexivity. Qed.
-    Example busy_ext_rc      : get (ext 1 9 issued) fs_out_rc
+    Example busy_ext_rc      : get (ext 1 9 issued) out_rc
                              = Bits.of_nat 16 MARS_RC_VALUE.
     Proof. reflexivity. Qed.
-    Example busy_ext_pend    : get (ext 1 9 issued) fs_out_pend
+    Example busy_ext_pend    : get (ext 1 9 issued) out_pend
                              = Bits.of_nat pend_sz PEND_EXT0.
     Proof. reflexivity. Qed.
-    Example busy_ext_req     : get (ext 1 9 issued) fs_out_crypt_req = Ob~1.
+    Example busy_ext_req     : get (ext 1 9 issued) out_crypt_req = Ob~1.
     Proof. reflexivity. Qed.
     (* A refused command must not disturb the in-flight message either. *)
-    Example busy_ext_msg_dig : Bits.slice 512 digest_sz (get (ext 1 9 issued) fs_out_crypt_msg)
+    Example busy_ext_msg_dig : Bits.slice 512 digest_sz (get (ext 1 9 issued) out_crypt_msg)
                              = Bits.of_nat digest_sz 7.
     Proof. reflexivity. Qed.
 
     (* PCR1 works the same way, and lands in the other register. *)
     Definition issued1   := ext 1 7 o_pcrs.
     Definition completed1 := cont 55 true true issued1.
-    Example ext1_pend  : get issued1 fs_out_pend  = Bits.of_nat pend_sz PEND_EXT1.
+    Example ext1_pend  : get issued1 out_pend  = Bits.of_nat pend_sz PEND_EXT1.
     Proof. reflexivity. Qed.
-    Example ext1_msg   : Bits.slice 768 digest_sz (get issued1 fs_out_crypt_msg)
+    Example ext1_msg   : Bits.slice 768 digest_sz (get issued1 out_crypt_msg)
                        = Bits.of_nat digest_sz 99.
     Proof. reflexivity. Qed.
-    Example done1_pcr1 : get completed1 fs_out_pcr1 = Bits.of_nat digest_sz 55.
+    Example done1_pcr1 : get completed1 out_pcr1 = Bits.of_nat digest_sz 55.
     Proof. reflexivity. Qed.
-    Example done1_pcr0 : get completed1 fs_out_pcr0 = Bits.of_nat digest_sz 42.
+    Example done1_pcr0 : get completed1 out_pcr0 = Bits.of_nat digest_sz 42.
     Proof. reflexivity. Qed.
 
 End Vectors.
@@ -919,11 +943,11 @@ Section TypedSynthesis.
         tfs_spec_inputs := fs_inputs;
         tfs_spec_inputs_fin := _;
         tfs_spec_inputs_size := fs_inputs_size;
-        tfs_spec_inputs_class := fun _ => Public;
+        tfs_spec_inputs_class := fs_inputs_class;
         tfs_spec_outputs := fs_outputs;
         tfs_spec_outputs_fin := _;
         tfs_spec_outputs_size := fs_outputs_size;
-        tfs_spec_outputs_class := fun _ => Public;
+        tfs_spec_outputs_class := fs_outputs_class;
         tfs_spec_action := fs_action;
         tfs_spec_action_fin := _;
         tfs_spec_action_ops := fs_transitions;

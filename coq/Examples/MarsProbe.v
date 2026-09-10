@@ -32,11 +32,11 @@ Import ListNotations.
     parameter, not a delay model.
  *)
 
-Definition dfg_cap  := build_dfg tfs_ctx fs_act_capabilityget.
-Definition dfg_reg  := build_dfg tfs_ctx fs_act_regread.
-Definition dfg_uns  := build_dfg tfs_ctx fs_act_selftest.
-Definition dfg_ext  := build_dfg tfs_ctx fs_act_pcrextend.
-Definition dfg_cont := build_dfg tfs_ctx fs_act_continue.
+Definition dfg_cap  := build_dfg tfs_ctx act_capabilityget.
+Definition dfg_reg  := build_dfg tfs_ctx act_regread.
+Definition dfg_uns  := build_dfg tfs_ctx act_selftest.
+Definition dfg_ext  := build_dfg tfs_ctx act_pcrextend.
+Definition dfg_cont := build_dfg tfs_ctx act_continue.
 
 Definition n_cap  := Eval vm_compute in (length (graph dfg_cap)).
 Definition n_reg  := Eval vm_compute in (length (graph dfg_reg)).
