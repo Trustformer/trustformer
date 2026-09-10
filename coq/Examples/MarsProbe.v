@@ -12,11 +12,24 @@ Import ListNotations.
     the scheduler pipeline it, and how many cycles does a host wait?  Pinned so
     a change that silently rebalances the schedule fails loudly.
 
-    These are CYCLE counts, not timing.  cost_fn is width-blind (SPIKE.md
-    section 5), and Stage 2 makes that impossible to ignore: MARS_PcrExtend
-    builds a 1024-bit message through two concatenations and still schedules to
-    ONE cycle with ZERO buffers, because a 1024-bit concat is costed exactly as
-    a 1-bit one.  Do not publish these as latency.
+    These are CYCLE counts, not timing.  Two different things get confused here,
+    so keep them apart:
+
+    - MARS_PcrExtend builds a 1024-bit message through two concatenations and
+      schedules to ONE cycle with ZERO buffers.  That is CORRECT, not a blind
+      spot: cost_fn gives tf_concat cost 0 ("concatenation is pure wiring",
+      VariableScheduler.v L358) because a concat picks wires and adds no logic.
+      What is left on that path is a 16-bit equality, a few phis and one NOT.
+      What 1024 bits does cost is AREA -- a 1024-bit 2:1 mux is ~1024 LUTs, wide
+      but one gate deep -- which is a yosys question (Stage 6), not a scheduling
+      one.
+    - The real width-blindness (SPIKE.md section 5) is that tf_add/tf_sub cost a
+      flat 2 and tf_cmp a flat 1 at every width, while a 256-bit ripple-carry
+      adder is genuinely deeper than a 1-bit one.  This module barely touches
+      that: its datapath is concat, mux and narrow compares.
+
+    Still do not publish these as latency -- cost limit 10 is a scheduling
+    parameter, not a delay model.
  *)
 
 Definition dfg_cap  := build_dfg tfs_ctx fs_act_capabilityget.
@@ -32,9 +45,11 @@ Definition n_ext  := Eval vm_compute in (length (graph dfg_ext)).
 Definition n_cont := Eval vm_compute in (length (graph dfg_cont)).
 
 (* The eleven-tag lookup is no longer the biggest graph: PcrExtend's message
-   construction and Continue's guard chain both overtake it.  An excluded
-   command is the two [clear_results] writes, the failure test, the constant and
-   the rc write. *)
+   construction and Continue's guard chain both overtake it in NODE COUNT.
+   Node count is not depth -- PcrExtend's extra nodes are wiring and wide muxes
+   in parallel, while CapabilityGet's are a serial phi chain, which is why the
+   smaller graph is the one that needs buffers.  An excluded command is the two
+   [clear_results] writes, the failure test, the constant and the rc write. *)
 Example probe_nodes_cap  : n_cap  = 87. Proof. reflexivity. Qed.
 Example probe_nodes_reg  : n_reg  = 30. Proof. reflexivity. Qed.
 Example probe_nodes_uns  : n_uns  = 9.  Proof. reflexivity. Qed.
@@ -43,9 +58,10 @@ Example probe_nodes_cont : n_cont = 88. Proof. reflexivity. Qed.
 
 (* Buffers per action, in [fs_action] constructor order, at the cost limit
    Mars.v ships with.  Index 1 is MARS_CapabilityGet -- still the only command
-   whose graph does not fit in one cycle, and the 1024-bit crypto datapath
-   needs none at all.  That is the width-blind cost model talking, not a
-   physical result. *)
+   whose graph does not fit in one cycle.  The 1024-bit crypto datapath needs
+   none, because concatenation is free and a wide mux is shallow; it is the
+   eleven-deep phi CHAIN in the tag lookup that costs cycles, and that chain is
+   16 bits wide. *)
 Definition nbufs := Eval vm_compute in (map (@length _) (buffer_needs tfs_ctx 10)).
 Example probe_bufs : nbufs = [0; 3; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0; 0].
 Proof. reflexivity. Qed.
