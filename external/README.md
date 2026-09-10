@@ -51,3 +51,19 @@ it. `agents/mars/oracle/run-stage3.sh` asserts exactly that.
 with the glue and the core attached. Run it via
 `agents/mars/oracle/run-stage3.sh`, which also diffs the result against the TCG
 reference emulator.
+
+## What each adapter is responsible for
+
+`mars_sha256_glue.v` and `mars_hmac_glue.v` both pad, because `sha256_core`
+does not (§9 A8). MARS hashes exactly four message lengths — 36, 64, 68 and
+100 bytes — and HMACs exactly three — 13, 32 and 42 — so padding is a small
+case per adapter rather than a byte-indexed shifter. A length outside those
+sets produces no request at all: a stall the test bench notices beats a
+silently mis-padded hash.
+
+`mars_hmac_glue.v` implements HMAC-SHA256 over the same core rather than
+vendoring one, because `secworks/hmac_core` computes a full 256-bit digest
+internally but exposes only the top 128 bits (`hmac_core.v` L52), and MARS
+needs 32 bytes. That puts the two-pass structure in the TCB; it is bounded and
+checked byte-for-byte against the reference emulator by
+`agents/mars/oracle/run-stage3.sh`.

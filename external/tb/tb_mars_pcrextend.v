@@ -17,6 +17,13 @@ module tb_mars_pcrextend;
   localparam CC_REGREAD       = 16'd6;
   localparam CC_CONTINUE      = 16'd13;
   localparam CC_INIT          = 16'hFFFF;
+  localparam CC_QUOTE         = 16'd10;
+
+  // "Here are thirty two secret bytes" -- the seed reference-emulator/c/mars.c
+  // is compiled with.  Both sides must start from the same PS or every
+  // DP-derived value differs.
+  localparam [255:0] PS =
+      256'h4865726520617265207468697274792074776f20736563726574206279746573;
 
   reg CLK = 1'b0;
   reg RST_N = 1'b0;
@@ -25,12 +32,15 @@ module tb_mars_pcrextend;
   reg [16:0]  in_cmd;
   reg [15:0]  a_pt, a_idx;
   reg [255:0] a_dig;
+  reg [31:0]  a_regsel;
+  reg [255:0] a_nonce, a_ctx;
 
   wire        ready;
   wire [15:0] rc, cap;
   wire [255:0] dout, pcr0, pcr1;
   wire [7:0]  pend;
   wire        failure, st;
+  wire [255:0] snap;
 
   // SHA-256 group
   wire          sha_req, sha_active;
@@ -39,9 +49,9 @@ module tb_mars_pcrextend;
   wire [255:0]  sha_res;
   wire          sha_valid, sha_tag;
 
-  // HMAC group -- driven by the STAND-IN core (external/glue/mars_hmac_mock.v)
-  // so _MARS_Init can complete and the SHA differential can still run.  DP is
-  // therefore wrong, which matters only from MARS_Quote onward.
+  // HMAC group -- driven by the real HMAC-SHA256 adapter, so DP and the AK are
+  // the values the reference emulator computes and MARS_Quote's signature is
+  // comparable byte for byte.
   wire          hmac_req, hmac_active;
   wire [255:0]  hmac_key;
   wire [511:0]  hmac_msg;
@@ -67,7 +77,7 @@ module tb_mars_pcrextend;
       .in_param_sec_in_hmac_tag_out(hmac_tag),     .in_param_sec_in_hmac_tag_arg(),
 
       // platform side: the Primary Seed and the protected init request
-      .in_param_sec_in_ps_out(256'd5),         .in_param_sec_in_ps_arg(),
+      .in_param_sec_in_ps_out(PS),         .in_param_sec_in_ps_arg(),
       .in_param_sec_in_init_req_out(init_req), .in_param_sec_in_init_req_arg(),
 
       .out_param_pub_out_rc_arg(rc),                 .out_param_pub_out_rc_out(1'b0),
@@ -78,16 +88,16 @@ module tb_mars_pcrextend;
       .out_param_pub_out_failure_arg(failure),       .out_param_pub_out_failure_out(1'b0),
       .out_param_pub_out_pend_arg(pend),             .out_param_pub_out_pend_out(1'b0),
       .out_param_pub_out_st_arg(st),                 .out_param_pub_out_st_out(1'b0),
-      .out_param_pub_out_snap_arg(),                 .out_param_pub_out_snap_out(1'b0),
+      .out_param_pub_out_snap_arg(snap),             .out_param_pub_out_snap_out(1'b0),
       .out_param_pub_out_ctx_arg(),                  .out_param_pub_out_ctx_out(1'b0),
 
       // MARS_Quote arguments -- tied to a legal-but-unused vector; Quote itself
       // is exercised in Coq and, byte-exactly, at Stage 4c against a real HMAC.
-      .in_param_pub_in_regsel_out(32'd0),  .in_param_pub_in_regsel_arg(),
-      .in_param_pub_in_nonce_out(256'd0),  .in_param_pub_in_nonce_arg(),
-      .in_param_pub_in_ctx_out(256'd0),    .in_param_pub_in_ctx_arg(),
-      .in_param_pub_in_nlen_out(16'd32),   .in_param_pub_in_nlen_arg(),
-      .in_param_pub_in_ctxlen_out(16'd32), .in_param_pub_in_ctxlen_arg(),
+      .in_param_pub_in_regsel_out(a_regsel), .in_param_pub_in_regsel_arg(),
+      .in_param_pub_in_nonce_out(a_nonce),   .in_param_pub_in_nonce_arg(),
+      .in_param_pub_in_ctx_out(a_ctx),       .in_param_pub_in_ctx_arg(),
+      .in_param_pub_in_nlen_out(16'd32),     .in_param_pub_in_nlen_arg(),
+      .in_param_pub_in_ctxlen_out(16'd32),   .in_param_pub_in_ctxlen_arg(),
 
       .out_param_pub_out_sha_req_arg(sha_req),       .out_param_pub_out_sha_req_out(1'b0),
       .out_param_pub_out_sha_active_arg(sha_active), .out_param_pub_out_sha_active_out(1'b0),
@@ -101,7 +111,7 @@ module tb_mars_pcrextend;
       .out_param_sec_out_hmac_len_arg(hmac_len),       .out_param_sec_out_hmac_len_out(1'b0)
   );
 
-  mars_hmac_mock hmac (
+  mars_hmac_glue hmac (
       .CLK(CLK), .RST_N(RST_N),
       .hmac_active(hmac_active), .hmac_key(hmac_key),
       .hmac_msg(hmac_msg), .hmac_len(hmac_len), .hmac_req(hmac_req),
@@ -180,6 +190,23 @@ module tb_mars_pcrextend;
     end
   endtask
 
+  // MARS_Quote: one strobe, then three Continues.  Steps 1 and 2 wait on the
+  // SHA core, steps 3 and 4 on the HMAC adapter.
+  task automatic quote(input [31:0] rsel, input [255:0] nonce, input [255:0] ctx);
+    integer g;
+    begin
+      a_regsel = rsel; a_nonce = nonce; a_ctx = ctx;
+      issue(CC_QUOTE);
+      finish_crypto;                     // snapshot -> KDF
+      g = 0;
+      while (hmac_valid !== 1'b1 && g < 4000) begin @(posedge CLK); g = g + 1; end
+      issue(CC_CONTINUE);                // AK -> SIGN
+      g = 0;
+      while (hmac_valid !== 1'b1 && g < 4000) begin @(posedge CLK); g = g + 1; end
+      issue(CC_CONTINUE);                // signature
+    end
+  endtask
+
   task automatic reg_read(input [15:0] idx);
     begin
       a_idx = idx;
@@ -192,6 +219,7 @@ module tb_mars_pcrextend;
   integer i;
   initial begin
     in_cmd = 17'b0; a_pt = 16'b0; a_idx = 16'b0; a_dig = 256'b0; init_req = 1'b0;
+    a_regsel = 32'b0; a_nonce = 256'b0; a_ctx = 256'b0;
     repeat (4) @(posedge CLK);
     RST_N = 1'b1;
     repeat (2) @(posedge CLK);
@@ -223,6 +251,15 @@ module tb_mars_pcrextend;
     $display("RegRead      i =1  rc=%0d dig=%064x", rc, dout);
     reg_read(16'd0);
     $display("RegRead      i =0  rc=%0d dig=%064x", rc, dout);
+
+    // MARS_Quote over both PCRs, with a nonce and a context the C driver uses
+    // verbatim.  The signature is HMAC(AK, snapshot) with AK derived from DP,
+    // so it exercises the whole key hierarchy in one value.
+    quote(32'd3,
+          256'h0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20,
+          256'h2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40);
+    $display("Quote        rsel=3 rc=%0d sig=%064x", rc, dout);
+    $display("Snapshot           snap=%064x", snap);
 
     $display("FINAL        failure=%0d pend=%0d st=%0d sha_active=%0d", failure, pend, st, sha_active);
     $finish;
