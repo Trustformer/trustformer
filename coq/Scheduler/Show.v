@@ -62,6 +62,7 @@ Definition show_binop (o: tf_binary_ops) : string :=
   | tf_and => "&" | tf_or => "|" | tf_xor => "^"
   | tf_add => "+" | tf_sub => "-" | tf_mul => "*"
   | tf_cmp n c => show_cmp_op c +++ "[" +++ show n +++ "]"
+  | tf_concat h l => "concat[" +++ show h +++ "," +++ show l +++ "]"
   end.
 
 Definition show_unop (o: tf_unary_ops) : string :=

@@ -86,6 +86,14 @@ Section Semantics.
                 | tf_ge =>
                     if Bits.unsigned_ge val_cmp_src1 val_cmp_src2 then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
                 end
+            (* SPIKE: like tf_cmp, the operands are evaluated at their OWN
+               widths, not at the demanded one.  [Bits.app x y : bits (|y|+|x|)]
+               places [y] at the low indices, i.e. the low bits, so this is
+               "hi followed by lo". *)
+            | tf_concat hi_sz lo_sz =>
+                let val_hi := tf_eval_expr (szB:=hi_sz) src1 sys_state input in
+                let val_lo := tf_eval_expr (szB:=lo_sz) src2 sys_state input in
+                convert (Bits.app val_hi val_lo)
             end
         | tf_expr_if cond then_expr else_expr =>
             let cond_val := tf_eval_expr (szB:=1) cond sys_state input in

@@ -1812,6 +1812,8 @@ Section SchedulerSimulation.
     | DFG_Binary bop a1 a2 =>
         match bop with
         | tf_cmp szC _ => wsz s a1 szC /\ wsz s a2 szC
+        (* SPIKE: concat reads its operands at their declared widths. *)
+        | tf_concat hz lz => wsz s a1 hz /\ wsz s a2 lz
         | _ => wsz s a1 (sz node) /\ wsz s a2 (sz node)
         end
     | DFG_Phi c t e => wsz s c 1 /\ wsz s t (sz node) /\ wsz s e (sz node)
@@ -1990,8 +1992,8 @@ Section SchedulerSimulation.
                | split; [ exact Hn2 | split; [ exact Hp2 | split; [ exact Hq2 | split; [ exact Hs2 | exact Hf2 ] ] ] ] ].
     - (* tf_op2 *)
       rename op into bop0.
-      cbn [dataflow_expr]. destruct bop0;
-        (unfold bind;
+      cbn [dataflow_expr]. destruct bop0 as [ | | | | | | szC cop | hz lz ];
+        try (unfold bind;
          match goal with
          | |- context[dataflow_expr ctx e1 ?z s] =>
             pose proof (IHe1 z s Hinv Hvsz Hfg) as H1;
@@ -2015,6 +2017,29 @@ Section SchedulerSimulation.
          end;
          split; [ eapply wgmono_trans; [ exact Hg1 | eapply wgmono_trans; [ exact Hg2 | exact Hg3 ] ]
                 | split; [ exact Hn3 | split; [ exact Hp3 | split; [ exact Hq3 | split; [ exact Hs3 | exact Hf3 ] ] ] ] ]).
+      (* tf_concat: the only binary op whose operands are emitted at DIFFERENT
+         widths, so the uniform tactic above cannot bind a single [?z]. *)
+      unfold bind.
+      pose proof (IHe1 hz s Hinv Hvsz Hfg) as H1.
+      destruct (dataflow_expr ctx e1 hz s) as [id1 s1].
+      destruct H1 as [Hg1 [Hn1 [Hw1 [Hv1 [Hs1 Hf1]]]]].
+      pose proof (IHe2 lz s1 Hw1 Hv1 Hf1) as H2.
+      destruct (dataflow_expr ctx e2 lz s1) as [id2 s2].
+      destruct H2 as [Hg2 [Hn2 [Hw2 [Hv2 [Hs2 Hf2]]]]].
+      assert (Hargs : forall x, In x (get_args ctx {| nid := length (graph s2);
+                        op := DFG_Binary (tf_concat hz lz) id1 id2; sz := size |}) -> wnidwf s2 x)
+        by (intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[]]];
+            [ eapply wnidwf_gmono; [ exact Hn1 | exact Hg2 ] | exact Hn2 ]).
+      assert (Hnode : node_args_sz s2 {| nid := length (graph s2);
+                        op := DFG_Binary (tf_concat hz lz) id1 id2; sz := size |})
+        by (unfold node_args_sz; cbn [op sz];
+            split; [ eapply wsz_gmono; [ exact Hs1 | exact Hg2 ] | exact Hs2 ]).
+      pose proof (emit_fg (DFG_Binary (tf_concat hz lz) id1 id2) size s2
+                    Hw2 Hv2 Hf2 Hargs Hnode) as He.
+      destruct (emit ctx (DFG_Binary (tf_concat hz lz) id1 id2) size s2) as [id3 s3].
+      destruct He as [Hg3 [Hn3 [Hp3 [Hq3 [Hs3 Hf3]]]]].
+      split; [ eapply wgmono_trans; [ exact Hg1 | eapply wgmono_trans; [ exact Hg2 | exact Hg3 ] ]
+             | split; [ exact Hn3 | split; [ exact Hp3 | split; [ exact Hq3 | split; [ exact Hs3 | exact Hf3 ] ] ] ] ].
     - (* tf_expr_if *)
       cbn [dataflow_expr]. unfold bind.
       pose proof (IHe1 1 s Hinv Hvsz Hfg) as H1.
@@ -4316,11 +4341,15 @@ Section SchedulerSimulation.
       cbn [fst].
       pose proof (IH arg1 szB pi) as Hc1. pose proof (IH arg2 szB pi) as Hc2.
       rewrite E1 in Hc1. rewrite E2 in Hc2. cbn [fst] in Hc1, Hc2.
-      destruct op1 as [ | | | | | | szC cop ];
+      destruct op1 as [ | | | | | | szC cop | hz lz ];
         cbn [tf_eval_expr]; try (rewrite Hc1, Hc2; reflexivity).
-      pose proof (IH arg1 szC pi) as Hd1. pose proof (IH arg2 szC pi) as Hd2.
-      rewrite E1 in Hd1. rewrite E2 in Hd2. cbn [fst] in Hd1, Hd2.
-      rewrite Hd1, Hd2. destruct cop; reflexivity.
+      + pose proof (IH arg1 szC pi) as Hd1. pose proof (IH arg2 szC pi) as Hd2.
+        rewrite E1 in Hd1. rewrite E2 in Hd2. cbn [fst] in Hd1, Hd2.
+        rewrite Hd1, Hd2. destruct cop; reflexivity.
+      + (* tf_concat: operands at their own widths *)
+        pose proof (IH arg1 hz pi) as He1. pose proof (IH arg2 lz pi) as He2.
+        rewrite E1 in He1. rewrite E2 in He2. cbn [fst] in He1, He2.
+        rewrite He1, He2. reflexivity.
     - destruct (compile_dfg_expr_aux ctx cost_limit tainted dfacts pi fuel a_idx
                   (build_dfg ctx act) arg []) as [ae ve] eqn:E1.
       cbn [fst tf_eval_expr].
@@ -4633,19 +4662,26 @@ Section SchedulerSimulation.
                     arg2 []) as [a2e' v2e'] eqn:E4.
         cbn [fst].
         unfold node_args_sz in Hfg. rewrite Hop in Hfg.
-        destruct op1 as [ | | | | | | szC cop ];
+        destruct op1 as [ | | | | | | szC cop | hz lz ];
           [ destruct Hfg as [Hf1 Hf2];
             pose proof (Hchild arg1 (sz node) pi Ha1in Hf1) as Hc1;
             pose proof (Hchild arg2 (sz node) pi Ha2in Hf2) as Hc2;
             rewrite E1, E3 in Hc1; rewrite E2, E4 in Hc2;
             cbn [fst] in Hc1, Hc2;
-            cbn [tf_eval_expr]; rewrite Hc1, Hc2; reflexivity .. | ].
+            cbn [tf_eval_expr]; rewrite Hc1, Hc2; reflexivity .. | | ].
         destruct Hfg as [Hf1 Hf2].
         pose proof (Hchild arg1 szC pi Ha1in Hf1) as Hc1.
         pose proof (Hchild arg2 szC pi Ha2in Hf2) as Hc2.
         rewrite E1, E3 in Hc1. rewrite E2, E4 in Hc2.
         cbn [fst] in Hc1, Hc2.
         cbn [tf_eval_expr]. rewrite Hc1, Hc2. reflexivity.
+        (* tf_concat: operands at their own declared widths *)
+        destruct Hfg as [Hf1 Hf2].
+        pose proof (Hchild arg1 hz pi Ha1in Hf1) as Hk1.
+        pose proof (Hchild arg2 lz pi Ha2in Hf2) as Hk2.
+        rewrite E1, E3 in Hk1. rewrite E2, E4 in Hk2.
+        cbn [fst] in Hk1, Hk2.
+        cbn [tf_eval_expr]. rewrite Hk1, Hk2. reflexivity.
       + (* Resize: the demanded size is the arg node's own size, definitionally *)
         assert (Hain : In arg (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
@@ -4940,19 +4976,26 @@ Section SchedulerSimulation.
                                      (build_dfg ctx act) arg2 bufs)) ss input
                        = Bits.ones 1) by (rewrite E2; cbn [snd]; exact Hv2).
         unfold node_args_sz in Hfg. rewrite Hop in Hfg.
-        destruct op1 as [ | | | | | | szC cop ];
+        destruct op1 as [ | | | | | | szC cop | hz lz ];
           [ destruct Hfg as [Hf1 Hf2];
             pose proof (Hchild arg1 (sz node) pi Ha1in Hf1 Hav1) as Hc1;
             pose proof (Hchild arg2 (sz node) pi Ha2in Hf2 Hav2) as Hc2;
             rewrite E1, E3 in Hc1; rewrite E2, E4 in Hc2;
             cbn [fst] in Hc1, Hc2;
-            cbn [tf_eval_expr]; rewrite Hc1, Hc2; reflexivity .. | ].
+            cbn [tf_eval_expr]; rewrite Hc1, Hc2; reflexivity .. | | ].
         destruct Hfg as [Hf1 Hf2].
         pose proof (Hchild arg1 szC pi Ha1in Hf1 Hav1) as Hc1.
         pose proof (Hchild arg2 szC pi Ha2in Hf2 Hav2) as Hc2.
         rewrite E1, E3 in Hc1. rewrite E2, E4 in Hc2.
         cbn [fst] in Hc1, Hc2.
         cbn [tf_eval_expr]. rewrite Hc1, Hc2. reflexivity.
+        (* tf_concat *)
+        destruct Hfg as [Hf1 Hf2].
+        pose proof (Hchild arg1 hz pi Ha1in Hf1 Hav1) as Hk1.
+        pose proof (Hchild arg2 lz pi Ha2in Hf2 Hav2) as Hk2.
+        rewrite E1, E3 in Hk1. rewrite E2, E4 in Hk2.
+        cbn [fst] in Hk1, Hk2.
+        cbn [tf_eval_expr]. rewrite Hk1, Hk2. reflexivity.
       + (* Resize: validity passes through *)
         assert (Hain : In arg (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
@@ -7148,7 +7191,7 @@ Section SchedulerSimulation.
             rewrite (nre_unary act a_idx id (tf_resize source_size) src_id R1 R2 Rop).
             cbn [tf_eval_expr]. rewrite Hv1. reflexivity.
       - (* tf_op2 *)
-        destruct bop as [ | | | | | | szC cop ].
+        destruct bop as [ | | | | | | szC cop | hz lz ].
         1-6: (cbn [dataflow_expr] in Hde; unfold bind in Hde;
               pose proof (dataflow_expr_sz e1 szE s Hinv Hvsz) as Hsz1;
               destruct (dataflow_expr ctx e1 szE s) as [id1 s1] eqn:Ee1;
@@ -7190,11 +7233,36 @@ Section SchedulerSimulation.
         destruct (IH2 szC s1 s2 id2 sp Hne1 Hp1 Hq1 Ee2 Hg2F Hsem1) as [Hsem2 Hv2].
         destruct (emitted_node_at act F s2 s' (DFG_Binary (tf_cmp szC cop) id1 id2)
                     szE id HF Hne2 Hde Hg') as [R1 [R2 [Rop _]]].
-        split.
-        + apply (sem_inv_vm s2 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem2 ].
-        + unfold nval in Hv1, Hv2 |- *.
-          rewrite (nre_binary act a_idx id (tf_cmp szC cop) id1 id2 R1 R2 Rop).
-          cbn [tf_eval_expr]. rewrite Hv1, Hv2. reflexivity.
+        split;
+        [ apply (sem_inv_vm s2 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem2 ]
+        | unfold nval in Hv1, Hv2 |- *;
+          rewrite (nre_binary act a_idx id (tf_cmp szC cop) id1 id2 R1 R2 Rop);
+          cbn [tf_eval_expr]; rewrite Hv1, Hv2; reflexivity ].
+        (* tf_concat: e1 is compiled at hz and e2 at lz.  Every other binary op
+           compiles both operands at ONE width, which is why this case cannot
+           share the tactic above. *)
+        cbn [dataflow_expr] in Hde. unfold bind in Hde.
+        pose proof (dataflow_expr_sz e1 hz s Hinv Hvsz) as Hsz1.
+        destruct (dataflow_expr ctx e1 hz s) as [id1 s1] eqn:Ee1.
+        destruct Hsz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hz1]]]].
+        pose proof (dataflow_expr_sz e2 lz s1 Hp1 Hq1) as Hsz2.
+        destruct (dataflow_expr ctx e2 lz s1) as [id2 s2] eqn:Ee2.
+        destruct Hsz2 as [Hg2 [Hn2 [Hp2 [Hq2 Hz2]]]].
+        cbv beta in Hde.
+        assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
+        assert (Hne2 : 0 < length (graph s2)) by exact (gne_gmono s1 s2 Hg2 Hne1).
+        assert (Hg2F : wgmono s2 F)
+          by exact (wgmono_trans s2 s' F (emit_gmono _ _ _ _ _ Hde) Hg').
+        assert (Hg1F : wgmono s1 F) by exact (wgmono_trans s1 s2 F Hg2 Hg2F).
+        destruct (IH1 hz s s1 id1 sp Hne Hinv Hvsz Ee1 Hg1F Hsem) as [Hsem1 Hv1].
+        destruct (IH2 lz s1 s2 id2 sp Hne1 Hp1 Hq1 Ee2 Hg2F Hsem1) as [Hsem2 Hv2].
+        destruct (emitted_node_at act F s2 s' (DFG_Binary (tf_concat hz lz) id1 id2)
+                    szE id HF Hne2 Hde Hg') as [R1 [R2 [Rop _]]].
+        split;
+        [ apply (sem_inv_vm s2 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem2 ]
+        | unfold nval in Hv1, Hv2 |- *;
+          rewrite (nre_binary act a_idx id (tf_concat hz lz) id1 id2 R1 R2 Rop);
+          cbn [tf_eval_expr]; rewrite Hv1, Hv2; reflexivity ].
       - (* tf_expr_if *)
         cbn [dataflow_expr] in Hde. unfold bind in Hde.
         pose proof (dataflow_expr_sz ec 1 s Hinv Hvsz) as HszC.

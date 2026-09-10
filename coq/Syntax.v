@@ -38,6 +38,10 @@ Section TrustformerSyntax.
         | tf_sub                                (* Subtraction *)
         | tf_mul                                (* Multiplication *)
         | tf_cmp (cmp_sz: nat) (cmp_op: tf_comparison_ops)    (* Comparison Operations *)
+        (* SPIKE (2026-09-09): bit concatenation, high operand first.  Carries
+           BOTH operand widths because, like tf_cmp, it must evaluate its
+           operands at their own widths rather than at the demanded width. *)
+        | tf_concat (hi_sz: nat) (lo_sz: nat)
         .
 
     Inductive tf_expr :=

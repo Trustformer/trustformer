@@ -423,6 +423,13 @@ Section TypedSynthesis.
                 | tf_gt => synth_convert target_size (in_var_size:=1) (Binop (PrimTyped.Bits2 (PrimTyped.Compare false cGt cmp_sz)) s1 s2)
                 | tf_ge => synth_convert target_size (in_var_size:=1) (Binop (PrimTyped.Bits2 (PrimTyped.Compare false cGe cmp_sz)) s1 s2)
               end
+          (* SPIKE: Koika's [Concat sz1 sz2 : sz1 ~> sz2 ~> (sz2 + sz1)] matches
+             [Bits.app] in the semantics, so the result width is [lo + hi]. *)
+          | tf_concat hi_sz lo_sz =>
+              let s1 := expr_to_action src1 hi_sz in
+              let s2 := expr_to_action src2 lo_sz in
+              synth_convert target_size (in_var_size:=(lo_sz + hi_sz))
+                (Binop (PrimTyped.Bits2 (PrimTyped.Concat hi_sz lo_sz)) s1 s2)
           end
           
       | tf_expr_if cond then_expr else_expr =>
