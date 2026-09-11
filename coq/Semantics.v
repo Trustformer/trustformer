@@ -107,6 +107,12 @@ Section Semantics.
         | tf_no_update
         | tf_st_update (var: states_var) (value: bits_t (states_size var))
         | tf_out_update (var: outputs_var) (value: bits_t (outputs_size var))
+        (* A call writes TWO places in one step: the request port and the
+           destination state var.  Modelling it as a pair rather than as two
+           separate updates keeps [tf_op_step_updates] returning ONE update per
+           op, which is what every fold over the update list assumes. *)
+        | tf_call_update (ovar: outputs_var) (ovalue: bits_t (outputs_size ovar))
+                         (svar: states_var)  (svalue: bits_t (states_size svar))
         .
 
     Definition tf_op_step_updates
@@ -131,15 +137,16 @@ Section Semantics.
            conversion, so a call is typed exactly as the user-written
            [let $dst := $resp] would be.
 
-           NOT YET MODELLED: [arg] is inert.  The hardware will drive it onto a
-           request port, and until that write appears BOTH here and in the
-           lowering, an action carrying a call must not drive anything -- the
-           spec and the hardware would disagree on that port's final value, and
-           that disagreement is precisely what makes scheduler_done_correct
-           false for a driving action (PLAN.md D2). *)
-        | tf_call _ resp dst _ =>
-            tf_st_update dst
-              (tf_eval_expr (szB:=(states_size dst)) (tf_ivar resp) sys_state input)
+           THE REQUEST.  [arg] is evaluated onto the request port [req] in the
+           same step, which is why this returns a two-write [tf_call_update]
+           rather than a [tf_st_update].  Both halves must exist here AND in the
+           lowering or scheduler_done_correct is false for an action carrying a
+           call: the spec and the hardware would disagree on that port's final
+           value (PLAN.md D2). *)
+        | tf_call _ req resp dst arg =>
+            tf_call_update
+              req (tf_eval_expr (szB:=(outputs_size req)) arg sys_state input)
+              dst (tf_eval_expr (szB:=(states_size dst)) (tf_ivar resp) sys_state input)
         end.
 
     Definition tf_op_step_commit_state
@@ -152,6 +159,8 @@ Section Semantics.
             ContextEnv.(putenv) sys_state var value
         | tf_out_update _ _ =>
             sys_state
+        | tf_call_update _ _ var value =>
+            ContextEnv.(putenv) sys_state var value
         end.
 
     Definition tf_op_step_commit_output
@@ -163,6 +172,8 @@ Section Semantics.
         | tf_st_update _ _ =>
             sys_state
         | tf_out_update var value =>
+            ContextEnv.(putenv) sys_state var value
+        | tf_call_update var value _ _ =>
             ContextEnv.(putenv) sys_state var value
         end.
 

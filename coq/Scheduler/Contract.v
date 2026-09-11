@@ -69,7 +69,7 @@ Definition tfs_ops_no_duplicates {s i o} (ops: list (@tf_op s i o)) : Prop :=
     match op with 
       | tf_assign dst _ => [StOp dst]  
       | tf_output dst _ => [OutOp dst]
-      | tf_call _ _ dst _ => [StOp dst]  (* SPIKE E1 *)
+      | tf_call _ req _ dst _ => [OutOp req; StOp dst]  (* a call writes BOTH *)
       | _ => []
     end) ops).
 
@@ -126,7 +126,7 @@ Record TFSchedule := {
           match op with
           | tf_assign dst _ => [StOp dst]
           | tf_output dst _ => [OutOp dst]
-          | tf_call _ _ dst _ => [StOp dst]  (* SPIKE E1 *)
+          | tf_call _ req _ dst _ => [OutOp req; StOp dst]  (* a call writes BOTH *)
           | _ => []
           end) (fst (tfs_schedule a)));
 
@@ -198,6 +198,16 @@ Section SchedulerSpec.
                       end)
             | right _ => find_st_update x rest
             end
+        (* a call writes a state var too, and must be found here or the spec's
+           state update would be invisible to the simulation *)
+        | tf_call_update _ _ _ _ var val =>
+            match eq_dec var x with
+            | left eq_proof =>
+                Some (match eq_proof in (_ = y) return bits_t (s_sz y) with
+                      | eq_refl => val
+                      end)
+            | right _ => find_st_update x rest
+            end
         | _ => find_st_update x rest
         end
     end.
@@ -216,6 +226,15 @@ Section SchedulerSpec.
         | tf_out_update _ _ var val =>
             match eq_dec var x with
             | left eq_proof => 
+                Some (match eq_proof in (_ = y) return bits_t (o_sz y) with
+                      | eq_refl => val
+                      end)
+            | right _ => find_out_update x rest
+            end
+        (* a call writes its REQUEST port here *)
+        | tf_call_update _ _ var val _ _ =>
+            match eq_dec var x with
+            | left eq_proof =>
                 Some (match eq_proof in (_ = y) return bits_t (o_sz y) with
                       | eq_refl => val
                       end)

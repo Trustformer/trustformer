@@ -279,12 +279,19 @@ Section VariableScheduler.
       | tf_output dst expr =>
         let! res_id := dataflow_expr expr (dfg_var_size (DFG_OVar dst)) in
         set_var (DFG_OVar dst) res_id
-      (* A call lowers to a read of its RESPONSE port, matching the denotation
-         in Semantics.v: the result is what the IP answered, not a function of
-         the request.  [arg] is not lowered at all yet -- when the drive lands
-         it becomes a DFG_Drive feeding a DFG_Stall feeding a DFG_Sample, and
-         this is the line that changes. *)
-      | tf_call _ resp dst _ =>
+      (* A call lowers to BOTH halves of the round trip, mirroring the two-write
+         [tf_call_update] in Semantics.v: the request payload onto [req], and
+         the destination from a read of the RESPONSE port.  Emitting only one of
+         them would make the spec and the hardware disagree on a port or a
+         register, which is what scheduler_done_correct compares.
+
+         Still untimed: both writes land through [var_map], so the port is
+         driven at the done cycle like any other output.  Making the request
+         land EARLY -- a DFG_Drive feeding a DFG_Stall feeding a DFG_Sample --
+         is the next rung, and it is this line that changes again. *)
+      | tf_call _ req resp dst arg =>
+        let! arg_id := dataflow_expr arg (dfg_var_size (DFG_OVar req)) in
+        let! _ := set_var (DFG_OVar req) arg_id in
         let! res_id := dataflow_expr (tf_ivar resp) (dfg_var_size (DFG_SVar dst)) in
         set_var (DFG_SVar dst) res_id
       end
@@ -1441,11 +1448,15 @@ Section VariableScheduler.
   Proof.
     induction ops as [bop | o1 IHops1 o2 IHops2 | oc ot IHops1 oe IHops2];
       cbn [dataflow_ops].
-    - destruct bop as [ | dst expr | dst expr | si rv dst expr].
+    - destruct bop as [ | dst expr | dst expr | si rq rv dst expr].
       + apply preserves_ret.
       + apply preserves_bind; [apply dataflow_expr_vm|]. intro x. apply set_var_vm.
       + apply preserves_bind; [apply dataflow_expr_vm|]. intro x. apply set_var_vm.
-      + apply preserves_bind; [apply dataflow_expr_vm|]. intro x. apply set_var_vm.
+      + (* a call is FOUR steps: payload, request write, response read, dest *)
+        apply preserves_bind; [apply dataflow_expr_vm|]. intro x.
+        apply preserves_bind; [apply set_var_vm|]. intro y.
+        apply preserves_bind; [apply dataflow_expr_vm|]. intro z.
+        apply set_var_vm.
     - apply preserves_bind; [apply IHops1|]. intro x. apply IHops2.
     - intros s Hs.
       unfold bind. cbn [get_state put_state].
@@ -1575,7 +1586,7 @@ Section VariableScheduler.
     (fun op => match op with
        | tf_assign dst _ => [StOp dst]
        | tf_output dst _ => [OutOp dst]
-       | tf_call _ _ dst _ => [StOp dst]  (* SPIKE E1 *)
+       | tf_call _ req _ dst _ => [OutOp req; StOp dst]  (* a call writes BOTH *)
        | _ => []
        end).
 
@@ -1736,7 +1747,7 @@ Section VariableScheduler.
           match op with
           | tf_assign dst _ => [StOp dst]
           | tf_output dst _ => [OutOp dst]
-          | tf_call _ _ dst _ => [StOp dst]  (* SPIKE E1 *)
+          | tf_call _ req _ dst _ => [OutOp req; StOp dst]  (* a call writes BOTH *)
           | _ => []
           end) (fst (schedule a))).
   Proof.

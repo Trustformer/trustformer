@@ -71,9 +71,16 @@ Section TrustformerSyntax.
            stronger D reading ("[resp] carries f(arg)") is a separate refinement
            hypothesis layered on top, not a different mechanism.
 
-           [arg] is the request payload.  It is SEMANTICALLY INERT until the
-           drive lands -- see the header of tf_op_step_updates. *)
-        | tf_call (site: nat) (resp: inputs_var) (dst: states_var) (arg: tf_expr)
+           [req] names the port the request payload [arg] is put on.  A call
+           therefore writes TWO places at once -- the request port and the
+           destination state var -- which is why [tf_update] carries a two-write
+           constructor.  The port is written through [var_map] like any other
+           output, so [tfs_ops_no_duplicates] already REJECTS an action that
+           also writes [req] by hand: "a port is either written by a call or
+           assigned, never both" comes free from the NoDup obligation rather
+           than needing a new well-formedness predicate. *)
+        | tf_call (site: nat) (req: outputs_var) (resp: inputs_var)
+                  (dst: states_var) (arg: tf_expr)
         . 
 
     Inductive tf_ops :=

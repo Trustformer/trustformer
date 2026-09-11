@@ -468,11 +468,12 @@ Section TypedSynthesis.
           Seq (Write P0 (tf_reg x) (expr_to_action expr (spec_states_size x))) code
       | tf_output x expr => 
           Seq (Write P0 (tf_out x) (expr_to_action expr (spec_outputs_size x))) code
-      (* A call writes its destination from the RESPONSE port, mirroring the
-         denotation in Semantics.v and the lowering in VariableScheduler.v.
-         [arg] is not emitted: the request drive does not exist yet. *)
-      | tf_call _ resp x _ =>
-          Seq (Write P0 (tf_reg x) (expr_to_action (tf_ivar resp) (spec_states_size x))) code
+      (* A call emits BOTH writes, mirroring Semantics.v and VariableScheduler.v:
+         the request payload onto [req], and the destination from the RESPONSE
+         port. *)
+      | tf_call _ req resp x arg =>
+          Seq (Write P0 (tf_out req) (expr_to_action arg (spec_outputs_size req)))
+            (Seq (Write P0 (tf_reg x) (expr_to_action (tf_ivar resp) (spec_states_size x))) code)
       end.
 
     Fixpoint rule_aux {sig tau}
