@@ -56,6 +56,10 @@ Section TrustformerSyntax.
         | tf_nop                                                (* No operation *)
         | tf_assign (dst : states_var) (expr : tf_expr)         (* Unary Operations *)
         | tf_output (dst : outputs_var) (expr : tf_expr)        (* Write variable to output *)
+        (* SPIKE (R-vs-D): an external-IP call as a STATEMENT, not an expression.
+           [site] is a STATIC call-site index, assigned syntactically, so the
+           response oracle needs no dynamic counter threaded through the fold. *)
+        | tf_call (bundle site argsz: nat) (dst: states_var) (arg: tf_expr)
         . 
 
     Inductive tf_ops :=
@@ -100,6 +104,7 @@ Section TrustformerSyntax.
     Proof.
         constructor. intros.
         decide equality;
+        try apply Nat.eq_dec;
         try apply states_var_eqdec;
         try apply outputs_var_eqdec;
         try apply tf_expr_eqdec.

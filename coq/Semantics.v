@@ -118,6 +118,9 @@ Section Semantics.
         | tf_nop => tf_no_update
         | tf_assign dst expr => tf_st_update dst (tf_eval_expr (szB:=(states_size dst)) expr sys_state input)
         | tf_output dst expr => tf_out_update dst (tf_eval_expr (szB:=(outputs_size dst)) expr sys_state input)
+        (* SPIKE E1: trivial semantics -- behaves as tf_assign, uses no oracle.
+           Measures the cost of the CONSTRUCTOR alone. *)
+        | tf_call _ _ _ dst arg => tf_st_update dst (tf_eval_expr (szB:=(states_size dst)) arg sys_state input)
         end.
 
     Definition tf_op_step_commit_state

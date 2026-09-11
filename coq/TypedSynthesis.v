@@ -468,6 +468,9 @@ Section TypedSynthesis.
           Seq (Write P0 (tf_reg x) (expr_to_action expr (spec_states_size x))) code
       | tf_output x expr => 
           Seq (Write P0 (tf_out x) (expr_to_action expr (spec_outputs_size x))) code
+      (* SPIKE E1: as tf_assign *)
+      | tf_call _ _ _ x expr =>
+          Seq (Write P0 (tf_reg x) (expr_to_action expr (spec_states_size x))) code
       end.
 
     Fixpoint rule_aux {sig tau}

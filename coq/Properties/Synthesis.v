@@ -1832,6 +1832,7 @@ Section SynthesisCorrectness.
     fold_right (fun op acc => match op with
                              | tf_assign dst _ => tf_reg dst :: acc
                              | tf_output dst _ => tf_out dst :: acc
+                             | tf_call _ _ _ dst _ => tf_reg dst :: acc  (* SPIKE E1 *)
                              | _ => acc
                              end) [] ops.
 
@@ -1839,6 +1840,7 @@ Section SynthesisCorrectness.
     fold_left (fun acc op => match op with
                              | tf_assign dst expr => log_cons (R:=R) (REnv:=REnv) (tf_reg dst) (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size expr sys input)) (expr_log expr (spec_states_size dst) sys input acc)
                              | tf_output dst expr => log_cons (R:=R) (REnv:=REnv) (tf_out dst) (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size expr sys input)) (expr_log expr (spec_outputs_size dst) sys input acc)
+                             | tf_call _ _ _ dst arg => log_cons (R:=R) (REnv:=REnv) (tf_reg dst) (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size arg sys input)) (expr_log arg (spec_states_size dst) sys input acc)  (* SPIKE E1 *)
                              | _ => acc
                              end) ops log_a.
 
@@ -1867,6 +1869,7 @@ Section SynthesisCorrectness.
     - destruct op; simpl; try apply IH.
       + (* hammer. *) timeout 10 sfirstorder.
       + (* hammer. *) timeout 10 sfirstorder.
+      + (* SPIKE E1: tf_call, same as tf_assign *) timeout 10 sfirstorder.
   Qed.
 
   Lemma may_write_all_expr_log :
@@ -1972,6 +1975,24 @@ Section SynthesisCorrectness.
           -- simpl in HNoDup_aff. inversion HNoDup_aff; subst.
              rewrite may_write_all_log_cons_neq; [|assumption].
              apply may_write_all_expr_log; assumption.
+      (* SPIKE E1: tf_call lowers exactly as tf_assign; bullet copied verbatim
+         with [expr] renamed to [arg]. *)
+      + simpl. simpl in Hwr0_aff. apply may_write_all_cons in Hwr0_aff. destruct Hwr0_aff as [Hwr0_dst Hwr0_rest].
+        unfold opt_bind. 
+        change (@tf_states_type _ (tfs_states_size (tf_sched_ctx tf_ctx)) dst)
+          with (bits_t (tfs_states_size (tf_sched_ctx tf_ctx) dst)) in *.
+        rewrite (interp_action_expr sys r act input sigma log_r log_a arg); try assumption.
+        extract_match_term. assert (MT = true).
+        * subst. apply may_write_expr_log.
+          -- intros. (* hammer. *) timeout 10 sauto.
+          -- assumption.
+        * rewrite H. apply H0; clear H0.   
+          -- simpl in HNoDup_aff. inversion HNoDup_aff; subst. assumption.
+          -- apply inputs_are_buffered_log_app_log_cons_neq; try apply inputs_are_buffered_expr_log; try assumption.
+             exact (not_in_reg_reg_all_inputs dst).
+          -- simpl in HNoDup_aff. inversion HNoDup_aff; subst.
+             rewrite may_write_all_log_cons_neq; [|assumption].
+             apply may_write_all_expr_log; assumption.
   Time Qed. (* ca. 0.3 s *)
 
   (* --- aux_log <-> abstract-updates bridge (Phase D building blocks) --- *)
@@ -2001,6 +2022,11 @@ Section SynthesisCorrectness.
         * apply IH. exact Hnotin.
       + apply Decidable.not_or in Hnotin. destruct Hnotin as [_ Hnotin].
         apply IH. exact Hnotin.
+      (* SPIKE E1: tf_call contributes tf_reg dst, exactly as tf_assign. *)
+      + apply Decidable.not_or in Hnotin. destruct Hnotin as [Hneq Hnotin].
+        destruct (eq_dec dst x) as [Heq | Hneq'].
+        * subst. contradiction Hneq. reflexivity.
+        * apply IH. exact Hnotin.
   Qed.
 
   (* Symmetric helper for outputs. *)
@@ -2020,6 +2046,9 @@ Section SynthesisCorrectness.
         destruct (eq_dec dst x) as [Heq | Hneq'].
         * subst. contradiction Hneq. reflexivity.
         * apply IH. exact Hnotin.
+      (* SPIKE E1: tf_call writes no output, so mirror the tf_assign bullet. *)
+      + apply Decidable.not_or in Hnotin. destruct Hnotin as [_ Hnotin].
+        apply IH. exact Hnotin.
   Qed.
 
   (* One-step unfolding of the aux_log fold_left. *)
@@ -2036,6 +2065,10 @@ Section SynthesisCorrectness.
              log_cons (R:=R) (REnv:=REnv) (tf_out dst)
                (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size expr sys input))
                (expr_log expr (spec_outputs_size dst) sys input log_a)
+         | tf_call _ _ _ dst arg =>
+             log_cons (R:=R) (REnv:=REnv) (tf_reg dst)
+               (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size arg sys input))
+               (expr_log arg (spec_states_size dst) sys input log_a)
          | _ => log_a
          end).
   Proof. reflexivity. Qed.
@@ -2076,6 +2109,18 @@ Section SynthesisCorrectness.
         rewrite SemanticProperties.latest_write0_cons_neq.
         * apply latest_write0_expr_log_any.
         * intro Hc. discriminate Hc.
+      + (* SPIKE E1: tf_call dst arg -- identical to the tf_assign bullet. *)
+        apply NoDup_cons_iff in Hnd. destruct Hnd as [Hnotin Hnd].
+        destruct (eq_dec dst x) as [Heq | Hneq].
+        * subst dst.
+          rewrite IH by exact Hnd.
+          rewrite (find_st_update_not_affected ops sys input x Hnotin).
+          rewrite SemanticProperties.latest_write0_cons_eq. reflexivity.
+        * rewrite IH by exact Hnd.
+          destruct (find_st_update sched_ctx x (tfs_get_updates sched_ctx ops sys input)); try reflexivity.
+          rewrite SemanticProperties.latest_write0_cons_neq.
+          -- apply latest_write0_expr_log_any.
+          -- intro Hc. apply Hneq. injection Hc. auto.
   Qed.
 
   (* CRUX BRIDGE (outputs): symmetric to the register version. *)
@@ -2113,6 +2158,13 @@ Section SynthesisCorrectness.
           rewrite SemanticProperties.latest_write0_cons_neq.
           -- apply latest_write0_expr_log_any.
           -- intro Hc. apply Hneq. injection Hc. auto.
+      + (* SPIKE E1: tf_call writes no output; mirrors the tf_assign bullet. *)
+        apply NoDup_cons_iff in Hnd. destruct Hnd as [_ Hnd].
+        rewrite IH by exact Hnd.
+        destruct (find_out_update sched_ctx x (tfs_get_updates sched_ctx ops sys input)); try reflexivity.
+        rewrite SemanticProperties.latest_write0_cons_neq.
+        * apply latest_write0_expr_log_any.
+        * intro Hc. discriminate Hc.
   Qed.
 
   (* may_write at P0 means no write0 exists in either log, so latest_write0 is None. *)
@@ -2222,6 +2274,12 @@ Section SynthesisCorrectness.
           -- simpl. intro. destruct H.
               ** timeout 10 sauto.
               ** inversion IHl; subst. apply IHl0; assumption.
+          (* SPIKE E1: tf_call -- same dst-collision reasoning as tf_assign. *)
+          -- simpl. destruct (eq_dec dst dst0) as [Heq | Hneq]; subst.
+              ++ contradict Hnotin. sauto.
+              ++ intro. destruct H.
+              ** timeout 10 sauto.
+              ** inversion IHl; subst. apply IHl0; assumption.
       + simpl in H. apply NoDup_cons_iff in H. destruct H as [Hnotin H]. specialize (IHl H); clear H. 
         apply NoDup_cons; try assumption.
         induction l.
@@ -2230,6 +2288,32 @@ Section SynthesisCorrectness.
           specialize (IHl0 Hnotin_l); clear Hnotin_l.          
           destruct a.
           -- simpl. apply IHl0. exact IHl.
+          -- simpl. intro. destruct H.
+              ** timeout 10 sauto.
+              ** inversion IHl; subst. apply IHl0; assumption.
+          -- simpl. destruct (eq_dec dst dst0) as [Heq | Hneq]; subst.
+              ++ contradict Hnotin. sauto.
+              ++ intro. destruct H.
+              ** timeout 10 sauto.
+              ** inversion IHl; subst. apply IHl0; assumption.
+          (* E1: tf_call -- outer is tf_output, so no collision. *)
+          -- simpl. intro. destruct H.
+              ** timeout 10 sauto.
+              ** inversion IHl; subst. apply IHl0; assumption.
+      (* E1: the OUTER tf_call branch -- the tf_assign branch verbatim. *)
+      + simpl in H. apply NoDup_cons_iff in H. destruct H as [Hnotin H]. specialize (IHl H); clear H.
+        apply NoDup_cons; try assumption.
+        induction l.
+        * auto.
+        * simpl in *. apply Common.not_in_app_iff in Hnotin. destruct Hnotin as [Hnotin Hnotin_l].
+          specialize (IHl0 Hnotin_l); clear Hnotin_l.
+          destruct a.
+          -- simpl. apply IHl0. exact IHl.
+          -- simpl. destruct (eq_dec dst dst0) as [Heq | Hneq]; subst.
+              ++ contradict Hnotin. sauto.
+              ++ intro. destruct H.
+              ** timeout 10 sauto.
+              ** inversion IHl; subst. apply IHl0; assumption.
           -- simpl. intro. destruct H.
               ** timeout 10 sauto.
               ** inversion IHl; subst. apply IHl0; assumption.
@@ -2268,6 +2352,12 @@ Section SynthesisCorrectness.
           -- simpl. intro. destruct H.
               ** timeout 10 sauto.
               ** inversion IHl; subst. apply IHl0; assumption.
+          (* E1: tf_call -- collides like tf_assign. *)
+          -- simpl. destruct (eq_dec dst dst0) as [Heq | Hneq]; subst.
+              ++ contradict Hnotin. sauto.
+              ++ intro. destruct H.
+              ** timeout 10 sauto.
+              ** inversion IHl; subst. apply IHl0; assumption.
       + simpl in H. apply NoDup_cons_iff in H. destruct H as [Hnotin H]. specialize (IHl H); clear H. 
         apply NoDup_cons; try assumption.
         induction l.
@@ -2276,6 +2366,32 @@ Section SynthesisCorrectness.
           specialize (IHl0 Hnotin_l); clear Hnotin_l.          
           destruct a.
           -- simpl. apply IHl0. exact IHl.
+          -- simpl. intro. destruct H.
+              ** timeout 10 sauto.
+              ** inversion IHl; subst. apply IHl0; assumption.
+          -- simpl. destruct (eq_dec dst dst0) as [Heq | Hneq]; subst.
+              ++ contradict Hnotin. sauto.
+              ++ intro. destruct H.
+              ** timeout 10 sauto.
+              ** inversion IHl; subst. apply IHl0; assumption.
+          (* E1: tf_call -- outer is tf_output, no collision. *)
+          -- simpl. intro. destruct H.
+              ** timeout 10 sauto.
+              ** inversion IHl; subst. apply IHl0; assumption.
+      (* E1: the OUTER tf_call branch -- the tf_assign branch verbatim. *)
+      + simpl in H. apply NoDup_cons_iff in H. destruct H as [Hnotin H]. specialize (IHl H); clear H.
+        apply NoDup_cons; try assumption.
+        induction l.
+        * auto.
+        * simpl in *. apply Common.not_in_app_iff in Hnotin. destruct Hnotin as [Hnotin Hnotin_l].
+          specialize (IHl0 Hnotin_l); clear Hnotin_l.
+          destruct a.
+          -- simpl. apply IHl0. exact IHl.
+          -- simpl. destruct (eq_dec dst dst0) as [Heq | Hneq]; subst.
+              ++ contradict Hnotin. sauto.
+              ++ intro. destruct H.
+              ** timeout 10 sauto.
+              ** inversion IHl; subst. apply IHl0; assumption.
           -- simpl. intro. destruct H.
               ** timeout 10 sauto.
               ** inversion IHl; subst. apply IHl0; assumption.
@@ -2298,6 +2414,11 @@ Section SynthesisCorrectness.
        match op with
        | tf_assign dst _ => [StOp dst]
        | tf_output dst _ => [OutOp dst]
+       (* E1.  A call WRITES a state var, so it must carry a StOp tag -- this is
+          the DEBT-3 wildcard shape, and omitting the arm makes the NoDup
+          obligation strictly EASIER rather than breaking a proof, so the build
+          would stay green while the hardware wrote a register twice. *)
+       | tf_call _ _ _ dst _ => [StOp dst]
        | _ => []
        end) ops).
 
@@ -2315,6 +2436,10 @@ Section SynthesisCorrectness.
     - (* tf_output: affected head is tf_out, cannot equal tf_reg x *)
       destruct Hin as [Heq | Hin]; [ discriminate Heq |].
       right. apply IH; assumption.
+    - (* E1: a call writes a state reg and carries a StOp tag. *)
+      destruct Hin as [Heq | Hin].
+      + left. injection Heq as ->. reflexivity.
+      + right. apply IH; assumption.
   Qed.
 
   (* The done register is not written by the done-ops (snd): it is assigned by the
@@ -2391,6 +2516,9 @@ Section SynthesisCorrectness.
         rewrite may_write_expr_log_P1. reflexivity.
       + rewrite may_write_log_cons_P1_not_w1 by reflexivity.
         rewrite may_write_expr_log_P1. reflexivity.
+      + (* E1: aux_log conses the same Write0-on-tf_reg shape for a call. *)
+        rewrite may_write_log_cons_P1_not_w1 by reflexivity.
+        rewrite may_write_expr_log_P1. reflexivity.
   Qed.
 
   Lemma may_write_all_aux_log_P1 :
@@ -2441,6 +2569,10 @@ Section SynthesisCorrectness.
       + apply inputs_are_buffered_log_app_log_cons_neq.
         * apply not_in_reg_out_all_inputs.
         * apply inputs_are_buffered_expr_log. exact Hbuf.
+      + (* E1: a call writes tf_reg dst, as tf_assign does. *)
+        apply inputs_are_buffered_log_app_log_cons_neq.
+        * apply not_in_reg_reg_all_inputs.
+        * apply inputs_are_buffered_expr_log. exact Hbuf.
   Qed.
 
   (* Generalized version of may_write_all_expr_log to an arbitrary register list that
@@ -2481,6 +2613,10 @@ Section SynthesisCorrectness.
         * rewrite may_write_all_log_cons_neq.
           -- apply may_write_all_expr_log_gen; assumption.
           -- intro Hin. apply (Hdisj (tf_out dst) Hin). simpl. left. reflexivity.
+        (* E1: a call writes tf_reg dst. *)
+        * rewrite may_write_all_log_cons_neq.
+          -- apply may_write_all_expr_log_gen; assumption.
+          -- intro Hin. apply (Hdisj (tf_reg dst) Hin). simpl. left. reflexivity.
   Qed.
 
   (* An output register appearing in affected_regs shows up as an OutOp tag. *)
@@ -2494,6 +2630,8 @@ Section SynthesisCorrectness.
     - destruct Hin as [Heq | Hin]; [ discriminate Heq | right; apply IH; assumption ].
     - destruct Hin as [Heq | Hin];
         [ left; injection Heq as ->; reflexivity | right; apply IH; assumption ].
+    - (* E1: a call's affected reg is a tf_reg, never a tf_out. *)
+      destruct Hin as [Heq | Hin]; [ discriminate Heq | right; apply IH; assumption ].
   Qed.
 
   (* Every affected register is a state (tf_reg) or an output (tf_out). *)
@@ -2507,6 +2645,8 @@ Section SynthesisCorrectness.
     - apply IH; assumption.
     - destruct Hin as [<- | Hin]; [ left; eexists; reflexivity | apply IH; assumption ].
     - destruct Hin as [<- | Hin]; [ right; eexists; reflexivity | apply IH; assumption ].
+    - (* E1: a call contributes a tf_reg. *)
+      destruct Hin as [<- | Hin]; [ left; eexists; reflexivity | apply IH; assumption ].
   Qed.
 
   Lemma NoDup_app_disjoint {A: Type} :
@@ -2587,6 +2727,10 @@ Section SynthesisCorrectness.
             * apply IHl. apply H.
         + simpl in Hreg_in_aff. destruct (Hreg_in_aff); clear Hreg_in_aff; subst.
             * apply Hwr0_out. apply in_map. exact (in_spec_all_outputs dst).
+            * apply IHl. apply H.
+        (* E1: a call affects tf_reg dst, as tf_assign does. *)
+        + simpl in Hreg_in_aff. destruct (Hreg_in_aff); clear Hreg_in_aff; subst.
+            * apply Hwr0_st. apply in_map. exact (in_spec_all_states dst).
             * apply IHl. apply H.
     }
 
@@ -2941,6 +3085,9 @@ Section SynthesisCorrectness.
         apply latest_write_expr_log_any.
       + rewrite SemanticProperties.latest_write_cons_neq by (apply Hout).
         apply latest_write_expr_log_any.
+      + (* E1: a call conses Write0 on tf_reg dst. *)
+        rewrite SemanticProperties.latest_write_cons_neq by (apply Hreg).
+        apply latest_write_expr_log_any.
   Qed.
 
   (* reset_log conses Write1 only on tf_reg of reset states; latest_write is
@@ -3225,6 +3372,18 @@ Section SynthesisCorrectness.
         rewrite SemanticProperties.latest_write_cons_neq.
         * apply latest_write_expr_log_any.
         * intro Hc. discriminate Hc.
+      (* E1: a call updates a state var -- the tf_assign case. *)
+      + apply NoDup_cons_iff in Hnd. destruct Hnd as [Hnotin Hnd].
+        destruct (eq_dec dst x) as [Heq | Hneq].
+        * subst dst.
+          rewrite IH by exact Hnd.
+          rewrite (find_st_update_not_affected ops sys input x Hnotin).
+          rewrite SemanticProperties.latest_write_cons_eq. reflexivity.
+        * rewrite IH by exact Hnd.
+          destruct (find_st_update sched_ctx x (tfs_get_updates sched_ctx ops sys input)); try reflexivity.
+          rewrite SemanticProperties.latest_write_cons_neq.
+          -- apply latest_write_expr_log_any.
+          -- intro Hc. apply Hneq. injection Hc. auto.
   Qed.
 
   Lemma latest_write_aux_log_out :
@@ -3259,6 +3418,13 @@ Section SynthesisCorrectness.
           rewrite SemanticProperties.latest_write_cons_neq.
           -- apply latest_write_expr_log_any.
           -- intro Hc. apply Hneq. injection Hc. auto.
+      (* E1: a call writes a STATE reg, so nothing collides with tf_out x. *)
+      + apply NoDup_cons_iff in Hnd. destruct Hnd as [_ Hnd].
+        rewrite IH by exact Hnd.
+        destruct (find_out_update sched_ctx x (tfs_get_updates sched_ctx ops sys input)); try reflexivity.
+        rewrite SemanticProperties.latest_write_cons_neq.
+        * apply latest_write_expr_log_any.
+        * intro Hc. discriminate Hc.
   Qed.
 
   (* A P1 read entry never counts as a write. *)

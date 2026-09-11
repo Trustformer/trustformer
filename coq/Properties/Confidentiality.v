@@ -126,6 +126,7 @@ Section Confidentiality.
     match ops with
     | tf_ops_base tf_nop => true
     | tf_ops_base (tf_assign _ _) => true    (* a secret register may hold anything *)
+    | tf_ops_base (tf_call _ _ _ _ _) => true  (* SPIKE E1: as tf_assign *)
     | tf_ops_base (tf_output o e) =>
         match o_cls o with
         | Secret => true                     (* Secret outputs may be arbitrary *)
@@ -210,7 +211,7 @@ Section Confidentiality.
       (snd (run ops sys input)).[o] = (snd sys).[o].
   Proof.
     induction ops; intros Hsf sys input o Hc; cbn [sf_ops] in Hsf.
-    - destruct op as [| d e | d e]; cbn [tf_ops_run tf_ops_updates
+    - destruct op as [| d e | d e | b si az d e]; cbn [tf_ops_run tf_ops_updates
         tf_op_step_updates tf_op_step_commit tf_op_step_commit_output snd].
       + reflexivity.
       + reflexivity.
@@ -218,6 +219,7 @@ Section Confidentiality.
         destruct (eq_dec d o) as [Heq | Hne].
         * subst d. rewrite Hc in Hd. discriminate.
         * rewrite get_put_neq; [ reflexivity | exact Hne ].
+      + reflexivity.  (* SPIKE E1: tf_call writes a state var, as tf_assign *)
     - apply andb_prop in Hsf. destruct Hsf as [H1 H2].
       rewrite run_cons, (IHops2 H2 _ input o Hc), (IHops1 H1 sys input o Hc).
       reflexivity.
@@ -239,7 +241,7 @@ Section Confidentiality.
   Proof.
     revert g. induction ops; intros g Hsf sys sys' input Hpub;
       cbn [sf_ops] in Hsf.
-    - destruct op as [| d e | d e]; intros o Hc;
+    - destruct op as [| d e | d e | b si az d e]; intros o Hc;
         cbn [tf_ops_run tf_ops_updates tf_op_step_updates tf_op_step_commit
              tf_op_step_commit_output snd].
       + exact (Hpub o Hc).
@@ -255,6 +257,7 @@ Section Confidentiality.
           destruct (eq_dec d o) as [Heq | Hne].
           -- subst d. rewrite Hc in Hd. discriminate.
           -- rewrite !get_put_neq by exact Hne. exact (Hpub o Hc).
+      + exact (Hpub o Hc).  (* SPIKE E1: tf_call writes a state var *)
     - apply andb_prop in Hsf. destruct Hsf as [H1 H2].
       rewrite !run_cons.
       exact (IHops2 g H2 _ _ input (IHops1 g H1 sys sys' input Hpub)).
