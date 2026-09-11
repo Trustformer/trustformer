@@ -279,9 +279,13 @@ Section VariableScheduler.
       | tf_output dst expr =>
         let! res_id := dataflow_expr expr (dfg_var_size (DFG_OVar dst)) in
         set_var (DFG_OVar dst) res_id
-      (* SPIKE E1: as tf_assign *)
-      | tf_call _ _ _ dst expr =>
-        let! res_id := dataflow_expr expr (dfg_var_size (DFG_SVar dst)) in
+      (* A call lowers to a read of its RESPONSE port, matching the denotation
+         in Semantics.v: the result is what the IP answered, not a function of
+         the request.  [arg] is not lowered at all yet -- when the drive lands
+         it becomes a DFG_Drive feeding a DFG_Stall feeding a DFG_Sample, and
+         this is the line that changes. *)
+      | tf_call _ resp dst _ =>
+        let! res_id := dataflow_expr (tf_ivar resp) (dfg_var_size (DFG_SVar dst)) in
         set_var (DFG_SVar dst) res_id
       end
     | tf_ops_cons op1 op2 =>
@@ -1437,7 +1441,7 @@ Section VariableScheduler.
   Proof.
     induction ops as [bop | o1 IHops1 o2 IHops2 | oc ot IHops1 oe IHops2];
       cbn [dataflow_ops].
-    - destruct bop as [ | dst expr | dst expr | b si az dst expr].
+    - destruct bop as [ | dst expr | dst expr | si rv dst expr].
       + apply preserves_ret.
       + apply preserves_bind; [apply dataflow_expr_vm|]. intro x. apply set_var_vm.
       + apply preserves_bind; [apply dataflow_expr_vm|]. intro x. apply set_var_vm.
@@ -1571,7 +1575,7 @@ Section VariableScheduler.
     (fun op => match op with
        | tf_assign dst _ => [StOp dst]
        | tf_output dst _ => [OutOp dst]
-       | tf_call _ _ _ dst _ => [StOp dst]  (* SPIKE E1 *)
+       | tf_call _ _ dst _ => [StOp dst]  (* SPIKE E1 *)
        | _ => []
        end).
 
@@ -1732,7 +1736,7 @@ Section VariableScheduler.
           match op with
           | tf_assign dst _ => [StOp dst]
           | tf_output dst _ => [OutOp dst]
-          | tf_call _ _ _ dst _ => [StOp dst]  (* SPIKE E1 *)
+          | tf_call _ _ dst _ => [StOp dst]  (* SPIKE E1 *)
           | _ => []
           end) (fst (schedule a))).
   Proof.

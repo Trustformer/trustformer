@@ -1832,7 +1832,7 @@ Section SynthesisCorrectness.
     fold_right (fun op acc => match op with
                              | tf_assign dst _ => tf_reg dst :: acc
                              | tf_output dst _ => tf_out dst :: acc
-                             | tf_call _ _ _ dst _ => tf_reg dst :: acc  (* SPIKE E1 *)
+                             | tf_call _ _ dst _ => tf_reg dst :: acc  (* SPIKE E1 *)
                              | _ => acc
                              end) [] ops.
 
@@ -1840,7 +1840,7 @@ Section SynthesisCorrectness.
     fold_left (fun acc op => match op with
                              | tf_assign dst expr => log_cons (R:=R) (REnv:=REnv) (tf_reg dst) (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size expr sys input)) (expr_log expr (spec_states_size dst) sys input acc)
                              | tf_output dst expr => log_cons (R:=R) (REnv:=REnv) (tf_out dst) (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size expr sys input)) (expr_log expr (spec_outputs_size dst) sys input acc)
-                             | tf_call _ _ _ dst arg => log_cons (R:=R) (REnv:=REnv) (tf_reg dst) (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size arg sys input)) (expr_log arg (spec_states_size dst) sys input acc)  (* SPIKE E1 *)
+                             | tf_call _ resp dst _ => log_cons (R:=R) (REnv:=REnv) (tf_reg dst) (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size (tf_ivar resp) sys input)) (expr_log (tf_ivar resp) (spec_states_size dst) sys input acc)  (* a call writes the RESPONSE port read, mirroring Semantics.v *)
                              | _ => acc
                              end) ops log_a.
 
@@ -1981,7 +1981,7 @@ Section SynthesisCorrectness.
         unfold opt_bind. 
         change (@tf_states_type _ (tfs_states_size (tf_sched_ctx tf_ctx)) dst)
           with (bits_t (tfs_states_size (tf_sched_ctx tf_ctx) dst)) in *.
-        rewrite (interp_action_expr sys r act input sigma log_r log_a arg); try assumption.
+        rewrite (interp_action_expr sys r act input sigma log_r log_a (tf_ivar resp)); try assumption.
         extract_match_term. assert (MT = true).
         * subst. apply may_write_expr_log.
           -- intros. (* hammer. *) timeout 10 sauto.
@@ -2065,10 +2065,10 @@ Section SynthesisCorrectness.
              log_cons (R:=R) (REnv:=REnv) (tf_out dst)
                (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size expr sys input))
                (expr_log expr (spec_outputs_size dst) sys input log_a)
-         | tf_call _ _ _ dst arg =>
+         | tf_call _ resp dst _ =>
              log_cons (R:=R) (REnv:=REnv) (tf_reg dst)
-               (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size arg sys input))
-               (expr_log arg (spec_states_size dst) sys input log_a)
+               (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size (tf_ivar resp) sys input))
+               (expr_log (tf_ivar resp) (spec_states_size dst) sys input log_a)
          | _ => log_a
          end).
   Proof. reflexivity. Qed.
@@ -2418,7 +2418,7 @@ Section SynthesisCorrectness.
           the DEBT-3 wildcard shape, and omitting the arm makes the NoDup
           obligation strictly EASIER rather than breaking a proof, so the build
           would stay green while the hardware wrote a register twice. *)
-       | tf_call _ _ _ dst _ => [StOp dst]
+       | tf_call _ _ dst _ => [StOp dst]
        | _ => []
        end) ops).
 

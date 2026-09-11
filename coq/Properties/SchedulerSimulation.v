@@ -195,7 +195,7 @@ Section SchedulerSimulation.
     (* SPIKE E1: tf_assign is no longer the ONLY state-writing op, so this
        characterisation had to gain a disjunct.  This is the one break in the
        whole experiment that is not mechanical. *)
-    (exists e, op = tf_assign x e) \/ (exists b si az e, op = tf_call b si az x e).
+    (exists e, op = tf_assign x e) \/ (exists si rv e, op = tf_call si rv x e).
   (* Predicate: op writes output x. *)
   Definition op_writes_out (x: o_var) (op: @tf_op (tfs_states sched) i_var o_var) : Prop :=
     exists e, op = tf_output x e.
@@ -206,9 +206,9 @@ Section SchedulerSimulation.
     = find_st_update sched x (tfs_get_updates sched ops ss input).
   Proof.
     intro Hne. rewrite tfs_get_updates_cons. apply find_st_update_skip_cons.
-    intro v. destruct op as [| dst e | dst e | b si az dst e]; cbn [tf_op_step_updates]; try discriminate.
+    intro v. destruct op as [| dst e | dst e | si rv dst e]; cbn [tf_op_step_updates]; try discriminate.
     - intro H. inversion H. subst dst. apply Hne. left. exists e. reflexivity.
-    - intro H. inversion H. subst dst. apply Hne. right. exists b, si, az, e. reflexivity.
+    - intro H. inversion H. subst dst. apply Hne. right. exists si, rv, e. reflexivity.
   Qed.
 
   (* A tf_output to dst at the head resolves find_out_update to its evaluated value. *)
@@ -240,7 +240,7 @@ Section SchedulerSimulation.
     = find_out_update sched x (tfs_get_updates sched ops ss input).
   Proof.
     intro Hne. rewrite tfs_get_updates_cons. apply find_out_update_skip_cons.
-    intro v. destruct op as [| dst e | dst e | b si az dst e]; cbn [tf_op_step_updates]; try discriminate.
+    intro v. destruct op as [| dst e | dst e | si rv dst e]; cbn [tf_op_step_updates]; try discriminate.
     intro H. inversion H. subst dst. eapply Hne. reflexivity.
   Qed.
 
@@ -270,7 +270,7 @@ Section SchedulerSimulation.
     cbn [flat_map] in Hnd.
     destruct Hin as [Heq | Hin].
     - subst op. apply find_st_update_assign_head.
-    - destruct op as [| dst rhs | dst rhs | b si az dst rhs].
+    - destruct op as [| dst rhs | dst rhs | si rv dst rhs].
       + apply IH; [ exact Hnd | exact Hin ].
       + inversion Hnd as [| tag tags Hnot Htail]; subst tag tags.
         destruct (eq_dec dst x) as [Hdx | Hdx].
@@ -278,7 +278,7 @@ Section SchedulerSimulation.
           exists (tf_assign x e). split; [ exact Hin |]. cbn [In]. left. reflexivity.
         * rewrite find_st_update_skip_head.
           -- apply IH; [ exact Htail | exact Hin ].
-          -- intros [[rhs' Heq] | (b' & si' & az' & rhs' & Heq)]; inversion Heq; contradiction.
+          -- intros [[rhs' Heq] | (si' & rv' & rhs' & Heq)]; inversion Heq; contradiction.
       + apply IH.
         * cbn [app] in Hnd. inversion Hnd. assumption.
         * exact Hin.
@@ -289,7 +289,7 @@ Section SchedulerSimulation.
           exists (tf_assign x e). split; [ exact Hin |]. cbn [In]. left. reflexivity.
         * rewrite find_st_update_skip_head.
           -- apply IH; [ exact Htail | exact Hin ].
-          -- intros [[rhs' Heq] | (b' & si' & az' & rhs' & Heq)]; inversion Heq; contradiction.
+          -- intros [[rhs' Heq] | (si' & rv' & rhs' & Heq)]; inversion Heq; contradiction.
   Qed.
 
   Lemma NoDup_app_l {A} (l1 l2: list A) : NoDup (l1 ++ l2) -> NoDup l1.
@@ -384,7 +384,7 @@ Section SchedulerSimulation.
     destruct (index_of_nat _ _) as [a' |]; [| intros []].
     rewrite in_map_iff. intros [[var nid] [Hop _]].
     destruct (compile_dfg_expr _ _ _ _ _ _ _) as [expr valid].
-    destruct var as [sv | ov]; subst op; intros [[e He] | (b & si & az & e & He)]; inversion He.
+    destruct var as [sv | ov]; subst op; intros [[e He] | (si & rv & e & He)]; inversion He.
   Qed.
 
   (* The done value produced by one cycle equals the always-list done value,
@@ -2244,10 +2244,10 @@ Section SchedulerSimulation.
       + (* SPIKE E1: tf_call -- dataflow_ops treats it as tf_assign, and so
            does this bullet, with [expr] renamed to [arg]. *)
         simpl.
-        pose proof (dataflow_expr_full arg (dfg_var_size ctx (DFG_SVar dst)) s Hinv) as He.
-        destruct (dataflow_expr ctx arg (dfg_var_size ctx (DFG_SVar dst)) s) as [res_id s1] eqn:Ee.
+        pose proof (dataflow_expr_full (tf_ivar resp) (dfg_var_size ctx (DFG_SVar dst)) s Hinv) as He.
+        destruct (dataflow_expr ctx (tf_ivar resp) (dfg_var_size ctx (DFG_SVar dst)) s) as [res_id s1] eqn:Ee.
         destruct He as [Ge [Ne Pe]].
-        rewrite (bind_red (dataflow_expr ctx arg (dfg_var_size ctx (DFG_SVar dst))) _ s _ _ Ee).
+        rewrite (bind_red (dataflow_expr ctx (tf_ivar resp) (dfg_var_size ctx (DFG_SVar dst))) _ s _ _ Ee).
         pose proof (set_var_full (DFG_SVar dst) res_id s1 Pe Ne) as Hs.
         destruct (set_var ctx (DFG_SVar dst) res_id s1) as [u s'] eqn:Es.
         destruct Hs as [Gs Ps].
@@ -2561,10 +2561,10 @@ Section SchedulerSimulation.
         split; [ eapply wgmono_trans; eauto | split; [ exact Ps | split; [ exact Qs | exact Fs ] ] ].
       + (* SPIKE E1: tf_call -- as tf_assign, with [expr] renamed to [arg]. *)
         simpl.
-        pose proof (dataflow_expr_fg arg (dfg_var_size ctx (DFG_SVar dst)) s Hinv Hvsz Hfg) as He.
-        destruct (dataflow_expr ctx arg (dfg_var_size ctx (DFG_SVar dst)) s) as [res_id s1] eqn:Ee.
+        pose proof (dataflow_expr_fg (tf_ivar resp) (dfg_var_size ctx (DFG_SVar dst)) s Hinv Hvsz Hfg) as He.
+        destruct (dataflow_expr ctx (tf_ivar resp) (dfg_var_size ctx (DFG_SVar dst)) s) as [res_id s1] eqn:Ee.
         destruct He as [Ge [Ne [Pe [Qe [Se Fe]]]]].
-        rewrite (bind_red (dataflow_expr ctx arg (dfg_var_size ctx (DFG_SVar dst))) _ s _ _ Ee).
+        rewrite (bind_red (dataflow_expr ctx (tf_ivar resp) (dfg_var_size ctx (DFG_SVar dst))) _ s _ _ Ee).
         pose proof (set_var_fg (DFG_SVar dst) res_id s1 Pe Qe Fe Ne Se) as Hs.
         destruct (set_var ctx (DFG_SVar dst) res_id s1) as [u s'] eqn:Es.
         destruct Hs as [Gs [Ps [Qs Fs]]].
@@ -2942,7 +2942,7 @@ Section SchedulerSimulation.
   Proof.
     induction ops as [op | op1 IHops1 op2 IHops2 | cond op1 IHops1 op2 IHops2];
       intros s Hp.
-    - destruct op as [ | dst expr | dst expr | b si az dst expr ].
+    - destruct op as [ | dst expr | dst expr | si rv dst expr ].
       + simpl. unfold ret. exact Hp.
       + simpl.
         pose proof (dataflow_expr_pos expr (dfg_var_size ctx (DFG_SVar dst)) s Hp) as He.
@@ -2960,12 +2960,13 @@ Section SchedulerSimulation.
         pose proof (set_var_pos (DFG_OVar dst) res_id s1 Pe Ne) as Hs.
         destruct (set_var ctx (DFG_OVar dst) res_id s1) as [u s'] eqn:Es.
         exact Hs.
-      + (* tf_call: [dataflow_ops] treats it exactly as [tf_assign]. *)
+      + (* tf_call: lowers the RESPONSE port read, so this is the tf_assign
+           case with [tf_ivar rv] in place of the assigned expression. *)
         simpl.
-        pose proof (dataflow_expr_pos expr (dfg_var_size ctx (DFG_SVar dst)) s Hp) as He.
-        destruct (dataflow_expr ctx expr (dfg_var_size ctx (DFG_SVar dst)) s) as [res_id s1] eqn:Ee.
+        pose proof (dataflow_expr_pos (tf_ivar rv) (dfg_var_size ctx (DFG_SVar dst)) s Hp) as He.
+        destruct (dataflow_expr ctx (tf_ivar rv) (dfg_var_size ctx (DFG_SVar dst)) s) as [res_id s1] eqn:Ee.
         destruct He as [Ne Pe].
-        rewrite (bind_red (dataflow_expr ctx expr (dfg_var_size ctx (DFG_SVar dst))) _ s _ _ Ee).
+        rewrite (bind_red (dataflow_expr ctx (tf_ivar rv) (dfg_var_size ctx (DFG_SVar dst))) _ s _ _ Ee).
         pose proof (set_var_pos (DFG_SVar dst) res_id s1 Pe Ne) as Hs.
         destruct (set_var ctx (DFG_SVar dst) res_id s1) as [u s'] eqn:Es.
         exact Hs.
@@ -3853,7 +3854,7 @@ Section SchedulerSimulation.
     induction ops as [ op | op1 IH1 op2 IH2 | cond then_ops IHthen else_ops IHelse ];
       intros s Hv.
     - (* tf_ops_base *)
-      destruct op as [ | dst expr | dst expr | b si az dst expr ]; cbn [dataflow_ops].
+      destruct op as [ | dst expr | dst expr | si rv dst expr ]; cbn [dataflow_ops].
       + (* tf_nop *) unfold ret. split; [ apply gmono_refl | exact Hv ].
       + (* tf_assign *)
         unfold bind.
@@ -3873,8 +3874,8 @@ Section SchedulerSimulation.
         destruct Hs as [g2 v2]. split; [ eapply gmono_trans; eauto | exact v2 ].
       + (* tf_call: lowered exactly as tf_assign *)
         unfold bind.
-        pose proof (dataflow_expr_spec expr (dfg_var_size ctx (DFG_SVar dst)) s Hv) as He.
-        destruct (dataflow_expr ctx expr (dfg_var_size ctx (DFG_SVar dst)) s)
+        pose proof (dataflow_expr_spec (tf_ivar rv) (dfg_var_size ctx (DFG_SVar dst)) s Hv) as He.
+        destruct (dataflow_expr ctx (tf_ivar rv) (dfg_var_size ctx (DFG_SVar dst)) s)
           as [res_id s1]. destruct He as [g1 [n1 v1]].
         pose proof (set_var_ospecv (DFG_SVar dst) res_id s1 n1 v1) as Hs.
         destruct (set_var ctx (DFG_SVar dst) res_id s1) as [u s2].
@@ -4145,7 +4146,7 @@ Section SchedulerSimulation.
     destruct (index_of_nat _ (fst x)) as [n' |]; [| destruct Hop].
     destruct (compile_dfg_expr _ _ _ _ _ _ _) as [expr valid].
     cbn [In] in Hop.
-    destruct Hop as [Heq | [Heq | []]]; subst op; intros [[e He] | (b & si & az & e & He)]; discriminate He.
+    destruct Hop as [Heq | [Heq | []]]; subst op; intros [[e He] | (si & rv & e & He)]; discriminate He.
   Qed.
 
   (* No op in the always-ops list assigns a base state var tf_dfg_s: the head is
@@ -4159,7 +4160,7 @@ Section SchedulerSimulation.
     unfold sched, tfs_schedule, Contract.tfs_schedule, schedule. cbv zeta. cbn [fst].
     intro Hin. cbn [In] in Hin. destruct Hin as [Heq | Hin].
     - subst op. unfold compile_dfg_valid. cbv zeta.
-      intros [[e He] | (b & si & az & e & He)]; discriminate He.
+      intros [[e He] | (si & rv & e & He)]; discriminate He.
     - exact (compile_dfg_buffers_no_svar _ _ _ s op Hin).
   Qed.
 
@@ -5989,7 +5990,7 @@ Section SchedulerSimulation.
     cbn [flat_map] in Hnd.
     destruct Hin as [Heq | Hin].
     - subst op. apply find_out_update_output_head.
-    - destruct op as [| dst rhs | dst rhs | b si az dst rhs].
+    - destruct op as [| dst rhs | dst rhs | si rv dst rhs].
       + apply IH; [ exact Hnd | exact Hin ].
       + apply IH; [ cbn [app] in Hnd; inversion Hnd; assumption | exact Hin ].
       + inversion Hnd as [| tag tags Hnot Htail]; subst tag tags.
@@ -6086,7 +6087,7 @@ Section SchedulerSimulation.
     (* E1: op_assigns_st gained a tf_call disjunct; the done half emits only
        tf_assign / tf_output, so the extra branch dies by inversion. *)
     destruct var as [sv' | ov]; subst op;
-      intros [[e He] | (b & si & az & e & He)]; inversion He; subst.
+      intros [[e He] | (si & rv & e & He)]; inversion He; subst.
     apply (Hno n). exact Hvm.
   Qed.
 
@@ -7675,13 +7676,15 @@ Section SchedulerSimulation.
            (tf_eval_expr s_sz i_sz o_sz (szB := s_sz dst) e sp input), snd sp).
     Proof. reflexivity. Qed.
 
-    (* E1: with the placeholder semantics a call updates its destination state
-       var exactly as tf_assign does.  When the call gains its real denotation
-       this is the ONE lemma that has to change shape. *)
-    Lemma ops_run_call (b si az: nat) (dst: s_var) e (sp: src_sys_state) :
-      tf_ops_run s_sz i_sz o_sz (tf_ops_base (tf_call b si az dst e)) sp input
+    (* THE DENOTATION, at the spec level: a call assigns its destination the
+       value of its RESPONSE port, and its argument [e] does not appear on the
+       right-hand side at all.  That absence is the whole content of Spike
+       1.5's R instantiation -- nothing here claims the response is a function
+       of the request, which is what makes it satisfiable for a TRNG. *)
+    Lemma ops_run_call (si: nat) (rv: i_var) (dst: s_var) e (sp: src_sys_state) :
+      tf_ops_run s_sz i_sz o_sz (tf_ops_base (tf_call si rv dst e)) sp input
       = (ContextEnv.(putenv) (fst sp) dst
-           (tf_eval_expr s_sz i_sz o_sz (szB := s_sz dst) e sp input), snd sp).
+           (tf_eval_expr s_sz i_sz o_sz (szB := s_sz dst) (tf_ivar rv) sp input), snd sp).
     Proof. reflexivity. Qed.
 
     Lemma ops_run_output (dst: o_var) e (sp: src_sys_state) :
@@ -7740,7 +7743,7 @@ Section SchedulerSimulation.
     Proof.
       induction ops as [op | op1 IHops1 op2 IHops2 | cond op1 IHops1 op2 IHops2];
         intros s sp Hne Hinv Hvsz Hfg Hsem.
-      - destruct op as [ | dst expr | dst expr | b si az dst expr ].
+      - destruct op as [ | dst expr | dst expr | si rv dst expr ].
         + (* nop *)
           cbn [dataflow_ops]. unfold ret. intro Hg'.
           rewrite ops_run_nop.
@@ -7807,12 +7810,12 @@ Section SchedulerSimulation.
             apply Hfr1. intros n Hin. exact (Hno n (Hkeep v n Hin Hnv)).
         + (* E1: a call -- the tf_assign case verbatim but for [ops_run_call]. *)
           cbn [dataflow_ops].
-          pose proof (dataflow_expr_fg expr (dfg_var_size ctx (DFG_SVar dst)) s
+          pose proof (dataflow_expr_fg (tf_ivar rv) (dfg_var_size ctx (DFG_SVar dst)) s
                         Hinv Hvsz Hfg) as He.
-          destruct (dataflow_expr ctx expr (dfg_var_size ctx (DFG_SVar dst)) s)
+          destruct (dataflow_expr ctx (tf_ivar rv) (dfg_var_size ctx (DFG_SVar dst)) s)
             as [res_id s1] eqn:Ee.
           destruct He as [Ge [Ne [Pe [Qe [Se Fe]]]]].
-          rewrite (bind_red (dataflow_expr ctx expr (dfg_var_size ctx (DFG_SVar dst)))
+          rewrite (bind_red (dataflow_expr ctx (tf_ivar rv) (dfg_var_size ctx (DFG_SVar dst)))
                      _ s _ _ Ee).
           pose proof (set_var_vm_head (DFG_SVar dst) res_id s1) as Hhead.
           pose proof (set_var_vm_keep (DFG_SVar dst) res_id s1) as Hkeep.
@@ -7823,7 +7826,7 @@ Section SchedulerSimulation.
           destruct Hs as [Gs Ps].
           intro Hg'.
           assert (Hg1F : wgmono s1 F) by exact (wgmono_trans s1 s' F Gs Hg').
-          destruct (dataflow_expr_sem expr (dfg_var_size ctx (DFG_SVar dst)) s s1
+          destruct (dataflow_expr_sem (tf_ivar rv) (dfg_var_size ctx (DFG_SVar dst)) s s1
                       res_id sp Hne Hinv Hvsz Ee Hg1F Hsem) as [[Hvm1 Hfr1] Hval].
           rewrite ops_run_call. split.
           * intros v n Hin.

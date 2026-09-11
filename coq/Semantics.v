@@ -118,9 +118,28 @@ Section Semantics.
         | tf_nop => tf_no_update
         | tf_assign dst expr => tf_st_update dst (tf_eval_expr (szB:=(states_size dst)) expr sys_state input)
         | tf_output dst expr => tf_out_update dst (tf_eval_expr (szB:=(outputs_size dst)) expr sys_state input)
-        (* SPIKE E1: trivial semantics -- behaves as tf_assign, uses no oracle.
-           Measures the cost of the CONSTRUCTOR alone. *)
-        | tf_call _ _ _ dst arg => tf_st_update dst (tf_eval_expr (szB:=(states_size dst)) arg sys_state input)
+        (* THE DENOTATION.  A call's result is what the IP put on its response
+           port [resp] -- not a function of [arg].  Spike 1.5's R instantiation:
+           always satisfiable, and the correct demonic model for a TRNG, since
+           nothing here claims the response is determined by the request.  The
+           stronger D reading ("[resp] carries f(arg)") is a refinement
+           HYPOTHESIS a module may assume on top of this, not a second mechanism
+           and not a different lowering.
+
+           Reading [resp] through [tf_ivar] rather than applying [input]
+           directly is deliberate: it reuses the expression evaluator's size
+           conversion, so a call is typed exactly as the user-written
+           [let $dst := $resp] would be.
+
+           NOT YET MODELLED: [arg] is inert.  The hardware will drive it onto a
+           request port, and until that write appears BOTH here and in the
+           lowering, an action carrying a call must not drive anything -- the
+           spec and the hardware would disagree on that port's final value, and
+           that disagreement is precisely what makes scheduler_done_correct
+           false for a driving action (PLAN.md D2). *)
+        | tf_call _ resp dst _ =>
+            tf_st_update dst
+              (tf_eval_expr (szB:=(states_size dst)) (tf_ivar resp) sys_state input)
         end.
 
     Definition tf_op_step_commit_state

@@ -69,7 +69,7 @@ Definition tfs_ops_no_duplicates {s i o} (ops: list (@tf_op s i o)) : Prop :=
     match op with 
       | tf_assign dst _ => [StOp dst]  
       | tf_output dst _ => [OutOp dst]
-      | tf_call _ _ _ dst _ => [StOp dst]  (* SPIKE E1 *)
+      | tf_call _ _ dst _ => [StOp dst]  (* SPIKE E1 *)
       | _ => []
     end) ops).
 
@@ -126,7 +126,7 @@ Record TFSchedule := {
           match op with
           | tf_assign dst _ => [StOp dst]
           | tf_output dst _ => [OutOp dst]
-          | tf_call _ _ _ dst _ => [StOp dst]  (* SPIKE E1 *)
+          | tf_call _ _ dst _ => [StOp dst]  (* SPIKE E1 *)
           | _ => []
           end) (fst (tfs_schedule a)));
 
