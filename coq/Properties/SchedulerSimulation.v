@@ -1433,7 +1433,7 @@ Section SchedulerSimulation.
     end; intro H.
     - unfold ret in H. injection H as Hid Hs. subst s'. left.
       apply find_some in Ef. destruct Ef as [Hin Hpred]. cbv beta in Hpred.
-      destruct (op nd) as [ c | iv | v' | uop a | bop a1 a2 | a | cd t e | sa | ] eqn:Eo;
+      destruct (op nd) as [ c | iv | v' | uop a | bop a1 a2 | a | cd t e | slat sa | ] eqn:Eo;
         try discriminate Hpred.
       apply andb_true_iff in Hpred. destruct Hpred as [Hpred Hpos].
       apply andb_true_iff in Hpred. destruct Hpred as [Hveq Hsz].
@@ -1819,7 +1819,7 @@ Section SchedulerSimulation.
     | DFG_Phi c t e => wsz s c 1 /\ wsz s t (sz node) /\ wsz s e (sz node)
     (* SPIKE: a stall passes its argument through unchanged, so the argument is
        read at the node's own size -- same discipline as DFG_Unary tf_not. *)
-    | DFG_Stall a => wsz s a (sz node)
+    | DFG_Stall _ a => wsz s a (sz node)
     | _ => True
     end.
 
@@ -4194,7 +4194,7 @@ Section SchedulerSimulation.
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |]; [ reflexivity | ].
     cbv beta iota zeta.
     destruct (op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | sa | ];
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | ];
       cbv beta iota zeta; try reflexivity.
     - destruct (compile_dfg_expr_aux ctx cost_limit tainted dfacts pi fuel a_idx
                   dfg arg bufs) as [ae ve] eqn:E1.
@@ -4324,7 +4324,7 @@ Section SchedulerSimulation.
     cbn [compile_dfg_expr_aux BitsToLists.list_assoc]. cbv beta iota.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | sa | ].
+      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | ].
     - reflexivity.
     - reflexivity.
     - destruct v; cbn [fst tf_eval_expr]; [ rewrite Hs | rewrite Ho ]; reflexivity.
@@ -4450,7 +4450,7 @@ Section SchedulerSimulation.
                 = compile_dfg_expr_aux ctx cost_limit tainted dfacts p f2' a_idx dfg x buffers).
       { intros x p Hx. destruct (Harg x Hx) as [Hx1 Hx2].
         apply (IH x Hx2 Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen)); lia. }
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | sa | ] eqn:Hop.
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | ] eqn:Hop.
       + reflexivity.
       + reflexivity.
       + destruct v; reflexivity.
@@ -4624,7 +4624,7 @@ Section SchedulerSimulation.
         apply (IH x sx p Hx1 Hxlen);
           [ lia | lia | right; lia | symmetry; exact Hxsz ]. }
       pose proof (wfg_build_dfg act node Hnode_in) as Hfg.
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | sa | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | ]
         eqn:Hop.
       + (* Const *) reflexivity.
       + (* Input *) reflexivity.
@@ -4929,7 +4929,7 @@ Section SchedulerSimulation.
         destruct (wsz_node_sz act x sx Hwsz) as [Hxlen Hxsz].
         apply (IH x sx p Hx1 Hxlen ltac:(lia) (eq_sym Hxsz) Hxv). }
       pose proof (wfg_build_dfg act node Hnode_in) as Hfg.
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | sa | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | ]
         eqn:Hop.
       + (* Const *) reflexivity.
       + (* Input *) reflexivity.
@@ -5534,7 +5534,7 @@ Section SchedulerSimulation.
       { intros x p Hx. destruct (Harg x Hx) as [Hx1 Hx2].
         apply (IH x p Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen));
           [ lia | lia | right; lia ]. }
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | sa | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | ]
         eqn:Hop.
       + cbn [snd]. apply eval1_const1.
       + cbn [snd]. apply eval1_const1.
@@ -6414,10 +6414,10 @@ Section SchedulerSimulation.
   (* SPIKE (W-b feasibility): a stall's reference expression IS its argument's,
      because the compiler emits no wrapper.  Same fuel-alignment argument as
      [nre_unary]. *)
-  Lemma nre_stall (act: tfs_action sched) a_idx n arg :
+  Lemma nre_stall (act: tfs_action sched) a_idx n lat arg :
     1 <= n -> n < length (graph (build_dfg ctx act)) ->
     op (nth n (graph (build_dfg ctx act))
-          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Stall arg ->
+          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Stall lat arg ->
     node_ref_expr act a_idx n = node_ref_expr act a_idx arg.
   Proof.
     intros H1 H2 Hop.

@@ -502,7 +502,7 @@ Section IPR.
     intros ss ss' input' Hpe. unfold nval.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | sa | ] eqn:Hopn;
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | ] eqn:Hopn;
       try discriminate.
     - rewrite (nre_const ctx cost_limit act a_idx n c Hn1 Hlen Hopn). reflexivity.
     - rewrite (nre_input ctx cost_limit act a_idx n v Hn1 Hlen Hopn).
@@ -701,7 +701,7 @@ Section IPR.
 
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | iv | [sv | ov] | uop arg | bop a1 a2 | src | cnd tid eid | sa | ]
+      as [c | iv | [sv | ov] | uop arg | bop a1 a2 | src | cnd tid eid | slat sa | ]
       eqn:Eop.
 
     - rewrite (nre_const ctx cost_limit act a_idx n c H1 Hlen Eop).
@@ -788,7 +788,7 @@ Section IPR.
                                                {| nid := 0; op := DFG_Empty; sz := 0 |})))
         by (unfold get_args; rewrite Eop; left; reflexivity).
       unfold node_args_sz in Hfg. rewrite Eop in Hfg.
-      rewrite (nre_stall ctx cost_limit act a_idx n sa H1 Hlen Eop).
+      rewrite (nre_stall ctx cost_limit act a_idx n slat sa H1 Hlen Eop).
       exact (Hder_at sa _ Ha Hfg).
 
     - assert (Hemp : node_ref_expr ctx cost_limit act a_idx n = tf_const 0).
@@ -1255,7 +1255,7 @@ Section IPR.
     assert (Hrange : forall x, List.In x (get_args ctx node) -> 1 <= x /\ x < n)
       by (intros x Hx; exact (node_args_range ctx cost_limit act n Hn1 Hnlen x Hx)).
     pose proof (wfg_build_dfg ctx cost_limit act node Hnode_in) as Hfg.
-    destruct (op node) as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | sa | ]
+    destruct (op node) as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | ]
       eqn:Hop.
     - reflexivity.
     - reflexivity.

@@ -38,8 +38,12 @@ Section SchedulerTypes.
     (* SPIKE (W-b feasibility, 2026-09-09): value passes through from [arg];
        validity lags it.  Nothing emits this yet -- it exists to measure how
        much of the proof development breaks on a node whose validity is NOT the
-       conjunction of its arguments' validities. *)
-    | DFG_Stall (arg: nid_t)
+       conjunction of its arguments' validities.
+       SPIKE 2 (2026-09-11): [lat] is the declared latency, in COST units (so
+       [lat / cost_limit] cycles).  Cost units rather than cycles only because
+       [cost_fn] does not see [cost_limit]; the real design wants cycles, which
+       is the ~27-site ripple INSIGHTS #13 describes and absorbs. *)
+    | DFG_Stall (lat: nat) (arg: nid_t)
     | DFG_Empty                
     .
 
