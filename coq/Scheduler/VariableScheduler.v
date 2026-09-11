@@ -332,6 +332,8 @@ Section VariableScheduler.
     | DFG_Resize arg => [arg]
     | DFG_Phi cond then_id else_id => [cond; then_id; else_id]
     | DFG_Stall _ arg => [arg]
+    | DFG_Drive _ arg => [arg]
+    | DFG_Sample _ tok => [tok]
     | DFG_Empty => []
     end.
 
@@ -367,6 +369,9 @@ Section VariableScheduler.
        design needs a separate [must_buffer] predicate rather than an inflated
        cost -- see the archive's DEBT-2. *)
     | DFG_Stall lat _ => lat
+    (* SPIKE 2b: a drive and a sample are wiring, not logic. *)
+    | DFG_Drive _ _ => 0
+    | DFG_Sample _ _ => 0
     | DFG_Empty => 0
     end.
 
@@ -622,6 +627,14 @@ Section VariableScheduler.
                          | Public => false
                          | Secret => true
                          end
+        (* SPIKE 2b: a SAMPLE reads a trusted input port, so it is a taint
+           source for exactly the reason [DFG_Input] is.  Without this arm the
+           wildcard below swallows it silently and IPR goes unsound -- the
+           hazard Spike 1.5 flagged and DEBT-3 already paid for once. *)
+        | DFG_Sample v _ => match inputs_var_class v with
+                            | Public => false
+                            | Secret => true
+                            end
         | _ => false
         end in
       (* If node depends on secrets it is tainted *)
@@ -826,6 +839,8 @@ Section VariableScheduler.
             (* Explicit, not falling through to [_]: the archive's DEBT-3 was a
                silently under-reporting diagnostic caused by exactly that. *)
             | DFG_Stall _ a => crit_report_aux dfg tainted dfacts pi fuel' a bufs
+            | DFG_Drive _ a => crit_report_aux dfg tainted dfacts pi fuel' a bufs
+            | DFG_Sample _ t => crit_report_aux dfg tainted dfacts pi fuel' t bufs
             | _ => []
             end
         end
@@ -910,6 +925,12 @@ Section VariableScheduler.
            bounds here, which is exactly what keeps the latency derivable. *)
         | DFG_Stall _ a =>
             let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel' a in
+            (wbump here l, wbump here u)
+        | DFG_Drive _ a =>
+            let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel' a in
+            (wbump here l, wbump here u)
+        | DFG_Sample _ t =>
+            let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel' t in
             (wbump here l, wbump here u)
         | DFG_Phi c t e =>
             let crit := phi_crit tainted dfacts c pi in
@@ -1010,6 +1031,15 @@ Section VariableScheduler.
              the part that needs a new register family. *)
           | DFG_Stall _ arg1 =>
               compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers
+          (* SPIKE 2b: a drive passes its value through -- it is the message on
+             its way to the port.  A SAMPLE is the interesting one: its VALUE is
+             the port, but its VALIDITY is the token's, so value and validity
+             decouple exactly where the round trip needs them to. *)
+          | DFG_Drive _ arg1 =>
+              compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers
+          | DFG_Sample v tok =>
+              let '(_, tok_val) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg tok buffers in
+              (tf_ivar v, tok_val)
           | DFG_Empty => (tf_const 0, tf_const 0) (* should not happen *)
           end
         end

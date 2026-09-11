@@ -323,6 +323,37 @@ Section IPR.
     rewrite Hop, Hcls. cbn [orb]. left. reflexivity.
   Qed.
 
+  (* SPIKE 2b.  The sample-side sibling of [input_secret_tainted].  A sample
+     reads a trusted port, so it is a taint source for the same reason a secret
+     [DFG_Input] is -- and it needed its own arm in [self_tainted] for the same
+     reason too: a wildcard would have swallowed it and left IPR unsound. *)
+  Lemma sample_secret_tainted (act: tfs_action sched) (node: node_t) (iv: i_var) tok :
+    List.In node (graph (build_dfg ctx act)) ->
+    op node = DFG_Sample iv tok ->
+    tfs_spec_inputs_class ctx iv = Secret ->
+    ~ List.In (nid node) (untainted_roots ctx (build_dfg ctx act)) ->
+    List.In (nid node) (get_tainted ctx (build_dfg ctx act)).
+  Proof.
+    intros Hnode Hop Hcls Hnd.
+    destruct (in_split _ _ Hnode) as [pre [post Hsplit]].
+    unfold get_tainted. cbv zeta.
+    set (U := untainted_roots ctx (build_dfg ctx act)) in *.
+    match goal with |- context [fold_left ?F _ _] => set (aux := F) in * end.
+
+    assert (Hgrow : forall acc (b: node_t), incl acc (aux acc b)).
+    { intros acc b. unfold aux; cbn beta.
+      destruct (mem (nid b) U); [ apply incl_refl | ].
+      destruct (_ || _)%bool; [ apply incl_tl, incl_refl | apply incl_refl ]. }
+
+    rewrite Hsplit, fold_left_app. simpl.
+    set (accP := fold_left aux pre []).
+    apply (fold_left_grows aux Hgrow post (aux accP node)).
+    unfold aux; cbn beta.
+    destruct (mem (nid node) U) as [m | _].
+    { exfalso. apply Hnd. exact (member_In _ _ m). }
+    rewrite Hop, Hcls. cbn [orb]. left. reflexivity.
+  Qed.
+
   (* ------------------------------------------------------------------- *)
   (* PHASE 0: the public view, and what it means for a node to be         *)
   (* derivable from it.                                                    *)
@@ -502,7 +533,7 @@ Section IPR.
     intros ss ss' input' Hpe. unfold nval.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | ] eqn:Hopn;
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ] eqn:Hopn;
       try discriminate.
     - rewrite (nre_const ctx cost_limit act a_idx n c Hn1 Hlen Hopn). reflexivity.
     - rewrite (nre_input ctx cost_limit act a_idx n v Hn1 Hlen Hopn).
@@ -701,7 +732,7 @@ Section IPR.
 
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | iv | [sv | ov] | uop arg | bop a1 a2 | src | cnd tid eid | slat sa | ]
+      as [c | iv | [sv | ov] | uop arg | bop a1 a2 | src | cnd tid eid | slat sa | dov dn | siv sn | ]
       eqn:Eop.
 
     - rewrite (nre_const ctx cost_limit act a_idx n c H1 Hlen Eop).
@@ -790,6 +821,29 @@ Section IPR.
       unfold node_args_sz in Hfg. rewrite Eop in Hfg.
       rewrite (nre_stall ctx cost_limit act a_idx n slat sa H1 Hlen Eop).
       exact (Hder_at sa _ Ha Hfg).
+    - (* SPIKE 2b: DFG_Drive -- derivability passes through, like the stall: a
+         drive is the message on its way to the port and adds no logic. *)
+      assert (Ha : List.In dn (get_args ctx (nth n (graph (build_dfg ctx act))
+                                               {| nid := 0; op := DFG_Empty; sz := 0 |})))
+        by (unfold get_args; rewrite Eop; left; reflexivity).
+      unfold node_args_sz in Hfg. rewrite Eop in Hfg.
+      rewrite (nre_drive ctx cost_limit act a_idx n dov dn H1 Hlen Eop).
+      exact (Hder_at dn _ Ha Hfg).
+
+    - (* SPIKE 2b: DFG_Sample -- NOT like the stall.  Its reference expression
+         is the PORT, so this bullet mirrors DFG_Input instead: a public port
+         agrees across the two runs, and a secret one is a taint source, so an
+         untainted node cannot be one.  That second half only closes because
+         [self_tainted] gained a [DFG_Sample] arm; without it the wildcard
+         swallows the node and this case is simply false. *)
+      rewrite (nre_sample ctx cost_limit act a_idx n siv sn H1 Hlen Eop).
+      cbn [tf_eval_expr]. destruct Hpub as [Hipub _].
+      destruct (tfs_spec_inputs_class ctx siv) eqn:Hcls.
+      + f_equal. exact (Hipub siv Hcls).
+      + exfalso.
+        assert (Ht := sample_secret_tainted act _ siv sn Hin Eop Hcls Hnr').
+        rewrite Hnid in Ht. exact (Hnt Ht).
+
 
     - assert (Hemp : node_ref_expr ctx cost_limit act a_idx n = tf_const 0).
       { rewrite (nre_unfold ctx cost_limit act a_idx n H1 Hlen).
@@ -1255,7 +1309,7 @@ Section IPR.
     assert (Hrange : forall x, List.In x (get_args ctx node) -> 1 <= x /\ x < n)
       by (intros x Hx; exact (node_args_range ctx cost_limit act n Hn1 Hnlen x Hx)).
     pose proof (wfg_build_dfg ctx cost_limit act node Hnode_in) as Hfg.
-    destruct (op node) as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | ]
+    destruct (op node) as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ]
       eqn:Hop.
     - reflexivity.
     - reflexivity.
@@ -1423,6 +1477,25 @@ Section IPR.
       destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
                   sa bufs) as [ae ve] eqn:E1.
       pose proof (IH sa pi Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
+      rewrite E1 in Ha. cbn [snd] in Ha |- *. exact Ha.
+    - (* SPIKE 2b: DFG_Drive -- validity passes through, as for the stall. *)
+      assert (Hain : List.In dn (get_args ctx node))
+        by (unfold get_args; rewrite Hop; left; reflexivity).
+      destruct (Hrange dn Hain) as [Ha1 Ha2].
+      destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                  dn bufs) as [ae ve] eqn:E1.
+      pose proof (IH dn pi Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
+      rewrite E1 in Ha. cbn [snd] in Ha |- *. exact Ha.
+    - (* SPIKE 2b: DFG_Sample -- its VALIDITY is the token's by construction in
+         [compile_dfg_expr_aux], so validity passes through here exactly as for
+         the stall, even though the VALUE does not.  The decoupling costs
+         nothing on this side. *)
+      assert (Hain : List.In sn (get_args ctx node))
+        by (unfold get_args; rewrite Hop; left; reflexivity).
+      destruct (Hrange sn Hain) as [Ha1 Ha2].
+      destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                  sn bufs) as [ae ve] eqn:E1.
+      pose proof (IH sn pi Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
       rewrite E1 in Ha. cbn [snd] in Ha |- *. exact Ha.
     - reflexivity.
   Qed.

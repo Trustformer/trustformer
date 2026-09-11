@@ -71,7 +71,7 @@ Section Soundness.
     assert (Hlen : n < length (graph (build_dfg ctx act))) by lia.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | ] eqn:Hop;
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ] eqn:Hop;
       cbn [List.In] in Hi; try (destruct Hi).
     destruct uop as [| source_size]; cbn [List.In] in Hi; [ | destruct Hi ].
     destruct Hi as [Hi | []]. subst i.

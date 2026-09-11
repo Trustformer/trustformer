@@ -33,7 +33,7 @@ Section Spike.
 
   Inductive sl_action  := act_dummy.
   Inductive sl_states  := st_acc.
-  Inductive sl_inputs  := in_x.
+  Inductive sl_inputs  := in_x | in_resp.
   Inductive sl_outputs := out_o.
 
   Definition sl_states_size  (_: sl_states)  : nat := w.
@@ -152,3 +152,102 @@ Section Spike.
         demands it. *)
 
 End Spike.
+
+(*
+    SPIKE 2b (2026-09-11): the round trip.
+
+    Spike 1.6 measured that nothing ordered a response after a request: give a
+    trusted input's value some work to feed and its read was scheduled in the
+    SAME cycle as the request's own operand, because a port write was not a node
+    and a trusted input read was a [source_op].  [DFG_Drive] and [DFG_Sample]
+    are those two gaps closed, and this section measures the result.
+ *)
+
+Section RoundTrip.
+
+  (* in_x -> drive[out_o] -> stall<L> -> sample[in_resp] -> not
+     The token edge runs drive -> stall -> sample; the sample's VALUE is the
+     port, its VALIDITY is the token's. *)
+  Definition trip (L: nat) : dfg_state_t (states_var := sl_states)
+                                         (inputs_var := sl_inputs)
+                                         (outputs_var := sl_outputs) := {|
+    graph :=
+      [ {| nid := 0; op := DFG_Empty;            sz := 0 |}
+      ; {| nid := 1; op := DFG_Input in_x;       sz := w |}
+      ; {| nid := 2; op := DFG_Drive out_o 1;    sz := w |}
+      ; {| nid := 3; op := DFG_Stall L 2;        sz := w |}
+      ; {| nid := 4; op := DFG_Sample in_resp 3; sz := w |}
+      ; {| nid := 5; op := DFG_Unary tf_not 4;   sz := w |}
+      ];
+    var_map := [ (DFG_SVar st_acc, 5) ]
+  |}.
+
+  Definition trip_cycles (L: nat) :=
+    calc_target_cycle climit (calc_backward_cost sl_ctx (trip L)).
+
+  Definition tcyc (L: nat) (n: nid_t) : nat :=
+    match BitsToLists.list_assoc (trip_cycles L) n with
+    | Some c => c | None => 999 end.
+
+  Definition trip_bufs (L: nat) : nat :=
+    List.length (require_buffer sl_ctx (trip L) (trip_cycles L)).
+
+  (* ================================================================== *)
+  (* THE REQUEST IS NOW ORDERED BEFORE THE RESPONSE.                    *)
+  (* ================================================================== *)
+
+  (* 1.6, for comparison: with the answer feeding real work, the trusted-input
+     read was scheduled in the SAME cycle as the request's own operand
+     (PortDriveSpike.v, [resp_used_same_cycle_as_request]).  There was no edge
+     to order them.  Now there is one, and the separation is the declared
+     latency: drive at 4, sample at 0, i.e. L/climit = 20/5 cycles apart. *)
+
+  Example drive_is_early : tcyc 20 2 = 4.
+  Proof. vm_compute. reflexivity. Qed.
+
+  Example sample_is_late : tcyc 20 4 = 0.
+  Proof. vm_compute. reflexivity. Qed.
+
+  (* Stated as the separation, so it does not depend on which way the axis
+     runs: the drive and the sample are L/climit cycles apart, and 1.6's
+     measurement was that the same two things were 0 cycles apart. *)
+  Example round_trip_separated : tcyc 20 2 - tcyc 20 4 = 4.
+  Proof. vm_compute. reflexivity. Qed.
+
+  (* And the token is held across the wait for one register, not L. *)
+  Example round_trip_one_buffer : trip_bufs 20 = 1.
+  Proof. vm_compute. reflexivity. Qed.
+
+  (* ================================================================== *)
+  (* THE SAMPLE IS NO LONGER A SOURCE OP.                               *)
+  (* ================================================================== *)
+
+  (* This is the other half of 1.6's negative result.  [require_buffer] never
+     buffers a [source_op], and the comment at VariableScheduler.v:421 gives
+     the reason outright -- "inputs are latched at action start", which is true
+     of a host input and false of a crypto result.  A [DFG_Sample] is not a
+     source, so it can be buffered and it has a defined sampling cycle; a plain
+     [DFG_Input] still is one, which is correct for a host input. *)
+
+  Example sample_is_not_a_source : is_source sl_ctx (trip 20) 4 = false.
+  Proof. vm_compute. reflexivity. Qed.
+
+  Example plain_input_still_is : is_source sl_ctx (trip 20) 1 = true.
+  Proof. vm_compute. reflexivity. Qed.
+
+  (* ================================================================== *)
+  (* WHAT 2b DOES NOT DO                                                *)
+  (* ================================================================== *)
+
+  (* 1. [var_map] is untouched: it still holds ONE nid per output var, so an
+        action still cannot drive a port twice.  The drive NODE is a
+        prerequisite for fixing that, not the fix.
+     2. Output writes still happen in the done half.  Moving them is the
+        Contract.v / TypedSynthesis.v pair INSIGHTS #25 says cannot land as two
+        green steps, and it is still the expensive part of this rung.
+     3. Nothing in the DSL emits a drive, a stall or a sample; these graphs are
+        hand-built.  Surface syntax is Spike 1.5's [tf_call], unimplemented.
+     4. The validity network still saturates over node IDs, so the sample's
+        validity does not yet LAG -- Spike 3. *)
+
+End RoundTrip.

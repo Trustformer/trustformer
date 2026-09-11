@@ -44,6 +44,14 @@ Section SchedulerTypes.
        [cost_fn] does not see [cost_limit]; the real design wants cycles, which
        is the ~27-site ripple INSIGHTS #13 describes and absorbs. *)
     | DFG_Stall (lat: nat) (arg: nid_t)
+    (* SPIKE 2b (2026-09-11): THE REQUEST SIDE.  [DFG_Drive] puts a port WRITE
+       into the graph, so it has a cycle and can be an argument.  [DFG_Sample]
+       reads a trusted input through a TOKEN edge, so it stops being a
+       [source_op] and acquires a defined sampling cycle.  With [DFG_Stall]
+       between them a round trip finally has an edge to sit on -- which is
+       precisely what Spike 1.6 found the pipeline could not express. *)
+    | DFG_Drive (v: outputs_var) (arg: nid_t)
+    | DFG_Sample (v: inputs_var) (tok: nid_t)
     | DFG_Empty                
     .
 

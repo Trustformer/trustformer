@@ -1433,7 +1433,7 @@ Section SchedulerSimulation.
     end; intro H.
     - unfold ret in H. injection H as Hid Hs. subst s'. left.
       apply find_some in Ef. destruct Ef as [Hin Hpred]. cbv beta in Hpred.
-      destruct (op nd) as [ c | iv | v' | uop a | bop a1 a2 | a | cd t e | slat sa | ] eqn:Eo;
+      destruct (op nd) as [ c | iv | v' | uop a | bop a1 a2 | a | cd t e | slat sa | dov dn | siv sn | ] eqn:Eo;
         try discriminate Hpred.
       apply andb_true_iff in Hpred. destruct Hpred as [Hpred Hpos].
       apply andb_true_iff in Hpred. destruct Hpred as [Hveq Hsz].
@@ -1820,6 +1820,8 @@ Section SchedulerSimulation.
     (* SPIKE: a stall passes its argument through unchanged, so the argument is
        read at the node's own size -- same discipline as DFG_Unary tf_not. *)
     | DFG_Stall _ a => wsz s a (sz node)
+    | DFG_Drive _ a => wsz s a (sz node)
+    | DFG_Sample _ t => wsz s t (sz node)
     | _ => True
     end.
 
@@ -1830,12 +1832,14 @@ Section SchedulerSimulation.
     node_args_sz s node -> wgmono s s' -> node_args_sz s' node.
   Proof.
     unfold node_args_sz. intros H Hg.
-    destruct (op node) as [c|v|v|uop a|bop a1 a2|a|cd t e|sa|];
-      [ exact I | exact I | exact I | | | exact I | | | exact I ].
+    destruct (op node) as [c|v|v|uop a|bop a1 a2|a|cd t e|sa|dov dn|siv sn|];
+      [ exact I | exact I | exact I | | | exact I | | | | | exact I ].
     - destruct uop; eapply wsz_gmono; eauto.
     - destruct bop; destruct H as [H1 H2]; split; eapply wsz_gmono; eauto.
     - destruct H as [H1 [H2 H3]]; repeat split; eapply wsz_gmono; eauto.
     - eapply wsz_gmono; eauto.
+    - (* SPIKE 2b: DFG_Drive, one argument like the stall. *) eapply wsz_gmono; eauto.
+    - (* SPIKE 2b: DFG_Sample, one token argument. *) eapply wsz_gmono; eauto.
   Qed.
 
   Lemma emit_fg op size (s: wst) :
@@ -4194,7 +4198,7 @@ Section SchedulerSimulation.
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |]; [ reflexivity | ].
     cbv beta iota zeta.
     destruct (op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | ];
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ];
       cbv beta iota zeta; try reflexivity.
     - destruct (compile_dfg_expr_aux ctx cost_limit tainted dfacts pi fuel a_idx
                   dfg arg bufs) as [ae ve] eqn:E1.
@@ -4245,6 +4249,15 @@ Section SchedulerSimulation.
       cbn [fst]. rewrite Hc, Ht, He. reflexivity.
     - (* DFG_Stall: a direct recursive call, so the IH is the whole proof. *)
       apply IH.
+    - (* SPIKE 2b: DFG_Drive -- likewise a direct recursive call. *)
+      apply IH.
+    - (* SPIKE 2b: DFG_Sample -- the VALUE half is [tf_ivar v], which does not
+         mention the path at all, so both sides are equal after the recursive
+         call is destructed. *)
+      cbn [fst].
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dfacts pi fuel a_idx dfg sn bufs).
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dfacts pi' fuel a_idx dfg sn bufs).
+      reflexivity.
   Qed.
 
   (* Packages the phi step of the VALUE component in one equation, so proofs
@@ -4324,7 +4337,7 @@ Section SchedulerSimulation.
     cbn [compile_dfg_expr_aux BitsToLists.list_assoc]. cbv beta iota.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | ].
+      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ].
     - reflexivity.
     - reflexivity.
     - destruct v; cbn [fst tf_eval_expr]; [ rewrite Hs | rewrite Ho ]; reflexivity.
@@ -4372,6 +4385,13 @@ Section SchedulerSimulation.
       cbn [fst] in Hcc, Hct, Hce.
       rewrite Hcc, Hct, Hce. reflexivity.
     - (* DFG_Stall *) apply IH.
+    - (* SPIKE 2b: DFG_Drive, pass-through. *) apply IH.
+    - (* SPIKE 2b: DFG_Sample -- the value is [tf_ivar v], the same expression
+         on both sides, so the states cannot tell it apart. *)
+      cbn [fst].
+      destruct (compile_dfg_expr_aux ctx cost_limit tainted dfacts pi fuel a_idx
+                  (build_dfg ctx act) sn []).
+      reflexivity.
     - reflexivity.
   Qed.
 
@@ -4450,7 +4470,7 @@ Section SchedulerSimulation.
                 = compile_dfg_expr_aux ctx cost_limit tainted dfacts p f2' a_idx dfg x buffers).
       { intros x p Hx. destruct (Harg x Hx) as [Hx1 Hx2].
         apply (IH x Hx2 Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen)); lia. }
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | ] eqn:Hop.
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ] eqn:Hop.
       + reflexivity.
       + reflexivity.
       + destruct v; reflexivity.
@@ -4477,6 +4497,15 @@ Section SchedulerSimulation.
         assert (Hain : In sa (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
         rewrite (Hrec sa pi Hain). reflexivity.
+      + (* SPIKE 2b: DFG_Drive, same shape again. *)
+        assert (Hain : In dn (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        rewrite (Hrec dn pi Hain). reflexivity.
+      + (* SPIKE 2b: DFG_Sample -- the fuel only reaches the token, and the
+           value half does not mention it. *)
+        assert (Hain : In sn (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        rewrite (Hrec sn pi Hain). reflexivity.
       + exfalso. apply (node_op_not_empty act n Hn1 Hnlen). exact Hop.
   Qed.
 
@@ -4624,7 +4653,7 @@ Section SchedulerSimulation.
         apply (IH x sx p Hx1 Hxlen);
           [ lia | lia | right; lia | symmetry; exact Hxsz ]. }
       pose proof (wfg_build_dfg act node Hnode_in) as Hfg.
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ]
         eqn:Hop.
       + (* Const *) reflexivity.
       + (* Input *) reflexivity.
@@ -4733,6 +4762,21 @@ Section SchedulerSimulation.
           by (unfold get_args; rewrite Hop; left; reflexivity).
         unfold node_args_sz in Hfg. rewrite Hop in Hfg.
         exact (Hchild sa (sz node) pi Hain Hfg).
+      + (* SPIKE 2b: DFG_Drive, pass-through like the stall. *)
+        assert (Hain : In dn (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+        exact (Hchild dn (sz node) pi Hain Hfg).
+      + (* SPIKE 2b: DFG_Sample -- only the VALIDITY comes from the token.  The
+           value is [tf_ivar v], identical with and without buffers, so the
+           substitution is trivial on this half.  That asymmetry is the whole
+           point of the node. *)
+        cbn [fst].
+        repeat match goal with
+        | |- context [compile_dfg_expr_aux ?a ?b ?c ?d ?e ?f ?g ?h ?i ?j] =>
+            destruct (compile_dfg_expr_aux a b c d e f g h i j)
+        end.
+        reflexivity.
       + (* Empty: impossible for a real node *)
         exfalso. apply (node_op_not_empty act n Hn1 Hnlen).
         unfold node in Hop. exact Hop.
@@ -4929,7 +4973,7 @@ Section SchedulerSimulation.
         destruct (wsz_node_sz act x sx Hwsz) as [Hxlen Hxsz].
         apply (IH x sx p Hx1 Hxlen ltac:(lia) (eq_sym Hxsz) Hxv). }
       pose proof (wfg_build_dfg act node Hnode_in) as Hfg.
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ]
         eqn:Hop.
       + (* Const *) reflexivity.
       + (* Input *) reflexivity.
@@ -5096,6 +5140,21 @@ Section SchedulerSimulation.
           by (unfold get_args; rewrite Hop; left; reflexivity).
         unfold node_args_sz in Hfg. rewrite Hop in Hfg.
         exact (Hchild sa (sz node) pi Hain Hfg Hval).
+      + (* SPIKE 2b: DFG_Drive, value and validity both pass through. *)
+        assert (Hain : In dn (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+        exact (Hchild dn (sz node) pi Hain Hfg Hval).
+      + (* SPIKE 2b: DFG_Sample -- THE interesting bullet.  Only the validity
+           passes through; the value is [tf_ivar v] and is the same with and
+           without buffers.  This is the value/validity decoupling a real
+           round trip needs, and it discharges here rather than blocking. *)
+        cbn [fst].
+        repeat match goal with
+        | |- context [compile_dfg_expr_aux ?a ?b ?c ?d ?e ?f ?g ?h ?i ?j] =>
+            destruct (compile_dfg_expr_aux a b c d e f g h i j)
+        end.
+        reflexivity.
       + (* Empty: impossible for a real node *)
         exfalso. apply (node_op_not_empty act n Hn1 Hnlen).
         unfold node in Hop. exact Hop.
@@ -5534,7 +5593,7 @@ Section SchedulerSimulation.
       { intros x p Hx. destruct (Harg x Hx) as [Hx1 Hx2].
         apply (IH x p Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen));
           [ lia | lia | right; lia ]. }
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ]
         eqn:Hop.
       + cbn [snd]. apply eval1_const1.
       + cbn [snd]. apply eval1_const1.
@@ -5596,6 +5655,21 @@ Section SchedulerSimulation.
         pose proof (Hchild sa pi Hain) as Ha.
         destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
                     sa bufs) as [ae ve] eqn:E1.
+        cbn [snd] in Ha |- *. exact Ha.
+      + (* SPIKE 2b: DFG_Drive, validity passes through. *)
+        assert (Hain : In dn (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        pose proof (Hchild dn pi Hain) as Ha.
+        destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                    dn bufs) as [ae ve] eqn:E1.
+        cbn [snd] in Ha |- *. exact Ha.
+      + (* SPIKE 2b: DFG_Sample -- its validity IS the token's, by construction
+           in compile_dfg_expr_aux, so this passes through too. *)
+        assert (Hain : In sn (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        pose proof (Hchild sn pi Hain) as Ha.
+        destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+                    sn bufs) as [ae ve] eqn:E1.
         cbn [snd] in Ha |- *. exact Ha.
       + exfalso. apply (node_op_not_empty act n Hn1 Hnlen).
         unfold node in Hop. exact Hop.
@@ -6432,6 +6506,43 @@ Section SchedulerSimulation.
       as [ae av] eqn:E.
     cbn [fst].
     rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3), E. reflexivity.
+  Qed.
+
+  (* SPIKE 2b.  A drive's reference expression is its argument's -- it is the
+     message on its way to the port, so it adds no logic. *)
+  Lemma nre_drive (act: tfs_action sched) a_idx n ov arg :
+    1 <= n -> n < length (graph (build_dfg ctx act)) ->
+    op (nth n (graph (build_dfg ctx act))
+          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Drive ov arg ->
+    node_ref_expr act a_idx n = node_ref_expr act a_idx arg.
+  Proof.
+    intros H1 H2 Hop.
+    assert (Hain : In arg (get_args ctx (nth n (graph (build_dfg ctx act))
+                                           {| nid := 0; op := DFG_Empty; sz := 0 |})))
+      by (unfold get_args; rewrite Hop; left; reflexivity).
+    destruct (node_args_range act n H1 H2 arg Hain) as [Ha1 Ha3].
+    assert (Ha2 : arg < length (graph (build_dfg ctx act))) by lia.
+    rewrite (nre_unfold act a_idx n H1 H2).
+    cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
+    destruct (compile_dfg_expr ctx cost_limit n a_idx (build_dfg ctx act) arg [])
+      as [ae av] eqn:E.
+    cbn [fst].
+    rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3), E. reflexivity.
+  Qed.
+
+  (* SPIKE 2b.  A sample's reference expression is the PORT, not its token's --
+     this is the value/validity decoupling, and it is why a sample is an input
+     read for the attacker model and a token consumer for the scheduler. *)
+  Lemma nre_sample (act: tfs_action sched) a_idx n iv tok :
+    1 <= n -> n < length (graph (build_dfg ctx act)) ->
+    op (nth n (graph (build_dfg ctx act))
+          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Sample iv tok ->
+    node_ref_expr act a_idx n = tf_ivar iv.
+  Proof.
+    intros H1 H2 Hop. rewrite (nre_unfold act a_idx n H1 H2).
+    cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
+    destruct (compile_dfg_expr ctx cost_limit n a_idx (build_dfg ctx act) tok []).
+    reflexivity.
   Qed.
 
   Lemma nre_resize (act: tfs_action sched) a_idx n arg :
