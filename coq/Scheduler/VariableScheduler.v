@@ -1242,25 +1242,8 @@ Section VariableScheduler.
                  (fold_right
                     (fun n acc =>
                        let '(e, v) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg n buffers in
-                       (* A PULSE: assert only on the cycle the drive's validity
-                          RISES.  [v] alone is monotone, so gating on it holds the
-                          port for the rest of the action; ANDing with the negated
-                          chain-head validity -- the same bit one cycle later --
-                          narrows that to exactly one cycle.
-                          The else-branch is 0 rather than [tf_ovar o], so the port
-                          returns low between requests.  That gives back-to-back
-                          calls a visible EDGE, which a held wire does not have,
-                          and hands the hold to the IP wrapper, which knows how
-                          long the payload is actually needed.  It is a deliberate
-                          reversal of Spike 2c's "port stability is structural":
-                          the obligation does not vanish, it moves to the wrapper. *)
-                       let vprev := match chain_head dfg n with
-                                    | Some h => snd (compile_dfg_expr_aux tainted dfacts []
-                                                       fuel a_idx' dfg h buffers)
-                                    | None => tf_const 0
-                                    end in
-                       tf_expr_if (tf_op2 tf_and v (tf_op1 tf_not vprev)) e acc)
-                    (tf_const 0) (drive_nodes dfg o)))
+                       tf_expr_if v e acc)
+                    (tf_ovar o) (drive_nodes dfg o)))
             (driven_ports dfg)
     end.
 
