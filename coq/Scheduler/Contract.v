@@ -51,6 +51,30 @@ Record TFSchedContext := {
   tfs_spec_outputs_size : tfs_spec_outputs -> nat;
   tfs_spec_outputs_class : tfs_spec_outputs -> port_class;
 
+  tfs_spec_ip_req : tfs_spec_inputs -> option tfs_spec_outputs;
+  tfs_spec_ip_lat : tfs_spec_inputs -> nat;
+
+  (* BOTH ends of an IP link are Secret, and this is enforced HERE -- as a field
+     of the context -- so a TFSchedContext naming a Public request or response
+     port cannot be constructed at all.  A free-standing Prop would have to be
+     remembered at every use site; a field is discharged once, where the ports
+     are declared, and is then available to every proof for free.
+
+     Why it must hold.  A request port moves mid-action, in a data-dependent
+     way, by construction -- that is the whole point of a drive.  A PUBLIC port
+     doing that is directly attacker-visible timing, which is the thing IPR
+     exists to rule out (Probe 2d: [driven_ports] admits only Secret ports, and
+     the proof obligation and the security obligation coincide).  A public
+     response port is the mirror image: it would let the attacker read the IP's
+     answer straight off the wire.
+
+     This covers every port named in an IP DECLARATION.  The companion condition
+     -- that a [tf_call] may only name a declared (req,resp) pair -- is what
+     extends it to every port named by a CALL. *)
+  tfs_spec_ip_secret :
+    forall v o, tfs_spec_ip_req v = Some o ->
+      tfs_spec_inputs_class v = Secret /\ tfs_spec_outputs_class o = Secret;
+
   tfs_spec_action : Type;
   tfs_spec_action_eq_dec : EqDec tfs_spec_action;
   tfs_spec_action_fin : FiniteType tfs_spec_action;
@@ -69,7 +93,7 @@ Definition tfs_ops_no_duplicates {s i o} (ops: list (@tf_op s i o)) : Prop :=
     match op with 
       | tf_assign dst _ => [StOp dst]  
       | tf_output dst _ => [OutOp dst]
-      | tf_call _ req _ dst _ => [OutOp req; StOp dst]  (* a call writes BOTH *)
+      | tf_call req _ dst _ _ => [OutOp req; StOp dst]  (* a call writes BOTH *)
       | _ => []
     end) ops).
 
@@ -90,6 +114,13 @@ Record TFSchedule := {
      input type, but that is not definitionally visible through an abstract
      [TFSchedule], so the classification has to be carried across. *)
   tfs_inputs_class : tfs_inputs -> port_class;
+  (* Also mirrored from the context: which inputs are IP RESPONSE ports.  These
+     are the only inputs that are not latched at action start -- a response
+     arrives mid-action, so latching it would read the value from BEFORE the
+     request was even driven.  The lowering has to be able to tell them apart,
+     and [tfs_spec_ip_req] is not definitionally visible through an abstract
+     [TFSchedule], so it is carried across exactly as the class is. *)
+  tfs_inputs_is_resp : tfs_inputs -> bool;
 
   tfs_outputs : Type;
   tfs_outputs_size : tfs_outputs -> nat;
@@ -126,7 +157,7 @@ Record TFSchedule := {
           match op with
           | tf_assign dst _ => [StOp dst]
           | tf_output dst _ => [OutOp dst]
-          | tf_call _ req _ dst _ => [OutOp req; StOp dst]  (* a call writes BOTH *)
+          | tf_call req _ dst _ _ => [OutOp req; StOp dst]  (* a call writes BOTH *)
           | _ => []
           end) (fst (tfs_schedule a)));
 

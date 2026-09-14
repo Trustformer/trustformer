@@ -56,31 +56,9 @@ Section TrustformerSyntax.
         | tf_nop                                                (* No operation *)
         | tf_assign (dst : states_var) (expr : tf_expr)         (* Unary Operations *)
         | tf_output (dst : outputs_var) (expr : tf_expr)        (* Write variable to output *)
-        (* An external-IP call, as a STATEMENT rather than an expression (Spike
-           1.5: a tf_op constructor never enters tf_eval_expr, where 93 of the
-           tree's most fragile proof lines live).
-
-           [site] is a STATIC call-site index, assigned syntactically, so the
-           response needs no dynamic counter threaded through the fold -- a
-           counter desynchronises against DFG_Phi, which evaluates both arms.
-
-           [resp] names the trusted input port the IP answers on.  THIS is the
-           denotation: a call's result is what the IP put on [resp], NOT a
-           function of [arg].  That is Spike 1.5's R instantiation, which is
-           always satisfiable and is the correct demonic model for a TRNG; the
-           stronger D reading ("[resp] carries f(arg)") is a separate refinement
-           hypothesis layered on top, not a different mechanism.
-
-           [req] names the port the request payload [arg] is put on.  A call
-           therefore writes TWO places at once -- the request port and the
-           destination state var -- which is why [tf_update] carries a two-write
-           constructor.  The port is written through [var_map] like any other
-           output, so [tfs_ops_no_duplicates] already REJECTS an action that
-           also writes [req] by hand: "a port is either written by a call or
-           assigned, never both" comes free from the NoDup obligation rather
-           than needing a new well-formedness predicate. *)
-        | tf_call (site: nat) (req: outputs_var) (resp: inputs_var)
+        | tf_call (req: outputs_var) (resp: inputs_var)
                   (dst: states_var) (arg: tf_expr)
+                  {szA szB: nat} (f: bits_t szA -> bits_t szB)
         . 
 
     Inductive tf_ops :=
@@ -121,24 +99,6 @@ Section TrustformerSyntax.
         try apply tf_binary_ops_eqdec.
     Qed.
 
-    Instance tf_op_eqdec: EqDec tf_op.
-    Proof.
-        constructor. intros.
-        decide equality;
-        try apply Nat.eq_dec;
-        try apply states_var_eqdec;
-        try apply inputs_var_eqdec;
-        try apply outputs_var_eqdec;
-        try apply tf_expr_eqdec.
-    Qed.
-
-    Instance tf_ops_eqdec: EqDec tf_ops.
-    Proof.
-        constructor. intros.
-        decide equality;
-        try apply tf_op_eqdec;
-        try apply tf_expr_eqdec.
-    Qed.
 
 End TrustformerSyntax.
 

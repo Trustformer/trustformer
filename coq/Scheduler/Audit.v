@@ -51,7 +51,7 @@ Section Audit.
 
   Definition audit (act: spec_action) : tf_audit :=
     let dfg := build_dfg ctx act in
-    let cycles := calc_target_cycle cost_limit (calc_backward_cost ctx dfg) in
+    let cycles := calc_target_cycle cost_limit (calc_backward_cost ctx cost_limit dfg) in
     let '((lo, pf), (hi, ps)) := action_bounds_w ctx cost_limit dfg in
     {| ta_nodes := List.length (graph dfg);
        ta_buffers := List.length (require_buffer ctx dfg cycles);
@@ -99,7 +99,7 @@ Section Audit.
   (* The same picture as [dfg_to_dot], plus the buffers the cost limit forced. *)
   Definition audit_dot (act: spec_action) : string :=
     let dfg := build_dfg ctx act in
-    let cycles := calc_target_cycle cost_limit (calc_backward_cost ctx dfg) in
+    let cycles := calc_target_cycle cost_limit (calc_backward_cost ctx cost_limit dfg) in
     dfg_to_dot_annot ctx dfg (get_tainted ctx dfg)
       (map cr_cond (crit_report_all ctx dfg))
       (require_buffer ctx dfg cycles).

@@ -106,6 +106,10 @@ Section Spike.
         | act_reqresp   => ops_reqresp
         | act_resp_used => ops_resp_used
         end;
+      (* no attached IP: no call names a response port here *)
+      tfs_spec_ip_req := fun _ => None;
+      tfs_spec_ip_lat := fun _ => 0;
+      tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
       tfs_spec_decls := []
   |}.
 
@@ -113,7 +117,7 @@ Section Spike.
 
   Definition cyc (a: pd_action) (n: nid_t) : nat :=
     match BitsToLists.list_assoc
-            (calc_target_cycle climit (calc_backward_cost pd_ctx (build_dfg pd_ctx a))) n with
+            (calc_target_cycle climit (calc_backward_cost pd_ctx climit (build_dfg pd_ctx a))) n with
     | Some c => c
     | None => 999
     end.

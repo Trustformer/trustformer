@@ -138,7 +138,7 @@ Section Confidentiality.
        side: a Public port that moves in a data-dependent way is
        attacker-visible.  The proof obligation and the security obligation are
        the same obligation. *)
-    | tf_ops_base (tf_call _ req _ _ arg) =>
+    | tf_ops_base (tf_call req _ _ arg _) =>
         match o_cls req with
         | Secret => true                     (* Secret request ports may be arbitrary *)
         | Public => negb g && sf_expr arg
@@ -227,7 +227,7 @@ Section Confidentiality.
       (snd (run ops sys input)).[o] = (snd sys).[o].
   Proof.
     induction ops; intros Hsf sys input o Hc; cbn [sf_ops] in Hsf.
-    - destruct op as [| d e | d e | si rq rv d e]; cbn [tf_ops_run tf_ops_updates
+    - destruct op as [| d e | d e | rq rv d e szA szB fn]; cbn [tf_ops_run tf_ops_updates
         tf_op_step_updates tf_op_step_commit tf_op_step_commit_output snd].
       + reflexivity.
       + reflexivity.
@@ -261,7 +261,7 @@ Section Confidentiality.
   Proof.
     revert g. induction ops; intros g Hsf sys sys' input Hpub;
       cbn [sf_ops] in Hsf.
-    - destruct op as [| d e | d e | si rq rv d e]; intros o Hc;
+    - destruct op as [| d e | d e | rq rv d e szA szB fn]; intros o Hc;
         cbn [tf_ops_run tf_ops_updates tf_op_step_updates tf_op_step_commit
              tf_op_step_commit_output snd].
       + exact (Hpub o Hc).

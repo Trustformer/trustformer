@@ -471,7 +471,7 @@ Section TypedSynthesis.
       (* A call emits BOTH writes, mirroring Semantics.v and VariableScheduler.v:
          the request payload onto [req], and the destination from the RESPONSE
          port. *)
-      | tf_call _ req resp x arg =>
+      | tf_call req resp x arg _ =>
           Seq (Write P0 (tf_out req) (expr_to_action arg (spec_outputs_size req)))
             (Seq (Write P0 (tf_reg x) (expr_to_action (tf_ivar resp) (spec_states_size x))) code)
       end.

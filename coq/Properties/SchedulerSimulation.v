@@ -210,13 +210,13 @@ Section SchedulerSimulation.
     (* SPIKE E1: tf_assign is no longer the ONLY state-writing op, so this
        characterisation had to gain a disjunct.  This is the one break in the
        whole experiment that is not mechanical. *)
-    (exists e, op = tf_assign x e) \/ (exists si rq rv e, op = tf_call si rq rv x e).
+    (exists e, op = tf_assign x e) \/ (exists rq rv e szA szB (fn: bits_t szA -> bits_t szB), op = tf_call rq rv x e fn).
   (* Predicate: op writes output x.  A call writes its REQUEST port, so this
      needed the same second disjunct [op_assigns_st] has.  The two predicates
      are now symmetric, which is right: a call writes one of each. *)
   Definition op_writes_out (x: o_var) (op: @tf_op (tfs_states sched) i_var o_var) : Prop :=
     (exists e, op = tf_output x e)
-    \/ (exists si rv dst e, op = tf_call si x rv dst e).
+    \/ (exists rv dst e szA szB (fn: bits_t szA -> bits_t szB), op = tf_call x rv dst e fn).
   (* find_st_update skips a head op that does not assign the queried state. *)
   Lemma find_st_update_skip_head x (op: @tf_op (tfs_states sched) i_var o_var) ops ss input :
     ~ op_assigns_st x op ->
@@ -224,13 +224,13 @@ Section SchedulerSimulation.
     = find_st_update sched x (tfs_get_updates sched ops ss input).
   Proof.
     intro Hne. rewrite tfs_get_updates_cons. apply find_st_update_skip_cons.
-    - intro v. destruct op as [| dst e | dst e | si rq rv dst e];
+    - intro v. destruct op as [| dst e | dst e | rq rv dst e szA szB fn];
         cbn [tf_op_step_updates]; try discriminate.
       intro H. inversion H. subst dst. apply Hne. left. exists e. reflexivity.
-    - intros ov ovv v. destruct op as [| dst e | dst e | si rq rv dst e];
+    - intros ov ovv v. destruct op as [| dst e | dst e | rq rv dst e szA szB fn];
         cbn [tf_op_step_updates]; try discriminate.
       intro H. inversion H. subst dst. apply Hne. right.
-      exists si, rq, rv, e. reflexivity.
+      exists rq, rv, e, szA, szB, fn. reflexivity.
   Qed.
 
   (* A tf_output to dst at the head resolves find_out_update to its evaluated value. *)
@@ -269,13 +269,13 @@ Section SchedulerSimulation.
     = find_out_update sched x (tfs_get_updates sched ops ss input).
   Proof.
     intro Hne. rewrite tfs_get_updates_cons. apply find_out_update_skip_cons.
-    - intro v. destruct op as [| dst e | dst e | si rq rv dst e];
+    - intro v. destruct op as [| dst e | dst e | rq rv dst e szA szB fn];
         cbn [tf_op_step_updates]; try discriminate.
       intro H. inversion H. subst dst. apply Hne. left. exists e. reflexivity.
-    - intros v sv svv. destruct op as [| dst e | dst e | si rq rv dst e];
+    - intros v sv svv. destruct op as [| dst e | dst e | rq rv dst e szA szB fn];
         cbn [tf_op_step_updates]; try discriminate.
       intro H. inversion H. subst rq. apply Hne. right.
-      exists si, rv, dst, e. reflexivity.
+      exists rv, dst, e, szA, szB, fn. reflexivity.
   Qed.
 
 
@@ -304,7 +304,7 @@ Section SchedulerSimulation.
     cbn [flat_map] in Hnd.
     destruct Hin as [Heq | Hin].
     - subst op. apply find_st_update_assign_head.
-    - destruct op as [| dst rhs | dst rhs | si rq rv dst rhs].
+    - destruct op as [| dst rhs | dst rhs | rq rv dst rhs szA szB fn].
       + apply IH; [ exact Hnd | exact Hin ].
       + inversion Hnd as [| tag tags Hnot Htail]; subst tag tags.
         destruct (eq_dec dst x) as [Hdx | Hdx].
@@ -312,7 +312,7 @@ Section SchedulerSimulation.
           exists (tf_assign x e). split; [ exact Hin |]. cbn [In]. left. reflexivity.
         * rewrite find_st_update_skip_head.
           -- apply IH; [ exact Htail | exact Hin ].
-          -- intros [[rhs' Heq] | (si' & rq' & rv' & rhs' & Heq)]; inversion Heq; contradiction.
+          -- intros [[rhs' Heq] | (rq' & rv' & rhs' & szA' & szB' & fn' & Heq)]; inversion Heq; contradiction.
       + apply IH.
         * cbn [app] in Hnd. inversion Hnd. assumption.
         * exact Hin.
@@ -326,7 +326,7 @@ Section SchedulerSimulation.
           exists (tf_assign x e). split; [ exact Hin |]. cbn [In]. left. reflexivity.
         * rewrite find_st_update_skip_head.
           -- apply IH; [ exact Htail1 | exact Hin ].
-          -- intros [[rhs' Heq] | (si' & rq' & rv' & rhs' & Heq)]; inversion Heq; contradiction.
+          -- intros [[rhs' Heq] | (rq' & rv' & rhs' & szA' & szB' & fn' & Heq)]; inversion Heq; contradiction.
   Qed.
 
   Lemma NoDup_app_l {A} (l1 l2: list A) : NoDup (l1 ++ l2) -> NoDup l1.
@@ -430,7 +430,7 @@ Section SchedulerSimulation.
     destruct (index_of_nat _ _) as [a' |]; [| intros []].
     rewrite in_map_iff. intros [[var nid] [Hop _]].
     destruct (compile_dfg_expr _ _ _ _ _ _ _) as [expr valid].
-    destruct var as [sv | ov]; subst op; intros [[e He] | (si & rq & rv & e & He)]; inversion He.
+    destruct var as [sv | ov]; subst op; intros [[e He] | (rq & rv & e & szA & szB & fn & He)]; inversion He.
   Qed.
 
   (* The done value produced by one cycle equals the always-list done value,
@@ -695,7 +695,7 @@ Section SchedulerSimulation.
 
   (* Per-node target-cycle map for an action's DFG. *)
   Local Notation act_cycle_map act :=
-    (calc_target_cycle cost_limit (calc_backward_cost ctx (build_dfg ctx act))).
+    (calc_target_cycle cost_limit (calc_backward_cost ctx cost_limit (build_dfg ctx act))).
 
   (* Target cycle of node [n] (0 when absent from the map). *)
   Definition node_cycle (act: tfs_action sched) (n: nat) : nat :=
@@ -922,7 +922,7 @@ Section SchedulerSimulation.
     = map (fun a => get_sizes_and_idx ctx (build_dfg ctx a)
                       (require_buffer ctx (build_dfg ctx a)
                          (calc_target_cycle cost_limit
-                            (calc_backward_cost ctx (build_dfg ctx a)))))
+                            (calc_backward_cost ctx cost_limit (build_dfg ctx a)))))
           (@finite_elements _ (tfs_action_fin sched)).
   Proof.
     unfold buffer_needs. rewrite !map_map, combine_map2, map_map. reflexivity.
@@ -938,7 +938,7 @@ Section SchedulerSimulation.
       = get_sizes_and_idx ctx (build_dfg ctx act)
           (require_buffer ctx (build_dfg ctx act)
              (calc_target_cycle cost_limit
-                (calc_backward_cost ctx (build_dfg ctx act)))).
+                (calc_backward_cost ctx cost_limit (build_dfg ctx act)))).
   Proof.
     intros act a_idx Halign.
     unfold act_idx_aligned in Halign.
@@ -946,7 +946,7 @@ Section SchedulerSimulation.
     set (F := fun a => get_sizes_and_idx ctx (build_dfg ctx a)
                          (require_buffer ctx (build_dfg ctx a)
                             (calc_target_cycle cost_limit
-                               (calc_backward_cost ctx (build_dfg ctx a))))).
+                               (calc_backward_cost ctx cost_limit (build_dfg ctx a))))).
     (* nth_error (map F finite_elements) (finite_index act) = Some (F act) *)
     assert (Hne : nth_error (map F (@finite_elements _ (tfs_action_fin sched)))
                     (@finite_index _ (tfs_action_fin sched) act) = Some (F act))
@@ -976,7 +976,7 @@ Section SchedulerSimulation.
     rewrite gsi_length in Hbound.
     set (nodes := require_buffer ctx (build_dfg ctx act)
                     (calc_target_cycle cost_limit
-                       (calc_backward_cost ctx (build_dfg ctx act)))) in *.
+                       (calc_backward_cost ctx cost_limit (build_dfg ctx act)))) in *.
     assert (Hbound_gsi : m < length (get_sizes_and_idx ctx (build_dfg ctx act) nodes)).
     { rewrite gsi_length. exact Hbound. }
     pose proof (nth_In (get_sizes_and_idx ctx (build_dfg ctx act) nodes)
@@ -1069,7 +1069,7 @@ Section SchedulerSimulation.
       In (vreg_nid a_idx n_idx)
          (require_buffer ctx (build_dfg ctx act)
             (calc_target_cycle cost_limit
-               (calc_backward_cost ctx (build_dfg ctx act)))).
+               (calc_backward_cost ctx cost_limit (build_dfg ctx act)))).
   Proof.
     intros act a_idx n_idx Halign.
     pose proof (index_to_nat_bounded n_idx) as Hb.
@@ -1081,7 +1081,7 @@ Section SchedulerSimulation.
     rewrite gsi_length in Hb.
     set (rb := require_buffer ctx (build_dfg ctx act)
                  (calc_target_cycle cost_limit
-                    (calc_backward_cost ctx (build_dfg ctx act)))) in *.
+                    (calc_backward_cost ctx cost_limit (build_dfg ctx act)))) in *.
     replace (fst (nth m (get_sizes_and_idx ctx (build_dfg ctx act) rb) (0, (0, 0))))
       with (nth m (map fst (get_sizes_and_idx ctx (build_dfg ctx act) rb)) 0).
     - rewrite gsi_map_fst. apply nth_In. exact Hb.
@@ -1253,10 +1253,10 @@ Section SchedulerSimulation.
   Local Definition bc_aux (cost_map : list (nid_t * nat)) node
     : list (nid_t * nat) :=
     list_assoc_set_all_max cost_map (nid node :: get_args ctx node)
-      (getn cost_map (nid node) + cost_fn ctx (op node) (sz node)).
+      (getn cost_map (nid node) + cost_fn ctx cost_limit (op node) (sz node)).
 
   Lemma calc_backward_cost_fold dfg :
-    calc_backward_cost ctx dfg = fold_left bc_aux (rev (graph dfg)) [].
+    calc_backward_cost ctx cost_limit dfg = fold_left bc_aux (rev (graph dfg)) [].
   Proof. unfold calc_backward_cost, bc_aux, getn. reflexivity. Qed.
 
   (* Frozen-key propagation: if key (nid N) is never in the key-set of any
@@ -3004,7 +3004,7 @@ Section SchedulerSimulation.
   Proof.
     induction ops as [op | op1 IHops1 op2 IHops2 | cond op1 IHops1 op2 IHops2];
       intros s Hp.
-    - destruct op as [ | dst expr | dst expr | si rq rv dst expr ].
+    - destruct op as [ | dst expr | dst expr | rq rv dst expr szA szB fn ].
       + simpl. unfold ret. exact Hp.
       + simpl.
         pose proof (dataflow_expr_pos expr (dfg_var_size ctx (DFG_SVar dst)) s Hp) as He.
@@ -3285,15 +3285,15 @@ Section SchedulerSimulation.
       In node (graph (build_dfg ctx act)) ->
       In x (get_args ctx node) ->
       (match BitsToLists.list_assoc
-               (calc_backward_cost ctx (build_dfg ctx act)) (nid node) with
+               (calc_backward_cost ctx cost_limit (build_dfg ctx act)) (nid node) with
        | Some c => c | None => 0 end)
       <= (match BitsToLists.list_assoc
-               (calc_backward_cost ctx (build_dfg ctx act)) x with
+               (calc_backward_cost ctx cost_limit (build_dfg ctx act)) x with
           | Some c => c | None => 0 end).
   Proof.
     intros act node x Hnode Hx.
-    change (getn (calc_backward_cost ctx (build_dfg ctx act)) (nid node)
-            <= getn (calc_backward_cost ctx (build_dfg ctx act)) x).
+    change (getn (calc_backward_cost ctx cost_limit (build_dfg ctx act)) (nid node)
+            <= getn (calc_backward_cost ctx cost_limit (build_dfg ctx act)) x).
     rewrite calc_backward_cost_fold.
     (* split the processing list at [node] *)
     pose proof Hnode as HinL. apply in_rev in HinL.
@@ -3303,7 +3303,7 @@ Section SchedulerSimulation.
     (* base inequality after processing [node] itself *)
     apply cost_ge_after_fold.
     - unfold bc_aux.
-      set (w := getn acc0 (nid node) + cost_fn ctx (op node) (sz node)).
+      set (w := getn acc0 (nid node) + cost_fn ctx cost_limit (op node) (sz node)).
       eapply Nat.le_trans.
       + (* getn (sam ..) (nid node) <= w *)
         eapply Nat.le_trans; [ apply sam_upper |].
@@ -3327,9 +3327,9 @@ Section SchedulerSimulation.
     rewrite !list_assoc_calc_target_cycle.
     pose proof (backward_cost_monotone act node x Hnode Hx) as Hm.
     destruct (BitsToLists.list_assoc
-                (calc_backward_cost ctx (build_dfg ctx act)) (nid node)) as [c1|];
+                (calc_backward_cost ctx cost_limit (build_dfg ctx act)) (nid node)) as [c1|];
     destruct (BitsToLists.list_assoc
-                (calc_backward_cost ctx (build_dfg ctx act)) x) as [c2|];
+                (calc_backward_cost ctx cost_limit (build_dfg ctx act)) x) as [c2|];
     cbn [option_map].
     - apply Nat.Div0.div_le_mono. exact Hm.
     - apply Nat.le_0_r in Hm. rewrite Hm, Nat.Div0.div_0_l. apply Nat.le_0_l.
@@ -3426,7 +3426,7 @@ Section SchedulerSimulation.
     forall (act: tfs_action sched) node,
       In node (graph (build_dfg ctx act)) ->
       BitsToLists.list_assoc
-        (calc_backward_cost ctx (build_dfg ctx act)) (nid node) <> None.
+        (calc_backward_cost ctx cost_limit (build_dfg ctx act)) (nid node) <> None.
   Proof.
     intros act node Hin. unfold calc_backward_cost.
     apply in_rev in Hin.
@@ -3436,7 +3436,7 @@ Section SchedulerSimulation.
                        (nid n :: get_args ctx n)
                        (match BitsToLists.list_assoc cost_map (nid n) with
                         | Some c => c | None => 0 end
-                        + cost_fn ctx (op n) (sz n)))).
+                        + cost_fn ctx cost_limit (op n) (sz n)))).
     - intros acc a j H. apply set_all_max_pres. exact H.
     - intros acc a. apply set_all_max_mem. left. reflexivity.
     - exact Hin.
@@ -3457,7 +3457,7 @@ Section SchedulerSimulation.
     pose proof (node_nid_at act n Hn) as Hnid. fold node in Hnid.
     rewrite Hnid in Hcost.
     destruct (BitsToLists.list_assoc
-      (calc_backward_cost ctx (build_dfg ctx act)) n); cbn [option_map]; congruence.
+      (calc_backward_cost ctx cost_limit (build_dfg ctx act)) n); cbn [option_map]; congruence.
   Qed.
 
   (* Every edge either remains within one target cycle or crosses a cycle
@@ -3922,7 +3922,7 @@ Section SchedulerSimulation.
     induction ops as [ op | op1 IH1 op2 IH2 | cond then_ops IHthen else_ops IHelse ];
       intros s Hv.
     - (* tf_ops_base *)
-      destruct op as [ | dst expr | dst expr | si rq rv dst expr ]; cbn [dataflow_ops].
+      destruct op as [ | dst expr | dst expr | rq rv dst expr szA szB fn ]; cbn [dataflow_ops].
       + (* tf_nop *) unfold ret. split; [ apply gmono_refl | exact Hv ].
       + (* tf_assign *)
         unfold bind.
@@ -4041,7 +4041,7 @@ Section SchedulerSimulation.
       In n (map snd (var_map (build_dfg ctx act))) ->
       BitsToLists.list_assoc
         (calc_target_cycle cost_limit
-           (calc_backward_cost ctx (build_dfg ctx act))) n <> None.
+           (calc_backward_cost ctx cost_limit (build_dfg ctx act))) n <> None.
   Proof.
     intros act n Hn.
     rewrite list_assoc_calc_target_cycle.
@@ -4049,7 +4049,7 @@ Section SchedulerSimulation.
     subst n.
     pose proof (graph_nid_has_cost act node Hnode) as Hc.
     destruct (BitsToLists.list_assoc
-                (calc_backward_cost ctx (build_dfg ctx act)) (nid node)) as [c|].
+                (calc_backward_cost ctx cost_limit (build_dfg ctx act)) (nid node)) as [c|].
     - cbn [option_map]. discriminate.
     - congruence.
   Qed.
@@ -4063,14 +4063,14 @@ Section SchedulerSimulation.
     forall (act: tfs_action sched) n,
       In n (require_buffer ctx (build_dfg ctx act)
               (calc_target_cycle cost_limit
-                 (calc_backward_cost ctx (build_dfg ctx act)))) ->
+                 (calc_backward_cost ctx cost_limit (build_dfg ctx act)))) ->
       node_cycle act n <> 0.
   Proof.
     intros act n Hin.
     unfold require_buffer in Hin.
     apply nodup_In, in_app_iff in Hin.
     set (cc := calc_target_cycle cost_limit
-                 (calc_backward_cost ctx (build_dfg ctx act))) in *.
+                 (calc_backward_cost ctx cost_limit (build_dfg ctx act))) in *.
     destruct Hin as [HA | HB].
     - (* arg-part: n is a buffered argument of some node *)
       apply fold_left_prepend_In in HA.
@@ -4106,7 +4106,7 @@ Section SchedulerSimulation.
     forall (act: tfs_action sched) n,
       In n (require_buffer ctx (build_dfg ctx act)
               (calc_target_cycle cost_limit
-                 (calc_backward_cost ctx (build_dfg ctx act)))) ->
+                 (calc_backward_cost ctx cost_limit (build_dfg ctx act)))) ->
       1 <= n /\ n < length (graph (build_dfg ctx act)).
   Proof.
     intros act n Hin.
@@ -4221,7 +4221,7 @@ Section SchedulerSimulation.
     destruct (index_of_nat _ (fst x)) as [n' |]; [| destruct Hop].
     destruct (compile_dfg_expr _ _ _ _ _ _ _) as [expr valid].
     cbn [In] in Hop.
-    destruct Hop as [Heq | [Heq | []]]; subst op; intros [[e He] | (si & rq & rv & e & He)]; discriminate He.
+    destruct Hop as [Heq | [Heq | []]]; subst op; intros [[e He] | (rq & rv & e & szA & szB & fn & He)]; discriminate He.
   Qed.
 
   (* No op in the always-ops list assigns a base state var tf_dfg_s: the head is
@@ -4235,7 +4235,7 @@ Section SchedulerSimulation.
     unfold sched, tfs_schedule, Contract.tfs_schedule, schedule. cbv zeta. cbn [fst].
     intro Hin. cbn [In] in Hin. destruct Hin as [Heq | Hin].
     - subst op. unfold compile_dfg_valid. cbv zeta.
-      intros [[e He] | (si & rq & rv & e & He)]; discriminate He.
+      intros [[e He] | (rq & rv & e & szA & szB & fn & He)]; discriminate He.
     - exact (compile_dfg_buffers_no_svar _ _ _ s op Hin).
   Qed.
 
@@ -4273,7 +4273,7 @@ Section SchedulerSimulation.
     (* [op_writes_out] now has TWO disjuncts, since a call writes its request
        port; buffer ops are neither. *)
     destruct Hop as [Heq | [Heq | []]]; subst op;
-      intros [[e He] | (si & rv & d & e & He)]; discriminate He.
+      intros [[e He] | (rv & d & e & szA & szB & fn & He)]; discriminate He.
   Qed.
 
   (* No op in the always-ops list writes an output: the head assigns the done
@@ -4287,7 +4287,7 @@ Section SchedulerSimulation.
     unfold sched, tfs_schedule, Contract.tfs_schedule, schedule. cbv zeta. cbn [fst].
     intro Hin. cbn [In] in Hin. destruct Hin as [Heq | Hin].
     - subst op. unfold compile_dfg_valid. cbv zeta.
-      intros [[e He] | (si & rv & d & e & He)]; discriminate He.
+      intros [[e He] | (rv & d & e & szA & szB & fn & He)]; discriminate He.
     - exact (compile_dfg_buffers_no_out _ _ _ o op Hin).
   Qed.
 
@@ -4732,7 +4732,7 @@ Section SchedulerSimulation.
                 (get_sizes_and_idx ctx (build_dfg ctx act)
                    (require_buffer ctx (build_dfg ctx act)
                       (calc_target_cycle cost_limit
-                         (calc_backward_cost ctx (build_dfg ctx act))))))
+                         (calc_backward_cost ctx cost_limit (build_dfg ctx act))))))
         by (rewrite <- (buffer_slot_eq act a_idx Halign); exact Hin_slot).
       assert (Hlt : m < length
                 (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
@@ -5050,7 +5050,7 @@ Section SchedulerSimulation.
                 (get_sizes_and_idx ctx (build_dfg ctx act)
                    (require_buffer ctx (build_dfg ctx act)
                       (calc_target_cycle cost_limit
-                         (calc_backward_cost ctx (build_dfg ctx act))))))
+                         (calc_backward_cost ctx cost_limit (build_dfg ctx act))))))
         by (rewrite <- (buffer_slot_eq act a_idx Halign); exact Hin_slot).
       assert (Hlt : m < length
                 (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
@@ -5452,7 +5452,7 @@ Section SchedulerSimulation.
   Proof.
     unfold node_cycle, max_cycle.
     destruct (BitsToLists.list_assoc
-                (calc_target_cycle cost_limit (calc_backward_cost ctx (build_dfg ctx act))) n)
+                (calc_target_cycle cost_limit (calc_backward_cost ctx cost_limit (build_dfg ctx act))) n)
       as [c |] eqn:Hc.
     - apply wla_in in Hc. eapply fold_max_ge_elem; exact Hc.
     - apply Nat.le_0_l.
@@ -5691,7 +5691,7 @@ Section SchedulerSimulation.
                 (get_sizes_and_idx ctx (build_dfg ctx act)
                    (require_buffer ctx (build_dfg ctx act)
                       (calc_target_cycle cost_limit
-                         (calc_backward_cost ctx (build_dfg ctx act))))))
+                         (calc_backward_cost ctx cost_limit (build_dfg ctx act))))))
         by (rewrite <- (buffer_slot_eq act a_idx Halign); exact Hin_slot).
       assert (Hlt : m < length
                 (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
@@ -6083,7 +6083,7 @@ Section SchedulerSimulation.
     cbn [flat_map] in Hnd.
     destruct Hin as [Heq | Hin].
     - subst op. apply find_out_update_output_head.
-    - destruct op as [| dst rhs | dst rhs | si rq rv dst rhs].
+    - destruct op as [| dst rhs | dst rhs | rq rv dst rhs szA szB fn].
       + apply IH; [ exact Hnd | exact Hin ].
       + apply IH; [ cbn [app] in Hnd; inversion Hnd; assumption | exact Hin ].
       + inversion Hnd as [| tag tags Hnot Htail]; subst tag tags.
@@ -6092,7 +6092,7 @@ Section SchedulerSimulation.
           exists (tf_output x e). split; [ exact Hin |]. cbn [In]. left. reflexivity.
         * rewrite find_out_update_skip_head.
           -- apply IH; [ exact Htail | exact Hin ].
-          -- intros [[rhs' Heq] | (si' & rv' & d' & e' & Heq)];
+          -- intros [[rhs' Heq] | (rv' & d' & e' & szA' & szB' & fn' & Heq)];
                inversion Heq; contradiction.
       (* A call DOES write an output -- its request port -- and emits TWO tags,
          so the NoDup is inverted twice. *)
@@ -6104,7 +6104,7 @@ Section SchedulerSimulation.
           exists (tf_output x e). split; [ exact Hin |]. cbn [In]. left. reflexivity.
         * rewrite find_out_update_skip_head.
           -- apply IH; [ exact Htail1 | exact Hin ].
-          -- intros [[rhs' Heq] | (si' & rv' & d' & e' & Heq)];
+          -- intros [[rhs' Heq] | (rv' & d' & e' & szA' & szB' & fn' & Heq)];
                inversion Heq; contradiction.
   Qed.
 
@@ -6191,7 +6191,7 @@ Section SchedulerSimulation.
     (* E1: op_assigns_st gained a tf_call disjunct; the done half emits only
        tf_assign / tf_output, so the extra branch dies by inversion. *)
     destruct var as [sv' | ov]; subst op;
-      intros [[e He] | (si & rq & rv & e & He)]; inversion He; subst.
+      intros [[e He] | (rq & rv & e & szA & szB & fn & He)]; inversion He; subst.
     apply (Hno n). exact Hvm.
   Qed.
 
@@ -6207,7 +6207,7 @@ Section SchedulerSimulation.
     (* the done half emits only tf_assign / tf_output, so the call disjunct of
        [op_writes_out] dies by inversion *)
     destruct var as [sv | ov']; subst op;
-      intros [[e He] | (si & rv & d & e & He)]; inversion He; subst.
+      intros [[e He] | (rv & d & e & szA & szB & fn & He)]; inversion He; subst.
     apply (Hno n). exact Hvm.
   Qed.
 
@@ -7788,9 +7788,10 @@ Section SchedulerSimulation.
        right-hand side at all.  That absence is the whole content of Spike
        1.5's R instantiation -- nothing here claims the response is a function
        of the request, which is what makes it satisfiable for a TRNG. *)
-    Lemma ops_run_call (si: nat) (rq: o_var) (rv: i_var) (dst: s_var) e
+    Lemma ops_run_call (rq: o_var) (rv: i_var) (dst: s_var) e
+        {szA szB} (fn: bits_t szA -> bits_t szB)
         (sp: src_sys_state) :
-      tf_ops_run s_sz i_sz o_sz (tf_ops_base (tf_call si rq rv dst e)) sp input
+      tf_ops_run s_sz i_sz o_sz (tf_ops_base (tf_call rq rv dst e fn)) sp input
       = (ContextEnv.(putenv) (fst sp) dst
            (tf_eval_expr s_sz i_sz o_sz (szB := s_sz dst) (tf_ivar rv) sp input),
          ContextEnv.(putenv) (snd sp) rq
@@ -7853,7 +7854,7 @@ Section SchedulerSimulation.
     Proof.
       induction ops as [op | op1 IHops1 op2 IHops2 | cond op1 IHops1 op2 IHops2];
         intros s sp Hne Hinv Hvsz Hfg Hsem.
-      - destruct op as [ | dst expr | dst expr | si rq rv dst expr ].
+      - destruct op as [ | dst expr | dst expr | rq rv dst expr szA szB fn ].
         + (* nop *)
           cbn [dataflow_ops]. unfold ret. intro Hg'.
           rewrite ops_run_nop.

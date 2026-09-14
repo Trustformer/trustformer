@@ -143,7 +143,7 @@ Section Semantics.
            lowering or scheduler_done_correct is false for an action carrying a
            call: the spec and the hardware would disagree on that port's final
            value (PLAN.md D2). *)
-        | tf_call _ req resp dst arg =>
+        | tf_call req resp dst arg _ =>
             tf_call_update
               req (tf_eval_expr (szB:=(outputs_size req)) arg sys_state input)
               dst (tf_eval_expr (szB:=(states_size dst)) (tf_ivar resp) sys_state input)

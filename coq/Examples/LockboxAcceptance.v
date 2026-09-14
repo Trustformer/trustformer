@@ -127,6 +127,10 @@ Section Contexts.
       tfs_spec_action := lb_action;
       tfs_spec_action_fin := _;
       tfs_spec_action_ops := ops;
+      (* no attached IP: no call names a response port here *)
+      tfs_spec_ip_req := fun _ => None;
+      tfs_spec_ip_lat := fun _ => 0;
+      tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
       tfs_spec_decls := decls
     |}.
 

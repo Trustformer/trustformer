@@ -289,7 +289,7 @@ Section VariableScheduler.
          driven at the done cycle like any other output.  Making the request
          land EARLY -- a DFG_Drive feeding a DFG_Stall feeding a DFG_Sample --
          is the next rung, and it is this line that changes again. *)
-      | tf_call _ req resp dst arg =>
+      | tf_call req resp dst arg _ =>
         let! arg_id := dataflow_expr arg (dfg_var_size (DFG_OVar req)) in
         let! _ := set_var (DFG_OVar req) arg_id in
         let! res_id := dataflow_expr (tf_ivar resp) (dfg_var_size (DFG_SVar dst)) in
@@ -383,7 +383,15 @@ Section VariableScheduler.
     (* SPIKE: a stall is a register, not combinational logic.  The real W-b
        design needs a separate [must_buffer] predicate rather than an inflated
        cost -- see the archive's DEBT-2. *)
-    | DFG_Stall lat _ => lat
+    (* [lat] comes from [tfs_spec_ip_lat] and is in CYCLES.  The cost model
+       works in cost units and [calc_target_cycle] divides by [cost_limit], so
+       multiplying here makes the resulting cycle count EXACT: adding a whole
+       multiple of [cost_limit] shifts the quotient by exactly that many cycles,
+       whatever the remainder.  A latency declared directly in cost units would
+       give a gap of lat/cost_limit, which rounds -- to ZERO when lat <
+       cost_limit.  Regressions: StallLatencySpike [sep_pad_r0..r5],
+       [sep_lat_0..6]. *)
+    | DFG_Stall lat _ => lat * cost_limit
     (* SPIKE 2b: a drive and a sample are wiring, not logic. *)
     | DFG_Drive _ _ => 0
     | DFG_Sample _ _ => 0
@@ -1448,7 +1456,7 @@ Section VariableScheduler.
   Proof.
     induction ops as [bop | o1 IHops1 o2 IHops2 | oc ot IHops1 oe IHops2];
       cbn [dataflow_ops].
-    - destruct bop as [ | dst expr | dst expr | si rq rv dst expr].
+    - destruct bop as [ | dst expr | dst expr | rq rv dst expr szA szB fn].
       + apply preserves_ret.
       + apply preserves_bind; [apply dataflow_expr_vm|]. intro x. apply set_var_vm.
       + apply preserves_bind; [apply dataflow_expr_vm|]. intro x. apply set_var_vm.
@@ -1586,7 +1594,7 @@ Section VariableScheduler.
     (fun op => match op with
        | tf_assign dst _ => [StOp dst]
        | tf_output dst _ => [OutOp dst]
-       | tf_call _ req _ dst _ => [OutOp req; StOp dst]  (* a call writes BOTH *)
+       | tf_call req _ dst _ _ => [OutOp req; StOp dst]  (* a call writes BOTH *)
        | _ => []
        end).
 
@@ -1747,7 +1755,7 @@ Section VariableScheduler.
           match op with
           | tf_assign dst _ => [StOp dst]
           | tf_output dst _ => [OutOp dst]
-          | tf_call _ req _ dst _ => [OutOp req; StOp dst]  (* a call writes BOTH *)
+          | tf_call req _ dst _ _ => [OutOp req; StOp dst]  (* a call writes BOTH *)
           | _ => []
           end) (fst (schedule a))).
   Proof.
@@ -1834,6 +1842,8 @@ Section VariableScheduler.
       tfs_inputs_size := inputs_var_size;
       tfs_inputs_fin := inputs_var_fin;
       tfs_inputs_class := inputs_var_class;
+      tfs_inputs_is_resp := fun v => match tfs_spec_ip_req ctx v with
+                                     | Some _ => true | None => false end;
 
       tfs_outputs := outputs_var;
       tfs_outputs_size := outputs_var_size;
@@ -1902,6 +1912,10 @@ Module Examples.
             let $out_A := $x + #1
         ]}
         end;
+      (* no attached IP: no call names a response port here *)
+      tfs_spec_ip_req := fun _ => None;
+      tfs_spec_ip_lat := fun _ => 0;
+      tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
       tfs_spec_decls := [];
     |}. 
 
@@ -1909,7 +1923,7 @@ Module Examples.
     pose (cost := 10).
     pose (shd := shd_ctx1).
     pose (debug_dfg := build_dfg shd (action)); vm_compute in debug_dfg.
-    pose (debug_cost := calc_backward_cost shd debug_dfg); vm_compute in debug_cost.
+    pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
     pose (debug_sched := schedule shd cost (action)); vm_compute in debug_sched.
@@ -1919,7 +1933,7 @@ Module Examples.
     pose (cost := 4).
     pose (shd := shd_ctx1).
     pose (debug_dfg := build_dfg shd (action)); vm_compute in debug_dfg.
-    pose (debug_cost := calc_backward_cost shd debug_dfg); vm_compute in debug_cost.
+    pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
     pose (debug_sched := schedule shd cost (action)); time vm_compute in debug_sched. (* TIME: 0.2 Seconds *)
@@ -1950,6 +1964,10 @@ Module Examples.
             let $out_A := $y 
         ]}
         end;
+      (* no attached IP: no call names a response port here *)
+      tfs_spec_ip_req := fun _ => None;
+      tfs_spec_ip_lat := fun _ => 0;
+      tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
       tfs_spec_decls := [];
     |}.
 
@@ -1957,7 +1975,7 @@ Module Examples.
     pose (cost := 15).
     pose (shd := shd_ctx2).
     pose (debug_dfg := build_dfg shd (action)); vm_compute in debug_dfg.
-    pose (debug_cost := calc_backward_cost shd debug_dfg); vm_compute in debug_cost.
+    pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
     pose (debug_sched := schedule shd cost (action)); vm_compute in debug_sched.
@@ -1967,7 +1985,7 @@ Module Examples.
     pose (cost := 5).
     pose (shd := shd_ctx2).
     pose (debug_dfg := build_dfg shd (action)); vm_compute in debug_dfg.
-    pose (debug_cost := calc_backward_cost shd debug_dfg); vm_compute in debug_cost.
+    pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
     pose (debug_sched := schedule shd cost (action)); time vm_compute in debug_sched.
@@ -2004,6 +2022,10 @@ Module Examples.
             let $z := $x
         ]}
         end;
+      (* no attached IP: no call names a response port here *)
+      tfs_spec_ip_req := fun _ => None;
+      tfs_spec_ip_lat := fun _ => 0;
+      tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
       tfs_spec_decls := [];
     |}.
 
@@ -2011,7 +2033,7 @@ Module Examples.
     pose (cost := 15).
     pose (shd := shd_ctx3).
     pose (debug_dfg := build_dfg shd (action)); vm_compute in debug_dfg.
-    pose (debug_cost := calc_backward_cost shd debug_dfg); vm_compute in debug_cost.
+    pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
     pose (debug_sched := schedule shd cost (action)); vm_compute in debug_sched.

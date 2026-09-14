@@ -1832,7 +1832,7 @@ Section SynthesisCorrectness.
     fold_right (fun op acc => match op with
                              | tf_assign dst _ => tf_reg dst :: acc
                              | tf_output dst _ => tf_out dst :: acc
-                             | tf_call _ req _ dst _ => tf_out req :: tf_reg dst :: acc  (* a call affects BOTH *)
+                             | tf_call req _ dst _ _ => tf_out req :: tf_reg dst :: acc  (* a call affects BOTH *)
                              | _ => acc
                              end) [] ops.
 
@@ -1840,7 +1840,7 @@ Section SynthesisCorrectness.
     fold_left (fun acc op => match op with
                              | tf_assign dst expr => log_cons (R:=R) (REnv:=REnv) (tf_reg dst) (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size expr sys input)) (expr_log expr (spec_states_size dst) sys input acc)
                              | tf_output dst expr => log_cons (R:=R) (REnv:=REnv) (tf_out dst) (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size expr sys input)) (expr_log expr (spec_outputs_size dst) sys input acc)
-                             | tf_call _ req resp dst arg => log_cons (R:=R) (REnv:=REnv) (tf_reg dst) (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size (tf_ivar resp) sys input)) (expr_log (tf_ivar resp) (spec_states_size dst) sys input (log_cons (R:=R) (REnv:=REnv) (tf_out req) (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size arg sys input)) (expr_log arg (spec_outputs_size req) sys input acc)))  (* a call logs BOTH writes, request first *)
+                             | tf_call req resp dst arg _ => log_cons (R:=R) (REnv:=REnv) (tf_reg dst) (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size (tf_ivar resp) sys input)) (expr_log (tf_ivar resp) (spec_states_size dst) sys input (log_cons (R:=R) (REnv:=REnv) (tf_out req) (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size arg sys input)) (expr_log arg (spec_outputs_size req) sys input acc)))  (* a call logs BOTH writes, request first *)
                              | _ => acc
                              end) ops log_a.
 
@@ -2105,7 +2105,7 @@ Section SynthesisCorrectness.
                (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size expr sys input))
                (expr_log expr (spec_outputs_size dst) sys input log_a)
          (* a call logs BOTH writes, request innermost *)
-         | tf_call _ req resp dst arg =>
+         | tf_call req resp dst arg _ =>
              log_cons (R:=R) (REnv:=REnv) (tf_reg dst)
                (Write0 (tf_eval_expr spec_states_size spec_inputs_size spec_outputs_size (tf_ivar resp) sys input))
                (expr_log (tf_ivar resp) (spec_states_size dst) sys input
@@ -2371,7 +2371,7 @@ Section SynthesisCorrectness.
                    | tf_nop => []
                    | tf_assign dst _ => [StOp dst]
                    | tf_output dst _ => [OutOp dst]
-                   | tf_call _ req _ dst _ => [OutOp req; StOp dst]
+                   | tf_call req _ dst _ _ => [OutOp req; StOp dst]
                    end) l))
           by (intro Hc; apply Hnotin_o; right; exact Hc).
         clear Hnotin_o.
@@ -2467,7 +2467,7 @@ Section SynthesisCorrectness.
                    | tf_nop => []
                    | tf_assign dst _ => [StOp dst]
                    | tf_output dst _ => [OutOp dst]
-                   | tf_call _ req _ dst _ => [OutOp req; StOp dst]
+                   | tf_call req _ dst _ _ => [OutOp req; StOp dst]
                    end) l))
           by (intro Hc; apply Hnotin_o; right; exact Hc).
         clear Hnotin_o.
@@ -2519,7 +2519,7 @@ Section SynthesisCorrectness.
           the DEBT-3 wildcard shape, and omitting the arm makes the NoDup
           obligation strictly EASIER rather than breaking a proof, so the build
           would stay green while the hardware wrote a register twice. *)
-       | tf_call _ req _ dst _ => [OutOp req; StOp dst]
+       | tf_call req _ dst _ _ => [OutOp req; StOp dst]
        | _ => []
        end) ops).
 

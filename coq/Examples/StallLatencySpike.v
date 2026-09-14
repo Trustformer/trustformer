@@ -58,6 +58,10 @@ Section Spike.
 
       tfs_spec_action := sl_action;   tfs_spec_action_fin := _;
       tfs_spec_action_ops := fun _ => tf_ops_base tf_nop;
+      (* no attached IP: no call names a response port here *)
+      tfs_spec_ip_req := fun _ => None;
+      tfs_spec_ip_lat := fun _ => 0;
+      tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
       tfs_spec_decls := []
   |}.
 
@@ -79,7 +83,7 @@ Section Spike.
   |}.
 
   Definition hold_cycles (L: nat) :=
-    calc_target_cycle climit (calc_backward_cost sl_ctx (hold L)).
+    calc_target_cycle climit (calc_backward_cost sl_ctx climit (hold L)).
 
   Definition cyc (L: nat) (n: nid_t) : nat :=
     match BitsToLists.list_assoc (hold_cycles L) n with
@@ -105,9 +109,9 @@ Section Spike.
      right shape for a round trip: drive and stall together, sample later. *)
 
   Example consumer_at_end_5  : cyc 5  3 = 0.  Proof. vm_compute. reflexivity. Qed.
-  Example producer_pinned_5  : cyc 5  2 = 1.  Proof. vm_compute. reflexivity. Qed.
-  Example producer_pinned_20 : cyc 20 2 = 4.  Proof. vm_compute. reflexivity. Qed.
-  Example producer_pinned_80 : cyc 80 2 = 16. Proof. vm_compute. reflexivity. Qed.
+  Example producer_pinned_5  : cyc 5  2 = 5.  Proof. vm_compute. reflexivity. Qed.
+  Example producer_pinned_20 : cyc 20 2 = 20.  Proof. vm_compute. reflexivity. Qed.
+  Example producer_pinned_80 : cyc 80 2 = 80. Proof. vm_compute. reflexivity. Qed.
 
   (* The argument rides with the stall rather than being separated from it. *)
   Example arg_rides_with_stall : cyc 80 1 = cyc 80 2.
@@ -183,7 +187,7 @@ Section RoundTrip.
   |}.
 
   Definition trip_cycles (L: nat) :=
-    calc_target_cycle climit (calc_backward_cost sl_ctx (trip L)).
+    calc_target_cycle climit (calc_backward_cost sl_ctx climit (trip L)).
 
   Definition tcyc (L: nat) (n: nid_t) : nat :=
     match BitsToLists.list_assoc (trip_cycles L) n with
@@ -200,9 +204,9 @@ Section RoundTrip.
      read was scheduled in the SAME cycle as the request's own operand
      (PortDriveSpike.v, [resp_used_same_cycle_as_request]).  There was no edge
      to order them.  Now there is one, and the separation is the declared
-     latency: drive at 4, sample at 0, i.e. L/climit = 20/5 cycles apart. *)
+     latency: drive at 20, sample at 0, i.e. exactly L cycles apart. *)
 
-  Example drive_is_early : tcyc 20 2 = 4.
+  Example drive_is_early : tcyc 20 2 = 20.
   Proof. vm_compute. reflexivity. Qed.
 
   Example sample_is_late : tcyc 20 4 = 0.
@@ -211,7 +215,7 @@ Section RoundTrip.
   (* Stated as the separation, so it does not depend on which way the axis
      runs: the drive and the sample are L/climit cycles apart, and 1.6's
      measurement was that the same two things were 0 cycles apart. *)
-  Example round_trip_separated : tcyc 20 2 - tcyc 20 4 = 4.
+  Example round_trip_separated : tcyc 20 2 - tcyc 20 4 = 20.
   Proof. vm_compute. reflexivity. Qed.
 
   (* And the token is held across the wait for one register, not L. *)
@@ -228,6 +232,82 @@ Section RoundTrip.
      of a host input and false of a crypto result.  A [DFG_Sample] is not a
      source, so it can be buffered and it has a defined sampling cycle; a plain
      [DFG_Input] still is one, which is correct for a host input. *)
+
+  (* ================================================================== *)
+  (* NO OFF-BY-ONE, AT ANY REMAINDER.                                   *)
+  (* ================================================================== *)
+
+  (* The worry: cycles come from [calc_target_cycle], which is integer
+     DIVISION by [climit], and integer division is not linear -- so a gap could
+     in principle round to L or L+1 depending on where the downstream cost
+     happens to fall relative to a [climit] boundary.
+
+     It cannot, and the reason is that [cost_fn] contributes an EXACT MULTIPLE
+     of [climit]:
+
+         (c + L*climit) / climit  =  c/climit + L     for every c
+
+     Adding a whole number of [climit]s shifts the quotient by exactly that
+     number, whatever the remainder of [c].  This is precisely why the latency
+     is declared in CYCLES and converted in [cost_fn], rather than declared in
+     cost units: a raw cost of L would give a gap of L/climit, which DOES round,
+     and for L < climit rounds to ZERO -- the sample landing in the same cycle
+     as the request, which is the stale-response hazard.
+
+     Measured rather than argued.  [trip_pad L m] is the round trip with [m]
+     unit-cost operations downstream of the sample, so the sample's own
+     accumulated cost is [m] and its remainder runs through every residue mod
+     [climit] = 5 as [m] goes 0..5. *)
+
+  Fixpoint not_chain (base m: nat)
+    : list (@dfg_node_t sl_states sl_inputs sl_outputs) :=
+    match m with
+    | 0 => []
+    | S m' => {| nid := base; op := DFG_Unary tf_not (base - 1); sz := w |}
+                :: not_chain (S base) m'
+    end.
+
+  Definition trip_pad (L m: nat) : dfg_state_t (states_var := sl_states)
+                                               (inputs_var := sl_inputs)
+                                               (outputs_var := sl_outputs) := {|
+    graph :=
+      [ {| nid := 0; op := DFG_Empty;            sz := 0 |}
+      ; {| nid := 1; op := DFG_Input in_x;       sz := w |}
+      ; {| nid := 2; op := DFG_Drive out_o 1;    sz := w |}
+      ; {| nid := 3; op := DFG_Stall L 2;        sz := w |}
+      ; {| nid := 4; op := DFG_Sample in_resp 3; sz := w |}
+      ] ++ not_chain 5 m;
+    var_map := [ (DFG_SVar st_acc, 4 + m) ]
+  |}.
+
+  Definition pcyc (L m n: nat) : nat :=
+    match BitsToLists.list_assoc
+            (calc_target_cycle climit (calc_backward_cost sl_ctx climit (trip_pad L m))) n with
+    | Some c => c | None => 999 end.
+
+  (* separation = drive cycle - sample cycle, which must be exactly L *)
+  Definition psep (L m: nat) : nat := pcyc L m 2 - pcyc L m 4.
+
+  (* every residue of the downstream cost mod climit=5 *)
+  Example sep_pad_r0 : psep 7 0 = 7. Proof. vm_compute. reflexivity. Qed.
+  Example sep_pad_r1 : psep 7 1 = 7. Proof. vm_compute. reflexivity. Qed.
+  Example sep_pad_r2 : psep 7 2 = 7. Proof. vm_compute. reflexivity. Qed.
+  Example sep_pad_r3 : psep 7 3 = 7. Proof. vm_compute. reflexivity. Qed.
+  Example sep_pad_r4 : psep 7 4 = 7. Proof. vm_compute. reflexivity. Qed.
+  Example sep_pad_r5 : psep 7 5 = 7. Proof. vm_compute. reflexivity. Qed.
+
+  (* and at latencies that straddle climit, including the ones a cost-unit
+     declaration would have rounded away to zero *)
+  Example sep_lat_1 : psep 1 3 = 1. Proof. vm_compute. reflexivity. Qed.
+  Example sep_lat_2 : psep 2 3 = 2. Proof. vm_compute. reflexivity. Qed.
+  Example sep_lat_4 : psep 4 3 = 4. Proof. vm_compute. reflexivity. Qed.
+  Example sep_lat_5 : psep 5 3 = 5. Proof. vm_compute. reflexivity. Qed.
+  Example sep_lat_6 : psep 6 3 = 6. Proof. vm_compute. reflexivity. Qed.
+
+  (* a zero-latency (combinational) IP puts the sample in the request's cycle;
+     kept as a regression because [tfs_spec_ip_lat] DEFAULTS to 0, so a call
+     whose response port was never declared silently gets this shape *)
+  Example sep_lat_0 : psep 0 3 = 0. Proof. vm_compute. reflexivity. Qed.
 
   Example sample_is_not_a_source : is_source sl_ctx (trip 20) 4 = false.
   Proof. vm_compute. reflexivity. Qed.

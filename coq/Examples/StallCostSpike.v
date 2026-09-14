@@ -84,6 +84,10 @@ Section Spike.
       tfs_spec_action := sc_action;   tfs_spec_action_fin := _;
       tfs_spec_action_ops := fun _ =>
         tf_ops_base (tf_output out_o (mulchain k (tf_ivar in_x)));
+      (* no attached IP: no call names a response port here *)
+      tfs_spec_ip_req := fun _ => None;
+      tfs_spec_ip_lat := fun _ => 0;
+      tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
       tfs_spec_decls := []
   |}.
 
