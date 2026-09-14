@@ -221,3 +221,142 @@ End CallSynthesis.
 Definition prog := Interop.Backends.register package.
 Set Extraction Output Directory "build".
 Extraction "Example_CallSpike.ml" prog.
+
+(* ===================================================================== *)
+(*  Two calls to the SAME IP in one action.                              *)
+(* ===================================================================== *)
+
+Section TwoCalls.
+
+  Inductive tc_states  := st_a | st_b.
+  Definition tc_states_size (_: tc_states) : nat := cw.
+  Definition tc_states_init (x: tc_states) : tf_states_type tc_states_size x :=
+    match x with st_a => Bits.zero | st_b => Bits.zero end.
+
+  (* two calls on the SAME req/resp pair, with INDEPENDENT arguments *)
+  Definition tc_ops : @tf_ops tc_states cs_inputs cs_outputs :=
+    tf_ops_cons
+      (tf_ops_base (tf_call out_req in_resp st_a (tf_ivar in_msg) cs_f))
+      (tf_ops_base (tf_call out_req in_resp st_b
+                      (tf_op1 tf_not (tf_ivar in_msg)) cs_f)).
+
+  Definition tc_ctx : TFSchedContext := {|
+      tfs_spec_states := tc_states;   tfs_spec_states_fin := _;
+      tfs_spec_states_size := tc_states_size;
+      tfs_spec_states_init := tc_states_init;
+      tfs_spec_inputs := cs_inputs;   tfs_spec_inputs_fin := _;
+      tfs_spec_inputs_size := cs_inputs_size;
+      tfs_spec_inputs_class := cs_in_class;
+      tfs_spec_outputs := cs_outputs; tfs_spec_outputs_fin := _;
+      tfs_spec_outputs_size := cs_outputs_size;
+      tfs_spec_outputs_class := cs_out_class;
+      tfs_spec_action := cs_action;   tfs_spec_action_fin := _;
+      tfs_spec_action_ops := fun _ => tc_ops;
+      tfs_spec_ip_req := fun i => match i with in_resp => Some out_req | _ => None end;
+      tfs_spec_ip_lat := fun i => match i with in_resp => clat | _ => 0 end;
+      tfs_spec_ip_secret := ltac:(intros i o H; destruct i; cbn in H;
+                                  [ discriminate | destruct o; split; reflexivity ]);
+      tfs_spec_decls := []
+  |}.
+
+  Definition tc_dfg := build_dfg tc_ctx act_call.
+  Definition tc_cycles :=
+    calc_target_cycle cclimit (calc_backward_cost tc_ctx cclimit tc_dfg).
+  Definition tcyc2 (n: nid_t) : nat :=
+    match BitsToLists.list_assoc tc_cycles n with Some c => c | None => 999 end.
+
+  (* BOTH calls drive the same port, so there are two drive nodes ... *)
+  Definition tc_drives := drive_nodes tc_ctx tc_dfg out_req.
+  Example two_drives : List.length tc_drives = 2.
+  Proof. vm_compute. reflexivity. Qed.
+
+  (* ... but the port appears ONCE in driven_ports, so ONE tf_output op is
+     emitted for it, folding both drives into one nested conditional. *)
+  Example one_driven_port : driven_ports tc_ctx tc_dfg = [out_req].
+  Proof. vm_compute. reflexivity. Qed.
+
+  (* Are the two drives in the SAME cycle?  If so they collide: the fold puts
+     the latest outermost, so the earlier request never reaches the wire. *)
+  Definition tc_d1 := List.nth 0 tc_drives 999.
+  Definition tc_d2 := List.nth 1 tc_drives 999.
+
+  Definition tc_samples :=
+    List.fold_left (fun acc nd => match op nd with
+                                  | DFG_Sample _ _ => nid nd :: acc
+                                  | _ => acc end) (graph tc_dfg) [].
+
+End TwoCalls.
+
+(* The complement: call 2s argument READS call 1s result, so there is a data
+   dependency between them.  Does the scheduler sequence them? *)
+Section TwoCallsChained.
+
+  Definition tc2_ops : @tf_ops tc_states cs_inputs cs_outputs :=
+    tf_ops_cons
+      (tf_ops_base (tf_call out_req in_resp st_a (tf_ivar in_msg) cs_f))
+      (tf_ops_base (tf_call out_req in_resp st_b (tf_svar st_a) cs_f)).
+
+  Definition tc2_ctx : TFSchedContext :=
+    {| tfs_spec_states := tc_states;   tfs_spec_states_fin := _;
+       tfs_spec_states_size := tc_states_size;
+       tfs_spec_states_init := tc_states_init;
+       tfs_spec_inputs := cs_inputs;   tfs_spec_inputs_fin := _;
+       tfs_spec_inputs_size := cs_inputs_size;
+       tfs_spec_inputs_class := cs_in_class;
+       tfs_spec_outputs := cs_outputs; tfs_spec_outputs_fin := _;
+       tfs_spec_outputs_size := cs_outputs_size;
+       tfs_spec_outputs_class := cs_out_class;
+       tfs_spec_action := cs_action;   tfs_spec_action_fin := _;
+       tfs_spec_action_ops := fun _ => tc2_ops;
+       tfs_spec_ip_req := fun i => match i with in_resp => Some out_req | _ => None end;
+       tfs_spec_ip_lat := fun i => match i with in_resp => clat | _ => 0 end;
+       tfs_spec_ip_secret := ltac:(intros i o H; destruct i; cbn in H;
+                                   [ discriminate | destruct o; split; reflexivity ]);
+       tfs_spec_decls := [] |}.
+
+  Definition tc2_dfg := build_dfg tc2_ctx act_call.
+  Definition tc2_cycles :=
+    calc_target_cycle cclimit (calc_backward_cost tc2_ctx cclimit tc2_dfg).
+  Definition tcyc3 (n: nid_t) : nat :=
+    match BitsToLists.list_assoc tc2_cycles n with Some c => c | None => 999 end.
+  Definition tc2_drives := drive_nodes tc2_ctx tc2_dfg out_req.
+  Definition tc2_samples :=
+    List.fold_left (fun acc nd => match op nd with
+                                  | DFG_Sample _ _ => nid nd :: acc
+                                  | _ => acc end) (graph tc2_dfg) [].
+
+End TwoCallsChained.
+
+(* ================================================================== *)
+(* TWO CALLS ON ONE IP: BROKEN WHEN INDEPENDENT, CORRECT WHEN CHAINED *)
+(* ================================================================== *)
+
+(* INDEPENDENT calls collide.  Both drives land in the SAME cycle, and
+   [compile_dfg_drives] folds them into ONE tf_output with the latest
+   outermost -- so the earlier request never reaches the wire.  Both samples
+   then read that wire in the same cycle, so both destinations receive the
+   answer to the LATER request.  One request sent, two identical results, no
+   diagnostic.  This is a miscompile and the surface language must reject it. *)
+Example independent_calls_collide_on_the_drive :
+  tcyc2 tc_d1 = tcyc2 tc_d2.
+Proof. vm_compute. reflexivity. Qed.
+
+Example independent_calls_collide_on_the_sample :
+  List.map tcyc2 tc_samples = [0; 0].
+Proof. vm_compute. reflexivity. Qed.
+
+(* CHAINED calls sequence correctly.  Call 2's argument reads call 1's result,
+   so the data dependency puts the drives clat apart and each round trip gets
+   its own cycles.  Validity is monotone, so the request wire carries e_1 until
+   drive 2 fires and e_2 thereafter -- which is the right waveform.
+
+   So the defect is NOT "the mechanism cannot do consecutive calls".  It is
+   specifically that nothing forces independent calls on one port to be
+   ordered. *)
+Example chained_calls_sequence :
+  List.map tcyc3 tc2_drives = [3; 6].
+Proof. vm_compute. reflexivity. Qed.
+
+Example chained_samples_sequence :
+  List.map tcyc3 tc2_samples = [0; 3].
+Proof. vm_compute. reflexivity. Qed.
