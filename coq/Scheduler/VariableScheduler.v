@@ -1192,6 +1192,21 @@ Section VariableScheduler.
                      end)
            (@finite_elements outputs_var outputs_var_fin).
 
+  (* The node that consumes [n] as its token -- the head of [n]'s delay chain.
+     Its validity is a ONE-CYCLE-DELAYED copy of [n]'s, because the chain head
+     sits in its own cycle bucket and is therefore buffered.  That delayed copy
+     is what turns a monotone validity into a rising edge, and so a hold into a
+     pulse.  [graph] is latest-first, so [find] returns the most recent
+     consumer; a drive has exactly one. *)
+  Definition chain_head (dfg: dfg_state) (n: nid_t) : option nid_t :=
+    match find (fun nd => match op nd with
+                          | DFG_Stall _ a => Nat.eqb a n
+                          | _ => false
+                          end) (graph dfg) with
+    | Some nd => Some (nid nd)
+    | None => None
+    end.
+
   (* A drive is emitted as an ALWAYS-op, unlike a [tf_output] from [var_map]
      which goes to the done half.  That is the whole point: the done half runs
      only on the action's final cycle, so a request emitted there reaches the IP
@@ -1227,8 +1242,25 @@ Section VariableScheduler.
                  (fold_right
                     (fun n acc =>
                        let '(e, v) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg n buffers in
-                       tf_expr_if v e acc)
-                    (tf_ovar o) (drive_nodes dfg o)))
+                       (* A PULSE: assert only on the cycle the drive's validity
+                          RISES.  [v] alone is monotone, so gating on it holds the
+                          port for the rest of the action; ANDing with the negated
+                          chain-head validity -- the same bit one cycle later --
+                          narrows that to exactly one cycle.
+                          The else-branch is 0 rather than [tf_ovar o], so the port
+                          returns low between requests.  That gives back-to-back
+                          calls a visible EDGE, which a held wire does not have,
+                          and hands the hold to the IP wrapper, which knows how
+                          long the payload is actually needed.  It is a deliberate
+                          reversal of Spike 2c's "port stability is structural":
+                          the obligation does not vanish, it moves to the wrapper. *)
+                       let vprev := match chain_head dfg n with
+                                    | Some h => snd (compile_dfg_expr_aux tainted dfacts []
+                                                       fuel a_idx' dfg h buffers)
+                                    | None => tf_const 0
+                                    end in
+                       tf_expr_if (tf_op2 tf_and v (tf_op1 tf_not vprev)) e acc)
+                    (tf_const 0) (drive_nodes dfg o)))
             (driven_ports dfg)
     end.
 
