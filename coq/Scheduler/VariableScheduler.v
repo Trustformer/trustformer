@@ -289,11 +289,28 @@ Section VariableScheduler.
          driven at the done cycle like any other output.  Making the request
          land EARLY -- a DFG_Drive feeding a DFG_Stall feeding a DFG_Sample --
          is the next rung, and it is this line that changes again. *)
+      (* THE ROUND TRIP, as a graph.
+
+         The request is a DRIVE, not a [set_var].  A [set_var] puts the port in
+         [var_map], and var_map writes are emitted into the DONE half -- the
+         action's final cycle -- so the IP would receive the request as the
+         action ends and no response could arrive inside the action.  A drive is
+         emitted as an always-op instead (see [compile_dfg_drives]), so the
+         request is on the wire DURING the action and held.
+
+         The stall hangs off the DRIVE, not off the payload, so the declared
+         latency is measured from the cycle the port is driven rather than from
+         whenever the argument happened to be computed.  The sample then hangs
+         off the stall, which is what gives the response read an edge back to
+         the request.  This is exactly the shape Spike 2b measured by hand:
+         in_x -> drive -> stall<L> -> sample. *)
       | tf_call req resp dst arg _ =>
         let! arg_id := dataflow_expr arg (dfg_var_size (DFG_OVar req)) in
-        let! _ := set_var (DFG_OVar req) arg_id in
-        let! res_id := dataflow_expr (tf_ivar resp) (dfg_var_size (DFG_SVar dst)) in
-        set_var (DFG_SVar dst) res_id
+        let! drive_id := emit (DFG_Drive req arg_id) (dfg_var_size (DFG_OVar req)) in
+        let! stall_id := emit (DFG_Stall (tfs_spec_ip_lat ctx resp) drive_id)
+                              (dfg_var_size (DFG_OVar req)) in
+        let! samp_id := emit (DFG_Sample resp stall_id) (dfg_var_size (DFG_SVar dst)) in
+        set_var (DFG_SVar dst) samp_id
       end
     | tf_ops_cons op1 op2 =>
       let! _ := dataflow_ops op1 in
@@ -1093,6 +1110,92 @@ Section VariableScheduler.
             end ) buffers
     end.
 
+  (* ==================================================================== *)
+  (* SPIKE 2c: mid-action port drives                                     *)
+  (* ==================================================================== *)
+
+  (* The nids of every [DFG_Drive] targeting [o], LATEST FIRST (the fold conses
+     and graph order is program order). *)
+  Definition drive_nodes (dfg: dfg_state) (o: outputs_var) : list nid_t :=
+    fold_left (fun acc nd =>
+                 match op nd with
+                 | DFG_Drive o' _ => if outputs_var_eq_dec.(eq_dec) o' o then nid nd :: acc else acc
+                 | _ => acc
+                 end) (graph dfg) [].
+
+  (* Is [o] written by an ordinary [tf_output], i.e. present in [var_map]? *)
+  Definition assigned_port (dfg: dfg_state) (o: outputs_var) : bool :=
+    existsb (fun '(k, _) => if dfg_vars_eq_dec.(eq_dec) k (DFG_OVar o) then true else false)
+            (var_map dfg).
+
+  (* The ports this action drives mid-action.
+
+     A port that is ALSO assigned by a [tf_output] is excluded, because the
+     always and done halves are concatenated for [tfs_ops_no_duplicates] and a
+     port in both would be written twice.  Excluding it here silently DROPS the
+     drive, which is wrong for a real module -- the surface language must reject
+     such an action instead.  That check belongs with [tf_call] and does not
+     exist yet.
+
+     A driven port must also be SECRET, and the proof obligation and the
+     security obligation coincide here.  Formally, [always_ops_no_out] ("no
+     always-op writes an output") is what [sched_step_preserves_ovar] consumes,
+     and drives falsify it; restricting drives to Secret ports weakens it to
+     PUBLIC outputs, which is Probe 1.7's shape.  Substantively, a Public port
+     that moves mid-action in a data-dependent way IS attacker-visible timing.
+     [tfs_spec_ip_secret] makes this unreachable for a declared IP, so the
+     filter is belt-and-braces rather than the only guard. *)
+  Definition driven_ports (dfg: dfg_state) : list outputs_var :=
+    filter (fun o => match drive_nodes dfg o with
+                     | [] => false
+                     | _ :: _ => andb (negb (assigned_port dfg o))
+                                      (match outputs_var_class o with
+                                       | Secret => true
+                                       | Public => false
+                                       end)
+                     end)
+           (@finite_elements outputs_var outputs_var_fin).
+
+  (* A drive is emitted as an ALWAYS-op, unlike a [tf_output] from [var_map]
+     which goes to the done half.  That is the whole point: the done half runs
+     only on the action's final cycle, so a request emitted there reaches the IP
+     as the action ends and no response can come back inside the action.
+
+     Two differences from [compile_dfg_buffers], and both matter:
+
+     - A buffer is recomputed unconditionally every cycle, because its value is
+       only ever read through its validity bit.  A PORT is read by hardware we
+       do not control, so it must never carry garbage: the drive HOLDS the old
+       value until its validity fires.  [tf_ovar o] reads the pre-cycle value,
+       so this is a latch, not a combinational loop.
+     - Validity is monotone, so once a drive fires the port keeps that value for
+       the rest of the action.  That turns "the trusted ports must stay stable
+       from the request to the response" (Examples/Mars.v:582) from a module
+       discipline into a property of the lowering.
+
+     Several drives to one port become ONE op with the latest outermost, so a
+     later request overrides an earlier one exactly when its validity arrives.
+     That is a defined meaning, not two sequenced round trips -- deciding
+     whether the surface should reject it is still open. *)
+  Definition compile_dfg_drives (a_idx: nat) (dfg: dfg_state)
+    (buffers: list (nid_t * (nat * sz_t)))
+    : list (@tf_op tf_dfg_states inputs_var outputs_var) :=
+    let tainted := get_tainted dfg in
+    let dfacts := decl_facts dfg in
+    let fuel := length (graph dfg) in
+    match index_of_nat (length buffer_needs) a_idx with
+    | None => []
+    | Some a_idx' =>
+        map (fun o =>
+               tf_output o
+                 (fold_right
+                    (fun n acc =>
+                       let '(e, v) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg n buffers in
+                       tf_expr_if v e acc)
+                    (tf_ovar o) (drive_nodes dfg o)))
+            (driven_ports dfg)
+    end.
+
   (* Fixpoint combine_pair_step (exprs : list expr_t) : list expr_t :=
     match exprs with
     | e1 :: e2 :: rest => (valid_expr_and e1 e2) :: combine_pair_step rest
@@ -1167,7 +1270,8 @@ Section VariableScheduler.
     let done_signal := compile_dfg_valid idx (nth idx dfgs {| graph := []; var_map := [] |}) (nth idx buffers []) in
     
     ( 
-      done_signal :: compile_dfg_buffers idx (nth idx dfgs {| graph := []; var_map := [] |}) (nth idx buffers []),
+      done_signal :: compile_dfg_buffers idx (nth idx dfgs {| graph := []; var_map := [] |}) (nth idx buffers [])
+                  ++ compile_dfg_drives idx (nth idx dfgs {| graph := []; var_map := [] |}) (nth idx buffers []),
       final_ops
     ).
 
@@ -1460,10 +1564,13 @@ Section VariableScheduler.
       + apply preserves_ret.
       + apply preserves_bind; [apply dataflow_expr_vm|]. intro x. apply set_var_vm.
       + apply preserves_bind; [apply dataflow_expr_vm|]. intro x. apply set_var_vm.
-      + (* a call is FOUR steps: payload, request write, response read, dest *)
+      + (* a call is FOUR steps: payload, drive, stall, sample, dest write --
+           and only the LAST touches var_map.  The request is no longer a
+           [set_var]: it is a drive, emitted into the always half. *)
         apply preserves_bind; [apply dataflow_expr_vm|]. intro x.
-        apply preserves_bind; [apply set_var_vm|]. intro y.
-        apply preserves_bind; [apply dataflow_expr_vm|]. intro z.
+        apply preserves_bind; [apply emit_vm|]. intro y.
+        apply preserves_bind; [apply emit_vm|]. intro z.
+        apply preserves_bind; [apply emit_vm|]. intro w.
         apply set_var_vm.
     - apply preserves_bind; [apply IHops1|]. intro x. apply IHops2.
     - intros s Hs.
@@ -1698,6 +1805,109 @@ Section VariableScheduler.
       destruct var as [sv|ov]; simpl in Hb; destruct Hb as [<-|[]]; reflexivity.
   Qed.
 
+  (* --- drive-op tags (SPIKE 2c, ported from P3) --- *)
+
+  (* [compile_dfg_drives] emits exactly ONE [tf_output o _] per driven port, so
+     its tag list is literally [map OutOp (driven_ports DFG)].  Stating it as an
+     equation rather than an [In] characterisation is what makes the membership
+     and NoDup lemmas one-liners; the emission was written as
+     [map (fun o => tf_output o _) (driven_ports dfg)] precisely so this rewrite
+     exists. *)
+  Lemma drives_tags_eq (idx: nat) (DFG: dfg_state)
+        (BUF: list (nid_t * (nat * sz_t))):
+    flat_map OPTAG (compile_dfg_drives idx DFG BUF)
+    = match index_of_nat (length buffer_needs) idx with
+      | None => []
+      | Some _ => map OutOp (driven_ports DFG)
+      end.
+  Proof.
+    unfold compile_dfg_drives.
+    destruct (index_of_nat (length buffer_needs) idx) as [a'|]; [| reflexivity].
+    rewrite flat_map_map.
+    induction (driven_ports DFG) as [|o l IH]; simpl;
+      [reflexivity | rewrite IH; reflexivity].
+  Qed.
+
+  Lemma drives_tags_in (idx: nat) (DFG: dfg_state)
+        (BUF: list (nid_t * (nat * sz_t))) t:
+    In t (flat_map OPTAG (compile_dfg_drives idx DFG BUF)) ->
+    exists o, t = OutOp o /\ In o (driven_ports DFG).
+  Proof.
+    rewrite drives_tags_eq.
+    destruct (index_of_nat (length buffer_needs) idx) as [a'|]; [| intros []].
+    intro Hin. apply in_map_iff in Hin. destruct Hin as [o [<- Ho]].
+    exists o. split; [reflexivity | exact Ho].
+  Qed.
+
+  Lemma NoDup_map_OutOp (l: list outputs_var):
+    NoDup l -> NoDup (map (@OutOp tf_dfg_states outputs_var) l).
+  Proof.
+    induction 1 as [|x l Hx Hnd IH]; simpl; constructor; [| exact IH].
+    intro Hin. apply in_map_iff in Hin. destruct Hin as [y [Heq Hy]].
+    injection Heq as ->. contradiction.
+  Qed.
+
+  (* No hypothesis needed: [driven_ports] filters [finite_elements], which is
+     NoDup by construction.  Contrast [final_tags_nodup], which must assume
+     [var_map] is duplicate-free. *)
+  Lemma drives_tags_nodup (idx: nat) (DFG: dfg_state)
+        (BUF: list (nid_t * (nat * sz_t))):
+    NoDup (flat_map OPTAG (compile_dfg_drives idx DFG BUF)).
+  Proof.
+    rewrite drives_tags_eq.
+    destruct (index_of_nat (length buffer_needs) idx) as [a'|]; [| constructor].
+    apply NoDup_map_OutOp. unfold driven_ports.
+    apply NoDup_filter. apply finite_nodup.
+  Qed.
+
+  (* The separation that makes the three-way concatenation work: a driven port
+     is never in [var_map], because [driven_ports] filters on
+     [negb (assigned_port ...)].  This is the NoDup obligation ENFORCING "a port
+     is either driven mid-action or assigned at done, never both". *)
+  Lemma driven_port_not_assigned (DFG: dfg_state) (o: outputs_var):
+    In o (driven_ports DFG) -> ~ In (DFG_OVar o) (map fst (var_map DFG)).
+  Proof.
+    unfold driven_ports. intro Hin.
+    apply filter_In in Hin. destruct Hin as [_ Hp].
+    destruct (drive_nodes DFG o) as [|n ns]; [discriminate Hp|].
+    apply andb_prop in Hp. destruct Hp as [Hna _].
+    apply negb_true_iff in Hna. unfold assigned_port in Hna.
+    intro Hvm. apply in_map_iff in Hvm.
+    destruct Hvm as [[k v] [Hk Hkv]]. simpl in Hk. subst k.
+    assert (Hex: existsb (fun '(k, _) =>
+                  if dfg_vars_eq_dec.(eq_dec) k (DFG_OVar o) then true else false)
+                 (var_map DFG) = true).
+    { apply existsb_exists. exists (DFG_OVar o, v). split; [exact Hkv|].
+      destruct (dfg_vars_eq_dec.(eq_dec) (DFG_OVar o) (DFG_OVar o));
+        [reflexivity | congruence]. }
+    rewrite Hex in Hna. discriminate Hna.
+  Qed.
+
+  (* [final_tags_in] STRENGTHENED to carry var_map membership.  The original
+     says only "t is a StOp of a state var, or an OutOp of something"; that does
+     not separate a final op's OutOp tag from a DRIVE's, since both are OutOps.
+     Carrying [In (DFG_OVar ov) (map fst (var_map DFG))] is exactly what
+     [driven_port_not_assigned] refutes. *)
+  Lemma final_tags_in_strong (idx: nat) (DFG: dfg_state)
+        (BUF: list (nid_t * (nat * sz_t))) t:
+    In t (flat_map OPTAG (compile_dfg_aux idx DFG BUF)) ->
+    (exists sv, t = StOp (tf_dfg_s sv))
+    \/ (exists ov, t = OutOp ov /\ In (DFG_OVar ov) (map fst (var_map DFG))).
+  Proof.
+    intro Hin. apply in_flat_map in Hin. destruct Hin as [op [Hop Ht]].
+    unfold compile_dfg_aux in Hop.
+    destruct (index_of_nat (length buffer_needs) idx) as [a'|]; [| destruct Hop].
+    apply in_map_iff in Hop. destruct Hop as [[var nid] [Heq Hvm]].
+    match goal with
+    | Heq : (let '(_, _) := ?E in _) = op |- _ =>
+        destruct E as [expr valid]
+    end.
+    destruct var as [sv|ov]; subst op; simpl in Ht.
+    - destruct Ht as [<-|[]]. left. exists sv. reflexivity.
+    - destruct Ht as [<-|[]]. right. exists ov. split; [reflexivity|].
+      apply in_map_iff. exists (DFG_OVar ov, nid). split; [reflexivity | exact Hvm].
+  Qed.
+
   (* --- assembly --- *)
 
   Lemma schedule_no_dup_aux (idx: nat) (DFG: dfg_state)
@@ -1705,26 +1915,44 @@ Section VariableScheduler.
     NoDup (map fst (var_map DFG)) ->
     NoDup (map (fun '(_, x) => fst x) BUF) ->
     NoDup (flat_map OPTAG
-      ((compile_dfg_valid idx DFG BUF :: compile_dfg_buffers idx DFG BUF)
+      ((compile_dfg_valid idx DFG BUF :: compile_dfg_buffers idx DFG BUF
+        ++ compile_dfg_drives idx DFG BUF)
        ++ compile_dfg_aux idx DFG BUF)).
   Proof.
     intros HDFG HBUF.
-    assert (Hval: flat_map OPTAG
-        (compile_dfg_valid idx DFG BUF :: compile_dfg_buffers idx DFG BUF)
-      = StOp tf_dfg_done :: flat_map OPTAG (compile_dfg_buffers idx DFG BUF)).
-    { unfold compile_dfg_valid. reflexivity. }
+    assert (Hval: forall L, flat_map OPTAG (compile_dfg_valid idx DFG BUF :: L)
+      = StOp tf_dfg_done :: flat_map OPTAG L).
+    { intro L. unfold compile_dfg_valid. reflexivity. }
     rewrite flat_map_app, Hval, <- app_comm_cons.
     apply NoDup_cons.
-    - rewrite in_app_iff. intros [Hb|Hf].
-      + apply buffers_tags_in in Hb. destruct Hb as [a' [n' [Hb|Hb]]]; discriminate Hb.
+    - rewrite in_app_iff. intros [Hbd|Hf].
+      + (* the always half: buffers give StOp, drives give OutOp *)
+        rewrite flat_map_app, in_app_iff in Hbd. destruct Hbd as [Hb|Hd].
+        * apply buffers_tags_in in Hb. destruct Hb as [a' [n' [Hb|Hb]]]; discriminate Hb.
+        * apply drives_tags_in in Hd. destruct Hd as [o [Ho _]]; discriminate Ho.
       + apply final_tags_in in Hf. destruct Hf as [[sv Hf]|[ov Hf]]; discriminate Hf.
     - apply NoDup_app.
-      + apply buffers_tags_nodup. exact HBUF.
+      + (* NoDup within the always half *)
+        rewrite flat_map_app. apply NoDup_app.
+        * apply buffers_tags_nodup. exact HBUF.
+        * apply drives_tags_nodup.
+        * intros x Hb Hd.
+          apply buffers_tags_in in Hb. apply drives_tags_in in Hd.
+          destruct Hb as [a' [n' [-> | ->]]]; destruct Hd as [o [Ho _]]; discriminate Ho.
       + apply final_tags_nodup. exact HDFG.
-      + intros x Hxb Hxf.
-        apply buffers_tags_in in Hxb. apply final_tags_in in Hxf.
-        destruct Hxb as [a' [n' [-> | ->]]];
-          destruct Hxf as [[sv Hs]|[ov Ho]]; discriminate.
+      + (* the always half is disjoint from the done half *)
+        intros x Hx Hxf. rewrite flat_map_app, in_app_iff in Hx.
+        destruct Hx as [Hxb|Hxd].
+        * apply buffers_tags_in in Hxb. apply final_tags_in in Hxf.
+          destruct Hxb as [a' [n' [-> | ->]]];
+            destruct Hxf as [[sv Hs]|[ov Ho]]; discriminate.
+        * (* the interesting case: BOTH tags are OutOps, and only the
+             driven/assigned exclusion separates them *)
+          apply drives_tags_in in Hxd. apply final_tags_in_strong in Hxf.
+          destruct Hxd as [o [-> Hdrv]].
+          destruct Hxf as [[sv Hs]|[ov [Hov Hvm]]]; [discriminate Hs|].
+          injection Hov as ->.
+          exact (driven_port_not_assigned DFG ov Hdrv Hvm).
   Qed.
 
 
