@@ -156,3 +156,68 @@ Section CallSpike.
   Proof. vm_compute. reflexivity. Qed.
 
 End CallSpike.
+
+(* ===================================================================== *)
+(*  End-to-end: through TypedSynthesis and out to Verilog.               *)
+(* ===================================================================== *)
+(*
+    The point of extracting this one is to READ THE GENERATED HARDWARE.  Every
+    claim about the drive so far is Coq-level, and this project's record is that
+    both of the archive's design bugs were timing bugs invisible in Coq.
+
+    What to look for in build/Example_CallSpike.v:
+
+      - out_req is assigned from ALWAYS logic, not only under the done gate;
+      - its else-branch reads the port's own previous value, i.e. it HOLDS;
+      - it has exactly one driver (scripts/check-drivers.sh);
+      - in_resp is read LIVE, not out of the action-start input latch.
+*)
+
+Require Import Trustformer.TypedSynthesis.
+
+Section CallSynthesis.
+
+  Definition cs_action_encoding (a: cs_action) : bits_t 16 :=
+    match a with act_call => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~1 end.
+
+  Lemma cs_action_encoding_inj :
+    forall a1 a2, cs_action_encoding a1 = cs_action_encoding a2 -> a1 = a2.
+  Proof. intros a1 a2 _. destruct a1; destruct a2; reflexivity. Qed.
+
+  Definition cs_schedule := tfs_schedule cs_ctx cclimit.
+
+  Definition cs_tf_ctx : TFSynthContext := {|
+    tf_sched_ctx := cs_schedule;
+    tf_action_encoding := cs_action_encoding;
+    tf_action_encoding_inj := cs_action_encoding_inj;
+  |}.
+
+  Definition R := TypedSynthesis.R cs_tf_ctx.
+  Definition r := TypedSynthesis.r cs_tf_ctx.
+  Definition Sigma := TypedSynthesis.Sigma cs_tf_ctx.
+  Definition system_schedule := TypedSynthesis.system_schedule cs_tf_ctx.
+  Definition ext_fn_specs := TypedSynthesis.ext_fn_specs cs_tf_ctx.
+  Instance ext_fn_names : Show _ := TypedSynthesis.ext_fn_names cs_tf_ctx.
+
+  Definition package :=
+    {| ip_koika := {| koika_reg_types := R;
+                      koika_reg_names := TypedSynthesis.reg_names cs_tf_ctx;
+                      koika_reg_init := r;
+                      koika_reg_finite := TypedSynthesis._reg_t_finite cs_tf_ctx;
+                      koika_ext_fn_types := Sigma;
+                      koika_rules := TypedSynthesis.rules cs_tf_ctx;
+                      koika_rule_names := TypedSynthesis.rule_names cs_tf_ctx;
+                      koika_rule_external := (fun _ => false);
+                      koika_scheduler := system_schedule;
+                      koika_module_name := "Example_CallSpike" |};
+
+    ip_sim := {| sp_ext_fn_specs fn := {| efs_name := show fn; efs_method := false |};
+                sp_prelude := None |};
+
+    ip_verilog := {| vp_ext_fn_specs := ext_fn_specs |} |}.
+
+End CallSynthesis.
+
+Definition prog := Interop.Backends.register package.
+Set Extraction Output Directory "build".
+Extraction "Example_CallSpike.ml" prog.

@@ -308,18 +308,6 @@ Section TypedSynthesis.
       | ext_output x => {$ spec_outputs_t x ~> bits_t 1 $}
       end.
 
-    (* Port names carry the DECLARED confidentiality class.
-
-       The class is composed in here rather than typed into the variable's own
-       name on purpose: a hand-written prefix can disagree with
-       [tfs_spec_*_class] and nothing would catch it, whereas a generated one
-       cannot.  A reader of the netlist -- or a wrapper generator deciding what
-       may be memory-mapped -- can then see the classification without a sidecar
-       file, and users stay free to name their variables whatever they like.
-
-       The tag is emitted unconditionally, including for an all-[Public] module:
-       an optional tag would make "nothing declared" and "everything public"
-       indistinguishable from the name. *)
     Definition port_name (prefix: string) (c: port_class) (n: string) : string :=
       String.append prefix
         (String.append (class_tag c) (String.append "_" n)).
@@ -378,6 +366,10 @@ Section TypedSynthesis.
       | right n => (Unop (PrimTyped.Bits1 (PrimTyped.Slice in_var_size 0 out_var_size)) code)
       end.
 
+    Program Definition live_input {sig} (r : spec_inputs)
+      : action sig (spec_inputs_t r) :=
+      ExternalCall (ext_input r) (Const (tau:=bits_t 1) Ob~1).
+
     Fixpoint expr_to_action {sig} (e: tf_expr) (target_size: nat) 
       : action sig (bits_t target_size) :=
       match e with
@@ -389,7 +381,9 @@ Section TypedSynthesis.
           synth_convert target_size act
           
       | tf_ivar v =>
-          let act := Read P1 (tf_in v) in
+          let act := if tfs_inputs_is_resp (tf_sched_ctx tf_ctx) v
+                     then live_input v
+                     else Read P1 (tf_in v) in
           synth_convert target_size act
           
       | tf_ovar v =>
@@ -445,8 +439,7 @@ Section TypedSynthesis.
                 | tf_gt => synth_convert target_size (in_var_size:=1) (Binop (PrimTyped.Bits2 (PrimTyped.Compare false cGt cmp_sz)) s1 s2)
                 | tf_ge => synth_convert target_size (in_var_size:=1) (Binop (PrimTyped.Bits2 (PrimTyped.Compare false cGe cmp_sz)) s1 s2)
               end
-          (* SPIKE: Koika's [Concat sz1 sz2 : sz1 ~> sz2 ~> (sz2 + sz1)] matches
-             [Bits.app] in the semantics, so the result width is [lo + hi]. *)
+
           | tf_concat hi_sz lo_sz =>
               let s1 := expr_to_action src1 hi_sz in
               let s2 := expr_to_action src2 lo_sz in
@@ -468,9 +461,6 @@ Section TypedSynthesis.
           Seq (Write P0 (tf_reg x) (expr_to_action expr (spec_states_size x))) code
       | tf_output x expr => 
           Seq (Write P0 (tf_out x) (expr_to_action expr (spec_outputs_size x))) code
-      (* A call emits BOTH writes, mirroring Semantics.v and VariableScheduler.v:
-         the request payload onto [req], and the destination from the RESPONSE
-         port. *)
       | tf_call req resp x arg _ =>
           Seq (Write P0 (tf_out req) (expr_to_action arg (spec_outputs_size req)))
             (Seq (Write P0 (tf_reg x) (expr_to_action (tf_ivar resp) (spec_states_size x))) code)
@@ -540,7 +530,19 @@ Section TypedSynthesis.
           
           Seq (Guard valid_bit) (
             Seq (Guard (Binop (PrimTyped.Bits2 (PrimTyped.EqBits spec_action_reg_size false)) data_val (Const cmd_enc))) (
+              (* Every input is still LATCHED here, response ports included, and
+                 that is deliberate.  The latch is what an ordinary [tf_ivar]
+                 read consumes; a response port's read bypasses it (see
+                 [expr_to_action]), so its latch entry is simply never read.
+                 Filtering it out would save one register and one sample per
+                 response port and change NOTHING else -- both reads denote
+                 [input v], so no proof can tell them apart -- and it would cost
+                 ~15 edits across the [interp_action_buffer_inputs] /
+                 [may_write_fold_cons_w0_inputs] family, which is stated over
+                 [spec_all_inputs] throughout.  Left as an optimisation, not a
+                 correctness matter. *)
               rule_buffer_inputs spec_all_inputs (
+
                 Seq (Write P0 tf_cmd (Const cmd_enc)) (
                   Write P0 tf_ready (Const (tau:=bits_t 1) Ob~0)
                 )
