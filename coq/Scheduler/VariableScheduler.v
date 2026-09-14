@@ -101,6 +101,43 @@ Section VariableScheduler.
     let! _ := put_state ({| graph := new_node :: graph s; var_map := var_map s |}) in
     ret next_id.
 
+  (* A WAIT THAT ACTUALLY WAITS.
+
+     A single [DFG_Stall lat] does not delay anything in hardware: it compiles to
+     its argument verbatim (see [compile_dfg_expr_aux]), so its validity fires
+     the moment its argument's does.  All it ever did was declare a COST, which
+     moves nodes between cycle buckets and therefore changes buffering -- and a
+     held value costs ONE buffer however long the declared wait (Spike 1), so
+     even that bought at most a single cycle.
+
+     What produces real waiting is a chain of nodes each costing one cycle: the
+     scheduler puts each in its own cycle bucket, [require_buffer] gives each its
+     own buffer, and a buffer's valid bit is assigned from its input's validity
+     once per cycle.  So validity lags by exactly one cycle per hop, and [lat]
+     hops lag by [lat] cycles.  Spike 1 measured precisely this shape --
+     [chain_1]/[chain_4]/[chain_16] give 1/4/16 buffers.
+
+     The chain is WIDTH 1, and that is what makes it cheap.  The archive's
+     [emit_delay_chain] was rejected because it chained [lat] nodes at the
+     ARGUMENT width -- INSIGHTS #1's (L+2)x256 for a crypto payload.  Here the
+     chain carries no data at all: a [DFG_Sample] uses only its token's
+     VALIDITY and discards the token's value, so one bit per hop suffices.  The
+     payload itself still rides in the single buffer Spike 1 measured.  For a
+     256-bit request at lat 20 that is 256 + 2x20 bits, against the archive's
+     20x256.
+
+     Chosen over a counter (INSIGHTS #1's suggestion) because in these constructs
+     a counter needs a width, an adder, a comparator against a constant, a
+     saturating conditional and the width-conversion dance, plus an invariant
+     relating count to elapsed cycles -- where a chain needs none of it and
+     reuses the buffer machinery unchanged.  The cost difference is a handful of
+     flops at these widths. *)
+  Fixpoint stall_chain (n: nat) (id: nid_t) : M nid_t :=
+    match n with
+    | 0 => ret id
+    | S n' => let! id' := emit (DFG_Stall 1 id) 1 in stall_chain n' id'
+    end.
+
   (* --- Variable & Output Management --- *)
 
   Definition ensure_var (dfg_v: dfg_vars) : M nid_t :=
@@ -307,8 +344,7 @@ Section VariableScheduler.
       | tf_call req resp dst arg _ =>
         let! arg_id := dataflow_expr arg (dfg_var_size (DFG_OVar req)) in
         let! drive_id := emit (DFG_Drive req arg_id) (dfg_var_size (DFG_OVar req)) in
-        let! stall_id := emit (DFG_Stall (tfs_spec_ip_lat ctx resp) drive_id)
-                              (dfg_var_size (DFG_OVar req)) in
+        let! stall_id := stall_chain (tfs_spec_ip_lat ctx resp) drive_id in
         let! samp_id := emit (DFG_Sample resp stall_id) (dfg_var_size (DFG_SVar dst)) in
         set_var (DFG_SVar dst) samp_id
       end
@@ -1556,6 +1592,14 @@ Section VariableScheduler.
         * apply IH; exact Hnd.
   Qed.
 
+  (* The delay chain is [emit]s all the way down, so it never touches var_map. *)
+  Lemma stall_chain_vm: forall n id, preserves vm_nd (stall_chain n id).
+  Proof.
+    induction n as [|n IH]; intro id; cbn [stall_chain].
+    - apply preserves_ret.
+    - apply preserves_bind; [apply emit_vm|]. intro x. apply IH.
+  Qed.
+
   Lemma dataflow_ops_vm: forall ops, preserves vm_nd (dataflow_ops ops).
   Proof.
     induction ops as [bop | o1 IHops1 o2 IHops2 | oc ot IHops1 oe IHops2];
@@ -1569,7 +1613,7 @@ Section VariableScheduler.
            [set_var]: it is a drive, emitted into the always half. *)
         apply preserves_bind; [apply dataflow_expr_vm|]. intro x.
         apply preserves_bind; [apply emit_vm|]. intro y.
-        apply preserves_bind; [apply emit_vm|]. intro z.
+        apply preserves_bind; [apply stall_chain_vm|]. intro z.
         apply preserves_bind; [apply emit_vm|]. intro w.
         apply set_var_vm.
     - apply preserves_bind; [apply IHops1|]. intro x. apply IHops2.
