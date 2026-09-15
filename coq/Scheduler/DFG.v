@@ -45,8 +45,15 @@ Section SchedulerTypes.
        [cost_fn] does not see [cost_limit]; the real design wants cycles, which
        is the ~27-site ripple INSIGHTS #13 describes and absorbs. *)
     | DFG_Stall (lat: nat) (arg: nid_t)
-    (* A round trip: drive the request, stall, sample the answer. *)
-    | DFG_Drive (p: ips_var) (arg: nid_t)
+    (* A round trip: drive the request, stall, sample the answer.
+
+       [en] is the path condition the call sits under, as a conjunction of
+       branch literals -- [] at the top of an action.  SYMBOLIC, not a node: a
+       guard that materialised its own AND/NOT nodes would change the graph of
+       every design with an [if], call or no call.  A drive is a conditional
+       SIDE EFFECT: unlike an assignment it has no [var_map] entry, so the phi
+       merge that makes branch writes conditional never reaches it. *)
+    | DFG_Drive (p: ips_var) (arg: nid_t) (en: list (nid_t * bool))
     | DFG_Sample (p: ips_var) (tok: nid_t)
     | DFG_Empty                
     .

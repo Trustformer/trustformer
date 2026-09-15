@@ -161,7 +161,7 @@ Section Rendering.
         | DFG_Phi c t e =>
             "(" +++ show_node_aux dfg d c +++ " ? " +++ show_node_aux dfg d t
                 +++ " : " +++ show_node_aux dfg d e +++ ")"
-        | DFG_Drive v a => "drive[" +++ show v +++ "](" +++ show_node_aux dfg d a +++ ")"
+        | DFG_Drive v a _ => "drive[" +++ show v +++ "](" +++ show_node_aux dfg d a +++ ")"
         | DFG_Sample v t => "sample[" +++ show v +++ "](" +++ show_node_aux dfg d t +++ ")"
         | DFG_Stall l a => "stall<" +++ show l +++ ">(" +++ show_node_aux dfg d a +++ ")"
         | DFG_Empty => "<empty>"
@@ -247,7 +247,7 @@ Section Rendering.
     | DFG_Binary o _ _ => show_binop o
     | DFG_Phi _ _ _ => "phi"
     | DFG_Stall _ _ => "stall"
-    | DFG_Drive _ _ => "drive"
+    | DFG_Drive _ _ _ => "drive"
     | DFG_Sample _ _ => "sample"
     | DFG_Empty => "empty"
     end.
@@ -263,7 +263,7 @@ Section Rendering.
     | DFG_Phi c t e =>
         [dot_edge (nid nd) "c" c; dot_edge (nid nd) "t" t; dot_edge (nid nd) "e" e]
     | DFG_Stall _ a => [dot_edge (nid nd) "" a]
-    | DFG_Drive _ a => [dot_edge (nid nd) "" a]
+    | DFG_Drive _ a _ => [dot_edge (nid nd) "" a]
     | DFG_Sample _ t => [dot_edge (nid nd) "" t]
     | _ => []
     end.

@@ -331,7 +331,10 @@ Section VariableScheduler.
 
   (* --- Operations Compiler --- *)
 
-  Fixpoint dataflow_ops (ops : tf_ops) : M unit :=
+  (* [en] is the path condition every drive in [ops] fires under: a conjunction
+     of branch literals, [] at the top of an action.  Only a DRIVE needs it --
+     an assignment is made conditional by the phi that [merge_maps] builds. *)
+  Fixpoint dataflow_ops (en : list (nid_t * bool)) (ops : tf_ops) : M unit :=
     match ops with
     | tf_ops_base op =>
       match op with
@@ -370,7 +373,7 @@ Section VariableScheduler.
       | tf_call ip dst arg =>
         let! s0 := get_state in
         let! arg_id := dataflow_expr arg (ip_req_sz (ip_of ip)) in
-        let! drive_id := emit (DFG_Drive ip arg_id) (ip_req_sz (ip_of ip)) in
+        let! drive_id := emit (DFG_Drive ip arg_id en) (ip_req_sz (ip_of ip)) in
         (* SEQUENCING.  If an earlier call in this action already used this IP,
            hang the delay chain off a JOIN of this drive and that call's sample
            rather than off the drive alone.  A DFG_Binary's validity is the AND
@@ -391,15 +394,15 @@ Section VariableScheduler.
         set_var (DFG_SVar dst) samp_id
       end
     | tf_ops_cons op1 op2 =>
-      let! _ := dataflow_ops op1 in
-      dataflow_ops op2
+      let! _ := dataflow_ops en op1 in
+      dataflow_ops en op2
     | tf_ops_if cond then_ops else_ops =>
       let! cond_id := dataflow_expr cond 1 in
       
       let! s_orig := get_state in
       
       (* Then Branch *)
-      let! _ := dataflow_ops then_ops in
+      let! _ := dataflow_ops ((cond_id, true) :: en) then_ops in
       let! s_then := get_state in
       
       (* Restore maps *)
@@ -409,7 +412,7 @@ Section VariableScheduler.
       |}) in
       
       (* Else Branch *)
-      let! _ := dataflow_ops else_ops in
+      let! _ := dataflow_ops ((cond_id, false) :: en) else_ops in
       let! s_else := get_state in
       
       (* Merge Maps *)
@@ -429,7 +432,7 @@ Section VariableScheduler.
   Definition build_dfg (action : spec_action) : dfg_state :=
     let ops := spec_action_ops action in
     let empty_state := {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |} in
-    let (_, final_state) := dataflow_ops ops empty_state in
+    let (_, final_state) := dataflow_ops [] ops empty_state in
     {| graph := rev (graph final_state); var_map := var_map final_state |}.
 
   Definition get_args (node: dfg_node) : list nid_t :=
@@ -442,7 +445,7 @@ Section VariableScheduler.
     | DFG_Resize arg => [arg]
     | DFG_Phi cond then_id else_id => [cond; then_id; else_id]
     | DFG_Stall _ arg => [arg]
-    | DFG_Drive _ arg => [arg]
+    | DFG_Drive _ arg en => arg :: map fst en
     | DFG_Sample _ tok => [tok]
     | DFG_Empty => []
     end.
@@ -488,7 +491,7 @@ Section VariableScheduler.
        [sep_lat_0..6]. *)
     | DFG_Stall lat _ => lat * cost_limit
     (* SPIKE 2b: a drive and a sample are wiring, not logic. *)
-    | DFG_Drive _ _ => 0
+    | DFG_Drive _ _ _ => 0
     | DFG_Sample _ _ => 0
     | DFG_Empty => 0
     end.
@@ -955,7 +958,7 @@ Section VariableScheduler.
             (* Explicit, not falling through to [_]: the archive's DEBT-3 was a
                silently under-reporting diagnostic caused by exactly that. *)
             | DFG_Stall _ a => crit_report_aux dfg tainted dfacts pi fuel' a bufs
-            | DFG_Drive _ a => crit_report_aux dfg tainted dfacts pi fuel' a bufs
+            | DFG_Drive _ a _ => crit_report_aux dfg tainted dfacts pi fuel' a bufs
             | DFG_Sample _ t => crit_report_aux dfg tainted dfacts pi fuel' t bufs
             | _ => []
             end
@@ -1042,7 +1045,7 @@ Section VariableScheduler.
         | DFG_Stall _ a =>
             let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel' a in
             (wbump here l, wbump here u)
-        | DFG_Drive _ a =>
+        | DFG_Drive _ a _ =>
             let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel' a in
             (wbump here l, wbump here u)
         | DFG_Sample _ t =>
@@ -1151,7 +1154,7 @@ Section VariableScheduler.
              its way to the port.  A SAMPLE is the interesting one: its VALUE is
              the port, but its VALIDITY is the token's, so value and validity
              decouple exactly where the round trip needs them to. *)
-          | DFG_Drive _ arg1 =>
+          | DFG_Drive _ arg1 _ =>
               compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers
           | DFG_Sample p tok =>
               let '(_, tok_val) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg tok buffers in
@@ -1224,7 +1227,7 @@ Section VariableScheduler.
   Definition drive_nodes (dfg: dfg_state) (p: ips_var) : list nid_t :=
     fold_left (fun acc nd =>
                  match op nd with
-                 | DFG_Drive p' _ => if ips_var_eq_dec.(eq_dec) p' p then nid nd :: acc else acc
+                 | DFG_Drive p' _ _ => if ips_var_eq_dec.(eq_dec) p' p then nid nd :: acc else acc
                  | _ => acc
                  end) (graph dfg) [].
 
@@ -1299,6 +1302,17 @@ Section VariableScheduler.
      later request overrides an earlier one exactly when its validity arrives.
      That is a defined meaning, not two sequenced round trips -- deciding
      whether the surface should reject it is still open. *)
+  (* The path condition as an expression: each literal is the branch value,
+     negated when the else side was taken.  An empty guard is [1], so a call
+     at the top of an action compiles exactly as it did before. *)
+  Definition guard_expr (tainted: list nid_t) (dfacts: list gfact) (fuel: nat)
+    (a_idx: Vect.index (length buffer_needs)) (dfg: dfg_state)
+    (buffers: list (nid_t * (nat * sz_t))) (en: list (nid_t * bool)) : expr_t :=
+    fold_right (fun (l : nid_t * bool) (acc : expr_t) =>
+      let v := fst (compile_dfg_expr_aux tainted dfacts [] fuel a_idx dfg (fst l) buffers) in
+      let lv := if snd l then v else tf_op1 tf_not v in
+      tf_op2 tf_and lv acc) (tf_const 1) en.
+
   Definition compile_dfg_drives (a_idx: nat) (dfg: dfg_state)
     (buffers: list (nid_t * (nat * sz_t)))
     : list (@tf_op tf_dfg_states (inputs_var + ips_var) outputs_var Empty_set) :=
@@ -1327,6 +1341,14 @@ Section VariableScheduler.
                     (fold_right
                        (fun n acc =>
                           let '(_, v) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg n buffers in
+                          (* the path condition the call sits under: a drive in
+                             an untaken branch must not reach the wire *)
+                          let en_val :=
+                            match op (nth n (graph dfg)
+                                        {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+                            | DFG_Drive _ _ en => guard_expr tainted dfacts fuel a_idx' dfg buffers en
+                            | _ => tf_const 1
+                            end in
                           let '(vgate, vprev) :=
                             match chain_gate dfg n with
                             | Some (g, h) =>
@@ -1334,11 +1356,20 @@ Section VariableScheduler.
                                  snd (compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg h buffers))
                             | None => (v, tf_const 0)
                             end in
-                          tf_expr_if (tf_op2 tf_and vgate (tf_op1 tf_not vprev)) (tf_const 1) acc)
+                          tf_expr_if (tf_op2 tf_and en_val (tf_op2 tf_and vgate (tf_op1 tf_not vprev)))
+                            (tf_const 1) acc)
                        (tf_const 0) (drive_nodes dfg p))
                     (fold_right
                        (fun n acc =>
                           let '(e, v) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg n buffers in
+                          (* the path condition the call sits under: a drive in
+                             an untaken branch must not reach the wire *)
+                          let en_val :=
+                            match op (nth n (graph dfg)
+                                        {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+                            | DFG_Drive _ _ en => guard_expr tainted dfacts fuel a_idx' dfg buffers en
+                            | _ => tf_const 1
+                            end in
                           let '(vgate, vprev) :=
                             match chain_gate dfg n with
                             | Some (g, h) =>
@@ -1346,7 +1377,8 @@ Section VariableScheduler.
                                  snd (compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg h buffers))
                             | None => (v, tf_const 0)
                             end in
-                          tf_expr_if (tf_op2 tf_and vgate (tf_op1 tf_not vprev)) e acc)
+                          tf_expr_if (tf_op2 tf_and en_val (tf_op2 tf_and vgate (tf_op1 tf_not vprev)))
+                            e acc)
                        (tf_svar (tf_dfg_ov p)) (drive_nodes dfg p))))
             (driven_ports dfg)
     end.
@@ -1737,9 +1769,9 @@ Section VariableScheduler.
     - apply preserves_bind; [apply emit_vm|]. intro x. apply IH.
   Qed.
 
-  Lemma dataflow_ops_vm: forall ops, preserves vm_nd (dataflow_ops ops).
+  Lemma dataflow_ops_vm: forall ops en, preserves vm_nd (dataflow_ops en ops).
   Proof.
-    induction ops as [bop | o1 IHops1 o2 IHops2 | oc ot IHops1 oe IHops2];
+    induction ops as [bop | o1 IHops1 o2 IHops2 | oc ot IHops1 oe IHops2]; intro en;
       cbn [dataflow_ops].
     - destruct bop as [ | dst expr | dst expr | pip dst expr].
       + apply preserves_ret.
@@ -1761,8 +1793,10 @@ Section VariableScheduler.
     - intros s Hs.
       unfold bind. cbn [get_state put_state].
       destruct (dataflow_expr oc 1 s) as [xc s0].
-      destruct (dataflow_ops ot s0) as [u1 s1].
-      destruct (dataflow_ops oe {| graph := graph s1; var_map := var_map s0 |}) as [u2 s2].
+
+
+      destruct (dataflow_ops _ ot s0) as [u1 s1].
+      destruct (dataflow_ops _ oe {| graph := graph s1; var_map := var_map s0 |}) as [u2 s2].
       unfold merge_maps, vm_nd.
       destruct (merge_loop xc (var_map s1) (var_map s2)
                  (var_map s1 ++ var_map s2) [] s2) as [x0 s3] eqn:Hm.
@@ -1775,12 +1809,12 @@ Section VariableScheduler.
   Lemma build_dfg_vm a: NoDup (map fst (var_map (build_dfg a))).
   Proof.
     unfold build_dfg. simpl.
-    destruct (dataflow_ops (spec_action_ops a)
+    destruct (dataflow_ops [] (spec_action_ops a)
                 {| graph := [{| nid := 0; op := DFG_Empty; sz := 0 |}]; var_map := [] |})
       as [u s'] eqn:Hd.
     simpl.
     assert (vm_nd s') as Hnd.
-    { pose proof (dataflow_ops_vm (spec_action_ops a)
+    { pose proof (dataflow_ops_vm (spec_action_ops a) []
         {| graph := [{| nid := 0; op := DFG_Empty; sz := 0 |}]; var_map := [] |}) as Hp.
       unfold preserves in Hp. specialize (Hp ltac:(unfold vm_nd; simpl; constructor)).
       rewrite Hd in Hp. exact Hp. }
