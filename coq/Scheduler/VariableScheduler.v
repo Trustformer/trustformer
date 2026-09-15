@@ -1229,33 +1229,32 @@ Section VariableScheduler.
     existsb (fun '(k, _) => if dfg_vars_eq_dec.(eq_dec) k (DFG_OVar o) then true else false)
             (var_map dfg).
 
-  (* The ports this action drives mid-action.
+  (* DECLARED, not derived from the graph: a port is driven iff some response
+     port names it as its request port.
 
-     A port that is ALSO assigned by a [tf_output] is excluded, because the
-     always and done halves are concatenated for [tfs_ops_no_duplicates] and a
-     port in both would be written twice.  Excluding it here silently DROPS the
-     drive, which is wrong for a real module -- the surface language must reject
-     such an action instead.  That check belongs with [tf_call] and does not
-     exist yet.
+     Deriving it from the graph (has drives, not assigned, and Secret) made
+     driven-ness depend on the ACTION, so a port could be driven in one action
+     and assigned at done in another -- inconsistent hardware from one module.
+     Declaring it makes a port live in the always half of EVERY action; one with
+     no call this action simply emits a hold and no pulse.
 
-     A driven port must also be SECRET, and the proof obligation and the
-     security obligation coincide here.  Formally, [always_ops_no_out] ("no
-     always-op writes an output") is what [sched_step_preserves_ovar] consumes,
-     and drives falsify it; restricting drives to Secret ports weakens it to
-     PUBLIC outputs, which is Probe 1.7's shape.  Substantively, a Public port
-     that moves mid-action in a data-dependent way IS attacker-visible timing.
-     [tfs_spec_ip_secret] makes this unreachable for a declared IP, so the
-     filter is belt-and-braces rather than the only guard. *)
-  Definition driven_ports (dfg: dfg_state) : list outputs_var :=
-    filter (fun o => match drive_nodes dfg o with
-                     | [] => false
-                     | _ :: _ => andb (negb (assigned_port dfg o))
-                                      (match outputs_var_class o with
-                                       | Secret => true
-                                       | Public => false
-                                       end)
-                     end)
-           (@finite_elements outputs_var outputs_var_fin).
+     It also turns a silent filter into a rejectable condition. The old
+     [negb (assigned_port ...)] conjunct EXCLUDED a port that was both driven and
+     assigned, which silently dropped the drive; the surface language must reject
+     such an action instead. [assigned_port] is kept for exactly that check.
+
+     The Secret conjunct is gone because [tfs_spec_ip_secret] already makes it
+     unreachable: a context naming a Public request or response port cannot be
+     constructed at all. *)
+  Definition is_ip_req_port (o: outputs_var) : bool :=
+    existsb (fun v => match tfs_spec_ip_req ctx v with
+                      | Some oo => if outputs_var_eq_dec.(eq_dec) oo o then true else false
+                      | None => false
+                      end)
+            (@finite_elements inputs_var inputs_var_fin).
+
+  Definition driven_ports (_: dfg_state) : list outputs_var :=
+    filter is_ip_req_port (@finite_elements outputs_var outputs_var_fin).
 
   (* The node carrying [n]'s validity one cycle later -- the head of [n]'s delay
      chain.  That delayed copy is what turns a monotone validity into a rising
@@ -2048,53 +2047,7 @@ Section VariableScheduler.
     apply NoDup_filter. apply finite_nodup.
   Qed.
 
-  (* The separation that makes the three-way concatenation work: a driven port
-     is never in [var_map], because [driven_ports] filters on
-     [negb (assigned_port ...)].  This is the NoDup obligation ENFORCING "a port
-     is either driven mid-action or assigned at done, never both". *)
-  Lemma driven_port_not_assigned (DFG: dfg_state) (o: outputs_var):
-    In o (driven_ports DFG) -> ~ In (DFG_OVar o) (map fst (var_map DFG)).
-  Proof.
-    unfold driven_ports. intro Hin.
-    apply filter_In in Hin. destruct Hin as [_ Hp].
-    destruct (drive_nodes DFG o) as [|n ns]; [discriminate Hp|].
-    apply andb_prop in Hp. destruct Hp as [Hna _].
-    apply negb_true_iff in Hna. unfold assigned_port in Hna.
-    intro Hvm. apply in_map_iff in Hvm.
-    destruct Hvm as [[k v] [Hk Hkv]]. simpl in Hk. subst k.
-    assert (Hex: existsb (fun '(k, _) =>
-                  if dfg_vars_eq_dec.(eq_dec) k (DFG_OVar o) then true else false)
-                 (var_map DFG) = true).
-    { apply existsb_exists. exists (DFG_OVar o, v). split; [exact Hkv|].
-      destruct (dfg_vars_eq_dec.(eq_dec) (DFG_OVar o) (DFG_OVar o));
-        [reflexivity | congruence]. }
-    rewrite Hex in Hna. discriminate Hna.
-  Qed.
 
-  (* [final_tags_in] STRENGTHENED to carry var_map membership.  The original
-     says only "t is a StOp of a state var, or an OutOp of something"; that does
-     not separate a final op's OutOp tag from a DRIVE's, since both are OutOps.
-     Carrying [In (DFG_OVar ov) (map fst (var_map DFG))] is exactly what
-     [driven_port_not_assigned] refutes. *)
-  Lemma final_tags_in_strong (idx: nat) (DFG: dfg_state)
-        (BUF: list (nid_t * (nat * sz_t))) t:
-    In t (flat_map OPTAG (compile_dfg_aux idx DFG BUF)) ->
-    (exists sv, t = StOp (tf_dfg_s sv))
-    \/ (exists ov, t = OutOp ov /\ In (DFG_OVar ov) (map fst (var_map DFG))).
-  Proof.
-    intro Hin. apply in_flat_map in Hin. destruct Hin as [op [Hop Ht]].
-    unfold compile_dfg_aux in Hop.
-    destruct (index_of_nat (length buffer_needs) idx) as [a'|]; [| destruct Hop].
-    apply in_map_iff in Hop. destruct Hop as [[var nid] [Heq Hvm]].
-    match goal with
-    | Heq : (let '(_, _) := ?E in _) = op |- _ =>
-        destruct E as [expr valid]
-    end.
-    destruct var as [sv|ov]; subst op; simpl in Ht.
-    - destruct Ht as [<-|[]]. left. exists sv. reflexivity.
-    - destruct Ht as [<-|[]]. right. exists ov. split; [reflexivity|].
-      apply in_map_iff. exists (DFG_OVar ov, nid). split; [reflexivity | exact Hvm].
-  Qed.
 
   (* --- assembly --- *)
 
@@ -2138,8 +2091,9 @@ Section VariableScheduler.
              this stops being the interesting case.  A drive tag is
              [StOp (tf_dfg_ov o)]; a final tag is [StOp (tf_dfg_s sv)] or
              [OutOp ov].  Different constructors, so [discriminate] separates
-             them and [driven_port_not_assigned] -- the delicate half of this
-             proof -- is not needed at all. *)
+             them, and the driven/assigned exclusion that used to do this work
+             is gone entirely: driven-ness is DECLARED, so a driven port is never
+             a final tag in the first place. *)
           apply drives_tags_in in Hxd. apply final_tags_in in Hxf.
           destruct Hxd as [o [-> _]].
           destruct Hxf as [[sv Hs]|[ov Ho]]; discriminate.
