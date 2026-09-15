@@ -1229,19 +1229,34 @@ Section VariableScheduler.
                      end)
            (@finite_elements outputs_var outputs_var_fin).
 
-  (* The node that consumes [n] as its token -- the head of [n]'s delay chain.
-     Its validity is a ONE-CYCLE-DELAYED copy of [n]'s, because the chain head
-     sits in its own cycle bucket and is therefore buffered.  That delayed copy
-     is what turns a monotone validity into a rising edge, and so a hold into a
-     pulse.  [graph] is latest-first, so [find] returns the most recent
-     consumer; a drive has exactly one. *)
+  (* The node carrying [n]'s validity one cycle later -- the head of [n]'s delay
+     chain.  That delayed copy is what turns a monotone validity into a rising
+     edge, and so a held port into a pulse.
+
+     A SEQUENCED call puts an ordering join between the drive and its chain, so
+     the stall consumes the join rather than the drive.  Look through one binary
+     node as well.  Getting this wrong is not a proof failure: the detector
+     silently degenerates to [v && ~false] = [v], the strobe is held high for the
+     whole action instead of pulsing, and only the Verilog shows it. *)
   Definition chain_head (dfg: dfg_state) (n: nid_t) : option nid_t :=
-    match find (fun nd => match op nd with
-                          | DFG_Stall _ a => Nat.eqb a n
-                          | _ => false
-                          end) (graph dfg) with
-    | Some nd => Some (nid nd)
-    | None => None
+    let stall_of := fun (m: nid_t) =>
+      match find (fun nd => match op nd with
+                            | DFG_Stall _ a => Nat.eqb a m
+                            | _ => false
+                            end) (graph dfg) with
+      | Some nd => Some (nid nd)
+      | None => None
+      end in
+    match stall_of n with
+    | Some h => Some h
+    | None =>
+        match find (fun nd => match op nd with
+                              | DFG_Binary _ a _ => Nat.eqb a n
+                              | _ => false
+                              end) (graph dfg) with
+        | Some j => stall_of (nid j)
+        | None => None
+        end
     end.
 
   (* A drive is emitted as an ALWAYS-op, unlike a [tf_output] from [var_map]
@@ -1274,23 +1289,22 @@ Section VariableScheduler.
     match index_of_nat (length buffer_needs) a_idx with
     | None => []
     | Some a_idx' =>
-        (* ONE scheduler register per driven port, holding {strobe, payload}
-           concatenated.  One register rather than two because the tag lemmas
-           below then have ONE tag per port and stay one-liners; [tf_concat]
-           costs 0 in the cost model ("pure wiring"), so it is free.
+        (* ONE scheduler register per driven port holding {strobe, payload}.
 
-           Both halves are a STATE-var write, which is what keeps
-           [always_ops_no_out] true (verified, d367975). *)
+           BOTH halves select on the PULSE, not on the drive's validity. A
+           drive's validity is monotone -- and for an input-derived payload it is
+           trivially true -- so folding on it makes the outermost drive win
+           always, and with two calls the earlier request's payload never reaches
+           the wire at all. The pulse is one cycle and the pulses are disjoint,
+           so folding on it gives: take request k's payload at request k's cycle,
+           then HOLD it (else-branch is the register's own previous value) until
+           the next pulse.
+
+           Only the Verilog showed this: at the Coq level both folds typecheck
+           and the cycle assignment is correct either way. *)
         map (fun o =>
                tf_assign (tf_dfg_ov o)
                  (tf_op2 (tf_concat 1 (outputs_var_size o))
-                    (* THE STROBE -- one cycle.  A drive's own validity is
-                       monotone, so gating on it would hold the strobe high for
-                       the rest of the action; ANDing with the negated
-                       chain-head validity (the same bit one cycle later)
-                       narrows it to the cycle the request issues.  Without an
-                       edge an IP cannot tell a new request from the previous
-                       payload still standing on the wire. *)
                     (fold_right
                        (fun n acc =>
                           let '(_, v) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg n buffers in
@@ -1301,15 +1315,15 @@ Section VariableScheduler.
                                        end in
                           tf_expr_if (tf_op2 tf_and v (tf_op1 tf_not vprev)) (tf_const 1) acc)
                        (tf_const 0) (drive_nodes dfg o))
-                    (* THE PAYLOAD -- held.  Reading the register back AT THE
-                       PAYLOAD WIDTH slices the strobe bit off, so the
-                       else-branch is literally the previous payload and the
-                       wire never carries garbage.  Holding it beyond the pulse
-                       is the IP wrapper's job. *)
                     (fold_right
                        (fun n acc =>
                           let '(e, v) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg n buffers in
-                          tf_expr_if v e acc)
+                          let vprev := match chain_head dfg n with
+                                       | Some h => snd (compile_dfg_expr_aux tainted dfacts []
+                                                          fuel a_idx' dfg h buffers)
+                                       | None => tf_const 0
+                                       end in
+                          tf_expr_if (tf_op2 tf_and v (tf_op1 tf_not vprev)) e acc)
                        (tf_svar (tf_dfg_ov o)) (drive_nodes dfg o))))
             (driven_ports dfg)
     end.

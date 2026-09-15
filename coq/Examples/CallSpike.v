@@ -359,3 +359,53 @@ Proof. vm_compute. reflexivity. Qed.
 Example chained_samples_sequence :
   List.map tcyc3 tc2_samples = [0; 3].
 Proof. vm_compute. reflexivity. Qed.
+
+(* ===================================================================== *)
+(*  End-to-end for TWO sequenced calls on one IP.                        *)
+(* ===================================================================== *)
+(*
+    tc_ctx's action contains two calls on the same req/resp pair with
+    INDEPENDENT arguments -- the case that silently collided before the
+    ordering join.  What to look for in build/Example_TwoCallSpike.v:
+
+      - TWO strobe pulses on ip_out_..._out_req_arg's top bit, lat apart;
+      - the payload changing between them and HELD in between;
+      - a single driver.
+*)
+
+Section TwoCallSynthesis.
+
+  Definition tc_schedule := tfs_schedule tc_ctx cclimit.
+
+  Definition tc_tf_ctx : TFSynthContext := {|
+    tf_sched_ctx := tc_schedule;
+    tf_action_encoding := cs_action_encoding;
+    tf_action_encoding_inj := cs_action_encoding_inj;
+  |}.
+
+  Definition tcR := TypedSynthesis.R tc_tf_ctx.
+  Definition tcr := TypedSynthesis.r tc_tf_ctx.
+  Definition tcSigma := TypedSynthesis.Sigma tc_tf_ctx.
+  Definition tc_system_schedule := TypedSynthesis.system_schedule tc_tf_ctx.
+  Definition tc_ext_fn_specs := TypedSynthesis.ext_fn_specs tc_tf_ctx.
+  Instance tc_ext_fn_names : Show _ := TypedSynthesis.ext_fn_names tc_tf_ctx.
+
+  Definition tc_package :=
+    {| ip_koika := {| koika_reg_types := tcR;
+                      koika_reg_names := TypedSynthesis.reg_names tc_tf_ctx;
+                      koika_reg_init := tcr;
+                      koika_reg_finite := TypedSynthesis._reg_t_finite tc_tf_ctx;
+                      koika_ext_fn_types := tcSigma;
+                      koika_rules := TypedSynthesis.rules tc_tf_ctx;
+                      koika_rule_names := TypedSynthesis.rule_names tc_tf_ctx;
+                      koika_rule_external := (fun _ => false);
+                      koika_scheduler := tc_system_schedule;
+                      koika_module_name := "Example_TwoCallSpike" |};
+    ip_sim := {| sp_ext_fn_specs fn := {| efs_name := show fn; efs_method := false |};
+                sp_prelude := None |};
+    ip_verilog := {| vp_ext_fn_specs := tc_ext_fn_specs |} |}.
+
+End TwoCallSynthesis.
+
+Definition tc_prog := Interop.Backends.register tc_package.
+Extraction "Example_TwoCallSpike.ml" tc_prog.
