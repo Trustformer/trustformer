@@ -94,7 +94,6 @@ Section Context.
     tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
     tfs_spec_ips := Empty_set;
     tfs_spec_ip := no_ips;
-    tfs_spec_ip_resp_secret := ltac:(intros []);
     tfs_spec_decls := []
   |}.
 

@@ -343,15 +343,24 @@ Section TypedSynthesis.
       String.append prefix
         (String.append (class_tag c) (String.append "_" n)).
 
+
+    (* An IP port is Secret by construction -- it has no port_class to read. *)
+    Definition ip_resp_name (p: spec_ips) : string :=
+      port_name "ip_resp_" Secret (show p).
+
+    Definition ip_name (p: spec_ips) : string :=
+      port_name "ip_req_" Secret (show p).
+
+    (* A response rides the input channel -- it IS a per-cycle value from the
+       environment -- but it names its IP, not a port of the design. *)
     Definition in_name (x: spec_inputs) : string :=
-      port_name "in_param_" (tfs_inputs_class (tf_sched_ctx tf_ctx) x) (show x).
+      match tfs_inputs_resp (tf_sched_ctx tf_ctx) x with
+      | Some p => ip_resp_name p
+      | None => port_name "in_param_" (tfs_inputs_class (tf_sched_ctx tf_ctx) x) (show x)
+      end.
 
     Definition out_name (y: spec_outputs) : string :=
       port_name "out_param_" (tfs_outputs_class (tf_sched_ctx tf_ctx) y) (show y).
-
-    (* An IP request is Secret by construction -- it has no port_class to read. *)
-    Definition ip_name (p: spec_ips) : string :=
-      port_name "ip_req_" Secret (show p).
 
     Definition ext_fn_specs (fn : ext_fn_t) := 
       match fn with
@@ -412,6 +421,7 @@ Section TypedSynthesis.
       : action sig (spec_inputs_t r) :=
       ExternalCall (ext_input r) (Const (tau:=bits_t 1) Ob~1).
 
+
     Fixpoint expr_to_action {sig} (e: tf_expr) (target_size: nat) 
       : action sig (bits_t target_size) :=
       match e with
@@ -423,9 +433,10 @@ Section TypedSynthesis.
           synth_convert target_size act
           
       | tf_ivar v =>
-          let act := if tfs_inputs_is_resp (tf_sched_ctx tf_ctx) v
-                     then live_input v
-                     else Read P1 (tf_in v) in
+          let act := match tfs_inputs_resp (tf_sched_ctx tf_ctx) v with
+                     | Some _ => live_input v      (* live: the answer is on the wire *)
+                     | None   => Read P1 (tf_in v) (* latched at action start *)
+                     end in
           synth_convert target_size act
           
       | tf_ovar v =>

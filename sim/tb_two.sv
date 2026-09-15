@@ -17,13 +17,13 @@ module tb;
 
   Example_TwoCallSpike dut(
     .CLK(clk), .RST_N(rst_n),
-    .in_param_sec_in_resp_out(resp_wire),
+    .ip_resp_sec_cs_crypto_out(resp_wire),
     .in_param_pub_in_msg_out(msg),
     .in_cmd_arg(ready),
     .ip_req_sec_cs_crypto_out(1'b1),
     .in_cmd_out(in_cmd_out),
     .ip_req_sec_cs_crypto_arg(ip_arg),
-    .in_param_sec_in_resp_arg(resp_ack),
+    .ip_resp_sec_cs_crypto_arg(resp_ack),
     .in_param_pub_in_msg_arg(msg_ack));
 
   // ---- non-pipelined IP: one request in flight at a time ----

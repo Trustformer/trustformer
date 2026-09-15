@@ -33,7 +33,7 @@ Section Spike.
 
   Inductive sl_action  := act_dummy.
   Inductive sl_states  := st_acc.
-  Inductive sl_inputs  := in_x | in_resp.
+  Inductive sl_inputs  := in_x.
   Inductive sl_outputs := out_o.
 
   Definition sl_states_size  (_: sl_states)  : nat := w.
@@ -44,8 +44,8 @@ Section Spike.
     match x with st_acc => Bits.zero end.
 
   Inductive sl_ips := sl_ip_crypto.
-  Definition sl_ip (_: sl_ips) : ip_decl sl_inputs_size :=
-    {| ip_req_sz := w; ip_resp := in_resp; ip_lat := 0; ip_fn := fun v => v |}.
+  Definition sl_ip (_: sl_ips) : ip_decl :=
+    {| ip_req_sz := w; ip_resp_sz := w; ip_lat := 0; ip_fn := fun v => v |}.
 
   Definition sl_ctx : TFSchedContext := {|
       tfs_spec_states := sl_states;   tfs_spec_states_fin := _;
@@ -64,7 +64,7 @@ Section Spike.
       tfs_spec_action_ops := fun _ => tf_ops_base tf_nop;
       tfs_spec_ips := sl_ips;   tfs_spec_ips_fin := _;
       tfs_spec_ip := sl_ip;
-      tfs_spec_ip_resp_secret := ltac:(reflexivity);
+
       tfs_spec_decls := []
   |}.
 

@@ -55,13 +55,8 @@ Record TFSchedContext := {
   tfs_spec_ips_eq_dec : EqDec tfs_spec_ips;
   tfs_spec_ips_fin : FiniteType tfs_spec_ips;
   tfs_spec_ips_names : Show tfs_spec_ips;
-  tfs_spec_ip : tfs_spec_ips -> ip_decl tfs_spec_inputs_size;
+  tfs_spec_ip : tfs_spec_ips -> ip_decl;
 
-  (* The request side needs no obligation -- it is not an output, so no action
-     can assign it and it can never be Public.  The response IS an input, so it
-     still has to be kept out of the attacker's view by hand. *)
-  tfs_spec_ip_resp_secret :
-    forall p, tfs_spec_inputs_class (ip_resp (tfs_spec_ip p)) = Secret;
 
   tfs_spec_action : Type;
   tfs_spec_action_eq_dec : EqDec tfs_spec_action;
@@ -95,32 +90,34 @@ Record TFSchedule := {
   tfs_states_names : Show tfs_states;
   tfs_states_init : forall x: tfs_states, tf_states_type tfs_states_size x;
 
+  (* Mirrored from the context like the sizes and names.  [tfs_drive_reg] is the
+     register carrying an IP request's {strobe, payload}. *)
+  tfs_ips : Type;
+  tfs_ips_fin : FiniteType tfs_ips;
+  tfs_ips_names : Show tfs_ips;
+  tfs_ip : tfs_ips -> ip_decl;
+  tfs_drive_reg : tfs_ips -> tfs_states;
+  tfs_drive_reg_size : forall p,
+    tfs_states_size (tfs_drive_reg p) = 1 + ip_req_sz (tfs_ip p);
+
+  (* The design's inputs PLUS one per IP response.  The response summand is what
+     lets the lowering read an answer without the spec having a port for it. *)
   tfs_inputs : Type;
   tfs_inputs_size : tfs_inputs -> nat;
   tfs_inputs_names : Show tfs_inputs;
   tfs_inputs_fin : FiniteType tfs_inputs;
-  (* Mirrored from the context, like size and names: [tfs_inputs] is the spec's
-     input type, but that is not definitionally visible through an abstract
-     [TFSchedule], so the classification has to be carried across. *)
   tfs_inputs_class : tfs_inputs -> port_class;
-  (* An IP response is read LIVE, not latched at action start. *)
-  tfs_inputs_is_resp : tfs_inputs -> bool;
+  (* A response is read LIVE, not latched at action start, and routed to
+     [ext_ip_resp]. *)
+  tfs_inputs_resp : tfs_inputs -> option tfs_ips;
+  tfs_inputs_resp_size : forall v p,
+    tfs_inputs_resp v = Some p -> tfs_inputs_size v = ip_resp_sz (tfs_ip p);
 
   tfs_outputs : Type;
   tfs_outputs_size : tfs_outputs -> nat;
   tfs_outputs_names : Show tfs_outputs;
   tfs_outputs_fin : FiniteType tfs_outputs;
   tfs_outputs_class : tfs_outputs -> port_class;
-
-  (* Mirrored from the context like the sizes and names.  [tfs_drive_reg] is the
-     register carrying an IP request's {strobe, payload}. *)
-  tfs_ips : Type;
-  tfs_ips_fin : FiniteType tfs_ips;
-  tfs_ips_names : Show tfs_ips;
-  tfs_ip : tfs_ips -> ip_decl tfs_inputs_size;
-  tfs_drive_reg : tfs_ips -> tfs_states;
-  tfs_drive_reg_size : forall p,
-    tfs_states_size (tfs_drive_reg p) = 1 + ip_req_sz (tfs_ip p);
 
   tfs_action : Type;
   tfs_action_fin : FiniteType tfs_action;

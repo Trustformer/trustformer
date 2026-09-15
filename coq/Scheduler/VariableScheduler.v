@@ -835,7 +835,7 @@ Section VariableScheduler.
   (* = Step 6: TF Compilations    = *)
   (* ============================== *)
 
-  Local Notation expr_t := (@tf_expr tf_dfg_states inputs_var outputs_var).
+  Local Notation expr_t := (@tf_expr tf_dfg_states (inputs_var + ips_var) outputs_var).
 
   Definition valid_expr_and (expr1: expr_t) (expr2: expr_t) : expr_t :=
     match expr1, expr2 with
@@ -1110,7 +1110,7 @@ Section VariableScheduler.
           let node := nth nid (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0; |} in
           match op node with
           | DFG_Const n => (tf_const n, tf_const 1)
-          | DFG_Input v => (tf_ivar v, tf_const 1)
+          | DFG_Input v => (tf_ivar (inl v), tf_const 1)
           | DFG_Var v => match v with
                         | DFG_SVar s_var => (tf_svar (tf_dfg_s s_var), tf_const 1)
                         | DFG_OVar o_var => (tf_ovar o_var, tf_const 1)
@@ -1154,7 +1154,7 @@ Section VariableScheduler.
               compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers
           | DFG_Sample p tok =>
               let '(_, tok_val) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg tok buffers in
-              (tf_ivar (ip_resp (ip_of p)), tok_val)
+              (tf_ivar (inr p), tok_val)
           | DFG_Empty => (tf_const 0, tf_const 0) (* should not happen *)
           end
         end
@@ -1165,7 +1165,7 @@ Section VariableScheduler.
     (compile_dfg_expr_aux (get_tainted dfg) (decl_facts dfg) [] fuel a_idx dfg n bufs).
 
   Definition compile_dfg_buffers (a_idx: nat) (dfg: dfg_state) (buffers: list (nid_t * (nat * sz_t)))
-    : list (@tf_op tf_dfg_states inputs_var outputs_var Empty_set)
+    : list (@tf_op tf_dfg_states (inputs_var + ips_var) outputs_var Empty_set)
     :=
     (* Bound outside the [flat_map]: inlining these would re-run the whole taint
        and declassification analysis once per buffer. *)
@@ -1300,7 +1300,7 @@ Section VariableScheduler.
      whether the surface should reject it is still open. *)
   Definition compile_dfg_drives (a_idx: nat) (dfg: dfg_state)
     (buffers: list (nid_t * (nat * sz_t)))
-    : list (@tf_op tf_dfg_states inputs_var outputs_var Empty_set) :=
+    : list (@tf_op tf_dfg_states (inputs_var + ips_var) outputs_var Empty_set) :=
     let tainted := get_tainted dfg in
     let dfacts := decl_facts dfg in
     let fuel := length (graph dfg) in
@@ -1370,7 +1370,7 @@ Section VariableScheduler.
   Definition combine_valid_exprs (exprs : list expr_t) : expr_t :=
     combine_balanced_helper (length exprs) exprs. *)
 
-  Fixpoint combine_valid_exprs (exprs: list (@tf_expr tf_dfg_states inputs_var outputs_var)) : @tf_expr tf_dfg_states inputs_var outputs_var :=
+  Fixpoint combine_valid_exprs (exprs: list (@tf_expr tf_dfg_states (inputs_var + ips_var) outputs_var)) : @tf_expr tf_dfg_states (inputs_var + ips_var) outputs_var :=
     match exprs with
     | [] => tf_const 1
     | [e] => e
@@ -1378,7 +1378,7 @@ Section VariableScheduler.
     end. 
 
   Definition compile_dfg_aux (a_idx: nat) (dfg: dfg_state) (buffers: list (nid_t * (nat * sz_t)))
-    : list (@tf_op tf_dfg_states inputs_var outputs_var Empty_set) :=
+    : list (@tf_op tf_dfg_states (inputs_var + ips_var) outputs_var Empty_set) :=
     let tainted := get_tainted dfg in
     let dfacts := decl_facts dfg in
     let fuel := length (graph dfg) in
@@ -1398,7 +1398,7 @@ Section VariableScheduler.
       end.
 
   Definition compile_dfg_valid (a_idx: nat) (dfg: dfg_state) (buffers: list (nid_t * (nat * sz_t)))
-    : @tf_op tf_dfg_states inputs_var outputs_var Empty_set :=
+    : @tf_op tf_dfg_states (inputs_var + ips_var) outputs_var Empty_set :=
     let tainted := get_tainted dfg in
     let dfacts := decl_facts dfg in
     let fuel := length (graph dfg) in
@@ -2203,14 +2203,25 @@ Section VariableScheduler.
       tfs_states_size := tf_dfg_states_size;
       tfs_states_init := tf_dfg_states_init;
       
-      tfs_inputs := inputs_var;
-      tfs_inputs_size := inputs_var_size;
-      tfs_inputs_fin := inputs_var_fin;
-      tfs_inputs_class := inputs_var_class;
-      tfs_inputs_is_resp := fun v =>
-        existsb (fun p => if inputs_var_eq_dec.(eq_dec) (ip_resp (ip_of p)) v
-                          then true else false)
-                (@finite_elements ips_var ips_var_fin);
+      (* The design's inputs plus one response per IP.  [inl] keeps the existing
+         names, sizes and indices, so a design with no IP is unchanged. *)
+      tfs_inputs := (inputs_var + ips_var)%type;
+      tfs_inputs_size := fun v => match v with
+                                  | inl x => inputs_var_size x
+                                  | inr p => ip_resp_sz (ip_of p)
+                                  end;
+      tfs_inputs_fin := @sum_finite _ _ inputs_var_fin ips_var_fin;
+      tfs_inputs_class := fun v => match v with
+                                   | inl x => inputs_var_class x
+                                   | inr _ => Secret
+                                   end;
+      tfs_inputs_resp := fun v => match v with
+                                  | inl _ => None
+                                  | inr p => Some p
+                                  end;
+      tfs_inputs_resp_size :=
+        ltac:(intros v p H; destruct v; cbn in H;
+              [ discriminate | injection H as <-; reflexivity ]);
 
       tfs_outputs := outputs_var;
       tfs_outputs_size := outputs_var_size;
@@ -2289,7 +2300,6 @@ Module Examples.
       (* no attached IP *)
       tfs_spec_ips := Empty_set;
       tfs_spec_ip := no_ips;
-      tfs_spec_ip_resp_secret := ltac:(intros []);
       tfs_spec_decls := [];
     |}. 
 
@@ -2341,7 +2351,6 @@ Module Examples.
       (* no attached IP *)
       tfs_spec_ips := Empty_set;
       tfs_spec_ip := no_ips;
-      tfs_spec_ip_resp_secret := ltac:(intros []);
       tfs_spec_decls := [];
     |}.
 
@@ -2399,7 +2408,6 @@ Module Examples.
       (* no attached IP *)
       tfs_spec_ips := Empty_set;
       tfs_spec_ip := no_ips;
-      tfs_spec_ip_resp_secret := ltac:(intros []);
       tfs_spec_decls := [];
     |}.
 

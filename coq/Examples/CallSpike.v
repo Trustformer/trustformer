@@ -41,7 +41,7 @@ Section CallSpike.
 
   Inductive cs_action  := act_call.
   Inductive cs_states  := st_res.
-  Inductive cs_inputs  := in_msg | in_resp.
+  Inductive cs_inputs  := in_msg.
   (* No outputs at all: the only port this design had was the IP request, and
      that is no longer an output. *)
   Definition cs_outputs := Empty_set.
@@ -57,15 +57,15 @@ Section CallSpike.
      the wire -- but the SPEC does: a call denotes [dst := ip_fn arg]. *)
   Definition cs_f (v: bits_t cw) : bits_t cw := v.
 
-  (* The response must be Secret; the request needs no such declaration, since
-     it is not an output. *)
-  Definition cs_in_class (i: cs_inputs) : port_class :=
-    match i with in_msg => Public | in_resp => Secret end.
+  (* Neither IP port is a port of the design, so neither is classified here. *)
+
+  Definition cs_in_class (_: cs_inputs) : port_class := Public.
+
   Definition cs_out_class (_: cs_outputs) : port_class := Secret.
 
   Inductive cs_ips := cs_crypto.
-  Definition cs_ip (_: cs_ips) : ip_decl cs_inputs_size :=
-    {| ip_req_sz := cw; ip_resp := in_resp; ip_lat := clat; ip_fn := cs_f |}.
+  Definition cs_ip (_: cs_ips) : ip_decl :=
+    {| ip_req_sz := cw; ip_resp_sz := cw; ip_lat := clat; ip_fn := cs_f |}.
 
   Definition cs_ctx : TFSchedContext := {|
       tfs_spec_states := cs_states;   tfs_spec_states_fin := _;
@@ -88,7 +88,7 @@ Section CallSpike.
 
       tfs_spec_ips := cs_ips;      tfs_spec_ips_fin := _;
       tfs_spec_ip := cs_ip;
-      tfs_spec_ip_resp_secret := ltac:(intros p; destruct p; reflexivity);
+
       tfs_spec_decls := []
   |}.
 
@@ -255,7 +255,7 @@ Section TwoCalls.
       tfs_spec_action_ops := fun _ => tc_ops;
       tfs_spec_ips := cs_ips;      tfs_spec_ips_fin := _;
       tfs_spec_ip := cs_ip;
-      tfs_spec_ip_resp_secret := ltac:(intros p; destruct p; reflexivity);
+
       tfs_spec_decls := []
   |}.
 
@@ -310,7 +310,6 @@ Section TwoCallsChained.
        tfs_spec_action_ops := fun _ => tc2_ops;
        tfs_spec_ips := cs_ips;      tfs_spec_ips_fin := _;
        tfs_spec_ip := cs_ip;
-       tfs_spec_ip_resp_secret := ltac:(intros p; destruct p; reflexivity);
        tfs_spec_decls := [] |}.
 
   Definition tc2_dfg := build_dfg tc2_ctx act_call.

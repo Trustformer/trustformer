@@ -100,7 +100,6 @@ Section Contrast.
       (* no IP drives any port here, so nothing can conflict with one *)
       tfs_spec_ips := Empty_set;
       tfs_spec_ip := no_ips;
-      tfs_spec_ip_resp_secret := ltac:(intros []);
       tfs_spec_decls := decls
     |}.
 

@@ -1,3 +1,4 @@
+Require Import Coq.micromega.Lia.
 Require Import Koika.Frontend.
 Require Import Koika.Std.
 Require Import Koika.Utils.Common.
@@ -6,24 +7,20 @@ Require Import Koika.Utils.Environments.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
-(* An attached IP block.  The request side is the scheduler's own -- there is no
-   output port, only a width -- because its hardware is a drive register routed
-   to [ext_ip_req].  The response IS an input of the design: it is read live,
-   from the environment, once per cycle, and the model has no other category for
-   that. *)
-Record ip_decl {i : Type} (isz : i -> nat) := {
-  ip_req_sz : nat;          (* request width, driven mid-action *)
-  ip_resp   : i;            (* response port, sampled live *)
-  ip_lat    : nat;          (* cycles from pulse to answer; not pipelined *)
-  ip_fn     : bits_t ip_req_sz -> bits_t (isz ip_resp);
+(* An attached IP block.  Both ports are the scheduler's own: the request is a
+   drive register routed to [ext_ip_req], the response a live read from
+   [ext_ip_resp].  Neither is a port of the design, so an action cannot name
+   one and neither needs a confidentiality declaration. *)
+
+Record ip_decl := {
+  ip_req_sz  : nat;         (* request width, driven mid-action *)
+  ip_resp_sz : nat;         (* response width, sampled live *)
+  ip_lat     : nat;         (* cycles from pulse to answer; not pipelined *)
+  ip_fn      : bits_t ip_req_sz -> bits_t ip_resp_sz;
 }.
-Arguments ip_req_sz {i isz}.
-Arguments ip_resp {i isz}.
-Arguments ip_lat {i isz}.
-Arguments ip_fn {i isz}.
 
 (* A design with no IPs uses [Empty_set] as its IP name type. *)
-Definition no_ips {i} {isz : i -> nat} (e : Empty_set) : ip_decl isz :=
+Definition no_ips (e : Empty_set) : ip_decl :=
   match e with end.
 
 #[global] Instance Empty_set_eqdec : EqDec Empty_set :=
@@ -37,6 +34,54 @@ Definition no_ips {i} {isz : i -> nat} (e : Empty_set) : ip_decl isz :=
      finite_elements := [];
      finite_surjective := fun (a: Empty_set) => match a with end;
      finite_injective := NoDup_nil _ |}.
+
+(* The schedule's input type is [design inputs + IP responses], so it needs a
+   [FiniteType] for a sum.  Koika has none. *)
+Lemma NoDup_map_shift {B} (k: nat) (f: B -> nat) (l: list B) :
+  NoDup (List.map f l) -> NoDup (List.map (fun b => k + f b) l).
+Proof.
+  intros H.
+  rewrite <- List.map_map with (f := f) (g := fun n => k + n).
+  apply NoDup_map; [ exact H | intros; lia ].
+Qed.
+
+Lemma finite_index_lt {A} {FA: FiniteType A} (a: A) :
+  finite_index a < List.length (finite_elements (T:=A)).
+Proof.
+  apply nth_error_Some. rewrite finite_surjective. discriminate.
+Qed.
+
+#[global] Program Instance sum_finite {A B} {FA: FiniteType A} {FB: FiniteType B}
+  : FiniteType (A + B) :=
+  {| finite_index x := match x with
+                       | inl a => finite_index a
+                       | inr b => List.length (finite_elements (T:=A)) + finite_index b
+                       end;
+     finite_elements := List.map inl (finite_elements (T:=A))
+                        ++ List.map inr (finite_elements (T:=B)) |}.
+Next Obligation.
+  destruct a as [a|b].
+  - rewrite nth_error_app1 by (rewrite List.map_length; apply finite_index_lt).
+    apply List.map_nth_error. apply finite_surjective.
+  - rewrite nth_error_app2 by (rewrite List.map_length; lia).
+    rewrite List.map_length.
+    replace (List.length (finite_elements (T:=A)) + finite_index b
+             - List.length (finite_elements (T:=A))) with (finite_index b) by lia.
+    apply List.map_nth_error. apply finite_surjective.
+Qed.
+Next Obligation.
+  rewrite List.map_app, !List.map_map. cbn.
+  apply NoDup_app.
+  - apply (finite_injective (FiniteType:=FA)).
+  - apply NoDup_map_shift. apply (finite_injective (FiniteType:=FB)).
+  - intros x Hx Hy.
+    apply List.in_map_iff in Hx as [a [<- _]].
+    apply List.in_map_iff in Hy as [b [Hb _]].
+    pose proof (finite_index_lt a). lia.
+Qed.
+
+#[global] Instance sum_show {A B} {SA: Show A} {SB: Show B} : Show (A + B) :=
+  {| show x := match x with inl a => show a | inr b => show b end |}.
 
 Section TrustformerSyntax.
 
@@ -323,4 +368,5 @@ Section NotationExamples.
     Goal True. pose (debug := t6); compute in debug.
     Abort.
 End NotationExamples.
+
 
