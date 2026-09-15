@@ -6,6 +6,7 @@ Require Koika.BitsToLists.
 
 Require Import Coq.Logic.FunctionalExtensionality.
 
+Require Import Trustformer.Utils.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Export Trustformer.Scheduler.DFG.

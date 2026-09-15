@@ -57,7 +57,6 @@ Record TFSchedContext := {
   tfs_spec_ips_names : Show tfs_spec_ips;
   tfs_spec_ip : tfs_spec_ips -> ip_decl;
 
-
   tfs_spec_action : Type;
   tfs_spec_action_eq_dec : EqDec tfs_spec_action;
   tfs_spec_action_fin : FiniteType tfs_spec_action;
