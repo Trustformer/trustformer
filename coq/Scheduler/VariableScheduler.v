@@ -547,7 +547,7 @@ Section VariableScheduler.
     
     buffers.
 
-  Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (buffer_needs:=buffer_needs)).
+  Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (outputs_var:=outputs_var) (buffer_needs:=buffer_needs)).
   Definition test := tf_dfg_states.
 
   Instance show_tf_dfg_states : Show tf_dfg_states :=
@@ -557,6 +557,7 @@ Section VariableScheduler.
         | tf_dfg_b a_idx n_idx => String.append "b_" (String.append (show (index_to_nat a_idx)) (String.append "_" (show (index_to_nat n_idx))))
         | tf_dfg_v a_idx n_idx => String.append "v_" (String.append (show (index_to_nat a_idx)) (String.append "_" (show (index_to_nat n_idx))))
         | tf_dfg_done => "done"
+        | tf_dfg_ov o => String.append "ov_" (show o)
         end }.
 
   Definition tf_dfg_states_size (dfg_s: tf_dfg_states) : sz_t :=
@@ -565,6 +566,7 @@ Section VariableScheduler.
     | tf_dfg_b a_idx b_idx => snd (snd (nth (index_to_nat b_idx) (nth (index_to_nat a_idx) buffer_needs []) (0, (0, 0))))
     | tf_dfg_v a_idx b_idx => 1
     | tf_dfg_done => 1
+    | tf_dfg_ov _ => 1
     end.
 
   (* ============================== *)
@@ -1237,8 +1239,12 @@ Section VariableScheduler.
     match index_of_nat (length buffer_needs) a_idx with
     | None => []
     | Some a_idx' =>
+        (* EXPERIMENT (RESET-PLAN step 1): emit a STATE-var write instead of an
+           output write.  If [always_ops_no_out] survives this, IP ports belong
+           to the scheduler like buffers and the campaign's one false theorem
+           never becomes false. *)
         map (fun o =>
-               tf_output o
+               tf_assign (tf_dfg_ov o)
                  (fold_right
                     (fun n acc =>
                        let '(e, v) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg n buffers in
@@ -1326,7 +1332,7 @@ Section VariableScheduler.
       final_ops
     ).
 
-  Definition done_signal := tf_dfg_done (states_var:=states_var) (buffer_needs:=buffer_needs).
+  Definition done_signal := tf_dfg_done (states_var:=states_var) (outputs_var:=outputs_var) (buffer_needs:=buffer_needs).
 
   Definition reset_states : list tf_dfg_states :=  
     flat_map 
@@ -1340,6 +1346,8 @@ Section VariableScheduler.
         | None => [] (* should not happen *)
         end)
       (List.seq 0 (length buffer_needs)).
+  (* EXPERIMENT: strobes are not in reset_states yet; the real implementation
+     must add them, which needs NoDup_app in reset_states_nodup. *)
 
   Instance tf_dfg_states_fin2 : FiniteType2 tf_dfg_states.
   Proof.  
@@ -1347,11 +1355,13 @@ Section VariableScheduler.
     - intro s. destruct s.
       + exact (0, 0).
       + exact (1, finite_index state).
-      + exact (2 + finite_index a_idx, finite_index n_idx).
-      + exact (2 + (Datatypes.length (finite_elements (T:=(Vect.index (Datatypes.length buffer_needs))))) + finite_index a_idx, finite_index n_idx).
+      + exact (3 + finite_index a_idx, finite_index n_idx).
+      + exact (3 + (Datatypes.length (finite_elements (T:=(Vect.index (Datatypes.length buffer_needs))))) + finite_index a_idx, finite_index n_idx).
+      + exact (2, (@finite_index outputs_var outputs_var_fin o)).
         
     - refine ([ [tf_dfg_done] ] ++ 
               [ map tf_dfg_s finite_elements ] ++ 
+              [ map tf_dfg_ov (@finite_elements outputs_var outputs_var_fin) ] ++ 
               map (fun a => map (tf_dfg_b a) finite_elements) finite_elements ++ 
               map (fun a => map (tf_dfg_v a) finite_elements) finite_elements).
 
@@ -1386,15 +1396,23 @@ Section VariableScheduler.
         * rewrite map_nth_error with (d:=n_idx); auto. 
           change (index_to_nat n_idx) with (finite_index n_idx).
           rewrite finite_surjective. reflexivity.
+      + (* tf_dfg_ov -- a flat group at a LITERAL index, so this is the
+           [tf_dfg_s] case verbatim *)
+        exists (map tf_dfg_ov (@finite_elements outputs_var outputs_var_fin)). split; auto.
+        rewrite map_nth_error with (d:=o); auto. rewrite finite_surjective. reflexivity.
     - intros n l Hn m x Hm.
       destruct n as [|n].
       { inversion Hn; subst. destruct m; inversion Hm; subst. reflexivity. timeout 10 scongruence use: nth_error_nil unfold: tfs_spec_states. }
       destruct n as [|n].
       { inversion Hn; subst. apply nth_error_map_inv in Hm. destruct Hm as [s [Hs ?]]; subst.
         apply finite_elements_index in Hs. subst. reflexivity. }
+      (* group 2 is the flat tf_dfg_ov block -- same shape as tf_dfg_s *)
+      destruct n as [|n].
+      { inversion Hn; subst. apply nth_error_map_inv in Hm. destruct Hm as [o [Ho ?]]; subst.
+        apply finite_elements_index in Ho. subst. reflexivity. }
       
       rewrite nth_error_app2 in Hn by (simpl; lia).
-      change (S (S n) - Datatypes.length [[tf_dfg_done]]) with (S n) in *.
+      change (S (S (S n)) - Datatypes.length [[tf_dfg_done]]) with (S (S n)) in *.
 
       cbn [nth_error List.app] in Hn.
       destruct (lt_dec n (length (finite_elements (T := Vect.index (Datatypes.length buffer_needs))))) as [HLT | HGE].      
@@ -1414,9 +1432,11 @@ Section VariableScheduler.
         apply finite_elements_index in Hn'.
         subst m. simpl. f_equal. 
         (* hammer *) timeout 10 sauto.
-    - apply Forall_app; split; [| apply Forall_app; split].
+    - apply Forall_app; split; [| apply Forall_app; split; [| apply Forall_app; split]].
       + repeat constructor. (* hammer *) timeout 10 sfirstorder.
       + repeat constructor. cbn [map]. rewrite map_map. apply NoDup_map_pair. apply finite_injective.
+      + (* the flat tf_dfg_ov block *)
+        repeat constructor. cbn [map]. rewrite map_map. apply NoDup_map_pair. apply finite_injective.
       + apply Forall_app; split.
         * (* Block for tf_dfg_b *)
           apply Forall_map. apply Forall_forall. intros a_idx' Hin.
@@ -1442,6 +1462,7 @@ Section VariableScheduler.
         | tf_dfg_b a_idx n_idx => Bits.zero
         | tf_dfg_v a_idx n_idx => Bits.zero
         | tf_dfg_done => Bits.zero
+        | tf_dfg_ov _ => Bits.zero
         end
     ).
 
@@ -1460,6 +1481,7 @@ Section VariableScheduler.
     | tf_dfg_b _ _ => Bits.zero
     | tf_dfg_v _ _ => Bits.zero
     | tf_dfg_done => Bits.zero
+    | tf_dfg_ov _ => Bits.zero
     end.
 
   (* ==================================================================== *)
@@ -1877,7 +1899,7 @@ Section VariableScheduler.
     flat_map OPTAG (compile_dfg_drives idx DFG BUF)
     = match index_of_nat (length buffer_needs) idx with
       | None => []
-      | Some _ => map OutOp (driven_ports DFG)
+      | Some _ => map (fun o => @StOp tf_dfg_states outputs_var (tf_dfg_ov o)) (driven_ports DFG)
       end.
   Proof.
     unfold compile_dfg_drives.
@@ -1890,7 +1912,7 @@ Section VariableScheduler.
   Lemma drives_tags_in (idx: nat) (DFG: dfg_state)
         (BUF: list (nid_t * (nat * sz_t))) t:
     In t (flat_map OPTAG (compile_dfg_drives idx DFG BUF)) ->
-    exists o, t = OutOp o /\ In o (driven_ports DFG).
+    exists o, t = @StOp tf_dfg_states outputs_var (tf_dfg_ov o) /\ In o (driven_ports DFG).
   Proof.
     rewrite drives_tags_eq.
     destruct (index_of_nat (length buffer_needs) idx) as [a'|]; [| intros []].
@@ -1898,8 +1920,8 @@ Section VariableScheduler.
     exists o. split; [reflexivity | exact Ho].
   Qed.
 
-  Lemma NoDup_map_OutOp (l: list outputs_var):
-    NoDup l -> NoDup (map (@OutOp tf_dfg_states outputs_var) l).
+  Lemma NoDup_map_StOp_ov (l: list outputs_var):
+    NoDup l -> NoDup (map (fun o => @StOp tf_dfg_states outputs_var (tf_dfg_ov o)) l).
   Proof.
     induction 1 as [|x l Hx Hnd IH]; simpl; constructor; [| exact IH].
     intro Hin. apply in_map_iff in Hin. destruct Hin as [y [Heq Hy]].
@@ -1915,7 +1937,7 @@ Section VariableScheduler.
   Proof.
     rewrite drives_tags_eq.
     destruct (index_of_nat (length buffer_needs) idx) as [a'|]; [| constructor].
-    apply NoDup_map_OutOp. unfold driven_ports.
+    apply NoDup_map_StOp_ov. unfold driven_ports.
     apply NoDup_filter. apply finite_nodup.
   Qed.
 
@@ -2005,13 +2027,15 @@ Section VariableScheduler.
         * apply buffers_tags_in in Hxb. apply final_tags_in in Hxf.
           destruct Hxb as [a' [n' [-> | ->]]];
             destruct Hxf as [[sv Hs]|[ov Ho]]; discriminate.
-        * (* the interesting case: BOTH tags are OutOps, and only the
-             driven/assigned exclusion separates them *)
-          apply drives_tags_in in Hxd. apply final_tags_in_strong in Hxf.
-          destruct Hxd as [o [-> Hdrv]].
-          destruct Hxf as [[sv Hs]|[ov [Hov Hvm]]]; [discriminate Hs|].
-          injection Hov as ->.
-          exact (driven_port_not_assigned DFG ov Hdrv Hvm).
+        * (* Once a drive writes a SCHEDULER register rather than an output,
+             this stops being the interesting case.  A drive tag is
+             [StOp (tf_dfg_ov o)]; a final tag is [StOp (tf_dfg_s sv)] or
+             [OutOp ov].  Different constructors, so [discriminate] separates
+             them and [driven_port_not_assigned] -- the delicate half of this
+             proof -- is not needed at all. *)
+          apply drives_tags_in in Hxd. apply final_tags_in in Hxf.
+          destruct Hxd as [o [-> _]].
+          destruct Hxf as [[sv Hs]|[ov Ho]]; discriminate.
   Qed.
 
 

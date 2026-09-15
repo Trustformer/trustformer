@@ -4206,6 +4206,40 @@ Section SchedulerSimulation.
 
   (* Every op emitted by compile_dfg_buffers is a tf_assign to a tf_dfg_b or
      tf_dfg_v register — never a base state var tf_dfg_s (nor the done flag). *)
+  (* Every op emitted by compile_dfg_drives is a [tf_assign (tf_dfg_ov o)] --
+     a SCHEDULER register, not an output and not a base state var.  That is the
+     whole content of the reframe: because a drive writes a register the
+     scheduler invented, the always half still writes no outputs, and
+     [always_ops_no_out] stays TRUE rather than becoming the one false theorem
+     this campaign found. *)
+  Lemma compile_dfg_drives_no_out
+    (a_idx: nat)
+    (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var) (outputs_var := o_var))
+    (buffers: list (nat * (nat * nat))) (o: o_var)
+    (op: @tf_op (tfs_states sched) i_var o_var) :
+    In op (compile_dfg_drives ctx cost_limit a_idx dfg buffers) ->
+    ~ op_writes_out o op.
+  Proof.
+    unfold compile_dfg_drives.
+    destruct (index_of_nat _ a_idx) as [a' |]; [| intros []].
+    intro Hin. apply in_map_iff in Hin. destruct Hin as [o' [Hop _]].
+    subst op. intros [[e He] | (rv & d & e & szA & szB & fn & He)]; discriminate He.
+  Qed.
+
+  Lemma compile_dfg_drives_no_svar
+    (a_idx: nat)
+    (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var) (outputs_var := o_var))
+    (buffers: list (nat * (nat * nat))) (sv: s_var)
+    (op: @tf_op (tfs_states sched) i_var o_var) :
+    In op (compile_dfg_drives ctx cost_limit a_idx dfg buffers) ->
+    ~ op_assigns_st (tf_dfg_s sv) op.
+  Proof.
+    unfold compile_dfg_drives.
+    destruct (index_of_nat _ a_idx) as [a' |]; [| intros []].
+    intro Hin. apply in_map_iff in Hin. destruct Hin as [o' [Hop _]].
+    subst op. intros [[e He] | (rq & rv & e & szA & szB & fn & He)]; inversion He.
+  Qed.
+
   Lemma compile_dfg_buffers_no_svar
     (a_idx: nat)
     (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var) (outputs_var := o_var))
@@ -4236,7 +4270,9 @@ Section SchedulerSimulation.
     intro Hin. cbn [In] in Hin. destruct Hin as [Heq | Hin].
     - subst op. unfold compile_dfg_valid. cbv zeta.
       intros [[e He] | (rq & rv & e & szA & szB & fn & He)]; discriminate He.
-    - exact (compile_dfg_buffers_no_svar _ _ _ s op Hin).
+    - apply in_app_iff in Hin. destruct Hin as [Hb | Hd].
+      + exact (compile_dfg_buffers_no_svar _ _ _ s op Hb).
+      + exact (compile_dfg_drives_no_svar _ _ _ s op Hd).
   Qed.
 
   (* A non-done cycle leaves every base state var tf_dfg_s unchanged: the always-
@@ -4288,7 +4324,9 @@ Section SchedulerSimulation.
     intro Hin. cbn [In] in Hin. destruct Hin as [Heq | Hin].
     - subst op. unfold compile_dfg_valid. cbv zeta.
       intros [[e He] | (rv & d & e & szA & szB & fn & He)]; discriminate He.
-    - exact (compile_dfg_buffers_no_out _ _ _ o op Hin).
+    - apply in_app_iff in Hin. destruct Hin as [Hb | Hd].
+      + exact (compile_dfg_buffers_no_out _ _ _ o op Hb).
+      + exact (compile_dfg_drives_no_out _ _ _ o op Hd).
   Qed.
 
   (* A non-done cycle leaves every output unchanged. *)

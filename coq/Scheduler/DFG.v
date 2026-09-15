@@ -73,6 +73,11 @@ Section SchedulerTypes.
     | tf_dfg_s (state: states_var)
     | tf_dfg_b (a_idx: Vect.index (length buffer_needs)) (n_idx: Vect.index (length (nth (index_to_nat a_idx) buffer_needs [])))
     | tf_dfg_v (a_idx: Vect.index (length buffer_needs)) (n_idx: Vect.index (length (nth (index_to_nat a_idx) buffer_needs [])))
+    (* EXPERIMENT (RESET-PLAN step 1/2): a scheduler-generated register for a
+       driven port's write strobe.  The point is the SHAPE -- if the always half
+       writes state vars rather than o_vars, [always_ops_no_out] should stay true
+       with its existing proof. *)
+    | tf_dfg_ov (o: outputs_var)
     .
         
 End SchedulerTypes.
