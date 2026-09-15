@@ -19,6 +19,7 @@ Section SchedulerTypes.
   Context {states_var: Type}.
   Context {inputs_var: Type}.
   Context {outputs_var: Type}.
+  Context {ips_var: Type}.
 
   Definition nid_t := nat.
   Definition sz_t := nat.
@@ -44,14 +45,9 @@ Section SchedulerTypes.
        [cost_fn] does not see [cost_limit]; the real design wants cycles, which
        is the ~27-site ripple INSIGHTS #13 describes and absorbs. *)
     | DFG_Stall (lat: nat) (arg: nid_t)
-    (* SPIKE 2b (2026-09-11): THE REQUEST SIDE.  [DFG_Drive] puts a port WRITE
-       into the graph, so it has a cycle and can be an argument.  [DFG_Sample]
-       reads a trusted input through a TOKEN edge, so it stops being a
-       [source_op] and acquires a defined sampling cycle.  With [DFG_Stall]
-       between them a round trip finally has an edge to sit on -- which is
-       precisely what Spike 1.6 found the pipeline could not express. *)
-    | DFG_Drive (v: outputs_var) (arg: nid_t)
-    | DFG_Sample (v: inputs_var) (tok: nid_t)
+    (* A round trip: drive the request, stall, sample the answer. *)
+    | DFG_Drive (p: ips_var) (arg: nid_t)
+    | DFG_Sample (p: ips_var) (tok: nid_t)
     | DFG_Empty                
     .
 
@@ -73,11 +69,8 @@ Section SchedulerTypes.
     | tf_dfg_s (state: states_var)
     | tf_dfg_b (a_idx: Vect.index (length buffer_needs)) (n_idx: Vect.index (length (nth (index_to_nat a_idx) buffer_needs [])))
     | tf_dfg_v (a_idx: Vect.index (length buffer_needs)) (n_idx: Vect.index (length (nth (index_to_nat a_idx) buffer_needs [])))
-    (* EXPERIMENT (RESET-PLAN step 1/2): a scheduler-generated register for a
-       driven port's write strobe.  The point is the SHAPE -- if the always half
-       writes state vars rather than o_vars, [always_ops_no_out] should stay true
-       with its existing proof. *)
-    | tf_dfg_ov (o: outputs_var)
+    (* The scheduler's register for an IP request's {strobe, payload}. *)
+    | tf_dfg_ov (p: ips_var)
     .
         
 End SchedulerTypes.
@@ -99,5 +92,5 @@ Record decl_instance := {
 
 (* A reusable rule inspects the current DFG and emits instances, so users never
    write node ids by hand. *)
-Definition decl_rule (states_var inputs_var outputs_var: Type) :=
-  @dfg_state_t states_var inputs_var outputs_var -> list decl_instance.
+Definition decl_rule (states_var inputs_var outputs_var ips_var: Type) :=
+  @dfg_state_t states_var inputs_var outputs_var ips_var -> list decl_instance.

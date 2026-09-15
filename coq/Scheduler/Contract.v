@@ -51,11 +51,7 @@ Record TFSchedContext := {
   tfs_spec_outputs_size : tfs_spec_outputs -> nat;
   tfs_spec_outputs_class : tfs_spec_outputs -> port_class;
 
-  (* An IP owns its ports, so there is nothing here to classify and nothing to
-     check.  A request port is not in [tfs_spec_outputs], so no action can
-     assign it and it can never be Public; a response port is not in
-     [tfs_spec_inputs], so the attacker cannot drive it.  Both obligations that
-     used to stand here hold by construction. *)
+  (* An IP owns its ports, so there is nothing here to classify or to check. *)
   tfs_spec_ips : Type;
   tfs_spec_ips_fin : FiniteType tfs_spec_ips;
   tfs_spec_ips_names : Show tfs_spec_ips;
@@ -68,7 +64,7 @@ Record TFSchedContext := {
     @tf_ops tfs_spec_states tfs_spec_inputs tfs_spec_outputs tfs_spec_ips;
 
   (* whitebox untainting: [] reproduces the blackbox behaviour *)
-  tfs_spec_decls : list (decl_rule tfs_spec_states tfs_spec_inputs tfs_spec_outputs)
+  tfs_spec_decls : list (decl_rule tfs_spec_states tfs_spec_inputs tfs_spec_outputs tfs_spec_ips)
 }.
 
 Inductive _tfs_ops_t {s_t o_t} :=
@@ -108,11 +104,8 @@ Record TFSchedule := {
   tfs_outputs_fin : FiniteType tfs_outputs;
   tfs_outputs_class : tfs_outputs -> port_class;
 
-  (* The IPs, mirrored across the TFSchedule boundary like the sizes and names:
-     they are what the lowering routes to [ext_ip_req] / [ext_ip_resp], and
-     [tfs_spec_ips] is not definitionally visible through an abstract
-     [TFSchedule].  [tfs_drive_reg] is the scheduler register carrying an IP
-     request's {strobe, payload}; total, because every IP has one. *)
+  (* Mirrored from the context like the sizes and names.  [tfs_drive_reg] is the
+     register carrying an IP request's {strobe, payload}. *)
   tfs_ips : Type;
   tfs_ips_fin : FiniteType tfs_ips;
   tfs_ips_names : Show tfs_ips;
@@ -128,9 +121,7 @@ Record TFSchedule := {
   tfs_map_from: ((ContextEnv (FT:=tfs_states_fin)).(env_t) (tf_states_type tfs_states_size)) -> ((ContextEnv (FT:=(tfs_spec_states_fin tfs_ctx))).(env_t) (tf_states_type (tfs_spec_states_size tfs_ctx)));
 
   (* returns the operations that should always run (fst) and the operations that should only run when the done signal is set (snd) *)
-  (* [Empty_set]: a call is a SPEC-level op.  The lowering turns one into a
-     drive, a delay chain and a sample, so a lowered schedule provably carries
-     none -- which is what the type says here. *)
+  (* [Empty_set]: a call is a spec-level op, so a lowered schedule carries none. *)
   tfs_schedule: tfs_action -> list (@tf_op tfs_states tfs_inputs tfs_outputs Empty_set)
                             * list (@tf_op tfs_states tfs_inputs tfs_outputs Empty_set);
   (* after the done signal is set, the next cycle the module is ready for new input & the modules output is valid (if the above schedule is respected) *)
