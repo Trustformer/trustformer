@@ -9,10 +9,10 @@
 
     What is measured here:
 
-      1. a call emits a DRIVE, so its request port is in [driven_ports] and is
-         therefore written by an ALWAYS-op rather than by a done-op;
-      2. the request port is NOT in [var_map] -- it left the done half
-         entirely, which is what [driven_port_not_assigned] needs;
+      1. a call emits a DRIVE, so it is written by an ALWAYS-op rather than by
+         a done-op;
+      2. the request is not an output at all, so no done-op can write it;
+
       3. the delay chain buys REAL cycles: the sample is scheduled [lat] cycles
          after the drive, and costs [lat] buffers of one bit rather than one
          buffer at the payload width.
@@ -53,13 +53,12 @@ Section CallSpike.
   Definition cs_states_init (x: cs_states) : tf_states_type cs_states_size x :=
     match x with st_res => Bits.zero end.
 
-  (* The IP's declared behaviour.  Inert here -- nothing in the lowering reads
-     it, because the circuit samples the wire.  It is the spec's claim about
-     what the attached chip computes. *)
+  (* What the IP computes.  The lowering never reads it -- the circuit samples
+     the wire -- but the SPEC does: a call denotes [dst := ip_fn arg]. *)
   Definition cs_f (v: bits_t cw) : bits_t cw := v.
 
-  (* Both ends of the IP link are Secret, which [tfs_spec_ip_secret] requires
-     and which [driven_ports] independently filters on. *)
+  (* The response must be Secret; the request needs no such declaration, since
+     it is not an output. *)
   Definition cs_in_class (i: cs_inputs) : port_class :=
     match i with in_msg => Public | in_resp => Secret end.
   Definition cs_out_class (_: cs_outputs) : port_class := Secret.
@@ -86,8 +85,6 @@ Section CallSpike.
          into st_res. *)
       tfs_spec_action_ops := fun _ =>
         tf_ops_base (tf_call cs_crypto st_res (tf_ivar in_msg));
-
-
 
       tfs_spec_ips := cs_ips;      tfs_spec_ips_fin := _;
       tfs_spec_ip := cs_ip;
