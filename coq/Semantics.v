@@ -19,7 +19,7 @@ Section Semantics.
             (states_size : states_var -> nat)
             (inputs_size : inputs_var -> nat)
             (outputs_size : outputs_var -> nat)
-            (ips : ips_var -> ip_decl inputs_size outputs_size).
+            (ips : ips_var -> ip_decl).
 
     (* All spec states are mapped to bits, the size is given by the states_size function *)
     Definition tf_states_type (x: states_var) := 
@@ -124,7 +124,7 @@ Section Semantics.
         | tf_call ip dst arg =>
             let d := ips ip in
             tf_st_update dst
-              (convert (ip_fn d (tf_eval_expr (szB:=(outputs_size (ip_req d)))
+              (convert (ip_fn d (tf_eval_expr (szB:=(ip_req_sz d))
                                               arg sys_state input)))
         end.
 

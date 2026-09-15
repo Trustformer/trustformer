@@ -29,23 +29,6 @@ Inductive port_class := Public | Secret.
 Definition class_tag (c: port_class) : string :=
   match c with Public => "pub" | Secret => "sec" end.
 
-(* ===================================================================== *)
-(*  Surface well-formedness for IP ports                                 *)
-(* ===================================================================== *)
-
-(* An action must not ALSO assign a port that an IP drives.  Boolean so a design
-   discharges it by computation. *)
-Fixpoint tf_no_assign_driven {s i o p}
-    (is_driven : o -> bool) (ops : @tf_ops s i o p) : bool :=
-  match ops with
-  | tf_ops_base (tf_output x _) => negb (is_driven x)
-  | tf_ops_base _ => true
-  | tf_ops_cons a b => andb (tf_no_assign_driven is_driven a)
-                            (tf_no_assign_driven is_driven b)
-  | tf_ops_if _ t e => andb (tf_no_assign_driven is_driven t)
-                            (tf_no_assign_driven is_driven e)
-  end.
-
 Record TFSchedContext := {
   tfs_spec_states : Type;
   tfs_spec_states_eq_dec : EqDec tfs_spec_states;
@@ -68,31 +51,21 @@ Record TFSchedContext := {
   tfs_spec_outputs_size : tfs_spec_outputs -> nat;
   tfs_spec_outputs_class : tfs_spec_outputs -> port_class;
 
+  (* An IP owns its ports, so there is nothing here to classify and nothing to
+     check.  A request port is not in [tfs_spec_outputs], so no action can
+     assign it and it can never be Public; a response port is not in
+     [tfs_spec_inputs], so the attacker cannot drive it.  Both obligations that
+     used to stand here hold by construction. *)
   tfs_spec_ips : Type;
   tfs_spec_ips_fin : FiniteType tfs_spec_ips;
-  tfs_spec_ip : tfs_spec_ips -> ip_decl tfs_spec_inputs_size tfs_spec_outputs_size;
-
-  (* Both ends of an IP link are Secret.  A field, not a free-standing Prop, so
-     a context naming a Public request or response port cannot be built. *)
-  tfs_spec_ip_secret :
-    forall p, tfs_spec_inputs_class (ip_resp (tfs_spec_ip p)) = Secret /\
-              tfs_spec_outputs_class (ip_req (tfs_spec_ip p)) = Secret;
+  tfs_spec_ips_names : Show tfs_spec_ips;
+  tfs_spec_ip : tfs_spec_ips -> ip_decl;
 
   tfs_spec_action : Type;
   tfs_spec_action_eq_dec : EqDec tfs_spec_action;
   tfs_spec_action_fin : FiniteType tfs_spec_action;
   tfs_spec_action_ops : tfs_spec_action ->
     @tf_ops tfs_spec_states tfs_spec_inputs tfs_spec_outputs tfs_spec_ips;
-
-  (* A port an IP drives must not ALSO be assigned by an action. *)
-  tfs_spec_no_assign_driven :
-    forall a, tf_no_assign_driven
-                (fun o => existsb
-                            (fun p => if tfs_spec_outputs_eq_dec.(eq_dec)
-                                           (ip_req (tfs_spec_ip p)) o
-                                      then true else false)
-                            (@finite_elements tfs_spec_ips tfs_spec_ips_fin))
-                (tfs_spec_action_ops a) = true;
 
   (* whitebox untainting: [] reproduces the blackbox behaviour *)
   tfs_spec_decls : list (decl_rule tfs_spec_states tfs_spec_inputs tfs_spec_outputs)
@@ -128,13 +101,6 @@ Record TFSchedule := {
      input type, but that is not definitionally visible through an abstract
      [TFSchedule], so the classification has to be carried across. *)
   tfs_inputs_class : tfs_inputs -> port_class;
-  (* Also mirrored from the context: which inputs are IP RESPONSE ports.  These
-     are the only inputs that are not latched at action start -- a response
-     arrives mid-action, so latching it would read the value from BEFORE the
-     request was even driven.  The lowering has to be able to tell them apart,
-     and [tfs_spec_ip_req] is not definitionally visible through an abstract
-     [TFSchedule], so it is carried across exactly as the class is. *)
-  tfs_inputs_is_resp : tfs_inputs -> bool;
 
   tfs_outputs : Type;
   tfs_outputs_size : tfs_outputs -> nat;
@@ -142,18 +108,18 @@ Record TFSchedule := {
   tfs_outputs_fin : FiniteType tfs_outputs;
   tfs_outputs_class : tfs_outputs -> port_class;
 
-  (* The scheduler register carrying a driven port's {strobe, payload}, if the
-     port is an IP request port.  Mirrored across the TFSchedule boundary for
-     the same reason the class is: tfs_states is abstract here, so TypedSynthesis
-     cannot name the concrete register the scheduler invented.
-
-     This is what makes IP ports SCHEDULER-GENERATED rather than user-declared:
-     the port name still lives in tfs_outputs, but its hardware is a register
-     the scheduler owns, routed to an IP-specific external call instead of the
-     ordinary ext_output.  Buffers work exactly this way. *)
-  tfs_drive_reg : tfs_outputs -> option tfs_states;
-  tfs_drive_reg_size : forall o r, tfs_drive_reg o = Some r ->
-                       tfs_states_size r = 1 + tfs_outputs_size o;
+  (* The IPs, mirrored across the TFSchedule boundary like the sizes and names:
+     they are what the lowering routes to [ext_ip_req] / [ext_ip_resp], and
+     [tfs_spec_ips] is not definitionally visible through an abstract
+     [TFSchedule].  [tfs_drive_reg] is the scheduler register carrying an IP
+     request's {strobe, payload}; total, because every IP has one. *)
+  tfs_ips : Type;
+  tfs_ips_fin : FiniteType tfs_ips;
+  tfs_ips_names : Show tfs_ips;
+  tfs_ip : tfs_ips -> ip_decl;
+  tfs_drive_reg : tfs_ips -> tfs_states;
+  tfs_drive_reg_size : forall p,
+    tfs_states_size (tfs_drive_reg p) = 1 + ip_req_sz (tfs_ip p);
 
   tfs_action : Type;
   tfs_action_fin : FiniteType tfs_action;

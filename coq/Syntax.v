@@ -6,21 +6,17 @@ Require Import Koika.Utils.Environments.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
-(* An attached IP block. *)
-Record ip_decl {i o : Type} (isz : i -> nat) (osz : o -> nat) := {
-  ip_req  : o;              (* request port, driven mid-action *)
-  ip_resp : i;              (* response port, sampled live *)
-  ip_lat  : nat;            (* cycles from pulse to answer; not pipelined *)
-  ip_fn   : bits_t (osz ip_req) -> bits_t (isz ip_resp);
+(* An attached IP block.  Its two ports are its OWN -- they are not drawn from
+   the design's input and output types, so an action cannot name one. *)
+Record ip_decl := {
+  ip_req_sz  : nat;         (* request width, driven mid-action *)
+  ip_resp_sz : nat;         (* response width, sampled live *)
+  ip_lat     : nat;         (* cycles from pulse to answer; not pipelined *)
+  ip_fn      : bits_t ip_req_sz -> bits_t ip_resp_sz;
 }.
-Arguments ip_req {i o isz osz}.
-Arguments ip_resp {i o isz osz}.
-Arguments ip_lat {i o isz osz}.
-Arguments ip_fn {i o isz osz}.
 
 (* The IP map of a design that has no IPs. *)
-Definition no_ips {i o} {isz : i -> nat} {osz : o -> nat}
-  (e : Empty_set) : ip_decl isz osz := match e with end.
+Definition no_ips (e : Empty_set) : ip_decl := match e with end.
 
 Section TrustformerSyntax.
 
