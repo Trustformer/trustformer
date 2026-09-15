@@ -18,6 +18,10 @@ Arguments ip_resp {i o isz osz}.
 Arguments ip_lat {i o isz osz}.
 Arguments ip_fn {i o isz osz}.
 
+(* The IP map of a design that has no IPs. *)
+Definition no_ips {i o} {isz : i -> nat} {osz : o -> nat}
+  (e : Empty_set) : ip_decl isz osz := match e with end.
+
 Section TrustformerSyntax.
 
     (* Given some variables, inputs and outputs we define our syntax *)

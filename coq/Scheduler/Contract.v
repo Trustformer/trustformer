@@ -33,18 +33,10 @@ Definition class_tag (c: port_class) : string :=
 (*  Surface well-formedness for IP ports                                 *)
 (* ===================================================================== *)
 
-(* An action must not ALSO assign a port that an IP drives.
-
-   This is the check that did not exist, and its absence was a miscompile
-   rather than a rejected program: [driven_ports] used to EXCLUDE a port that
-   was both driven and assigned, which silently dropped the drive -- the request
-   never reached the IP and nothing said so.
-
-   Boolean rather than Prop so a design discharges it by computation; MARS's
-   actions are large enough that a [cbn]-unfolded conjunction is not something to
-   put in front of the kernel. *)
-Fixpoint tf_no_assign_driven {s i o}
-    (is_driven : o -> bool) (ops : @tf_ops s i o) : bool :=
+(* An action must not ALSO assign a port that an IP drives.  Boolean so a design
+   discharges it by computation. *)
+Fixpoint tf_no_assign_driven {s i o p}
+    (is_driven : o -> bool) (ops : @tf_ops s i o p) : bool :=
   match ops with
   | tf_ops_base (tf_output x _) => negb (is_driven x)
   | tf_ops_base _ => true
@@ -76,48 +68,30 @@ Record TFSchedContext := {
   tfs_spec_outputs_size : tfs_spec_outputs -> nat;
   tfs_spec_outputs_class : tfs_spec_outputs -> port_class;
 
-  tfs_spec_ip_req : tfs_spec_inputs -> option tfs_spec_outputs;
-  tfs_spec_ip_lat : tfs_spec_inputs -> nat;
+  tfs_spec_ips : Type;
+  tfs_spec_ips_fin : FiniteType tfs_spec_ips;
+  tfs_spec_ip : tfs_spec_ips -> ip_decl tfs_spec_inputs_size tfs_spec_outputs_size;
 
-  (* BOTH ends of an IP link are Secret, and this is enforced HERE -- as a field
-     of the context -- so a TFSchedContext naming a Public request or response
-     port cannot be constructed at all.  A free-standing Prop would have to be
-     remembered at every use site; a field is discharged once, where the ports
-     are declared, and is then available to every proof for free.
-
-     Why it must hold.  A request port moves mid-action, in a data-dependent
-     way, by construction -- that is the whole point of a drive.  A PUBLIC port
-     doing that is directly attacker-visible timing, which is the thing IPR
-     exists to rule out (Probe 2d: [driven_ports] admits only Secret ports, and
-     the proof obligation and the security obligation coincide).  A public
-     response port is the mirror image: it would let the attacker read the IP's
-     answer straight off the wire.
-
-     This covers every port named in an IP DECLARATION.  The companion condition
-     -- that a [tf_call] may only name a declared (req,resp) pair -- is what
-     extends it to every port named by a CALL. *)
+  (* Both ends of an IP link are Secret.  A field, not a free-standing Prop, so
+     a context naming a Public request or response port cannot be built. *)
   tfs_spec_ip_secret :
-    forall v o, tfs_spec_ip_req v = Some o ->
-      tfs_spec_inputs_class v = Secret /\ tfs_spec_outputs_class o = Secret;
+    forall p, tfs_spec_inputs_class (ip_resp (tfs_spec_ip p)) = Secret /\
+              tfs_spec_outputs_class (ip_req (tfs_spec_ip p)) = Secret;
 
   tfs_spec_action : Type;
   tfs_spec_action_eq_dec : EqDec tfs_spec_action;
   tfs_spec_action_fin : FiniteType tfs_spec_action;
-  tfs_spec_action_ops : tfs_spec_action -> @tf_ops tfs_spec_states tfs_spec_inputs tfs_spec_outputs;
+  tfs_spec_action_ops : tfs_spec_action ->
+    @tf_ops tfs_spec_states tfs_spec_inputs tfs_spec_outputs tfs_spec_ips;
 
-  (* The surface check. A port an IP drives must not ALSO be assigned by an
-     action -- the two would write it in both schedule halves, and before
-     driven-ness was declared the conflict was resolved by silently dropping
-     the drive. Discharged by computation where the actions are written. *)
+  (* A port an IP drives must not ALSO be assigned by an action. *)
   tfs_spec_no_assign_driven :
     forall a, tf_no_assign_driven
                 (fun o => existsb
-                            (fun v => match tfs_spec_ip_req v with
-                                      | Some oo => if tfs_spec_outputs_eq_dec.(eq_dec) oo o
-                                                   then true else false
-                                      | None => false
-                                      end)
-                            (@finite_elements tfs_spec_inputs tfs_spec_inputs_fin))
+                            (fun p => if tfs_spec_outputs_eq_dec.(eq_dec)
+                                           (ip_req (tfs_spec_ip p)) o
+                                      then true else false)
+                            (@finite_elements tfs_spec_ips tfs_spec_ips_fin))
                 (tfs_spec_action_ops a) = true;
 
   (* whitebox untainting: [] reproduces the blackbox behaviour *)
@@ -128,12 +102,12 @@ Inductive _tfs_ops_t {s_t o_t} :=
   | StOp (s: s_t)
   | OutOp (o: o_t).
 
-Definition tfs_ops_no_duplicates {s i o} (ops: list (@tf_op s i o)) : Prop :=
-  NoDup (flat_map (fun op => 
-    match op with 
-      | tf_assign dst _ => [StOp dst]  
+Definition tfs_ops_no_duplicates {s i o p} (ops: list (@tf_op s i o p)) : Prop :=
+  NoDup (flat_map (fun op =>
+    match op with
+      | tf_assign dst _ => [StOp dst]
       | tf_output dst _ => [OutOp dst]
-      | tf_call req _ dst _ _ => [OutOp req; StOp dst]  (* a call writes BOTH *)
+      | tf_call _ dst _ => [StOp dst]
       | _ => []
     end) ops).
 
@@ -188,7 +162,11 @@ Record TFSchedule := {
   tfs_map_from: ((ContextEnv (FT:=tfs_states_fin)).(env_t) (tf_states_type tfs_states_size)) -> ((ContextEnv (FT:=(tfs_spec_states_fin tfs_ctx))).(env_t) (tf_states_type (tfs_spec_states_size tfs_ctx)));
 
   (* returns the operations that should always run (fst) and the operations that should only run when the done signal is set (snd) *)
-  tfs_schedule: tfs_action -> list (@tf_op tfs_states tfs_inputs tfs_outputs) * list (@tf_op tfs_states tfs_inputs tfs_outputs);
+  (* [Empty_set]: a call is a SPEC-level op.  The lowering turns one into a
+     drive, a delay chain and a sample, so a lowered schedule provably carries
+     none -- which is what the type says here. *)
+  tfs_schedule: tfs_action -> list (@tf_op tfs_states tfs_inputs tfs_outputs Empty_set)
+                            * list (@tf_op tfs_states tfs_inputs tfs_outputs Empty_set);
   (* after the done signal is set, the next cycle the module is ready for new input & the modules output is valid (if the above schedule is respected) *)
   tfs_done_signal: tfs_states;
   (* these states have to be reset to Bits.zero if the done signal is set *)
@@ -210,7 +188,7 @@ Record TFSchedule := {
           match op with
           | tf_assign dst _ => [StOp dst]
           | tf_output dst _ => [OutOp dst]
-          | tf_call req _ dst _ _ => [OutOp req; StOp dst]  (* a call writes BOTH *)
+          | tf_call _ dst _ => [StOp dst]
           | _ => []
           end) (fst (tfs_schedule a)));
 
@@ -244,10 +222,10 @@ Section SchedulerSpec.
   Hint Extern 0 (FiniteType o_var) => exact (tfs_outputs_fin (tf_sched_ctx)) : typeclass_instances.
 
   Definition tfs_get_updates
-    (ops: list (@tf_op s_var i_var o_var))
+    (ops: list (@tf_op s_var i_var o_var Empty_set))
     (sys_state: sys_state_t)
     (input: input_t) :=
-    List.map (fun op => tf_op_step_updates s_sz i_sz o_sz op sys_state input) ops.
+    List.map (fun op => tf_op_step_updates s_sz i_sz o_sz no_ips op sys_state input) ops.
 
   (* Definition tfs_reset_states_list
     (states_to_reset: list s_var)
@@ -282,16 +260,6 @@ Section SchedulerSpec.
                       end)
             | right _ => find_st_update x rest
             end
-        (* a call writes a state var too, and must be found here or the spec's
-           state update would be invisible to the simulation *)
-        | tf_call_update _ _ _ _ var val =>
-            match eq_dec var x with
-            | left eq_proof =>
-                Some (match eq_proof in (_ = y) return bits_t (s_sz y) with
-                      | eq_refl => val
-                      end)
-            | right _ => find_st_update x rest
-            end
         | _ => find_st_update x rest
         end
     end.
@@ -310,15 +278,6 @@ Section SchedulerSpec.
         | tf_out_update _ _ var val =>
             match eq_dec var x with
             | left eq_proof => 
-                Some (match eq_proof in (_ = y) return bits_t (o_sz y) with
-                      | eq_refl => val
-                      end)
-            | right _ => find_out_update x rest
-            end
-        (* a call writes its REQUEST port here *)
-        | tf_call_update _ _ var val _ _ =>
-            match eq_dec var x with
-            | left eq_proof =>
                 Some (match eq_proof in (_ = y) return bits_t (o_sz y) with
                       | eq_refl => val
                       end)
