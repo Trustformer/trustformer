@@ -331,28 +331,27 @@ End TwoCallsChained.
 (* TWO CALLS ON ONE IP: BROKEN WHEN INDEPENDENT, CORRECT WHEN CHAINED *)
 (* ================================================================== *)
 
-(* INDEPENDENT calls collide.  Both drives land in the SAME cycle, and
-   [compile_dfg_drives] folds them into ONE tf_output with the latest
-   outermost -- so the earlier request never reaches the wire.  Both samples
-   then read that wire in the same cycle, so both destinations receive the
-   answer to the LATER request.  One request sent, two identical results, no
-   diagnostic.  This is a miscompile and the surface language must reject it. *)
-Example independent_calls_collide_on_the_drive :
-  tcyc2 tc_d1 = tcyc2 tc_d2.
+(* INDEPENDENT calls now SEQUENCE, exactly as chained ones always did.
+
+   There is one set of request wires, so two calls physically must take turns.
+   Before the ordering join both drives landed in the SAME cycle: the fold kept
+   only the latest, the earlier request never reached the IP, and both samples
+   read the same wire -- so both destinations got the answer to the later
+   request. One request sent, two identical results, no diagnostic.
+
+   The join makes the second call's delay chain depend on the first call's
+   sample, so the second drive lands in the first sample's cycle, lat after the
+   first drive. *)
+Example independent_calls_sequence :
+  List.map tcyc2 tc_drives = [3; 6].
 Proof. vm_compute. reflexivity. Qed.
 
-Example independent_calls_collide_on_the_sample :
-  List.map tcyc2 tc_samples = [0; 0].
+Example independent_samples_sequence :
+  List.map tcyc2 tc_samples = [0; 3].
 Proof. vm_compute. reflexivity. Qed.
 
-(* CHAINED calls sequence correctly.  Call 2's argument reads call 1's result,
-   so the data dependency puts the drives clat apart and each round trip gets
-   its own cycles.  Validity is monotone, so the request wire carries e_1 until
-   drive 2 fires and e_2 thereafter -- which is the right waveform.
-
-   So the defect is NOT "the mechanism cannot do consecutive calls".  It is
-   specifically that nothing forces independent calls on one port to be
-   ordered. *)
+(* ...and chained calls are unchanged: the data dependency already ordered them,
+   so the join adds nothing. *)
 Example chained_calls_sequence :
   List.map tcyc3 tc2_drives = [3; 6].
 Proof. vm_compute. reflexivity. Qed.

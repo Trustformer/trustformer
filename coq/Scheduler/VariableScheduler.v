@@ -132,6 +132,25 @@ Section VariableScheduler.
      relating count to elapsed cycles -- where a chain needs none of it and
      reuses the buffer machinery unchanged.  The cost difference is a handful of
      flops at these widths. *)
+  (* The most recent [DFG_Sample] on [v], if any.  [graph] is latest-first
+     (emit conses), so [find] returns the latest -- i.e. PROGRAM ORDER, since the
+     graph is built in program order.
+
+     This is what lets independent calls on one IP be SEQUENCED rather than
+     rejected.  There is one set of request wires, so two calls physically must
+     take turns; without an ordering edge both drives land in the same cycle,
+     the fold keeps only the latest, and the earlier request is silently lost
+     while both samples read the same wire (measured in CallSpike). *)
+  Definition last_sample (dfg: dfg_state) (v: inputs_var) : option nid_t :=
+    match find (fun nd => match op nd with
+                          | DFG_Sample v' _ =>
+                              if inputs_var_eq_dec.(eq_dec) v' v then true else false
+                          | _ => false
+                          end) (graph dfg) with
+    | Some nd => Some (nid nd)
+    | None => None
+    end.
+
   Fixpoint stall_chain (n: nat) (id: nid_t) : M nid_t :=
     match n with
     | 0 => ret id
@@ -342,9 +361,25 @@ Section VariableScheduler.
          the request.  This is exactly the shape Spike 2b measured by hand:
          in_x -> drive -> stall<L> -> sample. *)
       | tf_call req resp dst arg _ =>
+        let! s0 := get_state in
         let! arg_id := dataflow_expr arg (dfg_var_size (DFG_OVar req)) in
         let! drive_id := emit (DFG_Drive req arg_id) (dfg_var_size (DFG_OVar req)) in
-        let! stall_id := stall_chain (tfs_spec_ip_lat ctx resp) drive_id in
+        (* SEQUENCING.  If an earlier call in this action already used this IP,
+           hang the delay chain off a JOIN of this drive and that call's sample
+           rather than off the drive alone.  A DFG_Binary's validity is the AND
+           of its arguments (valid_expr_and), so the join cannot fire until the
+           previous response has been taken -- and since a node shares a cycle
+           with its arguments, the new drive lands in the previous sample's
+           cycle, exactly lat after the previous drive.
+
+           Width 1: only the join's VALIDITY is used, its value is discarded by
+           the chain and then by the sample.  tf_or is arbitrary -- any binary op
+           would do, because nothing reads the result. *)
+        let! head := match last_sample s0 resp with
+                     | None => ret drive_id
+                     | Some prev => emit (DFG_Binary tf_or drive_id prev) 1
+                     end in
+        let! stall_id := stall_chain (tfs_spec_ip_lat ctx resp) head in
         let! samp_id := emit (DFG_Sample resp stall_id) (dfg_var_size (DFG_SVar dst)) in
         set_var (DFG_SVar dst) samp_id
       end
@@ -1671,11 +1706,15 @@ Section VariableScheduler.
       + apply preserves_ret.
       + apply preserves_bind; [apply dataflow_expr_vm|]. intro x. apply set_var_vm.
       + apply preserves_bind; [apply dataflow_expr_vm|]. intro x. apply set_var_vm.
-      + (* a call is FOUR steps: payload, drive, stall, sample, dest write --
-           and only the LAST touches var_map.  The request is no longer a
-           [set_var]: it is a drive, emitted into the always half. *)
+      + (* payload, drive, ordering join, delay chain, sample, dest write --
+           and only the LAST touches var_map.  [get_state] is the identity on
+           state, and the join is an [emit] or a [ret]; neither records
+           anything. *)
+        apply preserves_bind; [intros s Hs; exact Hs|]. intro s0.
         apply preserves_bind; [apply dataflow_expr_vm|]. intro x.
         apply preserves_bind; [apply emit_vm|]. intro y.
+        apply preserves_bind;
+          [destruct (last_sample s0 rv); [apply emit_vm | apply preserves_ret]|]. intro h.
         apply preserves_bind; [apply stall_chain_vm|]. intro z.
         apply preserves_bind; [apply emit_vm|]. intro w.
         apply set_var_vm.
