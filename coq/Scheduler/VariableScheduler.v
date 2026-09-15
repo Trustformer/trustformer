@@ -566,7 +566,7 @@ Section VariableScheduler.
     | tf_dfg_b a_idx b_idx => snd (snd (nth (index_to_nat b_idx) (nth (index_to_nat a_idx) buffer_needs []) (0, (0, 0))))
     | tf_dfg_v a_idx b_idx => 1
     | tf_dfg_done => 1
-    | tf_dfg_ov _ => 1
+    | tf_dfg_ov o => 1 + outputs_var_size o
     end.
 
   (* ============================== *)
@@ -1239,17 +1239,43 @@ Section VariableScheduler.
     match index_of_nat (length buffer_needs) a_idx with
     | None => []
     | Some a_idx' =>
-        (* EXPERIMENT (RESET-PLAN step 1): emit a STATE-var write instead of an
-           output write.  If [always_ops_no_out] survives this, IP ports belong
-           to the scheduler like buffers and the campaign's one false theorem
-           never becomes false. *)
+        (* ONE scheduler register per driven port, holding {strobe, payload}
+           concatenated.  One register rather than two because the tag lemmas
+           below then have ONE tag per port and stay one-liners; [tf_concat]
+           costs 0 in the cost model ("pure wiring"), so it is free.
+
+           Both halves are a STATE-var write, which is what keeps
+           [always_ops_no_out] true (verified, d367975). *)
         map (fun o =>
                tf_assign (tf_dfg_ov o)
-                 (fold_right
-                    (fun n acc =>
-                       let '(e, v) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg n buffers in
-                       tf_expr_if v e acc)
-                    (tf_ovar o) (drive_nodes dfg o)))
+                 (tf_op2 (tf_concat 1 (outputs_var_size o))
+                    (* THE STROBE -- one cycle.  A drive's own validity is
+                       monotone, so gating on it would hold the strobe high for
+                       the rest of the action; ANDing with the negated
+                       chain-head validity (the same bit one cycle later)
+                       narrows it to the cycle the request issues.  Without an
+                       edge an IP cannot tell a new request from the previous
+                       payload still standing on the wire. *)
+                    (fold_right
+                       (fun n acc =>
+                          let '(_, v) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg n buffers in
+                          let vprev := match chain_head dfg n with
+                                       | Some h => snd (compile_dfg_expr_aux tainted dfacts []
+                                                          fuel a_idx' dfg h buffers)
+                                       | None => tf_const 0
+                                       end in
+                          tf_expr_if (tf_op2 tf_and v (tf_op1 tf_not vprev)) (tf_const 1) acc)
+                       (tf_const 0) (drive_nodes dfg o))
+                    (* THE PAYLOAD -- held.  Reading the register back AT THE
+                       PAYLOAD WIDTH slices the strobe bit off, so the
+                       else-branch is literally the previous payload and the
+                       wire never carries garbage.  Holding it beyond the pulse
+                       is the IP wrapper's job. *)
+                    (fold_right
+                       (fun n acc =>
+                          let '(e, v) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg n buffers in
+                          tf_expr_if v e acc)
+                       (tf_svar (tf_dfg_ov o)) (drive_nodes dfg o))))
             (driven_ports dfg)
     end.
 
