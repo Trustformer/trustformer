@@ -65,14 +65,14 @@ Section Spike.
 
   (* TWO DRIVES OF ONE PORT -- what a second crypto request inside one action
      looks like: message A on the port, then later message B. *)
-  Definition ops_twice : @tf_ops pd_states pd_inputs pd_outputs :=
+  Definition ops_twice : @tf_ops pd_states pd_inputs pd_outputs Empty_set :=
     tf_ops_cons
       (tf_ops_base (tf_output out_req (tf_ivar in_x)))
       (tf_ops_base (tf_output out_req (tf_ivar in_y))).
 
   (* REQUEST THEN RESPONSE -- build a message over four cycles, drive it, read
      the answer back.  Nothing in the DSL says the read follows the write. *)
-  Definition ops_reqresp : @tf_ops pd_states pd_inputs pd_outputs :=
+  Definition ops_reqresp : @tf_ops pd_states pd_inputs pd_outputs Empty_set :=
     tf_ops_cons
       (tf_ops_base (tf_output out_req (work 4 (tf_ivar in_x))))
       (tf_ops_base (tf_assign st_acc (tf_ivar in_resp))).
@@ -81,7 +81,7 @@ Section Spike.
      in a register, so backward costing happens to put it at the far end and the
      schedule looks accidentally plausible.  Give the answer some work to feed
      and the accident disappears. *)
-  Definition ops_resp_used : @tf_ops pd_states pd_inputs pd_outputs :=
+  Definition ops_resp_used : @tf_ops pd_states pd_inputs pd_outputs Empty_set :=
     tf_ops_cons
       (tf_ops_base (tf_output out_req (work 4 (tf_ivar in_x))))
       (tf_ops_base (tf_assign st_acc (work 4 (tf_ivar in_resp)))).
@@ -108,10 +108,9 @@ Section Spike.
         end;
       (* no attached IP: no call names a response port here *)
       (* no IP drives any port here, so nothing can conflict with one *)
-      tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-      tfs_spec_ip_req := fun _ => None;
-      tfs_spec_ip_lat := fun _ => 0;
-      tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
+      tfs_spec_ips := Empty_set;
+      tfs_spec_ip := no_ips;
+      tfs_spec_ip_resp_secret := ltac:(intros []);
       tfs_spec_decls := []
   |}.
 
@@ -160,7 +159,7 @@ Section Spike.
      action and no earlier -- there is no cycle at which an IP could see a
      request AND the action still be running to receive the answer. *)
 
-  Definition count_outputs {s i o} (ops: list (@tf_op s i o)) : nat :=
+  Definition count_outputs {s i o} (ops: list (@tf_op s i o Empty_set)) : nat :=
     List.length (filter (fun op => match op with
                                    | tf_output _ _ => true
                                    | _ => false end) ops).

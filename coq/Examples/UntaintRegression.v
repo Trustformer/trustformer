@@ -55,7 +55,7 @@ Section FunctionalSpecification.
     (* The spec publishes the bitwise negation of the secret, then branches on
        the secret itself. *)
     Definition fs_transitions (act: fs_action)
-        : (@tf_ops fs_states fs_inputs fs_outputs) :=
+        : (@tf_ops fs_states fs_inputs fs_outputs Empty_set) :=
         match act with
         | act_neg =>
             {[
@@ -68,7 +68,7 @@ End FunctionalSpecification.
 
 Section Contrast.
 
-    Definition mk_ctx (decls: list (decl_rule fs_states fs_inputs fs_outputs))
+    Definition mk_ctx (decls: list (decl_rule fs_states fs_inputs fs_outputs Empty_set))
         : TFSchedContext := {|
         tfs_spec_states := fs_states;
         tfs_spec_states_fin := _;
@@ -88,10 +88,9 @@ Section Contrast.
         tfs_spec_action_ops := fs_transitions;
         (* no attached IP: no call names a response port here *)
         (* no IP drives any port here, so nothing can conflict with one *)
-        tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-        tfs_spec_ip_req := fun _ => None;
-        tfs_spec_ip_lat := fun _ => 0;
-        tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
+        tfs_spec_ips := Empty_set;
+        tfs_spec_ip := no_ips;
+        tfs_spec_ip_resp_secret := ltac:(intros []);
         tfs_spec_decls := decls
     |}.
 
@@ -102,7 +101,7 @@ Section Contrast.
        compiler's own diagnostic rather than from a per-node approximation. *)
     Definition critical_count (ctx: TFSchedContext)
         (dfg: @dfg_state_t (tfs_spec_states ctx) (tfs_spec_inputs ctx)
-                (tfs_spec_outputs ctx)) : nat :=
+                (tfs_spec_outputs ctx) (tfs_spec_ips ctx)) : nat :=
         List.length (crit_report_all ctx dfg).
 
     (* Without a rule the branch on the secret must be constant-time. *)
@@ -199,7 +198,7 @@ Section GuardedSpecification.
         end.
 
     Definition gs_transitions (act: gs_action)
-        : (@tf_ops gs_states gs_inputs gs_outputs) :=
+        : (@tf_ops gs_states gs_inputs gs_outputs Empty_set) :=
         match act with
         | gs_act =>
             {[
@@ -215,7 +214,7 @@ End GuardedSpecification.
 
 Section GuardedContrast.
 
-    Definition mk_gctx (decls: list (decl_rule gs_states gs_inputs gs_outputs))
+    Definition mk_gctx (decls: list (decl_rule gs_states gs_inputs gs_outputs Empty_set))
         : TFSchedContext := {|
         tfs_spec_states := gs_states;
         tfs_spec_states_fin := _;
@@ -235,10 +234,9 @@ Section GuardedContrast.
         tfs_spec_action_ops := gs_transitions;
         (* no attached IP: no call names a response port here *)
         (* no IP drives any port here, so nothing can conflict with one *)
-        tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-        tfs_spec_ip_req := fun _ => None;
-        tfs_spec_ip_lat := fun _ => 0;
-        tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
+        tfs_spec_ips := Empty_set;
+        tfs_spec_ip := no_ips;
+        tfs_spec_ip_resp_secret := ltac:(intros []);
         tfs_spec_decls := decls
     |}.
 

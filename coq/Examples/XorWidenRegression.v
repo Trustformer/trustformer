@@ -61,7 +61,7 @@ Section Specification.
        point here is the CONDITION: it reads the two secrets, and only the xor
        and resize rules can recover them. *)
     Definition rw_transitions (act: rw_action)
-      : (@tf_ops rw_states rw_inputs rw_outputs) :=
+      : (@tf_ops rw_states rw_inputs rw_outputs Empty_set) :=
       match act with
       | rw_act =>
           {[
@@ -78,7 +78,7 @@ End Specification.
 
 Section Contrast.
 
-    Definition mk_rw (decls: list (decl_rule rw_states rw_inputs rw_outputs))
+    Definition mk_rw (decls: list (decl_rule rw_states rw_inputs rw_outputs Empty_set))
       : TFSchedContext := {|
       tfs_spec_states := rw_states;
       tfs_spec_states_fin := _;
@@ -98,10 +98,9 @@ Section Contrast.
       tfs_spec_action_ops := rw_transitions;
       (* no attached IP: no call names a response port here *)
       (* no IP drives any port here, so nothing can conflict with one *)
-      tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-      tfs_spec_ip_req := fun _ => None;
-      tfs_spec_ip_lat := fun _ => 0;
-      tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
+      tfs_spec_ips := Empty_set;
+      tfs_spec_ip := no_ips;
+      tfs_spec_ip_resp_secret := ltac:(intros []);
       tfs_spec_decls := decls
     |}.
 

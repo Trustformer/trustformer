@@ -55,7 +55,7 @@ Section FunctionalSpecification.
        root would be the merge phi and the exposure would not arise -- which is
        exactly why relying on "we happen to write it inside a branch" is not a
        fix. *)
-    Definition sd_ops (a: sd_action) : @tf_ops sd_states sd_inputs sd_outputs :=
+    Definition sd_ops (a: sd_action) : @tf_ops sd_states sd_inputs sd_outputs Empty_set :=
       match a with
       | act_leak =>
         {[
@@ -101,10 +101,9 @@ Section FunctionalSpecification.
         tfs_spec_action_ops := sd_ops;
         (* no attached IP: no call names a response port here *)
         (* no IP drives any port here, so nothing can conflict with one *)
-        tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-        tfs_spec_ip_req := fun _ => None;
-        tfs_spec_ip_lat := fun _ => 0;
-        tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
+        tfs_spec_ips := Empty_set;
+        tfs_spec_ip := no_ips;
+        tfs_spec_ip_resp_secret := ltac:(intros []);
         tfs_spec_decls := []
     |}.
 
@@ -117,7 +116,7 @@ Section Contrast.
 
     Definition crit (ctx: TFSchedContext)
         (dfg: @dfg_state_t (tfs_spec_states ctx) (tfs_spec_inputs ctx)
-                (tfs_spec_outputs ctx)) : nat :=
+                (tfs_spec_outputs ctx) (tfs_spec_ips ctx)) : nat :=
       List.length (crit_report_all ctx dfg).
 
     (* [out_key] treated as attacker-visible: the secret is declassified at it,

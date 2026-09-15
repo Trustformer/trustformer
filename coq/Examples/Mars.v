@@ -312,8 +312,8 @@ Section FunctionalSpecification.
        normative in section 5.3.1): in out_failure mode every command except
        MARS_CapabilityGet returns MARS_RC_FAILURE, and it does so BEFORE the
        unsupported-command check. *)
-    Definition guard_failure (body: @tf_ops fs_states fs_inputs fs_outputs)
-        : @tf_ops fs_states fs_inputs fs_outputs :=
+    Definition guard_failure (body: @tf_ops fs_states fs_inputs fs_outputs Empty_set)
+        : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
     {[
         if ($out_failure ==[1] #1)
         then let $out_rc := #MARS_RC_FAILURE
@@ -327,8 +327,8 @@ Section FunctionalSpecification.
        command answers MARS_RC_COMMAND regardless, since there is nothing to
        refuse.  Busy is never an out_rc of its own: section 6.2 has no BUSY code and
        3 is Reserved, so the host reads busy from [out_pend] (REVIEW.md 3.2). *)
-    Definition guard_busy (body: @tf_ops fs_states fs_inputs fs_outputs)
-        : @tf_ops fs_states fs_inputs fs_outputs :=
+    Definition guard_busy (body: @tf_ops fs_states fs_inputs fs_outputs Empty_set)
+        : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
     {[
         if ($out_pend !=[pend_sz] #PEND_IDLE)
         then let $out_rc := #MARS_RC_VALUE
@@ -393,7 +393,7 @@ Section FunctionalSpecification.
        [out_dout].  The only recovery is _MARS_Init. *)
     Definition issue_sha (step: nat)
                      (msg: @tf_expr fs_states fs_inputs fs_outputs) (len: nat)
-        : @tf_ops fs_states fs_inputs fs_outputs :=
+        : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
     {[
         let $out_sha_msg    := `msg`;
         let $out_sha_len    := #len;
@@ -426,7 +426,7 @@ Section FunctionalSpecification.
        _MARS_Init reinitializes (spec section 5.3.1). *)
     (* Zeroize every group, whichever one misbehaved: a faulting IP is exactly
        when nothing should be left driven on any trusted port. *)
-    Definition zeroize : @tf_ops fs_states fs_inputs fs_outputs :=
+    Definition zeroize : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
     {[
         let $out_sha_msg     := #0;
         let $out_sha_active  := #0;
@@ -435,7 +435,7 @@ Section FunctionalSpecification.
         let $out_hmac_active := #0
     ]}.
 
-    Definition fault : @tf_ops fs_states fs_inputs fs_outputs :=
+    Definition fault : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
     {[
         `zeroize`;
         let $out_pend    := #PEND_IDLE;
@@ -446,7 +446,7 @@ Section FunctionalSpecification.
     (* End of a sequence: zeroize the trusted ports and disarm.  The ports hold
        their value indefinitely otherwise, which is how AK would stay driven on
        256 wires after a Quote (REVIEW.md section 2.7). *)
-    Definition finish : @tf_ops fs_states fs_inputs fs_outputs :=
+    Definition finish : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
     {[
         `zeroize`;
         let $out_pend  := #PEND_IDLE;
@@ -466,8 +466,8 @@ Section FunctionalSpecification.
        failure mode: it always answers.  It reads no state a pending step or an
        uninitialized DP could affect -- every value it returns is a Profile
        constant. *)
-    Definition guard_init (body: @tf_ops fs_states fs_inputs fs_outputs)
-        : @tf_ops fs_states fs_inputs fs_outputs :=
+    Definition guard_init (body: @tf_ops fs_states fs_inputs fs_outputs Empty_set)
+        : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
     {[
         if ($out_st ==[1] #0)
         then let $out_rc := #MARS_RC_VALUE
@@ -543,16 +543,16 @@ Section FunctionalSpecification.
 
     (* Hand a completed group back to idle so its adapter drops valid (A7) and
        the next request can arm. *)
-    Definition done_sha : @tf_ops fs_states fs_inputs fs_outputs :=
+    Definition done_sha : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
     {[ let $out_sha_msg := #0; let $out_sha_active := #0 ]}.
 
-    Definition done_hmac : @tf_ops fs_states fs_inputs fs_outputs :=
+    Definition done_hmac : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
     {[ let $out_hmac_key := #0; let $out_hmac_msg := #0;
        let $out_hmac_active := #0 ]}.
 
     Definition issue_hmac (step: nat)
                      (key msg: @tf_expr fs_states fs_inputs fs_outputs) (len: nat)
-        : @tf_ops fs_states fs_inputs fs_outputs :=
+        : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
     {[
         let $out_hmac_key    := `key`;
         let $out_hmac_msg    := `msg`;
@@ -566,7 +566,7 @@ Section FunctionalSpecification.
     (* A command this Profile excludes (spec section 7).  Eight of the thirteen
        codes are excluded outright; PcrExtend and Quote are in the Profile but
        not yet built, and answer MARS_RC_COMMAND until they are. *)
-    Definition unsupported : @tf_ops fs_states fs_inputs fs_outputs :=
+    Definition unsupported : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
         guard_failure {[ let $out_rc := #MARS_RC_COMMAND ]}.
 
     (* An output variable HOLDS its value unless an action writes it, so a stale
@@ -586,8 +586,8 @@ Section FunctionalSpecification.
 
        Measured free: +1 node on CapabilityGet, +0 on RegRead, +2 on an excluded
        command; no change to buffers or to any action's cycle bounds. *)
-    Definition clear_results (body: @tf_ops fs_states fs_inputs fs_outputs)
-        : @tf_ops fs_states fs_inputs fs_outputs :=
+    Definition clear_results (body: @tf_ops fs_states fs_inputs fs_outputs Empty_set)
+        : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
     {[
         let $out_dout := #0;
         let $out_cap  := #0;
@@ -599,7 +599,7 @@ Section FunctionalSpecification.
     Definition fs_command
         (act: fs_action)
         :
-        (@tf_ops fs_states fs_inputs fs_outputs)
+        (@tf_ops fs_states fs_inputs fs_outputs Empty_set)
         :=
         match act with
 
@@ -811,10 +811,10 @@ Section FunctionalSpecification.
         end.
 
     Definition fs_transitions (act: fs_action)
-        : (@tf_ops fs_states fs_inputs fs_outputs) :=
+        : (@tf_ops fs_states fs_inputs fs_outputs Empty_set) :=
         clear_results (fs_command act).
 
-    Definition fs_step := tf_ops_run fs_states_size fs_inputs_size fs_outputs_size.
+    Definition fs_step := tf_ops_run fs_states_size fs_inputs_size fs_outputs_size no_ips.
 
 End FunctionalSpecification.
 
@@ -1599,10 +1599,9 @@ Section TypedSynthesis.
            REVIEW.md section 4. *)
         (* no attached IP: no call names a response port here *)
         (* no IP drives any port here, so nothing can conflict with one *)
-        tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-        tfs_spec_ip_req := fun _ => None;
-        tfs_spec_ip_lat := fun _ => 0;
-        tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
+        tfs_spec_ips := Empty_set;
+        tfs_spec_ip := no_ips;
+        tfs_spec_ip_resp_secret := ltac:(intros []);
         tfs_spec_decls := []
     |}.
 

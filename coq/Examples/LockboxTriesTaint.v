@@ -26,15 +26,15 @@ Section FigureA.
 
     Definition dfgA := build_dfg tfs_ctx fs_act_test.
 
-    Definition node_at {s i o} (dfg: @dfg_state_t s i o) (n: nid_t)
-        : @dfg_op_t s i o :=
+    Definition node_at {s i o p} (dfg: @dfg_state_t s i o p) (n: nid_t)
+        : @dfg_op_t s i o p :=
         match nth_error (graph dfg) n with
         | Some nd => op nd
         | None => DFG_Empty
         end.
 
-    Definition phi_nodes {s i o} (dfg: @dfg_state_t s i o)
-        : list (@dfg_node_t s i o) :=
+    Definition phi_nodes {s i o p} (dfg: @dfg_state_t s i o p)
+        : list (@dfg_node_t s i o p) :=
         filter (fun n => match op n with DFG_Phi _ _ _ => true | _ => false end)
                (graph dfg).
 
@@ -110,7 +110,7 @@ Section FigureB.
         Bits.zero.
 
     Definition fsB_transitions (act: fs_action)
-        : (@tf_ops fsB_states fsB_inputs fsB_outputs) :=
+        : (@tf_ops fsB_states fsB_inputs fsB_outputs Empty_set) :=
         match act with
         | fs_act_set =>
             {[
@@ -133,7 +133,7 @@ Section FigureB.
             ]}
         end.
 
-    Definition mk_ctxB (decls: list (decl_rule fsB_states fsB_inputs fsB_outputs))
+    Definition mk_ctxB (decls: list (decl_rule fsB_states fsB_inputs fsB_outputs Empty_set))
         : TFSchedContext := {|
         tfs_spec_states := fsB_states;
         tfs_spec_states_fin := _;
@@ -153,10 +153,9 @@ Section FigureB.
         tfs_spec_action_ops := fsB_transitions;
         (* no attached IP: no call names a response port here *)
         (* no IP drives any port here, so nothing can conflict with one *)
-        tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-        tfs_spec_ip_req := fun _ => None;
-        tfs_spec_ip_lat := fun _ => 0;
-        tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
+        tfs_spec_ips := Empty_set;
+        tfs_spec_ip := no_ips;
+        tfs_spec_ip_resp_secret := ltac:(intros []);
         tfs_spec_decls := decls
     |}.
 
@@ -196,7 +195,7 @@ Section FigureB.
       crit_report_all ctxB_whitebox (build_dfg ctxB_whitebox fs_act_test) = [].
     Proof. vm_compute. reflexivity. Qed.
 
-    Definition mk_ctxA (decls: list (decl_rule fs_states fs_inputs fs_outputs))
+    Definition mk_ctxA (decls: list (decl_rule fs_states fs_inputs fs_outputs Empty_set))
         : TFSchedContext := {|
         tfs_spec_states := fs_states;
         tfs_spec_states_fin := _;
@@ -216,10 +215,9 @@ Section FigureB.
         tfs_spec_action_ops := fs_transitions;
         (* no attached IP: no call names a response port here *)
         (* no IP drives any port here, so nothing can conflict with one *)
-        tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-        tfs_spec_ip_req := fun _ => None;
-        tfs_spec_ip_lat := fun _ => 0;
-        tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
+        tfs_spec_ips := Empty_set;
+        tfs_spec_ip := no_ips;
+        tfs_spec_ip_resp_secret := ltac:(intros []);
         tfs_spec_decls := decls
     |}.
 
@@ -407,7 +405,7 @@ Section BoundsContrast.
     Definition sk_init (x: sk_states) : bits_t (sk_ssz x) := Bits.zero.
 
     Definition sk_ops (cond: @tf_expr sk_states sk_inputs sk_outputs)
-        : (@tf_ops sk_states sk_inputs sk_outputs) :=
+        : (@tf_ops sk_states sk_inputs sk_outputs Empty_set) :=
         {[
           if `cond`
           then let $sk_out := $sk_secret * $sk_secret * $sk_secret
@@ -433,10 +431,9 @@ Section BoundsContrast.
         tfs_spec_action_ops := fun _ => sk_ops cond;
         (* no attached IP: no call names a response port here *)
         (* no IP drives any port here, so nothing can conflict with one *)
-        tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-        tfs_spec_ip_req := fun _ => None;
-        tfs_spec_ip_lat := fun _ => 0;
-        tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
+        tfs_spec_ips := Empty_set;
+        tfs_spec_ip := no_ips;
+        tfs_spec_ip_resp_secret := ltac:(intros []);
         tfs_spec_decls := []
     |}.
 

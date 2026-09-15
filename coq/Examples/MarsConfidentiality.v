@@ -71,7 +71,7 @@ Section NotVacuous.
   Definition c_states_init (x: c_states) : tf_states_type c_states_size x :=
     match x with st_secret => Bits.zero end.
 
-  Definition c_ops (a: c_action) : @tf_ops c_states c_inputs c_outputs :=
+  Definition c_ops (a: c_action) : @tf_ops c_states c_inputs c_outputs Empty_set :=
     match a with
     (* legitimate: a secret may be handed to the crypto port *)
     | act_stash => {[ let $out_key := $st_secret ]}
@@ -99,10 +99,9 @@ Section NotVacuous.
       tfs_spec_action_ops := c_ops;
       (* no attached IP: no call names a response port here *)
       (* no IP drives any port here, so nothing can conflict with one *)
-      tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-      tfs_spec_ip_req := fun _ => None;
-      tfs_spec_ip_lat := fun _ => 0;
-      tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
+      tfs_spec_ips := Empty_set;
+      tfs_spec_ip := no_ips;
+      tfs_spec_ip_resp_secret := ltac:(intros []);
       tfs_spec_decls := []
   |}.
 

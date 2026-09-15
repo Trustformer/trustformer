@@ -43,6 +43,10 @@ Section Spike.
   Definition sl_states_init (x: sl_states) : tf_states_type sl_states_size x :=
     match x with st_acc => Bits.zero end.
 
+  Inductive sl_ips := sl_ip_crypto.
+  Definition sl_ip (_: sl_ips) : ip_decl sl_inputs_size :=
+    {| ip_req_sz := w; ip_resp := in_resp; ip_lat := 0; ip_fn := fun v => v |}.
+
   Definition sl_ctx : TFSchedContext := {|
       tfs_spec_states := sl_states;   tfs_spec_states_fin := _;
       tfs_spec_states_size := sl_states_size;
@@ -58,12 +62,9 @@ Section Spike.
 
       tfs_spec_action := sl_action;   tfs_spec_action_fin := _;
       tfs_spec_action_ops := fun _ => tf_ops_base tf_nop;
-      (* no attached IP: no call names a response port here *)
-      (* no IP drives any port here, so nothing can conflict with one *)
-      tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-      tfs_spec_ip_req := fun _ => None;
-      tfs_spec_ip_lat := fun _ => 0;
-      tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
+      tfs_spec_ips := sl_ips;   tfs_spec_ips_fin := _;
+      tfs_spec_ip := sl_ip;
+      tfs_spec_ip_resp_secret := ltac:(reflexivity);
       tfs_spec_decls := []
   |}.
 
@@ -74,7 +75,8 @@ Section Spike.
      and its use, which is where a crypto round trip would sit. *)
   Definition hold (L: nat) : dfg_state_t (states_var := sl_states)
                                          (inputs_var := sl_inputs)
-                                         (outputs_var := sl_outputs) := {|
+                                         (outputs_var := sl_outputs)
+                                         (ips_var := sl_ips) := {|
     graph :=
       [ {| nid := 0; op := DFG_Empty;        sz := 0 |}
       ; {| nid := 1; op := DFG_Input in_x;   sz := w |}
@@ -176,13 +178,14 @@ Section RoundTrip.
      port, its VALIDITY is the token's. *)
   Definition trip (L: nat) : dfg_state_t (states_var := sl_states)
                                          (inputs_var := sl_inputs)
-                                         (outputs_var := sl_outputs) := {|
+                                         (outputs_var := sl_outputs)
+                                         (ips_var := sl_ips) := {|
     graph :=
       [ {| nid := 0; op := DFG_Empty;            sz := 0 |}
       ; {| nid := 1; op := DFG_Input in_x;       sz := w |}
-      ; {| nid := 2; op := DFG_Drive out_o 1;    sz := w |}
+      ; {| nid := 2; op := DFG_Drive sl_ip_crypto 1; sz := w |}
       ; {| nid := 3; op := DFG_Stall L 2;        sz := w |}
-      ; {| nid := 4; op := DFG_Sample in_resp 3; sz := w |}
+      ; {| nid := 4; op := DFG_Sample sl_ip_crypto 3; sz := w |}
       ; {| nid := 5; op := DFG_Unary tf_not 4;   sz := w |}
       ];
     var_map := [ (DFG_SVar st_acc, 5) ]
@@ -262,7 +265,7 @@ Section RoundTrip.
      [climit] = 5 as [m] goes 0..5. *)
 
   Fixpoint not_chain (base m: nat)
-    : list (@dfg_node_t sl_states sl_inputs sl_outputs) :=
+    : list (@dfg_node_t sl_states sl_inputs sl_outputs sl_ips) :=
     match m with
     | 0 => []
     | S m' => {| nid := base; op := DFG_Unary tf_not (base - 1); sz := w |}
@@ -271,13 +274,14 @@ Section RoundTrip.
 
   Definition trip_pad (L m: nat) : dfg_state_t (states_var := sl_states)
                                                (inputs_var := sl_inputs)
-                                               (outputs_var := sl_outputs) := {|
+                                               (outputs_var := sl_outputs)
+                                         (ips_var := sl_ips) := {|
     graph :=
       [ {| nid := 0; op := DFG_Empty;            sz := 0 |}
       ; {| nid := 1; op := DFG_Input in_x;       sz := w |}
-      ; {| nid := 2; op := DFG_Drive out_o 1;    sz := w |}
+      ; {| nid := 2; op := DFG_Drive sl_ip_crypto 1; sz := w |}
       ; {| nid := 3; op := DFG_Stall L 2;        sz := w |}
-      ; {| nid := 4; op := DFG_Sample in_resp 3; sz := w |}
+      ; {| nid := 4; op := DFG_Sample sl_ip_crypto 3; sz := w |}
       ] ++ not_chain 5 m;
     var_map := [ (DFG_SVar st_acc, 4 + m) ]
   |}.

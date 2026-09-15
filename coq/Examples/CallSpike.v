@@ -42,7 +42,9 @@ Section CallSpike.
   Inductive cs_action  := act_call.
   Inductive cs_states  := st_res.
   Inductive cs_inputs  := in_msg | in_resp.
-  Inductive cs_outputs := out_req.
+  (* No outputs at all: the only port this design had was the IP request, and
+     that is no longer an output. *)
+  Definition cs_outputs := Empty_set.
 
   Definition cs_states_size  (_: cs_states)  : nat := cw.
   Definition cs_inputs_size  (_: cs_inputs)  : nat := cw.
@@ -62,6 +64,10 @@ Section CallSpike.
     match i with in_msg => Public | in_resp => Secret end.
   Definition cs_out_class (_: cs_outputs) : port_class := Secret.
 
+  Inductive cs_ips := cs_crypto.
+  Definition cs_ip (_: cs_ips) : ip_decl cs_inputs_size :=
+    {| ip_req_sz := cw; ip_resp := in_resp; ip_lat := clat; ip_fn := cs_f |}.
+
   Definition cs_ctx : TFSchedContext := {|
       tfs_spec_states := cs_states;   tfs_spec_states_fin := _;
       tfs_spec_states_size := cs_states_size;
@@ -76,19 +82,16 @@ Section CallSpike.
       tfs_spec_outputs_class := cs_out_class;
 
       tfs_spec_action := cs_action;   tfs_spec_action_fin := _;
-      (* THE CALL: drive [in_msg] onto out_req, wait clat cycles, read in_resp
+      (* THE CALL: drive [in_msg] at the IP, wait clat cycles, read the answer
          into st_res. *)
       tfs_spec_action_ops := fun _ =>
-        tf_ops_base (tf_call out_req in_resp st_res (tf_ivar in_msg) cs_f);
+        tf_ops_base (tf_call cs_crypto st_res (tf_ivar in_msg));
 
-      (* no IP drives any port here, so nothing can conflict with one *)
 
-      tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
 
-      tfs_spec_ip_req := fun i => match i with in_resp => Some out_req | _ => None end;
-      tfs_spec_ip_lat := fun i => match i with in_resp => clat | _ => 0 end;
-      tfs_spec_ip_secret := ltac:(intros i o H; destruct i; cbn in H;
-                                  [ discriminate | destruct o; split; reflexivity ]);
+      tfs_spec_ips := cs_ips;      tfs_spec_ips_fin := _;
+      tfs_spec_ip := cs_ip;
+      tfs_spec_ip_resp_secret := ltac:(intros p; destruct p; reflexivity);
       tfs_spec_decls := []
   |}.
 
@@ -106,17 +109,14 @@ Section CallSpike.
   (* [driven_ports] is what [compile_dfg_drives] maps over, and that emission
      goes into the ALWAYS half -- so this is the statement that the request
      reaches the wire during the action rather than at done. *)
-  Example req_is_driven : driven_ports cs_ctx cs_dfg = [out_req].
+  Example req_is_driven : driven_ports cs_ctx cs_dfg = [cs_crypto].
   Proof. vm_compute. reflexivity. Qed.
 
-  (* ...and it is NOT in var_map, so no done-op writes it.  Before the drive
-     landed this was exactly backwards: the port was in var_map and nowhere
-     else. *)
-  Example req_not_assigned : assigned_port cs_ctx cs_dfg out_req = false.
-  Proof. vm_compute. reflexivity. Qed.
+  (* There is no longer an [assigned_port] check to make: a request port is not
+     an output, so no action can write it and the conflict is unsayable. *)
 
   (* exactly one drive for the one call *)
-  Example one_drive : List.length (drive_nodes cs_ctx cs_dfg out_req) = 1.
+  Example one_drive : List.length (drive_nodes cs_ctx cs_dfg cs_crypto) = 1.
   Proof. vm_compute. reflexivity. Qed.
 
   (* ================================================================== *)
@@ -136,7 +136,7 @@ Section CallSpike.
 
   (* The drive and the sample are clat cycles apart.  Cycles count BACKWARD
      from done, so the drive has the larger number. *)
-  Definition drive_nid := List.hd 0 (drive_nodes cs_ctx cs_dfg out_req).
+  Definition drive_nid := List.hd 0 (drive_nodes cs_ctx cs_dfg cs_crypto).
   Definition samp_nid :=
     List.fold_left (fun acc nd => match op nd with
                                   | DFG_Sample _ _ => nid nd
@@ -171,7 +171,7 @@ End CallSpike.
 
     What to look for in build/Example_CallSpike.v:
 
-      - out_req is assigned from ALWAYS logic, not only under the done gate;
+      - the IP request is assigned from ALWAYS logic, not only under the done gate;
       - its else-branch reads the port's own previous value, i.e. it HOLDS;
       - it has exactly one driver (scripts/check-drivers.sh);
       - in_resp is read LIVE, not out of the action-start input latch.
@@ -238,11 +238,11 @@ Section TwoCalls.
     match x with st_a => Bits.zero | st_b => Bits.zero end.
 
   (* two calls on the SAME req/resp pair, with INDEPENDENT arguments *)
-  Definition tc_ops : @tf_ops tc_states cs_inputs cs_outputs :=
+  Definition tc_ops : @tf_ops tc_states cs_inputs cs_outputs cs_ips :=
     tf_ops_cons
-      (tf_ops_base (tf_call out_req in_resp st_a (tf_ivar in_msg) cs_f))
-      (tf_ops_base (tf_call out_req in_resp st_b
-                      (tf_op1 tf_not (tf_ivar in_msg)) cs_f)).
+      (tf_ops_base (tf_call cs_crypto st_a (tf_ivar in_msg)))
+      (tf_ops_base (tf_call cs_crypto st_b
+                      (tf_op1 tf_not (tf_ivar in_msg)))).
 
   Definition tc_ctx : TFSchedContext := {|
       tfs_spec_states := tc_states;   tfs_spec_states_fin := _;
@@ -256,12 +256,9 @@ Section TwoCalls.
       tfs_spec_outputs_class := cs_out_class;
       tfs_spec_action := cs_action;   tfs_spec_action_fin := _;
       tfs_spec_action_ops := fun _ => tc_ops;
-      (* no IP drives any port here, so nothing can conflict with one *)
-      tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-      tfs_spec_ip_req := fun i => match i with in_resp => Some out_req | _ => None end;
-      tfs_spec_ip_lat := fun i => match i with in_resp => clat | _ => 0 end;
-      tfs_spec_ip_secret := ltac:(intros i o H; destruct i; cbn in H;
-                                  [ discriminate | destruct o; split; reflexivity ]);
+      tfs_spec_ips := cs_ips;      tfs_spec_ips_fin := _;
+      tfs_spec_ip := cs_ip;
+      tfs_spec_ip_resp_secret := ltac:(intros p; destruct p; reflexivity);
       tfs_spec_decls := []
   |}.
 
@@ -272,13 +269,13 @@ Section TwoCalls.
     match BitsToLists.list_assoc tc_cycles n with Some c => c | None => 999 end.
 
   (* BOTH calls drive the same port, so there are two drive nodes ... *)
-  Definition tc_drives := drive_nodes tc_ctx tc_dfg out_req.
+  Definition tc_drives := drive_nodes tc_ctx tc_dfg cs_crypto.
   Example two_drives : List.length tc_drives = 2.
   Proof. vm_compute. reflexivity. Qed.
 
   (* ... but the port appears ONCE in driven_ports, so ONE tf_output op is
      emitted for it, folding both drives into one nested conditional. *)
-  Example one_driven_port : driven_ports tc_ctx tc_dfg = [out_req].
+  Example one_driven_port : driven_ports tc_ctx tc_dfg = [cs_crypto].
   Proof. vm_compute. reflexivity. Qed.
 
   (* Are the two drives in the SAME cycle?  If so they collide: the fold puts
@@ -297,10 +294,10 @@ End TwoCalls.
    dependency between them.  Does the scheduler sequence them? *)
 Section TwoCallsChained.
 
-  Definition tc2_ops : @tf_ops tc_states cs_inputs cs_outputs :=
+  Definition tc2_ops : @tf_ops tc_states cs_inputs cs_outputs cs_ips :=
     tf_ops_cons
-      (tf_ops_base (tf_call out_req in_resp st_a (tf_ivar in_msg) cs_f))
-      (tf_ops_base (tf_call out_req in_resp st_b (tf_svar st_a) cs_f)).
+      (tf_ops_base (tf_call cs_crypto st_a (tf_ivar in_msg)))
+      (tf_ops_base (tf_call cs_crypto st_b (tf_svar st_a))).
 
   Definition tc2_ctx : TFSchedContext :=
     {| tfs_spec_states := tc_states;   tfs_spec_states_fin := _;
@@ -314,12 +311,9 @@ Section TwoCallsChained.
        tfs_spec_outputs_class := cs_out_class;
        tfs_spec_action := cs_action;   tfs_spec_action_fin := _;
        tfs_spec_action_ops := fun _ => tc2_ops;
-       (* no IP drives any port here, so nothing can conflict with one *)
-       tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-       tfs_spec_ip_req := fun i => match i with in_resp => Some out_req | _ => None end;
-       tfs_spec_ip_lat := fun i => match i with in_resp => clat | _ => 0 end;
-       tfs_spec_ip_secret := ltac:(intros i o H; destruct i; cbn in H;
-                                   [ discriminate | destruct o; split; reflexivity ]);
+       tfs_spec_ips := cs_ips;      tfs_spec_ips_fin := _;
+       tfs_spec_ip := cs_ip;
+       tfs_spec_ip_resp_secret := ltac:(intros p; destruct p; reflexivity);
        tfs_spec_decls := [] |}.
 
   Definition tc2_dfg := build_dfg tc2_ctx act_call.
@@ -327,7 +321,7 @@ Section TwoCallsChained.
     calc_target_cycle cclimit (calc_backward_cost tc2_ctx cclimit tc2_dfg).
   Definition tcyc3 (n: nid_t) : nat :=
     match BitsToLists.list_assoc tc2_cycles n with Some c => c | None => 999 end.
-  Definition tc2_drives := drive_nodes tc2_ctx tc2_dfg out_req.
+  Definition tc2_drives := drive_nodes tc2_ctx tc2_dfg cs_crypto.
   Definition tc2_samples :=
     List.fold_left (fun acc nd => match op nd with
                                   | DFG_Sample _ _ => nid nd :: acc
@@ -376,7 +370,7 @@ Proof. vm_compute. reflexivity. Qed.
     INDEPENDENT arguments -- the case that silently collided before the
     ordering join.  What to look for in build/Example_TwoCallSpike.v:
 
-      - TWO strobe pulses on ip_out_..._out_req_arg's top bit, lat apart;
+      - TWO strobe pulses on ip_req_sec_..._arg's top bit, lat apart;
       - the payload changing between them and HELD in between;
       - a single driver.
 *)

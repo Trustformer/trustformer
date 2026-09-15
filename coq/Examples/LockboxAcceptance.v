@@ -69,7 +69,7 @@ Section Specification.
 
     (* fig. A5: tries is secret, nothing about it is published. *)
     Definition lb_secret_tries (act: lb_action)
-      : (@tf_ops lb_states lb_inputs lb_outputs) :=
+      : (@tf_ops lb_states lb_inputs lb_outputs Empty_set) :=
       match act with
       | lb_act_test =>
           {[
@@ -87,7 +87,7 @@ Section Specification.
 
     (* fig. B5: the user may see how many tries are left. *)
     Definition lb_public_tries (act: lb_action)
-      : (@tf_ops lb_states lb_inputs lb_outputs) :=
+      : (@tf_ops lb_states lb_inputs lb_outputs Empty_set) :=
       match act with
       | lb_act_test =>
           {[
@@ -108,8 +108,8 @@ End Specification.
 
 Section Contexts.
 
-    Definition mk_lb (ops: lb_action -> @tf_ops lb_states lb_inputs lb_outputs)
-        (decls: list (decl_rule lb_states lb_inputs lb_outputs))
+    Definition mk_lb (ops: lb_action -> @tf_ops lb_states lb_inputs lb_outputs Empty_set)
+        (decls: list (decl_rule lb_states lb_inputs lb_outputs Empty_set))
       : TFSchedContext := {|
       tfs_spec_states := lb_states;
       tfs_spec_states_fin := _;
@@ -129,14 +129,13 @@ Section Contexts.
       tfs_spec_action_ops := ops;
       (* no attached IP: no call names a response port here *)
       (* no IP drives any port here, so nothing can conflict with one *)
-      tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-      tfs_spec_ip_req := fun _ => None;
-      tfs_spec_ip_lat := fun _ => 0;
-      tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
+      tfs_spec_ips := Empty_set;
+      tfs_spec_ip := no_ips;
+      tfs_spec_ip_resp_secret := ltac:(intros []);
       tfs_spec_decls := decls
     |}.
 
-    Definition lb_rules : list (decl_rule lb_states lb_inputs lb_outputs) :=
+    Definition lb_rules : list (decl_rule lb_states lb_inputs lb_outputs Empty_set) :=
       [neg_rule; phibranch_rule; phiconst_rule].
 
     Definition ctx_A := mk_lb lb_secret_tries lb_rules.

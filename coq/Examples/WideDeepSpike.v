@@ -88,7 +88,7 @@ Section FunctionalSpecification.
       tf_op2 tf_add x8 (tf_const 5).
 
     Definition fs_transitions (act: fs_action)
-        : (@tf_ops fs_states fs_inputs fs_outputs) :=
+        : (@tf_ops fs_states fs_inputs fs_outputs Empty_set) :=
       match act with
       | fs_act_mix =>
           tf_ops_cons
@@ -119,10 +119,9 @@ Section TypedSynthesis.
         tfs_spec_action_ops := fs_transitions;
         (* no attached IP: no call names a response port here *)
         (* no IP drives any port here, so nothing can conflict with one *)
-        tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-        tfs_spec_ip_req := fun _ => None;
-        tfs_spec_ip_lat := fun _ => 0;
-        tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
+        tfs_spec_ips := Empty_set;
+        tfs_spec_ip := no_ips;
+        tfs_spec_ip_resp_secret := ltac:(intros []);
         tfs_spec_decls := []
     |}.
 
