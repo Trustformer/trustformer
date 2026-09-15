@@ -29,6 +29,31 @@ Inductive port_class := Public | Secret.
 Definition class_tag (c: port_class) : string :=
   match c with Public => "pub" | Secret => "sec" end.
 
+(* ===================================================================== *)
+(*  Surface well-formedness for IP ports                                 *)
+(* ===================================================================== *)
+
+(* An action must not ALSO assign a port that an IP drives.
+
+   This is the check that did not exist, and its absence was a miscompile
+   rather than a rejected program: [driven_ports] used to EXCLUDE a port that
+   was both driven and assigned, which silently dropped the drive -- the request
+   never reached the IP and nothing said so.
+
+   Boolean rather than Prop so a design discharges it by computation; MARS's
+   actions are large enough that a [cbn]-unfolded conjunction is not something to
+   put in front of the kernel. *)
+Fixpoint tf_no_assign_driven {s i o}
+    (is_driven : o -> bool) (ops : @tf_ops s i o) : bool :=
+  match ops with
+  | tf_ops_base (tf_output x _) => negb (is_driven x)
+  | tf_ops_base _ => true
+  | tf_ops_cons a b => andb (tf_no_assign_driven is_driven a)
+                            (tf_no_assign_driven is_driven b)
+  | tf_ops_if _ t e => andb (tf_no_assign_driven is_driven t)
+                            (tf_no_assign_driven is_driven e)
+  end.
+
 Record TFSchedContext := {
   tfs_spec_states : Type;
   tfs_spec_states_eq_dec : EqDec tfs_spec_states;
@@ -79,6 +104,21 @@ Record TFSchedContext := {
   tfs_spec_action_eq_dec : EqDec tfs_spec_action;
   tfs_spec_action_fin : FiniteType tfs_spec_action;
   tfs_spec_action_ops : tfs_spec_action -> @tf_ops tfs_spec_states tfs_spec_inputs tfs_spec_outputs;
+
+  (* The surface check. A port an IP drives must not ALSO be assigned by an
+     action -- the two would write it in both schedule halves, and before
+     driven-ness was declared the conflict was resolved by silently dropping
+     the drive. Discharged by computation where the actions are written. *)
+  tfs_spec_no_assign_driven :
+    forall a, tf_no_assign_driven
+                (fun o => existsb
+                            (fun v => match tfs_spec_ip_req v with
+                                      | Some oo => if tfs_spec_outputs_eq_dec.(eq_dec) oo o
+                                                   then true else false
+                                      | None => false
+                                      end)
+                            (@finite_elements tfs_spec_inputs tfs_spec_inputs_fin))
+                (tfs_spec_action_ops a) = true;
 
   (* whitebox untainting: [] reproduces the blackbox behaviour *)
   tfs_spec_decls : list (decl_rule tfs_spec_states tfs_spec_inputs tfs_spec_outputs)

@@ -81,6 +81,10 @@ Section CallSpike.
       tfs_spec_action_ops := fun _ =>
         tf_ops_base (tf_call out_req in_resp st_res (tf_ivar in_msg) cs_f);
 
+      (* no IP drives any port here, so nothing can conflict with one *)
+
+      tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
+
       tfs_spec_ip_req := fun i => match i with in_resp => Some out_req | _ => None end;
       tfs_spec_ip_lat := fun i => match i with in_resp => clat | _ => 0 end;
       tfs_spec_ip_secret := ltac:(intros i o H; destruct i; cbn in H;
@@ -252,6 +256,8 @@ Section TwoCalls.
       tfs_spec_outputs_class := cs_out_class;
       tfs_spec_action := cs_action;   tfs_spec_action_fin := _;
       tfs_spec_action_ops := fun _ => tc_ops;
+      (* no IP drives any port here, so nothing can conflict with one *)
+      tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
       tfs_spec_ip_req := fun i => match i with in_resp => Some out_req | _ => None end;
       tfs_spec_ip_lat := fun i => match i with in_resp => clat | _ => 0 end;
       tfs_spec_ip_secret := ltac:(intros i o H; destruct i; cbn in H;
@@ -308,6 +314,8 @@ Section TwoCallsChained.
        tfs_spec_outputs_class := cs_out_class;
        tfs_spec_action := cs_action;   tfs_spec_action_fin := _;
        tfs_spec_action_ops := fun _ => tc2_ops;
+       (* no IP drives any port here, so nothing can conflict with one *)
+       tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
        tfs_spec_ip_req := fun i => match i with in_resp => Some out_req | _ => None end;
        tfs_spec_ip_lat := fun i => match i with in_resp => clat | _ => 0 end;
        tfs_spec_ip_secret := ltac:(intros i o H; destruct i; cbn in H;

@@ -59,6 +59,8 @@ Section Spike.
       tfs_spec_action := sl_action;   tfs_spec_action_fin := _;
       tfs_spec_action_ops := fun _ => tf_ops_base tf_nop;
       (* no attached IP: no call names a response port here *)
+      (* no IP drives any port here, so nothing can conflict with one *)
+      tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
       tfs_spec_ip_req := fun _ => None;
       tfs_spec_ip_lat := fun _ => 0;
       tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
