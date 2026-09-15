@@ -456,3 +456,93 @@ End TwoCallsChainedSynthesis.
 
 Definition tc2_prog := Interop.Backends.register tc2_package.
 Extraction "Example_ChainedCallSpike.ml" tc2_prog.
+
+(* ===================================================================== *)
+(*  A call under a BRANCH.                                               *)
+(* ===================================================================== *)
+(*
+    Both arms of an [if] call the same IP with different payloads.  A drive is
+    emitted into the graph by the call, not by the branch, so the question this
+    measures is whether the two drives are mutually exclusive in TIME or
+    whether both reach the wire and the fold silently picks one.
+
+    MARS needs the answer: PcrExtend selects a PCR with an [if], and Quote
+    selects a snapshot shape with four.
+*)
+
+Section BranchCall.
+
+  Inductive bc_states  := st_out.
+  Definition bc_states_size (_: bc_states) : nat := cw.
+  Definition bc_states_init (x: bc_states) : tf_states_type bc_states_size x :=
+    match x with st_out => Bits.zero end.
+
+  Inductive bc_inputs := in_sel | in_a.
+  Definition bc_inputs_size (x: bc_inputs) : nat :=
+    match x with in_sel => 16 | in_a => cw end.
+  Definition bc_in_class (_: bc_inputs) : port_class := Public.
+
+  (* sel = 0 -> ask the IP about  in_a
+     sel = 1 -> ask the IP about ~in_a *)
+  Definition bc_ops : @tf_ops bc_states bc_inputs Empty_set cs_ips :=
+    tf_ops_if (tf_op2 (tf_cmp 16 tf_eq) (tf_ivar in_sel) (tf_const 0))
+      (tf_ops_base (tf_call cs_crypto st_out (tf_ivar in_a)))
+      (tf_ops_base (tf_call cs_crypto st_out (tf_op1 tf_not (tf_ivar in_a)))).
+
+  Definition bc_ctx : TFSchedContext := {|
+      tfs_spec_states := bc_states;   tfs_spec_states_fin := _;
+      tfs_spec_states_size := bc_states_size;
+      tfs_spec_states_init := bc_states_init;
+      tfs_spec_inputs := bc_inputs;   tfs_spec_inputs_fin := _;
+      tfs_spec_inputs_size := bc_inputs_size;
+      tfs_spec_inputs_class := bc_in_class;
+      tfs_spec_outputs := Empty_set;  tfs_spec_outputs_fin := _;
+      tfs_spec_outputs_size := fun _ => cw;
+      tfs_spec_outputs_class := fun _ => Secret;
+      tfs_spec_action := cs_action;   tfs_spec_action_fin := _;
+      tfs_spec_action_ops := fun _ => bc_ops;
+      tfs_spec_ips := cs_ips;         tfs_spec_ips_fin := _;
+      tfs_spec_ip := cs_ip;
+      tfs_spec_decls := []
+  |}.
+
+  Definition bc_dfg := build_dfg bc_ctx act_call.
+
+  (* BOTH branches emit a drive. *)
+  Example branch_two_drives :
+    List.length (drive_nodes bc_ctx bc_dfg cs_crypto) = 2.
+  Proof. vm_compute. reflexivity. Qed.
+
+End BranchCall.
+
+Section BranchCallSynthesis.
+
+  Definition bc_schedule := tfs_schedule bc_ctx cclimit.
+
+  Definition bc_tf_ctx : TFSynthContext := {|
+    tf_sched_ctx := bc_schedule;
+    tf_action_encoding := cs_action_encoding;
+    tf_action_encoding_inj := cs_action_encoding_inj;
+  |}.
+  Instance bc_ext_fn_names : Show _ := TypedSynthesis.ext_fn_names bc_tf_ctx.
+
+
+  Definition bc_package :=
+    {| ip_koika := {| koika_reg_types := TypedSynthesis.R bc_tf_ctx;
+                      koika_reg_names := TypedSynthesis.reg_names bc_tf_ctx;
+                      koika_reg_init := TypedSynthesis.r bc_tf_ctx;
+                      koika_reg_finite := TypedSynthesis._reg_t_finite bc_tf_ctx;
+                      koika_ext_fn_types := TypedSynthesis.Sigma bc_tf_ctx;
+                      koika_rules := TypedSynthesis.rules bc_tf_ctx;
+                      koika_rule_names := TypedSynthesis.rule_names bc_tf_ctx;
+                      koika_rule_external := (fun _ => false);
+                      koika_scheduler := TypedSynthesis.system_schedule bc_tf_ctx;
+                      koika_module_name := "Example_BranchCallSpike" |};
+    ip_sim := {| sp_ext_fn_specs fn := {| efs_name := show fn; efs_method := false |};
+                sp_prelude := None |};
+    ip_verilog := {| vp_ext_fn_specs := TypedSynthesis.ext_fn_specs bc_tf_ctx |} |}.
+
+End BranchCallSynthesis.
+
+Definition bc_prog := Interop.Backends.register bc_package.
+Extraction "Example_BranchCallSpike.ml" bc_prog.

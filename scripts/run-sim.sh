@@ -9,9 +9,10 @@ declare -A DESIGN=(
   [tb_call.sv]=Example_CallSpike
   [tb_two.sv]=Example_TwoCallSpike
   [tb_chain.sv]=Example_ChainedCallSpike
+  [tb_branch.sv]=Example_BranchCallSpike
 )
 
-tbs=("$@"); [ $# -eq 0 ] && tbs=(tb_call.sv tb_two.sv tb_chain.sv)
+tbs=("$@"); [ $# -eq 0 ] && tbs=(tb_call.sv tb_two.sv tb_chain.sv tb_branch.sv)
 status=0
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 
