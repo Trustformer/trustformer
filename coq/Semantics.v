@@ -14,10 +14,12 @@ Section Semantics.
     (* Given some (finite) variables, each with some HW register size, we define our semantics  *)
     Context {states_var: Type} {states_var_fin : FiniteType states_var} 
             {inputs_var: Type} {inputs_var_fin : FiniteType inputs_var} 
-            {outputs_var: Type} {outputs_var_fin : FiniteType outputs_var} 
+            {outputs_var: Type} {outputs_var_fin : FiniteType outputs_var}
+            {ips_var: Type}
             (states_size : states_var -> nat)
             (inputs_size : inputs_var -> nat)
-            (outputs_size : outputs_var -> nat).
+            (outputs_size : outputs_var -> nat)
+            (ips : ips_var -> ip_decl inputs_size outputs_size).
 
     (* All spec states are mapped to bits, the size is given by the states_size function *)
     Definition tf_states_type (x: states_var) := 
@@ -107,12 +109,6 @@ Section Semantics.
         | tf_no_update
         | tf_st_update (var: states_var) (value: bits_t (states_size var))
         | tf_out_update (var: outputs_var) (value: bits_t (outputs_size var))
-        (* A call writes TWO places in one step: the request port and the
-           destination state var.  Modelling it as a pair rather than as two
-           separate updates keeps [tf_op_step_updates] returning ONE update per
-           op, which is what every fold over the update list assumes. *)
-        | tf_call_update (ovar: outputs_var) (ovalue: bits_t (outputs_size ovar))
-                         (svar: states_var)  (svalue: bits_t (states_size svar))
         .
 
     Definition tf_op_step_updates
@@ -124,29 +120,12 @@ Section Semantics.
         | tf_nop => tf_no_update
         | tf_assign dst expr => tf_st_update dst (tf_eval_expr (szB:=(states_size dst)) expr sys_state input)
         | tf_output dst expr => tf_out_update dst (tf_eval_expr (szB:=(outputs_size dst)) expr sys_state input)
-        (* THE DENOTATION.  A call's result is what the IP put on its response
-           port [resp] -- not a function of [arg].  Spike 1.5's R instantiation:
-           always satisfiable, and the correct demonic model for a TRNG, since
-           nothing here claims the response is determined by the request.  The
-           stronger D reading ("[resp] carries f(arg)") is a refinement
-           HYPOTHESIS a module may assume on top of this, not a second mechanism
-           and not a different lowering.
-
-           Reading [resp] through [tf_ivar] rather than applying [input]
-           directly is deliberate: it reuses the expression evaluator's size
-           conversion, so a call is typed exactly as the user-written
-           [let $dst := $resp] would be.
-
-           THE REQUEST.  [arg] is evaluated onto the request port [req] in the
-           same step, which is why this returns a two-write [tf_call_update]
-           rather than a [tf_st_update].  Both halves must exist here AND in the
-           lowering or scheduler_done_correct is false for an action carrying a
-           call: the spec and the hardware would disagree on that port's final
-           value (PLAN.md D2). *)
-        | tf_call req resp dst arg _ =>
-            tf_call_update
-              req (tf_eval_expr (szB:=(outputs_size req)) arg sys_state input)
-              dst (tf_eval_expr (szB:=(states_size dst)) (tf_ivar resp) sys_state input)
+        (* The D reading: [dst] gets [ip_fn] of the argument.  See HANDOVER.md. *)
+        | tf_call ip dst arg =>
+            let d := ips ip in
+            tf_st_update dst
+              (convert (ip_fn d (tf_eval_expr (szB:=(outputs_size (ip_req d)))
+                                              arg sys_state input)))
         end.
 
     Definition tf_op_step_commit_state
@@ -159,8 +138,6 @@ Section Semantics.
             ContextEnv.(putenv) sys_state var value
         | tf_out_update _ _ =>
             sys_state
-        | tf_call_update _ _ var value =>
-            ContextEnv.(putenv) sys_state var value
         end.
 
     Definition tf_op_step_commit_output
@@ -172,8 +149,6 @@ Section Semantics.
         | tf_st_update _ _ =>
             sys_state
         | tf_out_update var value =>
-            ContextEnv.(putenv) sys_state var value
-        | tf_call_update var value _ _ =>
             ContextEnv.(putenv) sys_state var value
         end.
 
