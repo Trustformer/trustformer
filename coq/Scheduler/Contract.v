@@ -128,6 +128,19 @@ Record TFSchedule := {
   tfs_outputs_fin : FiniteType tfs_outputs;
   tfs_outputs_class : tfs_outputs -> port_class;
 
+  (* The scheduler register carrying a driven port's {strobe, payload}, if the
+     port is an IP request port.  Mirrored across the TFSchedule boundary for
+     the same reason the class is: tfs_states is abstract here, so TypedSynthesis
+     cannot name the concrete register the scheduler invented.
+
+     This is what makes IP ports SCHEDULER-GENERATED rather than user-declared:
+     the port name still lives in tfs_outputs, but its hardware is a register
+     the scheduler owns, routed to an IP-specific external call instead of the
+     ordinary ext_output.  Buffers work exactly this way. *)
+  tfs_drive_reg : tfs_outputs -> option tfs_states;
+  tfs_drive_reg_size : forall o r, tfs_drive_reg o = Some r ->
+                       tfs_states_size r = 1 + tfs_outputs_size o;
+
   tfs_action : Type;
   tfs_action_fin : FiniteType tfs_action;
 

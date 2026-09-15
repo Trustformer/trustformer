@@ -2181,6 +2181,20 @@ Section VariableScheduler.
       tfs_inputs_class := inputs_var_class;
       tfs_inputs_is_resp := fun v => match tfs_spec_ip_req ctx v with
                                      | Some _ => true | None => false end;
+      (* A port is DRIVEN iff some response port names it as its request port.
+         DECLARED, not derived from the graph -- so it is uniform across every
+         action, and "an IP port was also assigned by hand" becomes a rejectable
+         condition rather than a silent filter. *)
+      tfs_drive_reg := fun o =>
+        if existsb (fun v => match tfs_spec_ip_req ctx v with
+                             | Some oo => if outputs_var_eq_dec.(eq_dec) oo o then true else false
+                             | None => false
+                             end)
+                   (@finite_elements inputs_var inputs_var_fin)
+        then Some (tf_dfg_ov o) else None;
+      tfs_drive_reg_size :=
+        ltac:(intros o r H; cbn in H;
+              destruct (existsb _ _); [ injection H as <-; reflexivity | discriminate ]);
 
       tfs_outputs := outputs_var;
       tfs_outputs_size := outputs_var_size;
