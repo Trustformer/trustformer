@@ -582,7 +582,7 @@ Section VariableScheduler.
     
     buffers.
 
-  Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (outputs_var:=outputs_var) (buffer_needs:=buffer_needs)).
+  Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (inputs_var:=inputs_var) (outputs_var:=outputs_var) (buffer_needs:=buffer_needs)).
   Definition test := tf_dfg_states.
 
   Instance show_tf_dfg_states : Show tf_dfg_states :=
@@ -593,6 +593,8 @@ Section VariableScheduler.
         | tf_dfg_v a_idx n_idx => String.append "v_" (String.append (show (index_to_nat a_idx)) (String.append "_" (show (index_to_nat n_idx))))
         | tf_dfg_done => "done"
         | tf_dfg_ov o => String.append "ov_" (show o)
+        | tf_dfg_iv v => String.append "iv_" (show v)
+        | tf_dfg_ip v => String.append "ip_" (show v)
         end }.
 
   Definition tf_dfg_states_size (dfg_s: tf_dfg_states) : sz_t :=
@@ -602,6 +604,8 @@ Section VariableScheduler.
     | tf_dfg_v a_idx b_idx => 1
     | tf_dfg_done => 1
     | tf_dfg_ov o => 1 + outputs_var_size o
+    | tf_dfg_iv v => inputs_var_size v
+    | tf_dfg_ip _ => 1
     end.
 
   (* ============================== *)
@@ -1407,7 +1411,7 @@ Section VariableScheduler.
       final_ops
     ).
 
-  Definition done_signal := tf_dfg_done (states_var:=states_var) (outputs_var:=outputs_var) (buffer_needs:=buffer_needs).
+  Definition done_signal := tf_dfg_done (states_var:=states_var) (inputs_var:=inputs_var) (outputs_var:=outputs_var) (buffer_needs:=buffer_needs).
 
   Definition reset_states : list tf_dfg_states :=  
     flat_map 
@@ -1430,13 +1434,17 @@ Section VariableScheduler.
     - intro s. destruct s.
       + exact (0, 0).
       + exact (1, finite_index state).
-      + exact (3 + finite_index a_idx, finite_index n_idx).
-      + exact (3 + (Datatypes.length (finite_elements (T:=(Vect.index (Datatypes.length buffer_needs))))) + finite_index a_idx, finite_index n_idx).
+      + exact (5 + finite_index a_idx, finite_index n_idx).
+      + exact (5 + (Datatypes.length (finite_elements (T:=(Vect.index (Datatypes.length buffer_needs))))) + finite_index a_idx, finite_index n_idx).
       + exact (2, (@finite_index outputs_var outputs_var_fin o)).
+      + exact (3, (@finite_index inputs_var inputs_var_fin v)).
+      + exact (4, (@finite_index inputs_var inputs_var_fin v)).
         
     - refine ([ [tf_dfg_done] ] ++ 
               [ map tf_dfg_s finite_elements ] ++ 
               [ map tf_dfg_ov (@finite_elements outputs_var outputs_var_fin) ] ++ 
+              [ map tf_dfg_iv (@finite_elements inputs_var inputs_var_fin) ] ++ 
+              [ map tf_dfg_ip (@finite_elements inputs_var inputs_var_fin) ] ++ 
               map (fun a => map (tf_dfg_b a) finite_elements) finite_elements ++ 
               map (fun a => map (tf_dfg_v a) finite_elements) finite_elements).
 
@@ -1475,19 +1483,31 @@ Section VariableScheduler.
            [tf_dfg_s] case verbatim *)
         exists (map tf_dfg_ov (@finite_elements outputs_var outputs_var_fin)). split; auto.
         rewrite map_nth_error with (d:=o); auto. rewrite finite_surjective. reflexivity.
+      + (* tf_dfg_iv -- likewise *)
+        exists (map tf_dfg_iv (@finite_elements inputs_var inputs_var_fin)). split; auto.
+        rewrite map_nth_error with (d:=v); auto. rewrite finite_surjective. reflexivity.
+      + (* tf_dfg_ip -- likewise *)
+        exists (map tf_dfg_ip (@finite_elements inputs_var inputs_var_fin)). split; auto.
+        rewrite map_nth_error with (d:=v); auto. rewrite finite_surjective. reflexivity.
     - intros n l Hn m x Hm.
       destruct n as [|n].
       { inversion Hn; subst. destruct m; inversion Hm; subst. reflexivity. timeout 10 scongruence use: nth_error_nil unfold: tfs_spec_states. }
       destruct n as [|n].
       { inversion Hn; subst. apply nth_error_map_inv in Hm. destruct Hm as [s [Hs ?]]; subst.
         apply finite_elements_index in Hs. subst. reflexivity. }
-      (* group 2 is the flat tf_dfg_ov block -- same shape as tf_dfg_s *)
+      (* groups 2,3,4 are the flat ov / iv / ip blocks -- tf_dfg_s shape *)
+      destruct n as [|n].
+      { inversion Hn; subst. apply nth_error_map_inv in Hm. destruct Hm as [o [Ho ?]]; subst.
+        apply finite_elements_index in Ho. subst. reflexivity. }
+      destruct n as [|n].
+      { inversion Hn; subst. apply nth_error_map_inv in Hm. destruct Hm as [o [Ho ?]]; subst.
+        apply finite_elements_index in Ho. subst. reflexivity. }
       destruct n as [|n].
       { inversion Hn; subst. apply nth_error_map_inv in Hm. destruct Hm as [o [Ho ?]]; subst.
         apply finite_elements_index in Ho. subst. reflexivity. }
       
       rewrite nth_error_app2 in Hn by (simpl; lia).
-      change (S (S (S n)) - Datatypes.length [[tf_dfg_done]]) with (S (S n)) in *.
+      change (S (S (S (S (S n)))) - Datatypes.length [[tf_dfg_done]]) with (S (S (S (S n)))) in *.
 
       cbn [nth_error List.app] in Hn.
       destruct (lt_dec n (length (finite_elements (T := Vect.index (Datatypes.length buffer_needs))))) as [HLT | HGE].      
@@ -1507,10 +1527,14 @@ Section VariableScheduler.
         apply finite_elements_index in Hn'.
         subst m. simpl. f_equal. 
         (* hammer *) timeout 10 sauto.
-    - apply Forall_app; split; [| apply Forall_app; split; [| apply Forall_app; split]].
+    - apply Forall_app; split; [| apply Forall_app; split; [| apply Forall_app; split; [| apply Forall_app; split; [| apply Forall_app; split]]]].
       + repeat constructor. (* hammer *) timeout 10 sfirstorder.
       + repeat constructor. cbn [map]. rewrite map_map. apply NoDup_map_pair. apply finite_injective.
       + (* the flat tf_dfg_ov block *)
+        repeat constructor. cbn [map]. rewrite map_map. apply NoDup_map_pair. apply finite_injective.
+      + (* the flat tf_dfg_iv block *)
+        repeat constructor. cbn [map]. rewrite map_map. apply NoDup_map_pair. apply finite_injective.
+      + (* the flat tf_dfg_ip block *)
         repeat constructor. cbn [map]. rewrite map_map. apply NoDup_map_pair. apply finite_injective.
       + apply Forall_app; split.
         * (* Block for tf_dfg_b *)
@@ -1538,6 +1562,8 @@ Section VariableScheduler.
         | tf_dfg_v a_idx n_idx => Bits.zero
         | tf_dfg_done => Bits.zero
         | tf_dfg_ov _ => Bits.zero
+        | tf_dfg_iv _ => Bits.zero
+        | tf_dfg_ip _ => Bits.zero
         end
     ).
 
@@ -1557,6 +1583,8 @@ Section VariableScheduler.
     | tf_dfg_v _ _ => Bits.zero
     | tf_dfg_done => Bits.zero
     | tf_dfg_ov _ => Bits.zero
+    | tf_dfg_iv _ => Bits.zero
+    | tf_dfg_ip _ => Bits.zero
     end.
 
   (* ==================================================================== *)

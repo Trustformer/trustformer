@@ -78,6 +78,14 @@ Section SchedulerTypes.
        writes state vars rather than o_vars, [always_ops_no_out] should stay true
        with its existing proof. *)
     | tf_dfg_ov (o: outputs_var)
+    (* ...and the RESPONSE side.  [tf_dfg_iv] latches the answer at the sample
+       cycle; [tf_dfg_ip] is one bit remembering whether the sample was valid
+       last cycle, which is what makes the capture a one-cycle edge rather than
+       a monotone level.  Two registers rather than one concatenated word,
+       because [convert] takes the LOW bits and there is no shift op, so a high
+       flag cannot be extracted. *)
+    | tf_dfg_iv (v: inputs_var)
+    | tf_dfg_ip (v: inputs_var)
     .
         
 End SchedulerTypes.
