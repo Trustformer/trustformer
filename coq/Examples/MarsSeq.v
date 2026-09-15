@@ -15,6 +15,12 @@ Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
 (*
+    MARS_SEQ -- the SEQUENTIAL design, in which a crypto round trip is split
+    across MARS_Continue.  Superseded by Examples/Mars.v, which expresses one
+    command as one action via [tf_call].  Kept because it is the design the
+    oracle validated, and so the reference the one-action version is checked
+    against.
+
     A minimal TCG MARS device, Profile [TF-MARS-S256-P2].
 
     STAGE 1 of agents/mars/MVP.md section 8: the two crypto-free commands,
@@ -1635,7 +1641,7 @@ Section TypedSynthesis.
                         koika_rule_names := TypedSynthesis.rule_names tf_ctx;
                         koika_rule_external := (fun _ => false);
                         koika_scheduler := system_schedule;
-                        koika_module_name := "Example_Mars" |};
+                        koika_module_name := "Example_MarsSeq" |};
 
       ip_sim := {| sp_ext_fn_specs fn := {| efs_name := show fn; efs_method := false |};
                   sp_prelude := None |};
@@ -1648,4 +1654,4 @@ End TypedSynthesis.
 
 Definition prog := Interop.Backends.register package.
 Set Extraction Output Directory "build".
-Extraction "Example_Mars.ml" prog.
+Extraction "Example_MarsSeq.ml" prog.
