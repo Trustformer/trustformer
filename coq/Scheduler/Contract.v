@@ -51,11 +51,17 @@ Record TFSchedContext := {
   tfs_spec_outputs_size : tfs_spec_outputs -> nat;
   tfs_spec_outputs_class : tfs_spec_outputs -> port_class;
 
-  (* An IP owns its ports, so there is nothing here to classify or to check. *)
   tfs_spec_ips : Type;
+  tfs_spec_ips_eq_dec : EqDec tfs_spec_ips;
   tfs_spec_ips_fin : FiniteType tfs_spec_ips;
   tfs_spec_ips_names : Show tfs_spec_ips;
-  tfs_spec_ip : tfs_spec_ips -> ip_decl;
+  tfs_spec_ip : tfs_spec_ips -> ip_decl tfs_spec_inputs_size;
+
+  (* The request side needs no obligation -- it is not an output, so no action
+     can assign it and it can never be Public.  The response IS an input, so it
+     still has to be kept out of the attacker's view by hand. *)
+  tfs_spec_ip_resp_secret :
+    forall p, tfs_spec_inputs_class (ip_resp (tfs_spec_ip p)) = Secret;
 
   tfs_spec_action : Type;
   tfs_spec_action_eq_dec : EqDec tfs_spec_action;
@@ -97,6 +103,8 @@ Record TFSchedule := {
      input type, but that is not definitionally visible through an abstract
      [TFSchedule], so the classification has to be carried across. *)
   tfs_inputs_class : tfs_inputs -> port_class;
+  (* An IP response is read LIVE, not latched at action start. *)
+  tfs_inputs_is_resp : tfs_inputs -> bool;
 
   tfs_outputs : Type;
   tfs_outputs_size : tfs_outputs -> nat;
@@ -109,7 +117,7 @@ Record TFSchedule := {
   tfs_ips : Type;
   tfs_ips_fin : FiniteType tfs_ips;
   tfs_ips_names : Show tfs_ips;
-  tfs_ip : tfs_ips -> ip_decl;
+  tfs_ip : tfs_ips -> ip_decl tfs_inputs_size;
   tfs_drive_reg : tfs_ips -> tfs_states;
   tfs_drive_reg_size : forall p,
     tfs_states_size (tfs_drive_reg p) = 1 + ip_req_sz (tfs_ip p);

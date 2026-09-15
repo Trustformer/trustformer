@@ -6,17 +6,37 @@ Require Import Koika.Utils.Environments.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
-(* An attached IP block.  Its two ports are its OWN -- they are not drawn from
-   the design's input and output types, so an action cannot name one. *)
-Record ip_decl := {
-  ip_req_sz  : nat;         (* request width, driven mid-action *)
-  ip_resp_sz : nat;         (* response width, sampled live *)
-  ip_lat     : nat;         (* cycles from pulse to answer; not pipelined *)
-  ip_fn      : bits_t ip_req_sz -> bits_t ip_resp_sz;
+(* An attached IP block.  The request side is the scheduler's own -- there is no
+   output port, only a width -- because its hardware is a drive register routed
+   to [ext_ip_req].  The response IS an input of the design: it is read live,
+   from the environment, once per cycle, and the model has no other category for
+   that. *)
+Record ip_decl {i : Type} (isz : i -> nat) := {
+  ip_req_sz : nat;          (* request width, driven mid-action *)
+  ip_resp   : i;            (* response port, sampled live *)
+  ip_lat    : nat;          (* cycles from pulse to answer; not pipelined *)
+  ip_fn     : bits_t ip_req_sz -> bits_t (isz ip_resp);
 }.
+Arguments ip_req_sz {i isz}.
+Arguments ip_resp {i isz}.
+Arguments ip_lat {i isz}.
+Arguments ip_fn {i isz}.
 
-(* The IP map of a design that has no IPs. *)
-Definition no_ips (e : Empty_set) : ip_decl := match e with end.
+(* A design with no IPs uses [Empty_set] as its IP name type. *)
+Definition no_ips {i} {isz : i -> nat} (e : Empty_set) : ip_decl isz :=
+  match e with end.
+
+#[global] Instance Empty_set_eqdec : EqDec Empty_set :=
+  {| eq_dec := fun (x: Empty_set) _ => match x with end |}.
+
+#[global] Instance Empty_set_show : Show Empty_set :=
+  {| show := fun (x: Empty_set) => match x with end |}.
+
+#[global] Instance Empty_set_finite : FiniteType Empty_set :=
+  {| finite_index := fun (x: Empty_set) => match x with end;
+     finite_elements := [];
+     finite_surjective := fun (a: Empty_set) => match a with end;
+     finite_injective := NoDup_nil _ |}.
 
 Section TrustformerSyntax.
 

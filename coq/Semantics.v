@@ -19,7 +19,7 @@ Section Semantics.
             (states_size : states_var -> nat)
             (inputs_size : inputs_var -> nat)
             (outputs_size : outputs_var -> nat)
-            (ips : ips_var -> ip_decl).
+            (ips : ips_var -> ip_decl inputs_size).
 
     (* All spec states are mapped to bits, the size is given by the states_size function *)
     Definition tf_states_type (x: states_var) := 

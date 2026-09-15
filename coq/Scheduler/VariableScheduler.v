@@ -44,6 +44,11 @@ Section VariableScheduler.
   Local Notation outputs_var_size := (tfs_spec_outputs_size ctx).
   Local Notation outputs_var_class := (tfs_spec_outputs_class ctx).
 
+  Local Notation ips_var := (tfs_spec_ips ctx).
+  Local Notation ips_var_eq_dec := (tfs_spec_ips_eq_dec ctx).
+  Local Notation ips_var_fin := (tfs_spec_ips_fin ctx).
+  Local Notation ip_of := (tfs_spec_ip ctx).
+
   Local Notation spec_action := (tfs_spec_action ctx).
   Local Notation spec_action_eq_dec := (tfs_spec_action_eq_dec ctx).
   Local Notation spec_action_fin := (tfs_spec_action_fin ctx).
@@ -56,6 +61,7 @@ Section VariableScheduler.
   Hint Extern 0 (Show states_var) => exact (tfs_spec_states_names ctx) : typeclass_instances.
   Hint Extern 0 (Show inputs_var) => exact (tfs_spec_inputs_names ctx) : typeclass_instances.
   Hint Extern 0 (Show outputs_var) => exact (tfs_spec_outputs_names ctx) : typeclass_instances.
+  Hint Extern 0 (Show ips_var) => exact (tfs_spec_ips_names ctx) : typeclass_instances.
 
   (* ============================ *)
   (* = Step 1: DFG Construction = *)
@@ -63,9 +69,9 @@ Section VariableScheduler.
 
   (* --- DFG Definitions --- *)
   Local Notation dfg_vars := (@dfg_vars_t states_var outputs_var).
-  Local Notation dfg_op := (@dfg_op_t states_var inputs_var outputs_var).
-  Local Notation dfg_node := (@dfg_node_t states_var inputs_var outputs_var).
-  Local Notation dfg_state := (@dfg_state_t states_var inputs_var outputs_var). 
+  Local Notation dfg_op := (@dfg_op_t states_var inputs_var outputs_var ips_var).
+  Local Notation dfg_node := (@dfg_node_t states_var inputs_var outputs_var ips_var).
+  Local Notation dfg_state := (@dfg_state_t states_var inputs_var outputs_var ips_var). 
 
   Instance dfg_vars_eq_dec : EqDec dfg_vars.
   Proof.
@@ -141,10 +147,10 @@ Section VariableScheduler.
      take turns; without an ordering edge both drives land in the same cycle,
      the fold keeps only the latest, and the earlier request is silently lost
      while both samples read the same wire (measured in CallSpike). *)
-  Definition last_sample (dfg: dfg_state) (v: inputs_var) : option nid_t :=
+  Definition last_sample (dfg: dfg_state) (p: ips_var) : option nid_t :=
     match find (fun nd => match op nd with
-                          | DFG_Sample v' _ =>
-                              if inputs_var_eq_dec.(eq_dec) v' v then true else false
+                          | DFG_Sample p' _ =>
+                              if ips_var_eq_dec.(eq_dec) p' p then true else false
                           | _ => false
                           end) (graph dfg) with
     | Some nd => Some (nid nd)
@@ -360,10 +366,10 @@ Section VariableScheduler.
          off the stall, which is what gives the response read an edge back to
          the request.  This is exactly the shape Spike 2b measured by hand:
          in_x -> drive -> stall<L> -> sample. *)
-      | tf_call req resp dst arg _ =>
+      | tf_call ip dst arg =>
         let! s0 := get_state in
-        let! arg_id := dataflow_expr arg (dfg_var_size (DFG_OVar req)) in
-        let! drive_id := emit (DFG_Drive req arg_id) (dfg_var_size (DFG_OVar req)) in
+        let! arg_id := dataflow_expr arg (ip_req_sz (ip_of ip)) in
+        let! drive_id := emit (DFG_Drive ip arg_id) (ip_req_sz (ip_of ip)) in
         (* SEQUENCING.  If an earlier call in this action already used this IP,
            hang the delay chain off a JOIN of this drive and that call's sample
            rather than off the drive alone.  A DFG_Binary's validity is the AND
@@ -375,12 +381,12 @@ Section VariableScheduler.
            Width 1: only the join's VALIDITY is used, its value is discarded by
            the chain and then by the sample.  tf_or is arbitrary -- any binary op
            would do, because nothing reads the result. *)
-        let! head := match last_sample s0 resp with
+        let! head := match last_sample s0 ip with
                      | None => ret drive_id
                      | Some prev => emit (DFG_Binary tf_or drive_id prev) 1
                      end in
-        let! stall_id := stall_chain (tfs_spec_ip_lat ctx resp) head in
-        let! samp_id := emit (DFG_Sample resp stall_id) (dfg_var_size (DFG_SVar dst)) in
+        let! stall_id := stall_chain (ip_lat (ip_of ip)) head in
+        let! samp_id := emit (DFG_Sample ip stall_id) (dfg_var_size (DFG_SVar dst)) in
         set_var (DFG_SVar dst) samp_id
       end
     | tf_ops_cons op1 op2 =>
@@ -582,7 +588,7 @@ Section VariableScheduler.
     
     buffers.
 
-  Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (outputs_var:=outputs_var) (buffer_needs:=buffer_needs)).
+  Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (ips_var:=ips_var) (buffer_needs:=buffer_needs)).
   Definition test := tf_dfg_states.
 
   Instance show_tf_dfg_states : Show tf_dfg_states :=
@@ -592,7 +598,7 @@ Section VariableScheduler.
         | tf_dfg_b a_idx n_idx => String.append "b_" (String.append (show (index_to_nat a_idx)) (String.append "_" (show (index_to_nat n_idx))))
         | tf_dfg_v a_idx n_idx => String.append "v_" (String.append (show (index_to_nat a_idx)) (String.append "_" (show (index_to_nat n_idx))))
         | tf_dfg_done => "done"
-        | tf_dfg_ov o => String.append "ov_" (show o)
+        | tf_dfg_ov p => String.append "ip_" (show p)
         end }.
 
   Definition tf_dfg_states_size (dfg_s: tf_dfg_states) : sz_t :=
@@ -601,7 +607,7 @@ Section VariableScheduler.
     | tf_dfg_b a_idx b_idx => snd (snd (nth (index_to_nat b_idx) (nth (index_to_nat a_idx) buffer_needs []) (0, (0, 0))))
     | tf_dfg_v a_idx b_idx => 1
     | tf_dfg_done => 1
-    | tf_dfg_ov o => 1 + outputs_var_size o
+    | tf_dfg_ov p => 1 + ip_req_sz (ip_of p)
     end.
 
   (* ============================== *)
@@ -740,14 +746,10 @@ Section VariableScheduler.
                          | Public => false
                          | Secret => true
                          end
-        (* SPIKE 2b: a SAMPLE reads a trusted input port, so it is a taint
-           source for exactly the reason [DFG_Input] is.  Without this arm the
-           wildcard below swallows it silently and IPR goes unsound -- the
-           hazard Spike 1.5 flagged and DEBT-3 already paid for once. *)
-        | DFG_Sample v _ => match inputs_var_class v with
-                            | Public => false
-                            | Secret => true
-                            end
+        (* An IP link is outside the attacker model, so a sample is always a
+           taint source.  Without this arm the wildcard swallows it and IPR
+           goes unsound. *)
+        | DFG_Sample _ _ => true
         | _ => false
         end in
       (* If node depends on secrets it is tainted *)
@@ -1150,9 +1152,9 @@ Section VariableScheduler.
              decouple exactly where the round trip needs them to. *)
           | DFG_Drive _ arg1 =>
               compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers
-          | DFG_Sample v tok =>
+          | DFG_Sample p tok =>
               let '(_, tok_val) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg tok buffers in
-              (tf_ivar v, tok_val)
+              (tf_ivar (ip_resp (ip_of p)), tok_val)
           | DFG_Empty => (tf_const 0, tf_const 0) (* should not happen *)
           end
         end
@@ -1163,7 +1165,8 @@ Section VariableScheduler.
     (compile_dfg_expr_aux (get_tainted dfg) (decl_facts dfg) [] fuel a_idx dfg n bufs).
 
   Definition compile_dfg_buffers (a_idx: nat) (dfg: dfg_state) (buffers: list (nid_t * (nat * sz_t)))
-    := 
+    : list (@tf_op tf_dfg_states inputs_var outputs_var Empty_set)
+    :=
     (* Bound outside the [flat_map]: inlining these would re-run the whole taint
        and declassification analysis once per buffer. *)
     let tainted := get_tainted dfg in
@@ -1215,46 +1218,19 @@ Section VariableScheduler.
   (* SPIKE 2c: mid-action port drives                                     *)
   (* ==================================================================== *)
 
-  (* The nids of every [DFG_Drive] targeting [o], LATEST FIRST (the fold conses
+  (* The nids of every [DFG_Drive] on [p], LATEST FIRST (the fold conses
      and graph order is program order). *)
-  Definition drive_nodes (dfg: dfg_state) (o: outputs_var) : list nid_t :=
+  Definition drive_nodes (dfg: dfg_state) (p: ips_var) : list nid_t :=
     fold_left (fun acc nd =>
                  match op nd with
-                 | DFG_Drive o' _ => if outputs_var_eq_dec.(eq_dec) o' o then nid nd :: acc else acc
+                 | DFG_Drive p' _ => if ips_var_eq_dec.(eq_dec) p' p then nid nd :: acc else acc
                  | _ => acc
                  end) (graph dfg) [].
 
-  (* Is [o] written by an ordinary [tf_output], i.e. present in [var_map]? *)
-  Definition assigned_port (dfg: dfg_state) (o: outputs_var) : bool :=
-    existsb (fun '(k, _) => if dfg_vars_eq_dec.(eq_dec) k (DFG_OVar o) then true else false)
-            (var_map dfg).
-
-  (* DECLARED, not derived from the graph: a port is driven iff some response
-     port names it as its request port.
-
-     Deriving it from the graph (has drives, not assigned, and Secret) made
-     driven-ness depend on the ACTION, so a port could be driven in one action
-     and assigned at done in another -- inconsistent hardware from one module.
-     Declaring it makes a port live in the always half of EVERY action; one with
-     no call this action simply emits a hold and no pulse.
-
-     It also turns a silent filter into a rejectable condition. The old
-     [negb (assigned_port ...)] conjunct EXCLUDED a port that was both driven and
-     assigned, which silently dropped the drive; the surface language must reject
-     such an action instead. [assigned_port] is kept for exactly that check.
-
-     The Secret conjunct is gone because [tfs_spec_ip_secret] already makes it
-     unreachable: a context naming a Public request or response port cannot be
-     constructed at all. *)
-  Definition is_ip_req_port (o: outputs_var) : bool :=
-    existsb (fun v => match tfs_spec_ip_req ctx v with
-                      | Some oo => if outputs_var_eq_dec.(eq_dec) oo o then true else false
-                      | None => false
-                      end)
-            (@finite_elements inputs_var inputs_var_fin).
-
-  Definition driven_ports (_: dfg_state) : list outputs_var :=
-    filter is_ip_req_port (@finite_elements outputs_var outputs_var_fin).
+  (* Every IP, not just the ones this action calls: a drive register is live in
+     the always half of EVERY action, and one with no call emits a hold. *)
+  Definition driven_ports (_: dfg_state) : list ips_var :=
+    @finite_elements ips_var ips_var_fin.
 
   (* The node carrying [n]'s validity one cycle later -- the head of [n]'s delay
      chain.  That delayed copy is what turns a monotone validity into a rising
@@ -1309,7 +1285,7 @@ Section VariableScheduler.
      whether the surface should reject it is still open. *)
   Definition compile_dfg_drives (a_idx: nat) (dfg: dfg_state)
     (buffers: list (nid_t * (nat * sz_t)))
-    : list (@tf_op tf_dfg_states inputs_var outputs_var) :=
+    : list (@tf_op tf_dfg_states inputs_var outputs_var Empty_set) :=
     let tainted := get_tainted dfg in
     let dfacts := decl_facts dfg in
     let fuel := length (graph dfg) in
@@ -1329,9 +1305,9 @@ Section VariableScheduler.
 
            Only the Verilog showed this: at the Coq level both folds typecheck
            and the cycle assignment is correct either way. *)
-        map (fun o =>
-               tf_assign (tf_dfg_ov o)
-                 (tf_op2 (tf_concat 1 (outputs_var_size o))
+        map (fun p =>
+               tf_assign (tf_dfg_ov p)
+                 (tf_op2 (tf_concat 1 (ip_req_sz (ip_of p)))
                     (fold_right
                        (fun n acc =>
                           let '(_, v) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg n buffers in
@@ -1341,7 +1317,7 @@ Section VariableScheduler.
                                        | None => tf_const 0
                                        end in
                           tf_expr_if (tf_op2 tf_and v (tf_op1 tf_not vprev)) (tf_const 1) acc)
-                       (tf_const 0) (drive_nodes dfg o))
+                       (tf_const 0) (drive_nodes dfg p))
                     (fold_right
                        (fun n acc =>
                           let '(e, v) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg n buffers in
@@ -1351,7 +1327,7 @@ Section VariableScheduler.
                                        | None => tf_const 0
                                        end in
                           tf_expr_if (tf_op2 tf_and v (tf_op1 tf_not vprev)) e acc)
-                       (tf_svar (tf_dfg_ov o)) (drive_nodes dfg o))))
+                       (tf_svar (tf_dfg_ov p)) (drive_nodes dfg p))))
             (driven_ports dfg)
     end.
 
@@ -1382,7 +1358,8 @@ Section VariableScheduler.
     | e :: rest => valid_expr_and e (combine_valid_exprs rest)
     end. 
 
-  Definition compile_dfg_aux (a_idx: nat) (dfg: dfg_state) (buffers: list (nid_t * (nat * sz_t))) :=
+  Definition compile_dfg_aux (a_idx: nat) (dfg: dfg_state) (buffers: list (nid_t * (nat * sz_t)))
+    : list (@tf_op tf_dfg_states inputs_var outputs_var Empty_set) :=
     let tainted := get_tainted dfg in
     let dfacts := decl_facts dfg in
     let fuel := length (graph dfg) in
@@ -1401,7 +1378,8 @@ Section VariableScheduler.
             ) (var_map dfg)
       end.
 
-  Definition compile_dfg_valid (a_idx: nat) (dfg: dfg_state) (buffers: list (nid_t * (nat * sz_t))) :=
+  Definition compile_dfg_valid (a_idx: nat) (dfg: dfg_state) (buffers: list (nid_t * (nat * sz_t)))
+    : @tf_op tf_dfg_states inputs_var outputs_var Empty_set :=
     let tainted := get_tainted dfg in
     let dfacts := decl_facts dfg in
     let fuel := length (graph dfg) in
@@ -1434,7 +1412,7 @@ Section VariableScheduler.
       final_ops
     ).
 
-  Definition done_signal := tf_dfg_done (states_var:=states_var) (outputs_var:=outputs_var) (buffer_needs:=buffer_needs).
+  Definition done_signal := tf_dfg_done (states_var:=states_var) (ips_var:=ips_var) (buffer_needs:=buffer_needs).
 
   Definition reset_states : list tf_dfg_states :=  
     flat_map 
@@ -1459,11 +1437,11 @@ Section VariableScheduler.
       + exact (1, finite_index state).
       + exact (3 + finite_index a_idx, finite_index n_idx).
       + exact (3 + (Datatypes.length (finite_elements (T:=(Vect.index (Datatypes.length buffer_needs))))) + finite_index a_idx, finite_index n_idx).
-      + exact (2, (@finite_index outputs_var outputs_var_fin o)).
+      + exact (2, (@finite_index ips_var ips_var_fin p)).
         
     - refine ([ [tf_dfg_done] ] ++ 
               [ map tf_dfg_s finite_elements ] ++ 
-              [ map tf_dfg_ov (@finite_elements outputs_var outputs_var_fin) ] ++ 
+              [ map tf_dfg_ov (@finite_elements ips_var ips_var_fin) ] ++ 
               map (fun a => map (tf_dfg_b a) finite_elements) finite_elements ++ 
               map (fun a => map (tf_dfg_v a) finite_elements) finite_elements).
 
@@ -1500,8 +1478,8 @@ Section VariableScheduler.
           rewrite finite_surjective. reflexivity.
       + (* tf_dfg_ov -- a flat group at a LITERAL index, so this is the
            [tf_dfg_s] case verbatim *)
-        exists (map tf_dfg_ov (@finite_elements outputs_var outputs_var_fin)). split; auto.
-        rewrite map_nth_error with (d:=o); auto. rewrite finite_surjective. reflexivity.
+        exists (map tf_dfg_ov (@finite_elements ips_var ips_var_fin)). split; auto.
+        rewrite map_nth_error with (d:=p); auto. rewrite finite_surjective. reflexivity.
     - intros n l Hn m x Hm.
       destruct n as [|n].
       { inversion Hn; subst. destruct m; inversion Hm; subst. reflexivity. timeout 10 scongruence use: nth_error_nil unfold: tfs_spec_states. }
@@ -1743,7 +1721,7 @@ Section VariableScheduler.
   Proof.
     induction ops as [bop | o1 IHops1 o2 IHops2 | oc ot IHops1 oe IHops2];
       cbn [dataflow_ops].
-    - destruct bop as [ | dst expr | dst expr | rq rv dst expr szA szB fn].
+    - destruct bop as [ | dst expr | dst expr | pip dst expr].
       + apply preserves_ret.
       + apply preserves_bind; [apply dataflow_expr_vm|]. intro x. apply set_var_vm.
       + apply preserves_bind; [apply dataflow_expr_vm|]. intro x. apply set_var_vm.
@@ -1755,7 +1733,7 @@ Section VariableScheduler.
         apply preserves_bind; [apply dataflow_expr_vm|]. intro x.
         apply preserves_bind; [apply emit_vm|]. intro y.
         apply preserves_bind;
-          [destruct (last_sample s0 rv); [apply emit_vm | apply preserves_ret]|]. intro h.
+          [destruct (last_sample s0 pip); [apply emit_vm | apply preserves_ret]|]. intro h.
         apply preserves_bind; [apply stall_chain_vm|]. intro z.
         apply preserves_bind; [apply emit_vm|]. intro w.
         apply set_var_vm.
@@ -1888,7 +1866,7 @@ Section VariableScheduler.
     (fun op => match op with
        | tf_assign dst _ => [StOp dst]
        | tf_output dst _ => [OutOp dst]
-       | tf_call req _ dst _ _ => [OutOp req; StOp dst]  (* a call writes BOTH *)
+       | tf_call _ dst _ => [StOp dst]
        | _ => []
        end).
 
@@ -1994,12 +1972,8 @@ Section VariableScheduler.
 
   (* --- drive-op tags (SPIKE 2c, ported from P3) --- *)
 
-  (* [compile_dfg_drives] emits exactly ONE [tf_output o _] per driven port, so
-     its tag list is literally [map OutOp (driven_ports DFG)].  Stating it as an
-     equation rather than an [In] characterisation is what makes the membership
-     and NoDup lemmas one-liners; the emission was written as
-     [map (fun o => tf_output o _) (driven_ports dfg)] precisely so this rewrite
-     exists. *)
+  (* One [tf_assign (tf_dfg_ov p) _] per IP, so the tag list is exactly
+     [map StOp (map tf_dfg_ov (driven_ports DFG))]. *)
   Lemma drives_tags_eq (idx: nat) (DFG: dfg_state)
         (BUF: list (nid_t * (nat * sz_t))):
     flat_map OPTAG (compile_dfg_drives idx DFG BUF)
@@ -2026,7 +2000,7 @@ Section VariableScheduler.
     exists o. split; [reflexivity | exact Ho].
   Qed.
 
-  Lemma NoDup_map_StOp_ov (l: list outputs_var):
+  Lemma NoDup_map_StOp_ov (l: list ips_var):
     NoDup l -> NoDup (map (fun o => @StOp tf_dfg_states outputs_var (tf_dfg_ov o)) l).
   Proof.
     induction 1 as [|x l Hx Hnd IH]; simpl; constructor; [| exact IH].
@@ -2044,7 +2018,7 @@ Section VariableScheduler.
     rewrite drives_tags_eq.
     destruct (index_of_nat (length buffer_needs) idx) as [a'|]; [| constructor].
     apply NoDup_map_StOp_ov. unfold driven_ports.
-    apply NoDup_filter. apply finite_nodup.
+    apply finite_nodup.
   Qed.
 
 
@@ -2127,7 +2101,7 @@ Section VariableScheduler.
           match op with
           | tf_assign dst _ => [StOp dst]
           | tf_output dst _ => [OutOp dst]
-          | tf_call req _ dst _ _ => [OutOp req; StOp dst]  (* a call writes BOTH *)
+          | tf_call _ dst _ => [StOp dst]
           | _ => []
           end) (fst (schedule a))).
   Proof.
@@ -2214,27 +2188,22 @@ Section VariableScheduler.
       tfs_inputs_size := inputs_var_size;
       tfs_inputs_fin := inputs_var_fin;
       tfs_inputs_class := inputs_var_class;
-      tfs_inputs_is_resp := fun v => match tfs_spec_ip_req ctx v with
-                                     | Some _ => true | None => false end;
-      (* A port is DRIVEN iff some response port names it as its request port.
-         DECLARED, not derived from the graph -- so it is uniform across every
-         action, and "an IP port was also assigned by hand" becomes a rejectable
-         condition rather than a silent filter. *)
-      tfs_drive_reg := fun o =>
-        if existsb (fun v => match tfs_spec_ip_req ctx v with
-                             | Some oo => if outputs_var_eq_dec.(eq_dec) oo o then true else false
-                             | None => false
-                             end)
-                   (@finite_elements inputs_var inputs_var_fin)
-        then Some (tf_dfg_ov o) else None;
-      tfs_drive_reg_size :=
-        ltac:(intros o r H; cbn in H;
-              destruct (existsb _ _); [ injection H as <-; reflexivity | discriminate ]);
+      tfs_inputs_is_resp := fun v =>
+        existsb (fun p => if inputs_var_eq_dec.(eq_dec) (ip_resp (ip_of p)) v
+                          then true else false)
+                (@finite_elements ips_var ips_var_fin);
 
       tfs_outputs := outputs_var;
       tfs_outputs_size := outputs_var_size;
       tfs_outputs_fin := outputs_var_fin;
       tfs_outputs_class := outputs_var_class;
+
+      tfs_ips := ips_var;
+      tfs_ips_fin := ips_var_fin;
+      tfs_ips_names := tfs_spec_ips_names ctx;
+      tfs_ip := ip_of;
+      tfs_drive_reg := tf_dfg_ov;
+      tfs_drive_reg_size := ltac:(reflexivity);
 
       tfs_action := spec_action;
       tfs_action_fin := spec_action_fin;
@@ -2298,12 +2267,10 @@ Module Examples.
             let $out_A := $x + #1
         ]}
         end;
-      (* no attached IP: no call names a response port here *)
-      (* no IP drives any port here, so nothing can conflict with one *)
-      tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-      tfs_spec_ip_req := fun _ => None;
-      tfs_spec_ip_lat := fun _ => 0;
-      tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
+      (* no attached IP *)
+      tfs_spec_ips := Empty_set;
+      tfs_spec_ip := no_ips;
+      tfs_spec_ip_resp_secret := ltac:(intros []);
       tfs_spec_decls := [];
     |}. 
 
@@ -2352,12 +2319,10 @@ Module Examples.
             let $out_A := $y 
         ]}
         end;
-      (* no attached IP: no call names a response port here *)
-      (* no IP drives any port here, so nothing can conflict with one *)
-      tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-      tfs_spec_ip_req := fun _ => None;
-      tfs_spec_ip_lat := fun _ => 0;
-      tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
+      (* no attached IP *)
+      tfs_spec_ips := Empty_set;
+      tfs_spec_ip := no_ips;
+      tfs_spec_ip_resp_secret := ltac:(intros []);
       tfs_spec_decls := [];
     |}.
 
@@ -2412,12 +2377,10 @@ Module Examples.
             let $z := $x
         ]}
         end;
-      (* no attached IP: no call names a response port here *)
-      (* no IP drives any port here, so nothing can conflict with one *)
-      tfs_spec_no_assign_driven := ltac:(intros a; destruct a; vm_compute; reflexivity);
-      tfs_spec_ip_req := fun _ => None;
-      tfs_spec_ip_lat := fun _ => 0;
-      tfs_spec_ip_secret := ltac:(intros ? ? H; cbn in H; discriminate);
+      (* no attached IP *)
+      tfs_spec_ips := Empty_set;
+      tfs_spec_ip := no_ips;
+      tfs_spec_ip_resp_secret := ltac:(intros []);
       tfs_spec_decls := [];
     |}.
 
