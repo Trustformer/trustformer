@@ -1241,7 +1241,16 @@ Section VariableScheduler.
      node as well.  Getting this wrong is not a proof failure: the detector
      silently degenerates to [v && ~false] = [v], the strobe is held high for the
      whole action instead of pulsing, and only the Verilog shows it. *)
-  Definition chain_head (dfg: dfg_state) (n: nid_t) : option nid_t :=
+  (* The head of [n]'s delay chain, paired with the node that head DELAYS: the
+     drive itself, or the ordering join when the call is sequenced.
+
+     Both halves are needed because a drive's strobe is the rising edge of what
+     the chain delays, [gate && ~head].  Using the drive's own validity as the
+     gate is correct only for an unsequenced call: behind a join the drive is
+     valid from cycle 0 while the head is not, so [~head] holds for the whole
+     wait and the strobe is a LEVEL rather than a pulse -- which masks the
+     earlier request entirely.  Measured, not reasoned: see the testbenches. *)
+  Definition chain_gate (dfg: dfg_state) (n: nid_t) : option (nid_t * nid_t) :=
     let stall_of := fun (m: nid_t) =>
       match find (fun nd => match op nd with
                             | DFG_Stall _ a => Nat.eqb a m
@@ -1251,16 +1260,22 @@ Section VariableScheduler.
       | None => None
       end in
     match stall_of n with
-    | Some h => Some h
+    | Some h => Some (n, h)
     | None =>
         match find (fun nd => match op nd with
                               | DFG_Binary _ a _ => Nat.eqb a n
                               | _ => false
                               end) (graph dfg) with
-        | Some j => stall_of (nid j)
+        | Some j => match stall_of (nid j) with
+                    | Some h => Some (nid j, h)
+                    | None => None
+                    end
         | None => None
         end
     end.
+
+  Definition chain_head (dfg: dfg_state) (n: nid_t) : option nid_t :=
+    match chain_gate dfg n with Some (_, h) => Some h | None => None end.
 
   (* A drive is emitted as an ALWAYS-op, unlike a [tf_output] from [var_map]
      which goes to the done half.  That is the whole point: the done half runs
@@ -1311,22 +1326,26 @@ Section VariableScheduler.
                     (fold_right
                        (fun n acc =>
                           let '(_, v) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg n buffers in
-                          let vprev := match chain_head dfg n with
-                                       | Some h => snd (compile_dfg_expr_aux tainted dfacts []
-                                                          fuel a_idx' dfg h buffers)
-                                       | None => tf_const 0
-                                       end in
-                          tf_expr_if (tf_op2 tf_and v (tf_op1 tf_not vprev)) (tf_const 1) acc)
+                          let '(vgate, vprev) :=
+                            match chain_gate dfg n with
+                            | Some (g, h) =>
+                                (snd (compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg g buffers),
+                                 snd (compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg h buffers))
+                            | None => (v, tf_const 0)
+                            end in
+                          tf_expr_if (tf_op2 tf_and vgate (tf_op1 tf_not vprev)) (tf_const 1) acc)
                        (tf_const 0) (drive_nodes dfg p))
                     (fold_right
                        (fun n acc =>
                           let '(e, v) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg n buffers in
-                          let vprev := match chain_head dfg n with
-                                       | Some h => snd (compile_dfg_expr_aux tainted dfacts []
-                                                          fuel a_idx' dfg h buffers)
-                                       | None => tf_const 0
-                                       end in
-                          tf_expr_if (tf_op2 tf_and v (tf_op1 tf_not vprev)) e acc)
+                          let '(vgate, vprev) :=
+                            match chain_gate dfg n with
+                            | Some (g, h) =>
+                                (snd (compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg g buffers),
+                                 snd (compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg h buffers))
+                            | None => (v, tf_const 0)
+                            end in
+                          tf_expr_if (tf_op2 tf_and vgate (tf_op1 tf_not vprev)) e acc)
                        (tf_svar (tf_dfg_ov p)) (drive_nodes dfg p))))
             (driven_ports dfg)
     end.

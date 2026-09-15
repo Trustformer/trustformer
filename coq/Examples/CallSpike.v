@@ -408,3 +408,52 @@ End TwoCallSynthesis.
 
 Definition tc_prog := Interop.Backends.register tc_package.
 Extraction "Example_TwoCallSpike.ml" tc_prog.
+
+(* ===================================================================== *)
+(*  End-to-end for two CHAINED calls: call 2's argument is call 1's       *)
+(*  result, so the calls carry a real data dependency.                   *)
+(* ===================================================================== *)
+(*
+    Extracted because the independent-argument case is not the hard one.
+    Here call 2's payload does not exist until call 1's answer has landed,
+    so the drive, the sample latch and the ordering join all have to agree
+    on WHEN -- and a strobe that is a level rather than a pulse sends the
+    IP a payload that has not been computed yet.
+*)
+
+Section TwoCallsChainedSynthesis.
+
+  Definition tc2_schedule := tfs_schedule tc2_ctx cclimit.
+
+  Definition tc2_tf_ctx : TFSynthContext := {|
+    tf_sched_ctx := tc2_schedule;
+    tf_action_encoding := cs_action_encoding;
+    tf_action_encoding_inj := cs_action_encoding_inj;
+  |}.
+
+  Definition tc2R := TypedSynthesis.R tc2_tf_ctx.
+  Definition tc2r := TypedSynthesis.r tc2_tf_ctx.
+  Definition tc2Sigma := TypedSynthesis.Sigma tc2_tf_ctx.
+  Definition tc2_system_schedule := TypedSynthesis.system_schedule tc2_tf_ctx.
+  Definition tc2_ext_fn_specs := TypedSynthesis.ext_fn_specs tc2_tf_ctx.
+  Instance tc2_ext_fn_names : Show _ := TypedSynthesis.ext_fn_names tc2_tf_ctx.
+
+  Definition tc2_package :=
+    {| ip_koika := {| koika_reg_types := tc2R;
+                      koika_reg_names := TypedSynthesis.reg_names tc2_tf_ctx;
+                      koika_reg_init := tc2r;
+                      koika_reg_finite := TypedSynthesis._reg_t_finite tc2_tf_ctx;
+                      koika_ext_fn_types := tc2Sigma;
+                      koika_rules := TypedSynthesis.rules tc2_tf_ctx;
+                      koika_rule_names := TypedSynthesis.rule_names tc2_tf_ctx;
+                      koika_rule_external := (fun _ => false);
+                      koika_scheduler := tc2_system_schedule;
+                      koika_module_name := "Example_ChainedCallSpike" |};
+    ip_sim := {| sp_ext_fn_specs fn := {| efs_name := show fn; efs_method := false |};
+                sp_prelude := None |};
+    ip_verilog := {| vp_ext_fn_specs := tc2_ext_fn_specs |} |}.
+
+End TwoCallsChainedSynthesis.
+
+Definition tc2_prog := Interop.Backends.register tc2_package.
+Extraction "Example_ChainedCallSpike.ml" tc2_prog.
