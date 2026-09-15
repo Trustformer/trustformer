@@ -62,6 +62,10 @@ Section SynthesisTypes.
     | ext_in_cmd
     | ext_input (x : inputs_var)
     | ext_output (x : outputs_var)
+    (* An IP REQUEST port. Distinct from ext_output because it carries a write
+       STROBE alongside the payload: a port written once per action needs no such
+       thing (the action is the write), but a port driven mid-action does. *)
+    | ext_ip_req (x : outputs_var)
     .
 
 End SynthesisTypes.
@@ -306,6 +310,7 @@ Section TypedSynthesis.
       | ext_in_cmd => {$ bits_t 1 ~> maybe (bits_t spec_action_reg_size) $}
       | ext_input x => {$ bits_t 1 ~> spec_inputs_t x $}
       | ext_output x => {$ spec_outputs_t x ~> bits_t 1 $}
+      | ext_ip_req x => {$ bits_t (1 + spec_outputs_size x) ~> bits_t 1 $}
       end.
 
     Definition port_name (prefix: string) (c: port_class) (n: string) : string :=
@@ -326,6 +331,8 @@ Section TypedSynthesis.
                           efr_internal := false |}
       | ext_output x => {| efr_name := out_name x; 
                            efr_internal := false |}
+      | ext_ip_req x => {| efr_name := String.append "ip_" (out_name x);
+                           efr_internal := false |}
       end.
 
     Instance ext_fn_names : Show ext_fn_t :=
@@ -333,6 +340,7 @@ Section TypedSynthesis.
           | ext_in_cmd => "in_cmd"
           | ext_input x => in_name x
           | ext_output x => out_name x
+          | ext_ip_req x => String.append "ip_" (out_name x)
           end
       }.
     
@@ -566,7 +574,24 @@ Section TypedSynthesis.
       | rule_cmd cmd => 
             Seq (rule_cmd_guard cmd) (_rule_cmd cmd)
       | rule_out out =>
-            Write P1 (tf_out_ack out) (ExternalCall (ext_output out) (Read P1 (tf_out out)))
+            (* An IP REQUEST port is presented from the SCHEDULER register that
+               holds {strobe, payload}; every other output is presented from
+               tf_out exactly as before, which is why the existing designs
+               regenerate byte-identically.
+
+               This is the routing half of "IP ports belong to the scheduler":
+               the port NAME still lives in tfs_outputs, but no done-op ever
+               writes tf_out for it and its hardware comes from a register the
+               scheduler owns. [synth_convert] is exact here -- the widths are
+               equal by tfs_drive_reg_size. *)
+            match tfs_drive_reg (tf_sched_ctx tf_ctx) out with
+            | Some r =>
+                Write P1 (tf_out_ack out)
+                  (ExternalCall (ext_ip_req out)
+                     (synth_convert (1 + spec_outputs_size out) (Read P1 (tf_reg r))))
+            | None =>
+                Write P1 (tf_out_ack out) (ExternalCall (ext_output out) (Read P1 (tf_out out)))
+            end
       end.
 
 End TypedSynthesis.
