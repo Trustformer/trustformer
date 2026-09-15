@@ -40,6 +40,7 @@ Section SynthesisTypes.
   Context {states_var: Type}.
   Context {inputs_var: Type}.
   Context {outputs_var: Type}.
+  Context {ips_var: Type}.
   Context {actions: Type}.
 
   Inductive _reg_t := 
@@ -50,11 +51,13 @@ Section SynthesisTypes.
     | tf_in (x : inputs_var)
     | tf_out (x : outputs_var)
     | tf_out_ack (x : outputs_var)
+    | tf_ip_ack (p : ips_var)
     .
 
   Inductive _rule_name_t :=
     | rule_cmd (cmd: actions)
     | rule_out (out: outputs_var)
+    | rule_ip (p: ips_var)
     | rule_busy
     .
 
@@ -65,7 +68,7 @@ Section SynthesisTypes.
     (* An IP REQUEST port. Distinct from ext_output because it carries a write
        STROBE alongside the payload: a port written once per action needs no such
        thing (the action is the write), but a port driven mid-action does. *)
-    | ext_ip_req (x : outputs_var)
+    | ext_ip_req (p : ips_var)
     .
 
 End SynthesisTypes.
@@ -101,6 +104,12 @@ Section TypedSynthesis.
     Local Notation spec_output_index := (@finite_index spec_outputs spec_outputs_fin).
     Local Notation spec_output_num := (Datatypes.length spec_all_outputs).
 
+    Local Notation spec_ips := (tfs_ips (tf_sched_ctx tf_ctx)).
+    Local Notation spec_ips_fin := (tfs_ips_fin (tf_sched_ctx tf_ctx)).
+    Local Notation spec_ip := (tfs_ip (tf_sched_ctx tf_ctx)).
+    Local Notation spec_all_ips := (@finite_elements spec_ips spec_ips_fin).
+    Local Notation spec_ip_index := (@finite_index spec_ips spec_ips_fin).
+
     Local Notation spec_action := (tfs_action (tf_sched_ctx tf_ctx)).
     Local Notation spec_action_fin := (tfs_action_fin (tf_sched_ctx tf_ctx)).
     Local Notation spec_all_actions := (@finite_elements spec_action spec_action_fin).
@@ -126,6 +135,8 @@ Section TypedSynthesis.
     Hint Extern 0 (Show spec_inputs) => exact (tfs_inputs_names (tf_sched_ctx tf_ctx)) : typeclass_instances.
     Hint Extern 0 (Show spec_outputs) => exact (tfs_outputs_names (tf_sched_ctx tf_ctx)) : typeclass_instances.
     Hint Extern 0 (Show spec_action) => exact (tf_action_names tf_ctx) : typeclass_instances.
+    Hint Extern 0 (FiniteType spec_ips) => exact (tfs_ips_fin (tf_sched_ctx tf_ctx)) : typeclass_instances.
+    Hint Extern 0 (Show spec_ips) => exact (tfs_ips_names (tf_sched_ctx tf_ctx)) : typeclass_instances.
 
 
     Instance _eq_dec_states : EqDec spec_states.
@@ -136,7 +147,7 @@ Section TypedSynthesis.
 
     (* ====== Registers ====== *)
 
-    Local Notation reg_t := (@_reg_t spec_states spec_inputs spec_outputs).
+    Local Notation reg_t := (@_reg_t spec_states spec_inputs spec_outputs spec_ips).
 
     Definition _reg_t_index2 (s: reg_t) : nat * nat :=
       match s with
@@ -147,6 +158,7 @@ Section TypedSynthesis.
       | tf_in x => (4, spec_input_index x)
       | tf_out x => (5, spec_output_index x)
       | tf_out_ack x => (6, spec_output_index x)
+      | tf_ip_ack p => (7, spec_ip_index p)
       end.
 
     Definition _reg_t_elements2 : list (list reg_t) :=
@@ -156,7 +168,8 @@ Section TypedSynthesis.
       [ map tf_reg spec_all_states ] ++
       [ map tf_in spec_all_inputs ] ++
       [ map tf_out spec_all_outputs ] ++
-      [ map tf_out_ack spec_all_outputs ].
+      [ map tf_out_ack spec_all_outputs ] ++
+      [ map tf_ip_ack spec_all_ips ].
 
     (* These three must stay Qed-opaque: a transparent proof inside the FiniteType2
        record forces the kernel to rebuild a huge term on every conversion that goes
@@ -186,6 +199,9 @@ Section TypedSynthesis.
           apply map_nth_error. apply finite_surjective.
         + (* tf_out_ack *)
           exists (map tf_out_ack spec_all_outputs). split; auto.
+          apply map_nth_error. apply finite_surjective.
+        + (* tf_ip_ack *)
+          exists (map tf_ip_ack spec_all_ips). split; auto.
           apply map_nth_error. apply finite_surjective.
     Qed.
 
@@ -218,6 +234,10 @@ Section TypedSynthesis.
         { inversion Hn; subst. apply nth_error_map_inv in Hm. destruct Hm as [s [Hs ?]]; subst.
           apply finite_elements_index in Hs. subst. reflexivity. }
         
+        destruct n as [|n].
+        { inversion Hn; subst. apply nth_error_map_inv in Hm. destruct Hm as [s [Hs ?]]; subst.
+          apply finite_elements_index in Hs. subst. reflexivity. }
+
         inversion Hn. rewrite nth_error_nil in H0. congruence. 
     Qed.
 
@@ -225,11 +245,14 @@ Section TypedSynthesis.
       Forall (fun l => NoDup (map _reg_t_index2 l)) _reg_t_elements2.
     Proof.
         unfold _reg_t_index2, _reg_t_elements2.
-        do 6 (try apply Forall_app; try split).
+        do 7 (try apply Forall_app; try split).
         all: constructor; [| constructor].        
         + apply NoDup_one.
         + apply NoDup_one.
         + apply NoDup_one.
+        + cbn [map]. rewrite map_map.
+          apply NoDup_map_pair.
+          apply finite_injective.
         + cbn [map]. rewrite map_map.
           apply NoDup_map_pair.
           apply finite_injective.
@@ -274,6 +297,7 @@ Section TypedSynthesis.
           | tf_in x => String.append "in_" (show x)
           | tf_out x => String.append "out_" (show x)
           | tf_out_ack x => String.append "out_ack_" (show x)
+          | tf_ip_ack p => String.append "ip_ack_" (show p)
           end
       }.
 
@@ -288,6 +312,7 @@ Section TypedSynthesis.
     | tf_in x => spec_inputs_t x
     | tf_out x => spec_outputs_t x
     | tf_out_ack x => bits_t 1
+    | tf_ip_ack p => bits_t 1
     end.
 
     Definition r (reg: reg_t) : R reg :=
@@ -299,18 +324,19 @@ Section TypedSynthesis.
       | tf_in x => Bits.zero
       | tf_out x => Bits.zero
       | tf_out_ack x => Bits.zero
+      | tf_ip_ack p => Bits.zero
       end.
 
     (* ====== External Functions ====== *)
 
-    Local Notation ext_fn_t := (@_ext_fn_t spec_inputs spec_outputs).
+    Local Notation ext_fn_t := (@_ext_fn_t spec_inputs spec_outputs spec_ips).
 
     Definition Sigma (fn: ext_fn_t) : ExternalSignature :=
       match fn with
       | ext_in_cmd => {$ bits_t 1 ~> maybe (bits_t spec_action_reg_size) $}
       | ext_input x => {$ bits_t 1 ~> spec_inputs_t x $}
       | ext_output x => {$ spec_outputs_t x ~> bits_t 1 $}
-      | ext_ip_req x => {$ bits_t (1 + spec_outputs_size x) ~> bits_t 1 $}
+      | ext_ip_req p => {$ bits_t (1 + ip_req_sz (spec_ip p)) ~> bits_t 1 $}
       end.
 
     Definition port_name (prefix: string) (c: port_class) (n: string) : string :=
@@ -323,6 +349,10 @@ Section TypedSynthesis.
     Definition out_name (y: spec_outputs) : string :=
       port_name "out_param_" (tfs_outputs_class (tf_sched_ctx tf_ctx) y) (show y).
 
+    (* An IP request is Secret by construction -- it has no port_class to read. *)
+    Definition ip_name (p: spec_ips) : string :=
+      port_name "ip_req_" Secret (show p).
+
     Definition ext_fn_specs (fn : ext_fn_t) := 
       match fn with
       | ext_in_cmd => {| efr_name := "in_cmd"; 
@@ -331,7 +361,7 @@ Section TypedSynthesis.
                           efr_internal := false |}
       | ext_output x => {| efr_name := out_name x; 
                            efr_internal := false |}
-      | ext_ip_req x => {| efr_name := String.append "ip_" (out_name x);
+      | ext_ip_req p => {| efr_name := ip_name p;
                            efr_internal := false |}
       end.
 
@@ -340,27 +370,31 @@ Section TypedSynthesis.
           | ext_in_cmd => "in_cmd"
           | ext_input x => in_name x
           | ext_output x => out_name x
-          | ext_ip_req x => String.append "ip_" (out_name x)
+          | ext_ip_req p => ip_name p
           end
       }.
     
     (* ====== Rules ====== *)
 
-    Local Notation rule_name_t := (@_rule_name_t spec_outputs spec_action).
+    Local Notation rule_name_t := (@_rule_name_t spec_outputs spec_ips spec_action).
 
     Instance rule_names : Show rule_name_t :=
       { show := fun r => match r with
           | rule_cmd cmd => String.append "rule_cmd_" (show cmd)
           | rule_out out => String.append "rule_out_" (show out)
+          | rule_ip p => String.append "rule_ip_" (show p)
           | rule_busy => "rule_busy"
           end
       }.
 
-    Definition system_schedule_outputs : scheduler := 
-      List.fold_right (fun t acc => @rule_out spec_outputs spec_action t |> acc) Done spec_all_outputs.
+    Definition system_schedule_ips : scheduler :=
+      List.fold_right (fun t acc => @rule_ip spec_outputs spec_ips spec_action t |> acc) Done spec_all_ips.
+
+    Definition system_schedule_outputs : scheduler :=
+      List.fold_right (fun t acc => @rule_out spec_outputs spec_ips spec_action t |> acc) system_schedule_ips spec_all_outputs.
 
     Definition system_schedule_actions : scheduler  :=
-      List.fold_right (fun t acc => @rule_cmd spec_outputs spec_action t |> acc) system_schedule_outputs spec_all_actions.
+      List.fold_right (fun t acc => @rule_cmd spec_outputs spec_ips spec_action t |> acc) system_schedule_outputs spec_all_actions.
 
     Definition system_schedule := rule_busy |> system_schedule_actions.
     
@@ -461,7 +495,9 @@ Section TypedSynthesis.
             (expr_to_action else_expr target_size)
       end.
 
-    Definition op_to_action {sig tau} (op: tf_op) (code: action sig tau) : action sig tau :=
+    Definition op_to_action {sig tau}
+      (op: @tf_op spec_states spec_inputs spec_outputs Empty_set)
+      (code: action sig tau) : action sig tau :=
       match op with
       | tf_nop => 
           code
@@ -469,13 +505,11 @@ Section TypedSynthesis.
           Seq (Write P0 (tf_reg x) (expr_to_action expr (spec_states_size x))) code
       | tf_output x expr => 
           Seq (Write P0 (tf_out x) (expr_to_action expr (spec_outputs_size x))) code
-      | tf_call req resp x arg _ =>
-          Seq (Write P0 (tf_out req) (expr_to_action arg (spec_outputs_size req)))
-            (Seq (Write P0 (tf_reg x) (expr_to_action (tf_ivar resp) (spec_states_size x))) code)
+      | tf_call p _ _ => match p return action sig tau with end
       end.
 
     Fixpoint rule_aux {sig tau}
-      (rule_ops: list tf_op)
+      (rule_ops: list (@tf_op spec_states spec_inputs spec_outputs Empty_set))
       (code: action sig tau)
       : action sig tau :=
       match rule_ops with
@@ -574,24 +608,15 @@ Section TypedSynthesis.
       | rule_cmd cmd => 
             Seq (rule_cmd_guard cmd) (_rule_cmd cmd)
       | rule_out out =>
-            (* An IP REQUEST port is presented from the SCHEDULER register that
-               holds {strobe, payload}; every other output is presented from
-               tf_out exactly as before, which is why the existing designs
-               regenerate byte-identically.
-
-               This is the routing half of "IP ports belong to the scheduler":
-               the port NAME still lives in tfs_outputs, but no done-op ever
-               writes tf_out for it and its hardware comes from a register the
-               scheduler owns. [synth_convert] is exact here -- the widths are
-               equal by tfs_drive_reg_size. *)
-            match tfs_drive_reg (tf_sched_ctx tf_ctx) out with
-            | Some r =>
-                Write P1 (tf_out_ack out)
-                  (ExternalCall (ext_ip_req out)
-                     (synth_convert (1 + spec_outputs_size out) (Read P1 (tf_reg r))))
-            | None =>
-                Write P1 (tf_out_ack out) (ExternalCall (ext_output out) (Read P1 (tf_out out)))
-            end
+            Write P1 (tf_out_ack out) (ExternalCall (ext_output out) (Read P1 (tf_out out)))
+      (* The request is presented from the scheduler register holding
+         {strobe, payload}.  [synth_convert] is exact -- the widths are equal by
+         tfs_drive_reg_size. *)
+      | rule_ip p =>
+            Write P1 (tf_ip_ack p)
+              (ExternalCall (ext_ip_req p)
+                 (synth_convert (1 + ip_req_sz (spec_ip p))
+                    (Read P1 (tf_reg (tfs_drive_reg (tf_sched_ctx tf_ctx) p)))))
       end.
 
 End TypedSynthesis.
