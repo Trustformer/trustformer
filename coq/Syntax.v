@@ -6,6 +6,34 @@ Require Import Koika.Utils.Environments.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
+(* ===================================================================== *)
+(*  An attached IP block                                                 *)
+(* ===================================================================== *)
+(*
+    One record for one concept.  Before this, an IP was encoded as a
+    distinguished RESPONSE PORT plus six parallel tables keyed on it
+    (tfs_spec_ip_req, _ip_lat, _ip_secret, _no_assign_driven,
+    tfs_inputs_is_resp, tfs_drive_reg) -- and [resp] had to impersonate an IP
+    name in the syntax because there was nothing else to name.
+
+    Carrying the sizes means [ip_fn] can be typed EXACTLY against the two port
+    widths.  While the function lived in the [tf_call] node it could not be:
+    a node's type cannot mention [outputs_size req], so it needed size fields
+    and a side condition tying them to the ports.  Here that condition holds by
+    construction.
+*)
+Record ip_decl {i o : Type} (isz : i -> nat) (osz : o -> nat) := {
+  ip_req  : o;              (* request port, driven mid-action *)
+  ip_resp : i;              (* response port, sampled live     *)
+  ip_lat  : nat;            (* CYCLES: wait this long after the pulse, then
+                               read the answer and pulse again.  Not pipelined. *)
+  ip_fn   : bits_t (osz ip_req) -> bits_t (isz ip_resp);
+}.
+Arguments ip_req {i o isz osz}.
+Arguments ip_resp {i o isz osz}.
+Arguments ip_lat {i o isz osz}.
+Arguments ip_fn {i o isz osz}.
+
 Section TrustformerSyntax.
 
     (* Given some variables, inputs and outputs we define our syntax *)
@@ -14,6 +42,7 @@ Section TrustformerSyntax.
     Context {inputs_var: Type}.
     Context {inputs_var_eqdec: EqDec inputs_var}.
     Context {outputs_var: Type}.
+    Context {ips_var: Type}.
     Context {outputs_var_eqdec: EqDec outputs_var}.
 
     Inductive tf_unary_ops :=
@@ -56,9 +85,30 @@ Section TrustformerSyntax.
         | tf_nop                                                (* No operation *)
         | tf_assign (dst : states_var) (expr : tf_expr)         (* Unary Operations *)
         | tf_output (dst : outputs_var) (expr : tf_expr)        (* Write variable to output *)
-        | tf_call (req: outputs_var) (resp: inputs_var)
-                  (dst: states_var) (arg: tf_expr)
-                  {szA szB: nat} (f: bits_t szA -> bits_t szB)
+        (* An external-IP call.  THREE fields, and each is there for a reason
+           that survives scrutiny:
+
+             [ip]   WHICH IP -- routing.  Everything about the block (its two
+                    ports, its latency, what it computes) lives in the context's
+                    [ip_decl], because all of it is a property of the block and
+                    not of the call site.
+             [dst]  where the answer goes.
+             [arg]  the request payload.
+
+           What used to be here and why it left:
+             [site] -- nothing ever read it.
+             [lat]  -- a property of the IP, not the call.
+             [req]  -- derivable: the context pairs it with the response port.
+             [resp] -- was impersonating an IP name; [ip] is the name now.
+             [f]    -- a property of the IP, and in the record it can be typed
+                       exactly against the port widths, which a node cannot do.
+                       That also retires the [szA]/[szB] fields and the side
+                       condition that tied them to the ports.
+
+           A call is still a STATEMENT, not an expression: a [tf_op] constructor
+           never enters [tf_eval_expr], where the tree's most fragile proof lines
+           live. *)
+        | tf_call (ip: ips_var) (dst: states_var) (arg: tf_expr)
         . 
 
     Inductive tf_ops :=
@@ -111,8 +161,8 @@ Class IsExpr (S I O V : Type) := {
     as_expr : V -> @tf_expr S I O 
 }.
 
-Class IsAssignable (S I O V : Type) := { 
-    do_assign : V -> @tf_expr S I O -> @tf_op S I O 
+Class IsAssignable (S I O P V : Type) := { 
+    do_assign : V -> @tf_expr S I O -> @tf_op S I O P 
 }.
 
 Class HasIf (Ret S I O : Type) := {
@@ -120,7 +170,7 @@ Class HasIf (Ret S I O : Type) := {
 }.
 
 Arguments as_expr {S I O V} {_} _.
-Arguments do_assign {S I O V} {_} _ _.
+Arguments do_assign {S I O P V} {_} _ _.
 Arguments make_if {Ret S I O} {_} _ _ _.
 
 Instance StateIsExpr {S I O : Type} : IsExpr S I O S := {
@@ -135,11 +185,11 @@ Instance OutputIsExpr {S I O : Type} : IsExpr S I O O := {
     as_expr := tf_ovar
 }.
 
-Instance StateIsAssignable {S I O : Type} : IsAssignable S I O S := {
+Instance StateIsAssignable {S I O P : Type} : IsAssignable S I O P S := {
     do_assign := tf_assign
 }.  
 
-Instance OutputIsAssignable {S I O : Type} : IsAssignable S I O O := {
+Instance OutputIsAssignable {S I O P : Type} : IsAssignable S I O P O := {
     do_assign := tf_output
 }.
 
@@ -147,7 +197,7 @@ Instance IfExpr {S I O : Type} : HasIf (@tf_expr S I O) S I O := {
     make_if := tf_expr_if
 }.
 
-Instance IfOps {S I O : Type} : HasIf (@tf_ops S I O) S I O := {
+Instance IfOps {S I O P : Type} : HasIf (@tf_ops S I O P) S I O := {
     make_if := tf_ops_if
 }.
 
@@ -241,17 +291,18 @@ Section NotationExamples.
     Context {states_var: Type}.
     Context {inputs_var: Type}.
     Context {outputs_var: Type}.
+    Context {ips_var: Type}.
 
     Variables (s_a s_b : states_var) (i_x : inputs_var) (o_y : outputs_var).
 
-    Definition t1 : @tf_ops states_var inputs_var outputs_var := {[ 
+    Definition t1 : @tf_ops states_var inputs_var outputs_var ips_var := {[ 
         let $s_a := $i_x + #1;
         let $s_b := $i_x
     ]}.
     Goal True. pose (debug := t1); compute in debug.
     Abort.
 
-    Definition t2 : @tf_ops states_var inputs_var outputs_var := {[ 
+    Definition t2 : @tf_ops states_var inputs_var outputs_var ips_var := {[ 
         if ($i_x ==[32] $s_a) 
         then 
             let $o_y := #1;
@@ -261,13 +312,13 @@ Section NotationExamples.
     Goal True. pose (debug := t2); compute in debug.
     Abort.
 
-    Definition t3 : @tf_ops states_var inputs_var outputs_var := {[ 
+    Definition t3 : @tf_ops states_var inputs_var outputs_var ips_var := {[ 
         pass ; pass                  
     ]}.
     Goal True. pose (debug := t3); compute in debug.
     Abort.
 
-    Definition t4 : @tf_ops states_var inputs_var outputs_var := {[ 
+    Definition t4 : @tf_ops states_var inputs_var outputs_var ips_var := {[ 
         let $s_a := $i_x + #1;                 
         if ($s_a ==[32] #10) 
         then let $o_y := $s_a 
@@ -276,14 +327,14 @@ Section NotationExamples.
     Goal True. pose (debug := t4); compute in debug.
     Abort.
 
-    Definition t5 : @tf_ops states_var inputs_var outputs_var := {[ 
+    Definition t5 : @tf_ops states_var inputs_var outputs_var ips_var := {[ 
         let $s_a := $i_x + `tf_const 1`;           
         if ($s_a ==[32] #10) then pass else pass
     ]}.
     Goal True. pose (debug := t5); compute in debug.
     Abort.
 
-    Definition t6 : @tf_ops states_var inputs_var outputs_var := {[ 
+    Definition t6 : @tf_ops states_var inputs_var outputs_var ips_var := {[ 
         let $s_a := if ($i_x ==[32] #0) then #1 else #2 
     ]}.
     Goal True. pose (debug := t6); compute in debug.
