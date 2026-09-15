@@ -144,14 +144,27 @@ Section VariableScheduler.
      graph is built in program order.
 
      This is what lets independent calls on one IP be SEQUENCED rather than
-     rejected.  There is one set of request wires, so two calls physically must
-     take turns; without an ordering edge both drives land in the same cycle,
-     the fold keeps only the latest, and the earlier request is silently lost
-     while both samples read the same wire (measured in CallSpike). *)
-  Definition last_sample (dfg: dfg_state) (p: ips_var) : option nid_t :=
+     rejected.  There is one set of request wires, so two calls that can BOTH
+     fire must take turns; without an ordering edge both drives land in the same
+     cycle, the fold keeps only the latest, and the earlier request is silently
+     lost while both samples read the same wire (measured in CallSpike).
+
+     "Can both fire" is the condition, not "both exist".  Two calls whose path
+     guards are DISJOINT -- opposite sides of one [if] -- never contend, because
+     only the taken arm drives.  Chaining them anyway would cost a full round
+     trip per arm and buy nothing, which is what made branching around a call
+     look expensive enough to want a workaround. *)
+  Definition guards_disjoint (g1 g2: list (nid_t * bool)) : bool :=
+    existsb (fun l1 => existsb (fun l2 =>
+               andb (Nat.eqb (fst l1) (fst l2))
+                    (negb (Bool.eqb (snd l1) (snd l2)))) g2) g1.
+
+  Definition last_sample (dfg: dfg_state) (p: ips_var)
+    (en: list (nid_t * bool)) : option nid_t :=
     match find (fun nd => match op nd with
-                          | DFG_Sample p' _ =>
-                              if ips_var_eq_dec.(eq_dec) p' p then true else false
+                          | DFG_Sample p' _ en' =>
+                              if ips_var_eq_dec.(eq_dec) p' p
+                              then negb (guards_disjoint en en') else false
                           | _ => false
                           end) (graph dfg) with
     | Some nd => Some (nid nd)
@@ -385,12 +398,12 @@ Section VariableScheduler.
            Width 1: only the join's VALIDITY is used, its value is discarded by
            the chain and then by the sample.  tf_or is arbitrary -- any binary op
            would do, because nothing reads the result. *)
-        let! head := match last_sample s0 ip with
+        let! head := match last_sample s0 ip en with
                      | None => ret drive_id
                      | Some prev => emit (DFG_Binary tf_or drive_id prev) 1
                      end in
         let! stall_id := stall_chain (ip_lat (ip_of ip)) head in
-        let! samp_id := emit (DFG_Sample ip stall_id) (dfg_var_size (DFG_SVar dst)) in
+        let! samp_id := emit (DFG_Sample ip stall_id en) (dfg_var_size (DFG_SVar dst)) in
         set_var (DFG_SVar dst) samp_id
       end
     | tf_ops_cons op1 op2 =>
@@ -446,7 +459,7 @@ Section VariableScheduler.
     | DFG_Phi cond then_id else_id => [cond; then_id; else_id]
     | DFG_Stall _ arg => [arg]
     | DFG_Drive _ arg en => arg :: map fst en
-    | DFG_Sample _ tok => [tok]
+    | DFG_Sample _ tok _ => [tok]
     | DFG_Empty => []
     end.
 
@@ -492,7 +505,7 @@ Section VariableScheduler.
     | DFG_Stall lat _ => lat * cost_limit
     (* SPIKE 2b: a drive and a sample are wiring, not logic. *)
     | DFG_Drive _ _ _ => 0
-    | DFG_Sample _ _ => 0
+    | DFG_Sample _ _ _ => 0
     | DFG_Empty => 0
     end.
 
@@ -753,7 +766,7 @@ Section VariableScheduler.
         (* An IP link is outside the attacker model, so a sample is always a
            taint source.  Without this arm the wildcard swallows it and IPR
            goes unsound. *)
-        | DFG_Sample _ _ => true
+        | DFG_Sample _ _ _ => true
         | _ => false
         end in
       (* If node depends on secrets it is tainted *)
@@ -959,7 +972,7 @@ Section VariableScheduler.
                silently under-reporting diagnostic caused by exactly that. *)
             | DFG_Stall _ a => crit_report_aux dfg tainted dfacts pi fuel' a bufs
             | DFG_Drive _ a _ => crit_report_aux dfg tainted dfacts pi fuel' a bufs
-            | DFG_Sample _ t => crit_report_aux dfg tainted dfacts pi fuel' t bufs
+            | DFG_Sample _ t _ => crit_report_aux dfg tainted dfacts pi fuel' t bufs
             | _ => []
             end
         end
@@ -1048,7 +1061,7 @@ Section VariableScheduler.
         | DFG_Drive _ a _ =>
             let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel' a in
             (wbump here l, wbump here u)
-        | DFG_Sample _ t =>
+        | DFG_Sample _ t _ =>
             let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel' t in
             (wbump here l, wbump here u)
         | DFG_Phi c t e =>
@@ -1156,7 +1169,7 @@ Section VariableScheduler.
              decouple exactly where the round trip needs them to. *)
           | DFG_Drive _ arg1 _ =>
               compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers
-          | DFG_Sample p tok =>
+          | DFG_Sample p tok _ =>
               let '(_, tok_val) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg tok buffers in
               (tf_ivar (inr p), tok_val)
           | DFG_Empty => (tf_const 0, tf_const 0) (* should not happen *)
@@ -1204,7 +1217,7 @@ Section VariableScheduler.
                  to exactly the same hardware. *)
               let is_sample :=
                 match op (nth nid (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}) with
-                | DFG_Sample _ _ => true
+                | DFG_Sample _ _ _ => true
                 | _ => false
                 end in
               let bexpr :=
@@ -1785,7 +1798,7 @@ Section VariableScheduler.
         apply preserves_bind; [apply dataflow_expr_vm|]. intro x.
         apply preserves_bind; [apply emit_vm|]. intro y.
         apply preserves_bind;
-          [destruct (last_sample s0 pip); [apply emit_vm | apply preserves_ret]|]. intro h.
+          [destruct (last_sample s0 pip en); [apply emit_vm | apply preserves_ret]|]. intro h.
         apply preserves_bind; [apply stall_chain_vm|]. intro z.
         apply preserves_bind; [apply emit_vm|]. intro w.
         apply set_var_vm.

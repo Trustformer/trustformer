@@ -136,7 +136,7 @@ Section CallSpike.
   Definition drive_nid := List.hd 0 (drive_nodes cs_ctx cs_dfg cs_crypto).
   Definition samp_nid :=
     List.fold_left (fun acc nd => match op nd with
-                                  | DFG_Sample _ _ => nid nd
+                                  | DFG_Sample _ _ _ => nid nd
                                   | _ => acc end) (graph cs_dfg) 0.
 
   Example round_trip_separated : ccyc drive_nid - ccyc samp_nid = clat.
@@ -282,7 +282,7 @@ Section TwoCalls.
 
   Definition tc_samples :=
     List.fold_left (fun acc nd => match op nd with
-                                  | DFG_Sample _ _ => nid nd :: acc
+                                  | DFG_Sample _ _ _ => nid nd :: acc
                                   | _ => acc end) (graph tc_dfg) [].
 
 End TwoCalls.
@@ -320,7 +320,7 @@ Section TwoCallsChained.
   Definition tc2_drives := drive_nodes tc2_ctx tc2_dfg cs_crypto.
   Definition tc2_samples :=
     List.fold_left (fun acc nd => match op nd with
-                                  | DFG_Sample _ _ => nid nd :: acc
+                                  | DFG_Sample _ _ _ => nid nd :: acc
                                   | _ => acc end) (graph tc2_dfg) [].
 
 End TwoCallsChained.

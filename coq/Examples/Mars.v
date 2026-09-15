@@ -410,13 +410,7 @@ Section FunctionalSpecification.
     (* A request is one word.  SHA takes [len || msg]; HMAC takes
        [len || key || msg].  The IP glue unpacks -- which is what a single
        request bus means, and the reason [ip_req_sz] is one number.
-
-       [len] is an EXPRESSION, so a command that chooses between message shapes
-       chooses inside the PAYLOAD and still issues one call.  Branching around
-       the call instead is correct but costly: a drive is emitted by the call,
-       not by the branch, so every arm's request reaches the IP and the drives
-       are SEQUENCED -- N arms, N round trips.  Example_BranchCallSpike measures
-       exactly that. *)
+       [len] is an expression because message shapes differ in length. *)
     Definition call_sha (dst: fs_states)
                         (len msg: @tf_expr fs_states fs_inputs fs_outputs)
         : @tf_ops fs_states fs_inputs fs_outputs fs_ips :=
@@ -430,28 +424,10 @@ Section FunctionalSpecification.
         (tf_op2 (tf_concat len_sz (digest_sz + hmac_msg_sz)) len
           (tf_op2 (tf_concat digest_sz hmac_msg_sz) key msg))).
 
-    (* The index and regSelect choose a PAYLOAD, not whether to call.  Lifting
-       the choice into the message keeps each command at one call per IP. *)
-    Definition ext_sel_msg : @tf_expr fs_states fs_inputs fs_outputs :=
-      tf_expr_if (tf_op2 (tf_cmp arg_sz tf_eq) (tf_ivar in_idx) (tf_const 0))
-        (ext_msg out_pcr0) (ext_msg out_pcr1).
-
-    Definition snap_len : @tf_expr fs_states fs_inputs fs_outputs :=
-      tf_expr_if (tf_op2 (tf_cmp 32 tf_eq) (tf_ivar in_regsel) (tf_const 0))
-        (tf_const 36)
-        (tf_expr_if (tf_op2 (tf_cmp 32 tf_eq) (tf_ivar in_regsel) (tf_const 3))
-          (tf_const 100) (tf_const 68)).
-
-    Definition snap_msg : @tf_expr fs_states fs_inputs fs_outputs :=
-      tf_expr_if (tf_op2 (tf_cmp 32 tf_eq) (tf_ivar in_regsel) (tf_const 0))
-        snap_none
-        (tf_expr_if (tf_op2 (tf_cmp 32 tf_eq) (tf_ivar in_regsel) (tf_const 1))
-          (snap_one out_pcr0)
-          (tf_expr_if (tf_op2 (tf_cmp 32 tf_eq) (tf_ivar in_regsel) (tf_const 2))
-            (snap_one out_pcr1) snap_both)).
-
-    Definition quote_ok : @tf_ops fs_states fs_inputs fs_outputs fs_ips :=
+    Definition quote_sign : @tf_ops fs_states fs_inputs fs_outputs fs_ips :=
     {[
+        `call_hmac st_ak  (tf_const 42) (tf_svar st_dp) ak_kdf_msg`;
+        `call_hmac st_sig (tf_const 32) (tf_svar st_ak) sign_msg`;
         let $out_snap := $st_snap;
         let $out_dout := $st_sig;
         let $out_rc   := #MARS_RC_SUCCESS
@@ -554,17 +530,16 @@ Section FunctionalSpecification.
                     let $out_rc := #MARS_RC_REG
             ]})
 
-        (* MARS_PcrExtend -- spec section 8.3.1.  ONE action and ONE call: the
-           index chooses the MESSAGE, not whether to call.  An out-of-range
-           index still issues a request whose answer is discarded, which keeps
-           the command's cycle count independent of the index. *)
+        (* MARS_PcrExtend -- spec section 8.3.1.  ONE action: build PCR[i] ||
+           in_dig, call SHA, write the answer back to the PCR. *)
         | act_pcrextend =>
             guard_failure (guard_init {[
-                `call_sha st_dig (tf_const 64) ext_sel_msg`;
                 if ($in_idx ==[arg_sz] #0) then
+                    `call_sha st_dig (tf_const 64) (ext_msg out_pcr0)`;
                     let $out_pcr0 := $st_dig;
                     let $out_rc   := #MARS_RC_SUCCESS
                 else if ($in_idx ==[arg_sz] #1) then
+                    `call_sha st_dig (tf_const 64) (ext_msg out_pcr1)`;
                     let $out_pcr1 := $st_dig;
                     let $out_rc   := #MARS_RC_SUCCESS
                 else
@@ -622,17 +597,18 @@ Section FunctionalSpecification.
            the three samples by the data dependency between them. *)
         | act_quote =>
             guard_failure (guard_init {[
-                `call_sha st_snap snap_len snap_msg`;
-                `call_hmac st_ak  (tf_const 42) (tf_svar st_dp) ak_kdf_msg`;
-                `call_hmac st_sig (tf_const 32) (tf_svar st_ak) sign_msg`;
                 if ($in_nlen !=[arg_sz] #32) then
                     let $out_rc := #MARS_RC_VALUE
                 else if ($in_ctxlen !=[arg_sz] #32) then
                     let $out_rc := #MARS_RC_VALUE
-                else if ($in_regsel ==[32] #0) then `quote_ok`
-                else if ($in_regsel ==[32] #1) then `quote_ok`
-                else if ($in_regsel ==[32] #2) then `quote_ok`
-                else if ($in_regsel ==[32] #3) then `quote_ok`
+                else if ($in_regsel ==[32] #0) then
+                    `call_sha st_snap (tf_const 36) snap_none`; `quote_sign`
+                else if ($in_regsel ==[32] #1) then
+                    `call_sha st_snap (tf_const 68) (snap_one out_pcr0)`; `quote_sign`
+                else if ($in_regsel ==[32] #2) then
+                    `call_sha st_snap (tf_const 68) (snap_one out_pcr1)`; `quote_sign`
+                else if ($in_regsel ==[32] #3) then
+                    `call_sha st_snap (tf_const 100) snap_both`; `quote_sign`
                 else
                     (* regSelect names a register this Profile does not
                        implement -- mars.c: regSelect >> PROFILE_COUNT_REG *)
@@ -686,15 +662,29 @@ Section TypedSynthesis.
        form is FOR: a crypto round trip lives inside the command that needs it,
        and choosing a payload does not multiply the round trips. *)
     Definition qdfg := build_dfg tfs_ctx act_quote.
-    (* two on one IP, and the third reads the second's result *)
-    Example quote_one_sha  : List.length (drive_nodes tfs_ctx qdfg ip_sha)  = 1.
+    (* One arm per snapshot shape, so four SHA drives -- but their guards are
+       DISJOINT, so they are not chained: the action is one round trip deep,
+       not four.  [quote_depth] is what pins that down. *)
+    Example quote_four_sha  : List.length (drive_nodes tfs_ctx qdfg ip_sha)  = 4.
     Proof. vm_compute. reflexivity. Qed.
-    Example quote_two_hmac : List.length (drive_nodes tfs_ctx qdfg ip_hmac) = 2.
+    Example quote_eight_hmac : List.length (drive_nodes tfs_ctx qdfg ip_hmac) = 8.
     Proof. vm_compute. reflexivity. Qed.
 
-    (* four snapshot shapes, still ONE request *)
+    (* THE MEASUREMENT that makes branching around a call affordable.  Four arms
+       emit four SHA drives and eight HMAC drives, but their guards are disjoint
+       arm-to-arm, so the arms are NOT chained and the action is one round trip
+       deep rather than four.
+
+       Control, taken by forcing [guards_disjoint] to false: the same 52 stall
+       nodes, depth 40 instead of 10. *)
+    Definition qcycles := calc_target_cycle 40 (calc_backward_cost tfs_ctx 40 qdfg).
+    Example quote_depth :
+      fold_left (fun a p => Nat.max a (snd p)) qcycles 0 = 10.
+    Proof. vm_compute. reflexivity. Qed.
+
+    (* one arm per index *)
     Definition edfg := build_dfg tfs_ctx act_pcrextend.
-    Example ext_one_sha : List.length (drive_nodes tfs_ctx edfg ip_sha)  = 1.
+    Example ext_two_sha : List.length (drive_nodes tfs_ctx edfg ip_sha)  = 2.
     Proof. vm_compute. reflexivity. Qed.
     Example ext_no_hmac : List.length (drive_nodes tfs_ctx edfg ip_hmac) = 0.
     Proof. vm_compute. reflexivity. Qed.

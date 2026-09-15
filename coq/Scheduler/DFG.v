@@ -54,7 +54,7 @@ Section SchedulerTypes.
        SIDE EFFECT: unlike an assignment it has no [var_map] entry, so the phi
        merge that makes branch writes conditional never reaches it. *)
     | DFG_Drive (p: ips_var) (arg: nid_t) (en: list (nid_t * bool))
-    | DFG_Sample (p: ips_var) (tok: nid_t)
+    | DFG_Sample (p: ips_var) (tok: nid_t) (en: list (nid_t * bool))
     | DFG_Empty                
     .
 

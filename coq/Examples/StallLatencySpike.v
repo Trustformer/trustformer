@@ -185,7 +185,7 @@ Section RoundTrip.
       ; {| nid := 1; op := DFG_Input in_x;       sz := w |}
       ; {| nid := 2; op := DFG_Drive sl_ip_crypto 1 []; sz := w |}
       ; {| nid := 3; op := DFG_Stall L 2;        sz := w |}
-      ; {| nid := 4; op := DFG_Sample sl_ip_crypto 3; sz := w |}
+      ; {| nid := 4; op := DFG_Sample sl_ip_crypto 3 []; sz := w |}
       ; {| nid := 5; op := DFG_Unary tf_not 4;   sz := w |}
       ];
     var_map := [ (DFG_SVar st_acc, 5) ]
@@ -281,7 +281,7 @@ Section RoundTrip.
       ; {| nid := 1; op := DFG_Input in_x;       sz := w |}
       ; {| nid := 2; op := DFG_Drive sl_ip_crypto 1 []; sz := w |}
       ; {| nid := 3; op := DFG_Stall L 2;        sz := w |}
-      ; {| nid := 4; op := DFG_Sample sl_ip_crypto 3; sz := w |}
+      ; {| nid := 4; op := DFG_Sample sl_ip_crypto 3 []; sz := w |}
       ] ++ not_chain 5 m;
     var_map := [ (DFG_SVar st_acc, 4 + m) ]
   |}.
