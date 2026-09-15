@@ -120,7 +120,7 @@ Section Semantics.
         | tf_nop => tf_no_update
         | tf_assign dst expr => tf_st_update dst (tf_eval_expr (szB:=(states_size dst)) expr sys_state input)
         | tf_output dst expr => tf_out_update dst (tf_eval_expr (szB:=(outputs_size dst)) expr sys_state input)
-        (* The D reading: [dst] gets [ip_fn] of the argument.  See HANDOVER.md. *)
+        (* The D reading: [dst] gets [ip_fn] of the argument. *)
         | tf_call ip dst arg =>
             let d := ips ip in
             tf_st_update dst

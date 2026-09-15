@@ -6,27 +6,11 @@ Require Import Koika.Utils.Environments.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
-(* ===================================================================== *)
-(*  An attached IP block                                                 *)
-(* ===================================================================== *)
-(*
-    One record for one concept.  Before this, an IP was encoded as a
-    distinguished RESPONSE PORT plus six parallel tables keyed on it
-    (tfs_spec_ip_req, _ip_lat, _ip_secret, _no_assign_driven,
-    tfs_inputs_is_resp, tfs_drive_reg) -- and [resp] had to impersonate an IP
-    name in the syntax because there was nothing else to name.
-
-    Carrying the sizes means [ip_fn] can be typed EXACTLY against the two port
-    widths.  While the function lived in the [tf_call] node it could not be:
-    a node's type cannot mention [outputs_size req], so it needed size fields
-    and a side condition tying them to the ports.  Here that condition holds by
-    construction.
-*)
+(* An attached IP block. *)
 Record ip_decl {i o : Type} (isz : i -> nat) (osz : o -> nat) := {
   ip_req  : o;              (* request port, driven mid-action *)
-  ip_resp : i;              (* response port, sampled live     *)
-  ip_lat  : nat;            (* CYCLES: wait this long after the pulse, then
-                               read the answer and pulse again.  Not pipelined. *)
+  ip_resp : i;              (* response port, sampled live *)
+  ip_lat  : nat;            (* cycles from pulse to answer; not pipelined *)
   ip_fn   : bits_t (osz ip_req) -> bits_t (isz ip_resp);
 }.
 Arguments ip_req {i o isz osz}.
@@ -85,29 +69,8 @@ Section TrustformerSyntax.
         | tf_nop                                                (* No operation *)
         | tf_assign (dst : states_var) (expr : tf_expr)         (* Unary Operations *)
         | tf_output (dst : outputs_var) (expr : tf_expr)        (* Write variable to output *)
-        (* An external-IP call.  THREE fields, and each is there for a reason
-           that survives scrutiny:
-
-             [ip]   WHICH IP -- routing.  Everything about the block (its two
-                    ports, its latency, what it computes) lives in the context's
-                    [ip_decl], because all of it is a property of the block and
-                    not of the call site.
-             [dst]  where the answer goes.
-             [arg]  the request payload.
-
-           What used to be here and why it left:
-             [site] -- nothing ever read it.
-             [lat]  -- a property of the IP, not the call.
-             [req]  -- derivable: the context pairs it with the response port.
-             [resp] -- was impersonating an IP name; [ip] is the name now.
-             [f]    -- a property of the IP, and in the record it can be typed
-                       exactly against the port widths, which a node cannot do.
-                       That also retires the [szA]/[szB] fields and the side
-                       condition that tied them to the ports.
-
-           A call is still a STATEMENT, not an expression: a [tf_op] constructor
-           never enters [tf_eval_expr], where the tree's most fragile proof lines
-           live. *)
+        (* External-IP call: which IP, where the answer goes, the request
+           payload.  Everything else about the block is in its [ip_decl]. *)
         | tf_call (ip: ips_var) (dst: states_var) (arg: tf_expr)
         . 
 
