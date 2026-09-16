@@ -36,6 +36,18 @@ which are on the dev-shell PATH — omit any one and it fails late with a bare
 bundles `main` into `Vtb__ALL.a` and the linker discards it.
 
 ```sh
-scripts/run-sim.sh              # all three
+scripts/run-sim.sh              # all of them
 scripts/run-sim.sh tb_two.sv    # just one
 ```
+
+## The one-action MARS
+
+`tb_mars.sv` drives `Example_Mars` through CapabilityGet, RegRead, PcrExtend,
+Quote and _MARS_Init, with both IPs modelled as deterministic functions of the
+whole request word.  The expected digests are computed by applying those same
+functions to request payloads the testbench builds independently from the
+framing in `coq/Examples/Mars.v`, so a wrong field order, length or key fails
+even though the digest itself is arbitrary.  It also checks the guards, the
+response codes, that an error arm drives no request at all, that the request
+carries the LATCHED input, and that both arms of a branch take the same number
+of cycles.

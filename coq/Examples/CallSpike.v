@@ -546,3 +546,86 @@ End BranchCallSynthesis.
 
 Definition bc_prog := Interop.Backends.register bc_package.
 Extraction "Example_BranchCallSpike.ml" bc_prog.
+
+
+(* ===================================================================== *)
+(*  A branch on a CALL RESULT.                                           *)
+(* ===================================================================== *)
+(*
+    Every other spike guards its drives on an INPUT.  Here the [if] tests the
+    answer to a previous call, so the drive's path guard reaches through a
+    [DFG_Sample].
+
+    That is the one source in the graph which is not stable across the action:
+    a sample reads a live wire the IP holds up for a single cycle, which is
+    why a sample's buffer latches rather than recomputes.  A guard is compiled
+    for the cycle its drive fires in, so this shape asks whether it reaches
+    the latch or the wire.
+*)
+
+Section GuardOnResult.
+
+  (* st_a := ip(in_msg);  if st_a = 0 then st_b := ip(7) else st_b := ip(9) *)
+  Definition gr_ops : @tf_ops tc_states cs_inputs cs_outputs cs_ips :=
+    tf_ops_cons
+      (tf_ops_base (tf_call cs_crypto st_a (tf_ivar in_msg)))
+      (tf_ops_if (tf_op2 (tf_cmp cw tf_eq) (tf_svar st_a) (tf_const 0))
+        (tf_ops_base (tf_call cs_crypto st_b (tf_const 7)))
+        (tf_ops_base (tf_call cs_crypto st_b (tf_const 9)))).
+
+  Definition gr_ctx : TFSchedContext := {|
+      tfs_spec_states := tc_states;   tfs_spec_states_fin := _;
+      tfs_spec_states_size := tc_states_size;
+      tfs_spec_states_init := tc_states_init;
+      tfs_spec_inputs := cs_inputs;   tfs_spec_inputs_fin := _;
+      tfs_spec_inputs_size := cs_inputs_size;
+      tfs_spec_inputs_class := cs_in_class;
+      tfs_spec_outputs := cs_outputs; tfs_spec_outputs_fin := _;
+      tfs_spec_outputs_size := cs_outputs_size;
+      tfs_spec_outputs_class := cs_out_class;
+      tfs_spec_action := cs_action;   tfs_spec_action_fin := _;
+      tfs_spec_action_ops := fun _ => gr_ops;
+      tfs_spec_ips := cs_ips;         tfs_spec_ips_fin := _;
+      tfs_spec_ip := cs_ip;
+      tfs_spec_decls := []
+  |}.
+
+  Definition gr_dfg := build_dfg gr_ctx act_call.
+
+  (* one for the first call, one per arm *)
+  Example guard_three_drives :
+    List.length (drive_nodes gr_ctx gr_dfg cs_crypto) = 3.
+  Proof. vm_compute. reflexivity. Qed.
+
+End GuardOnResult.
+
+Section GuardOnResultSynthesis.
+
+  Definition gr_schedule := tfs_schedule gr_ctx cclimit.
+
+  Definition gr_tf_ctx : TFSynthContext := {|
+    tf_sched_ctx := gr_schedule;
+    tf_action_encoding := cs_action_encoding;
+    tf_action_encoding_inj := cs_action_encoding_inj;
+  |}.
+  Instance gr_ext_fn_names : Show _ := TypedSynthesis.ext_fn_names gr_tf_ctx.
+
+  Definition gr_package :=
+    {| ip_koika := {| koika_reg_types := TypedSynthesis.R gr_tf_ctx;
+                      koika_reg_names := TypedSynthesis.reg_names gr_tf_ctx;
+                      koika_reg_init := TypedSynthesis.r gr_tf_ctx;
+                      koika_reg_finite := TypedSynthesis._reg_t_finite gr_tf_ctx;
+                      koika_ext_fn_types := TypedSynthesis.Sigma gr_tf_ctx;
+                      koika_rules := TypedSynthesis.rules gr_tf_ctx;
+                      koika_rule_names := TypedSynthesis.rule_names gr_tf_ctx;
+                      koika_rule_external := (fun _ => false);
+                      koika_scheduler := TypedSynthesis.system_schedule gr_tf_ctx;
+                      koika_module_name := "Example_GuardCallSpike" |};
+    ip_sim := {| sp_ext_fn_specs fn := {| efs_name := show fn; efs_method := false |};
+                sp_prelude := None |};
+    ip_verilog := {| vp_ext_fn_specs := TypedSynthesis.ext_fn_specs gr_tf_ctx |} |}.
+
+End GuardOnResultSynthesis.
+
+Definition gr_prog := Interop.Backends.register gr_package.
+Extraction "Example_GuardCallSpike.ml" gr_prog.

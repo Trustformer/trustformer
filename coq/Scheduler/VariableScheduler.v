@@ -1320,12 +1320,16 @@ Section VariableScheduler.
      whether the surface should reject it is still open. *)
   (* The path condition as an expression: each literal is the branch value,
      negated when the else side was taken.  An empty guard is [1], so a call
-     at the top of an action compiles exactly as it did before. *)
+     at the top of an action compiles exactly as it did before.
+
+     Compiled WITHOUT buffer substitution, SAMPLES EXCEPTED: the strobe is a
+     one-cycle edge and a buffer lags its value by a cycle, while a sample is
+     the one source not stable across the action, so it must keep its latch. *)
   Definition guard_expr (tainted: list nid_t) (dfacts: list gfact) (fuel: nat)
     (a_idx: Vect.index (length bn)) (dfg: dfg_state)
-    (buffers: list (nid_t * (nat * sz_t))) (en: list (nid_t * bool)) : expr_t :=
+    (sbufs: list (nid_t * (nat * sz_t))) (en: list (nid_t * bool)) : expr_t :=
     fold_right (fun (l : nid_t * bool) (acc : expr_t) =>
-      let v := fst (compile_dfg_expr_aux tainted dfacts [] fuel a_idx dfg (fst l) buffers) in
+      let v := fst (compile_dfg_expr_aux tainted dfacts [] fuel a_idx dfg (fst l) sbufs) in
       let lv := if snd l then v else tf_op1 tf_not v in
       tf_op2 tf_and lv acc) (tf_const 1) en.
 
@@ -1335,6 +1339,13 @@ Section VariableScheduler.
     let tainted := get_tainted dfg in
     let dfacts := decl_facts dfg in
     let fuel := length (graph dfg) in
+    (* the only buffers a guard keeps -- see [guard_expr] *)
+    let sbufs := filter (fun '(n, _) =>
+                           match op (nth n (graph dfg)
+                                       {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+                           | DFG_Sample _ _ _ => true
+                           | _ => false
+                           end) buffers in
     match index_of_nat (length bn) a_idx with
     | None => []
     | Some a_idx' =>
@@ -1362,7 +1373,7 @@ Section VariableScheduler.
                           let en_val :=
                             match op (nth n (graph dfg)
                                         {| nid := 0; op := DFG_Empty; sz := 0 |}) with
-                            | DFG_Drive _ _ en => guard_expr tainted dfacts fuel a_idx' dfg buffers en
+                            | DFG_Drive _ _ en => guard_expr tainted dfacts fuel a_idx' dfg sbufs en
                             | _ => tf_const 1
                             end in
                           let '(vgate, vprev) :=
@@ -1383,7 +1394,7 @@ Section VariableScheduler.
                           let en_val :=
                             match op (nth n (graph dfg)
                                         {| nid := 0; op := DFG_Empty; sz := 0 |}) with
-                            | DFG_Drive _ _ en => guard_expr tainted dfacts fuel a_idx' dfg buffers en
+                            | DFG_Drive _ _ en => guard_expr tainted dfacts fuel a_idx' dfg sbufs en
                             | _ => tf_const 1
                             end in
                           let '(vgate, vprev) :=

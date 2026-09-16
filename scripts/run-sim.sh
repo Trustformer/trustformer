@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Simulate the IP round-trip spikes.  See sim/README.md.
+# Simulate the IP round-trip spikes and the one-action MARS.  See sim/README.md.
 #
-#   scripts/run-sim.sh [testbench.sv ...]     (default: all three)
+#   scripts/run-sim.sh [testbench.sv ...]     (default: all of them)
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -10,9 +10,11 @@ declare -A DESIGN=(
   [tb_two.sv]=Example_TwoCallSpike
   [tb_chain.sv]=Example_ChainedCallSpike
   [tb_branch.sv]=Example_BranchCallSpike
+  [tb_mars.sv]=Example_Mars
+  [tb_guard.sv]=Example_GuardCallSpike
 )
 
-tbs=("$@"); [ $# -eq 0 ] && tbs=(tb_call.sv tb_two.sv tb_chain.sv tb_branch.sv)
+tbs=("$@"); [ $# -eq 0 ] && tbs=(tb_call.sv tb_two.sv tb_chain.sv tb_branch.sv tb_guard.sv tb_mars.sv)
 status=0
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 
