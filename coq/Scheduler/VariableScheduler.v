@@ -605,7 +605,10 @@ Section VariableScheduler.
     
     buffers.
 
-  Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (ips_var:=ips_var) (buffer_needs:=buffer_needs)).
+  (* The buffer table, computed ONCE by [tfs_schedule] and passed to everything below. *)
+  Context (bn : list (list (nid_t * (nat * sz_t)))).
+
+  Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (ips_var:=ips_var) (buffer_needs:=bn)).
   Definition test := tf_dfg_states.
 
   Instance show_tf_dfg_states : Show tf_dfg_states :=
@@ -621,7 +624,7 @@ Section VariableScheduler.
   Definition tf_dfg_states_size (dfg_s: tf_dfg_states) : sz_t :=
     match dfg_s with
     | tf_dfg_s s => states_var_size s
-    | tf_dfg_b a_idx b_idx => snd (snd (nth (index_to_nat b_idx) (nth (index_to_nat a_idx) buffer_needs []) (0, (0, 0))))
+    | tf_dfg_b a_idx b_idx => snd (snd (nth (index_to_nat b_idx) (nth (index_to_nat a_idx) bn []) (0, (0, 0))))
     | tf_dfg_v a_idx b_idx => 1
     | tf_dfg_done => 1
     | tf_dfg_ov p => 1 + ip_req_sz (ip_of p)
@@ -1112,14 +1115,14 @@ Section VariableScheduler.
 
   Fixpoint compile_dfg_expr_aux (tainted: list nid_t)
     (dfacts: list gfact) (pi: list lit)
-    (fuel: nat) (a_idx: Vect.index (length buffer_needs)) (dfg: dfg_state) (nid: nid_t) (buffers: list (nid_t * (nat * sz_t))) 
+    (fuel: nat) (a_idx: Vect.index (length bn)) (dfg: dfg_state) (nid: nid_t) (buffers: list (nid_t * (nat * sz_t))) 
     : (expr_t * expr_t)
     :=
     match fuel with
     | 0 => (tf_const 0, tf_const 0) (* should not happen *)
     | S fuel' =>
         match BitsToLists.list_assoc buffers nid with
-        | Some (n_idx, n_sz) => match index_of_nat (length (nth (index_to_nat a_idx) buffer_needs [])) n_idx with
+        | Some (n_idx, n_sz) => match index_of_nat (length (nth (index_to_nat a_idx) bn [])) n_idx with
                               | Some n_idx' => (tf_svar (tf_dfg_b a_idx n_idx'), tf_svar (tf_dfg_v a_idx n_idx'))
                               | None => (tf_const 0, tf_const 0) (* should not happen *)
                               end
@@ -1189,12 +1192,12 @@ Section VariableScheduler.
     let tainted := get_tainted dfg in
     let dfacts := decl_facts dfg in
     let fuel := length (graph dfg) in
-    match index_of_nat (length buffer_needs) a_idx with
+    match index_of_nat (length bn) a_idx with
     | None => []
     | Some a_idx' => 
       flat_map 
         ( fun '(nid, x) => 
-          match index_of_nat (length (nth (index_to_nat a_idx') buffer_needs [])) (fst x) with
+          match index_of_nat (length (nth (index_to_nat a_idx') bn [])) (fst x) with
             | Some n_idx' => 
               let buffers' := filter (fun '(b_nid, _) => negb (Nat.eqb b_nid nid)) buffers in
               let '(expr, valid) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg nid buffers' in
@@ -1319,7 +1322,7 @@ Section VariableScheduler.
      negated when the else side was taken.  An empty guard is [1], so a call
      at the top of an action compiles exactly as it did before. *)
   Definition guard_expr (tainted: list nid_t) (dfacts: list gfact) (fuel: nat)
-    (a_idx: Vect.index (length buffer_needs)) (dfg: dfg_state)
+    (a_idx: Vect.index (length bn)) (dfg: dfg_state)
     (buffers: list (nid_t * (nat * sz_t))) (en: list (nid_t * bool)) : expr_t :=
     fold_right (fun (l : nid_t * bool) (acc : expr_t) =>
       let v := fst (compile_dfg_expr_aux tainted dfacts [] fuel a_idx dfg (fst l) buffers) in
@@ -1332,7 +1335,7 @@ Section VariableScheduler.
     let tainted := get_tainted dfg in
     let dfacts := decl_facts dfg in
     let fuel := length (graph dfg) in
-    match index_of_nat (length buffer_needs) a_idx with
+    match index_of_nat (length bn) a_idx with
     | None => []
     | Some a_idx' =>
         (* ONE scheduler register per driven port holding {strobe, payload}.
@@ -1428,7 +1431,7 @@ Section VariableScheduler.
     let tainted := get_tainted dfg in
     let dfacts := decl_facts dfg in
     let fuel := length (graph dfg) in
-    match index_of_nat (length buffer_needs) a_idx with
+    match index_of_nat (length bn) a_idx with
       | None => []
       | Some a_idx' => 
         map 
@@ -1449,7 +1452,7 @@ Section VariableScheduler.
     let dfacts := decl_facts dfg in
     let fuel := length (graph dfg) in
     let nids := nodup Nat.eq_dec (map snd (var_map dfg)) in
-    let exprs := match index_of_nat (length buffer_needs) a_idx with
+    let exprs := match index_of_nat (length bn) a_idx with
       | None => []
       | Some a_idx' => map ( fun nid => snd (compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg nid buffers)) nids
     end in
@@ -1477,20 +1480,20 @@ Section VariableScheduler.
       final_ops
     ).
 
-  Definition done_signal := tf_dfg_done (states_var:=states_var) (ips_var:=ips_var) (buffer_needs:=buffer_needs).
+  Definition done_signal := tf_dfg_done (states_var:=states_var) (ips_var:=ips_var) (buffer_needs:=bn).
 
   Definition reset_states : list tf_dfg_states :=  
     flat_map 
-      (fun a_idx => match index_of_nat (length buffer_needs) a_idx with
+      (fun a_idx => match index_of_nat (length bn) a_idx with
         | Some a_idx' =>
-          flat_map (fun n_idx => match index_of_nat (length (nth (index_to_nat a_idx') buffer_needs [])) n_idx with
+          flat_map (fun n_idx => match index_of_nat (length (nth (index_to_nat a_idx') bn [])) n_idx with
             | Some n_idx' =>
               [ tf_dfg_b a_idx' n_idx'; tf_dfg_v a_idx' n_idx' ]
             | None => [] (* should not happen *)
-            end ) (List.seq 0 (length (nth (index_to_nat a_idx') buffer_needs [])))
+            end ) (List.seq 0 (length (nth (index_to_nat a_idx') bn [])))
         | None => [] (* should not happen *)
         end)
-      (List.seq 0 (length buffer_needs)).
+      (List.seq 0 (length bn)).
   (* EXPERIMENT: strobes are not in reset_states yet; the real implementation
      must add them, which needs NoDup_app in reset_states_nodup. *)
 
@@ -1501,7 +1504,7 @@ Section VariableScheduler.
       + exact (0, 0).
       + exact (1, finite_index state).
       + exact (3 + finite_index a_idx, finite_index n_idx).
-      + exact (3 + (Datatypes.length (finite_elements (T:=(Vect.index (Datatypes.length buffer_needs))))) + finite_index a_idx, finite_index n_idx).
+      + exact (3 + (Datatypes.length (finite_elements (T:=(Vect.index (Datatypes.length bn))))) + finite_index a_idx, finite_index n_idx).
       + exact (2, (@finite_index ips_var ips_var_fin p)).
         
     - refine ([ [tf_dfg_done] ] ++ 
@@ -1536,7 +1539,7 @@ Section VariableScheduler.
           rewrite Nat.add_comm, Nat.add_sub. 
           rewrite map_nth_error with (d:=a_idx); auto.
           change (index_to_nat a_idx) with (finite_index a_idx).
-          change (vect_to_list (all_indices (Datatypes.length buffer_needs))) with (finite_elements (T:=Vect.index (Datatypes.length buffer_needs))).
+          change (vect_to_list (all_indices (Datatypes.length bn))) with (finite_elements (T:=Vect.index (Datatypes.length bn))).
           apply (finite_surjective a_idx).
         * rewrite map_nth_error with (d:=n_idx); auto. 
           change (index_to_nat n_idx) with (finite_index n_idx).
@@ -1560,7 +1563,7 @@ Section VariableScheduler.
       change (S (S (S n)) - Datatypes.length [[tf_dfg_done]]) with (S (S n)) in *.
 
       cbn [nth_error List.app] in Hn.
-      destruct (lt_dec n (length (finite_elements (T := Vect.index (Datatypes.length buffer_needs))))) as [HLT | HGE].      
+      destruct (lt_dec n (length (finite_elements (T := Vect.index (Datatypes.length bn))))) as [HLT | HGE].      
       + rewrite nth_error_app1 in Hn by (rewrite map_length; auto).
         apply nth_error_map_inv in Hn. destruct Hn as [a_idx' [Ha EQ_l]]; subst l.
         apply nth_error_map_inv in Hm. destruct Hm as [n_idx' [Hn' EQ_x]]; subst x.
@@ -1946,7 +1949,7 @@ Section VariableScheduler.
   Proof.
     intro Hin. apply in_flat_map in Hin. destruct Hin as [op [Hop Ht]].
     unfold compile_dfg_buffers in Hop.
-    destruct (index_of_nat (length buffer_needs) idx) as [a'|]; [| destruct Hop].
+    destruct (index_of_nat (length bn) idx) as [a'|]; [| destruct Hop].
     apply in_flat_map in Hop. destruct Hop as [[nid x] [_ Hop]].
     destruct (index_of_nat _ (fst x)) as [n'|]; [| destruct Hop].
     match goal with
@@ -1964,7 +1967,7 @@ Section VariableScheduler.
     NoDup (flat_map OPTAG (compile_dfg_buffers idx DFG BUF)).
   Proof.
     intro HBUF. unfold compile_dfg_buffers.
-    destruct (index_of_nat (length buffer_needs) idx) as [a'|]; [| simpl; constructor].
+    destruct (index_of_nat (length bn) idx) as [a'|]; [| simpl; constructor].
     rewrite flat_map_flat_map.
     apply NoDup_flat_map_of_key
       with (g := fun '(_, x) => fst x)
@@ -1998,7 +2001,7 @@ Section VariableScheduler.
   Proof.
     intro Hin. apply in_flat_map in Hin. destruct Hin as [op [Hop Ht]].
     unfold compile_dfg_aux in Hop.
-    destruct (index_of_nat (length buffer_needs) idx) as [a'|]; [| destruct Hop].
+    destruct (index_of_nat (length bn) idx) as [a'|]; [| destruct Hop].
     apply in_map_iff in Hop. destruct Hop as [[var nid] [Heq _]].
     match goal with
     | Heq : (let '(_, _) := ?E in _) = op |- _ =>
@@ -2015,7 +2018,7 @@ Section VariableScheduler.
     NoDup (flat_map OPTAG (compile_dfg_aux idx DFG BUF)).
   Proof.
     intro HDFG. unfold compile_dfg_aux.
-    destruct (index_of_nat (length buffer_needs) idx) as [a'|]; [| simpl; constructor].
+    destruct (index_of_nat (length bn) idx) as [a'|]; [| simpl; constructor].
     rewrite flat_map_map.
     apply NoDup_flat_map_of_key
       with (g := fun p => Some (fst p))
@@ -2044,13 +2047,13 @@ Section VariableScheduler.
   Lemma drives_tags_eq (idx: nat) (DFG: dfg_state)
         (BUF: list (nid_t * (nat * sz_t))):
     flat_map OPTAG (compile_dfg_drives idx DFG BUF)
-    = match index_of_nat (length buffer_needs) idx with
+    = match index_of_nat (length bn) idx with
       | None => []
       | Some _ => map (fun o => @StOp tf_dfg_states outputs_var (tf_dfg_ov o)) (driven_ports DFG)
       end.
   Proof.
     unfold compile_dfg_drives.
-    destruct (index_of_nat (length buffer_needs) idx) as [a'|]; [| reflexivity].
+    destruct (index_of_nat (length bn) idx) as [a'|]; [| reflexivity].
     rewrite flat_map_map.
     induction (driven_ports DFG) as [|o l IH]; simpl;
       [reflexivity | rewrite IH; reflexivity].
@@ -2062,7 +2065,7 @@ Section VariableScheduler.
     exists o, t = @StOp tf_dfg_states outputs_var (tf_dfg_ov o) /\ In o (driven_ports DFG).
   Proof.
     rewrite drives_tags_eq.
-    destruct (index_of_nat (length buffer_needs) idx) as [a'|]; [| intros []].
+    destruct (index_of_nat (length bn) idx) as [a'|]; [| intros []].
     intro Hin. apply in_map_iff in Hin. destruct Hin as [o [<- Ho]].
     exists o. split; [reflexivity | exact Ho].
   Qed.
@@ -2083,7 +2086,7 @@ Section VariableScheduler.
     NoDup (flat_map OPTAG (compile_dfg_drives idx DFG BUF)).
   Proof.
     rewrite drives_tags_eq.
-    destruct (index_of_nat (length buffer_needs) idx) as [a'|]; [| constructor].
+    destruct (index_of_nat (length bn) idx) as [a'|]; [| constructor].
     apply NoDup_map_StOp_ov. unfold driven_ports.
     apply finite_nodup.
   Qed.
@@ -2196,7 +2199,7 @@ Section VariableScheduler.
     - apply seq_NoDup.
     - (* each outer chunk is NoDup *)
       intros a_idx _.
-      destruct (index_of_nat (length buffer_needs) a_idx) as [a'|] eqn:Ha;
+      destruct (index_of_nat (length bn) a_idx) as [a'|] eqn:Ha;
         [| constructor].
       apply NoDup_flat_map_key.
       + apply seq_NoDup.
@@ -2217,14 +2220,14 @@ Section VariableScheduler.
         rewrite <- (Hrec x b Hbx). rewrite <- (Hrec y b Hby). reflexivity.
     - (* outer disjointness: element recovers its a-index *)
       intros x y b Hx Hy Hbx Hby.
-      assert (forall m b0, In b0 (match index_of_nat (length buffer_needs) m with
+      assert (forall m b0, In b0 (match index_of_nat (length bn) m with
                             | Some a' => flat_map (fun n_idx =>
-                                match index_of_nat (length (nth (index_to_nat a') buffer_needs [])) n_idx with
+                                match index_of_nat (length (nth (index_to_nat a') bn [])) n_idx with
                                 | Some n' => [tf_dfg_b a' n'; tf_dfg_v a' n']
                                 | None => [] end)
-                                (List.seq 0 (length (nth (index_to_nat a') buffer_needs [])))
+                                (List.seq 0 (length (nth (index_to_nat a') bn [])))
                             | None => [] end) -> a_of b0 = m) as Hrec.
-      { intros m b0 Hb0. destruct (index_of_nat (length buffer_needs) m) as [a'|] eqn:Hm;
+      { intros m b0 Hb0. destruct (index_of_nat (length bn) m) as [a'|] eqn:Hm;
           [| destruct Hb0].
         apply index_to_nat_of_nat in Hm.
         apply in_flat_map in Hb0. destruct Hb0 as [n_idx [_ Hb0]].
@@ -2237,13 +2240,13 @@ Section VariableScheduler.
   Proof.
     intros v Hin. unfold reset_states in Hin.
     apply in_flat_map in Hin. destruct Hin as [a_idx [_ Hin]].
-    destruct (index_of_nat (length buffer_needs) a_idx) as [a_idx'|]; [|contradiction].
+    destruct (index_of_nat (length bn) a_idx) as [a_idx'|]; [|contradiction].
     apply in_flat_map in Hin. destruct Hin as [n_idx [_ Hin]].
     destruct (index_of_nat _ n_idx) as [n_idx'|]; [|contradiction].
     simpl in Hin. destruct Hin as [<-|[<-|[]]]; reflexivity.
   Qed.
 
-  Definition tfs_schedule : TFSchedule :=
+  Definition tfs_schedule_bn : TFSchedule :=
     {|
       tfs_ctx := ctx;
 
@@ -2301,15 +2304,19 @@ Section VariableScheduler.
 
 End VariableScheduler.
 
+(* The buffer table is computed once here; every function of the record closes over it. *)
+Definition tfs_schedule (ctx: TFSchedContext) (cost_limit: nat) : TFSchedule :=
+  tfs_schedule_bn ctx cost_limit (buffer_needs ctx cost_limit).
+
 (* Keeps every existing use site unchanged while the taint set is computed once
    per top-level call rather than at every phi. *)
-Notation compile_dfg_expr ctx cost_limit fuel a_idx dfg n bufs :=
-  (compile_dfg_expr_aux ctx cost_limit (get_tainted ctx dfg) (decl_facts ctx dfg) []
+Notation compile_dfg_expr ctx cost_limit bn fuel a_idx dfg n bufs :=
+  (compile_dfg_expr_aux ctx cost_limit bn (get_tainted ctx dfg) (decl_facts ctx dfg) []
      fuel a_idx dfg n bufs).
 
 (* Same, at an explicit path: proofs that recurse into phi branches need it. *)
-Notation compile_dfg_expr_at ctx cost_limit pi fuel a_idx dfg n bufs :=
-  (compile_dfg_expr_aux ctx cost_limit (get_tainted ctx dfg) (decl_facts ctx dfg) pi
+Notation compile_dfg_expr_at ctx cost_limit bn pi fuel a_idx dfg n bufs :=
+  (compile_dfg_expr_aux ctx cost_limit bn (get_tainted ctx dfg) (decl_facts ctx dfg) pi
      fuel a_idx dfg n bufs).
 
 Module Examples.
@@ -2358,7 +2365,7 @@ Module Examples.
     pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
-    pose (debug_sched := schedule shd cost (action)); vm_compute in debug_sched.
+    pose (debug_sched := schedule shd cost (buffer_needs shd cost) (action)); vm_compute in debug_sched.
   Abort.
 
   Goal True. 
@@ -2368,7 +2375,7 @@ Module Examples.
     pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
-    pose (debug_sched := schedule shd cost (action)); time vm_compute in debug_sched. (* TIME: 0.2 Seconds *)
+    pose (debug_sched := schedule shd cost (buffer_needs shd cost) (action)); time vm_compute in debug_sched. (* TIME: 0.2 Seconds *)
   Abort.
 
   Definition shd_ctx2 : TFSchedContext :=
@@ -2409,7 +2416,7 @@ Module Examples.
     pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
-    pose (debug_sched := schedule shd cost (action)); vm_compute in debug_sched.
+    pose (debug_sched := schedule shd cost (buffer_needs shd cost) (action)); vm_compute in debug_sched.
   Abort.
 
   Goal True. 
@@ -2419,11 +2426,11 @@ Module Examples.
     pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
-    pose (debug_sched := schedule shd cost (action)); time vm_compute in debug_sched.
+    pose (debug_sched := schedule shd cost (buffer_needs shd cost) (action)); time vm_compute in debug_sched.
   Abort.
 
-  Definition no_precompute := schedule shd_ctx2 5 (action).
-  Definition with_precompute := tc_compute (schedule shd_ctx2 5 (action)).
+  Definition no_precompute := schedule shd_ctx2 5 (buffer_needs shd_ctx2 5) (action).
+  Definition with_precompute := tc_compute (schedule shd_ctx2 5 (buffer_needs shd_ctx2 5) (action)).
 
   Goal True.
     pose (debug1 := no_precompute).
@@ -2466,7 +2473,7 @@ Module Examples.
     pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
-    pose (debug_sched := schedule shd cost (action)); vm_compute in debug_sched.
+    pose (debug_sched := schedule shd cost (buffer_needs shd cost) (action)); vm_compute in debug_sched.
   Abort.
 
 End Examples.

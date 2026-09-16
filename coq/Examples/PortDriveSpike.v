@@ -164,11 +164,11 @@ Section Spike.
                                    | _ => false end) ops).
 
   Example port_never_driven_early :
-    count_outputs (fst (VariableScheduler.schedule pd_ctx climit act_twice)) = 0.
+    count_outputs (fst (VariableScheduler.schedule pd_ctx climit (VariableScheduler.buffer_needs pd_ctx climit) act_twice)) = 0.
   Proof. vm_compute. reflexivity. Qed.
 
   Example port_driven_at_done :
-    count_outputs (snd (VariableScheduler.schedule pd_ctx climit act_twice)) = 1.
+    count_outputs (snd (VariableScheduler.schedule pd_ctx climit (VariableScheduler.buffer_needs pd_ctx climit) act_twice)) = 1.
   Proof. vm_compute. reflexivity. Qed.
 
   (* CONFIRMED IN THE GENERATED VERILOG, not only in Coq -- this is a hardware

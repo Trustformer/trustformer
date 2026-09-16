@@ -344,7 +344,7 @@ Section ValidSignals.
        The buffer's valid register is bound out of the schedule itself rather
        than written down, so the assertion needs no [Vect.index] literals. *)
     Example valid_signals_all_phis_critical :
-      match fst (schedule ctxA_blackbox 4 fs_act_test) with
+      match fst (schedule ctxA_blackbox 4 (buffer_needs ctxA_blackbox 4) fs_act_test) with
       | [ tf_assign dst_done e_done;
           tf_assign _ e_buf;
           tf_assign v_buf e_valid ] =>
@@ -365,7 +365,7 @@ Section ValidSignals.
        is a source node and valid at once.  So the wait on [buf] happens exactly
        when [tries <> 0] AND [pin <> in_pin]. *)
     Example valid_signals_no_phi_critical :
-      match fst (schedule ctxB_whitebox 4 fs_act_test) with
+      match fst (schedule ctxB_whitebox 4 (buffer_needs ctxB_whitebox 4) fs_act_test) with
       | [ tf_assign dst_done e_done;
           tf_assign _ e_buf;
           tf_assign v_buf e_valid ] =>

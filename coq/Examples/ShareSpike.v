@@ -88,7 +88,7 @@ Section ShareSpike.
     | tf_nop => 1 | tf_assign _ e => esize e
     | tf_output _ e => esize e | tf_call _ _ e => esize e end.
   Definition compiled_size (climit: nat) : nat :=
-    let s := schedule sh_ctx climit sh_act in
+    let s := schedule sh_ctx climit (buffer_needs sh_ctx climit) sh_act in
     fold_left (fun acc op => acc + osize op) (fst s)
       (fold_left (fun acc op => acc + osize op) (snd s) 0).
 
@@ -119,7 +119,7 @@ Section ShareSpike.
       tfs_spec_decls := []
   |}.
   Definition compiled_size4 (climit: nat) : nat :=
-    let s := schedule sh_ctx4 climit sh_act in
+    let s := schedule sh_ctx4 climit (buffer_needs sh_ctx4 climit) sh_act in
     fold_left (fun acc op => acc + osize op) (fst s)
       (fold_left (fun acc op => acc + osize op) (snd s) 0).
 
