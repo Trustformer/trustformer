@@ -171,10 +171,14 @@ Section VariableScheduler.
     | None => None
     end.
 
-  Fixpoint stall_chain (n: nat) (id: nid_t) : M nid_t :=
+  (* wide enough to count 0 .. n-1 *)
+  Definition counter_sz (n: nat) : nat := S (Nat.log2 n).
+
+  (* ONE node, whose buffer is a COUNTER -- see [compile_dfg_buffers]. *)
+  Definition stall_chain (n: nat) (id: nid_t) : M nid_t :=
     match n with
     | 0 => ret id
-    | S n' => let! id' := emit (DFG_Stall 1 id) 1 in stall_chain n' id'
+    | _ => emit (DFG_Stall n id) (counter_sz n)
     end.
 
   (* --- Variable & Output Management --- *)
@@ -1123,7 +1127,16 @@ Section VariableScheduler.
     | S fuel' =>
         match BitsToLists.list_assoc buffers nid with
         | Some (n_idx, n_sz) => match index_of_nat (length (nth (index_to_nat a_idx) bn [])) n_idx with
-                              | Some n_idx' => (tf_svar (tf_dfg_b a_idx n_idx'), tf_svar (tf_dfg_v a_idx n_idx'))
+                              | Some n_idx' =>
+                                  (* A STALL's buffer holds its counter, not its
+                                     value, so only the validity comes from the
+                                     register and the value passes through. *)
+                                  match op (nth nid (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0; |}) with
+                                  | DFG_Stall _ arg =>
+                                      (fst (compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg buffers),
+                                       tf_svar (tf_dfg_v a_idx n_idx'))
+                                  | _ => (tf_svar (tf_dfg_b a_idx n_idx'), tf_svar (tf_dfg_v a_idx n_idx'))
+                                  end
                               | None => (tf_const 0, tf_const 0) (* should not happen *)
                               end
         | None => 
@@ -1223,13 +1236,37 @@ Section VariableScheduler.
                 | DFG_Sample _ _ _ => true
                 | _ => false
                 end in
+              (* A STALL waits by COUNTING, not by passing a token down a chain
+                 of one-cycle buffers.  Its buffer is the counter: it advances
+                 while the argument is valid and saturates at [lat-1], so the
+                 validity rises exactly [lat] cycles after the argument's and
+                 stays up.  One register of [log2 lat] bits per call site,
+                 whatever [lat] is. *)
+              let stall_lat :=
+                match op (nth nid (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+                | DFG_Stall l _ => Some l
+                | _ => None
+                end in
+              let cnt := tf_svar (tf_dfg_b a_idx' n_idx') in
               let bexpr :=
-                if is_sample
-                then tf_expr_if (tf_op2 tf_and valid
-                                   (tf_op1 tf_not (tf_svar (tf_dfg_v a_idx' n_idx'))))
-                       expr (tf_svar (tf_dfg_b a_idx' n_idx'))
-                else expr in
-              [ tf_assign (tf_dfg_b a_idx' n_idx') bexpr; tf_assign (tf_dfg_v a_idx' n_idx') valid ]
+                match stall_lat with
+                | Some l =>
+                    tf_expr_if (tf_op2 tf_and valid
+                                  (tf_op1 tf_not (tf_op2 (tf_cmp (snd x) tf_eq) cnt (tf_const (pred l)))))
+                      (tf_op2 tf_add cnt (tf_const 1)) cnt
+                | None =>
+                  if is_sample
+                  then tf_expr_if (tf_op2 tf_and valid
+                                     (tf_op1 tf_not (tf_svar (tf_dfg_v a_idx' n_idx'))))
+                         expr (tf_svar (tf_dfg_b a_idx' n_idx'))
+                  else expr
+                end in
+              let vexpr :=
+                match stall_lat with
+                | Some l => tf_op2 (tf_cmp (snd x) tf_eq) cnt (tf_const (pred l))
+                | None => valid
+                end in
+              [ tf_assign (tf_dfg_b a_idx' n_idx') bexpr; tf_assign (tf_dfg_v a_idx' n_idx') vexpr ]
             | None => [] (* should not happen *)
             end ) buffers
     end.
@@ -1296,6 +1333,22 @@ Section VariableScheduler.
 
   Definition chain_head (dfg: dfg_state) (n: nid_t) : option nid_t :=
     match chain_gate dfg n with Some (_, h) => Some h | None => None end.
+
+  (* The FIRST cycle of a stall's wait, read straight off its counter.  This is
+     what the chain needed the rising-edge trick for, and the two bugs that
+     trick caused -- a guard one cycle late, a join that never rises -- are not
+     expressible against a counter. *)
+  Definition stall_start (a_idx: Vect.index (length bn)) (dfg: dfg_state)
+    (buffers: list (nid_t * (nat * sz_t))) (h: nid_t) : expr_t :=
+    match BitsToLists.list_assoc buffers h with
+    | Some (n_idx, n_sz) =>
+        match index_of_nat (length (nth (index_to_nat a_idx) bn [])) n_idx with
+        | Some n_idx' =>
+            tf_op2 (tf_cmp n_sz tf_eq) (tf_svar (tf_dfg_b a_idx n_idx')) (tf_const 0)
+        | None => tf_const 0
+        end
+    | None => tf_const 0
+    end.
 
   (* A drive is emitted as an ALWAYS-op, unlike a [tf_output] from [var_map]
      which goes to the done half.  That is the whole point: the done half runs
@@ -1376,14 +1429,14 @@ Section VariableScheduler.
                             | DFG_Drive _ _ en => guard_expr tainted dfacts fuel a_idx' dfg sbufs en
                             | _ => tf_const 1
                             end in
-                          let '(vgate, vprev) :=
+                          let '(vgate, vfirst) :=
                             match chain_gate dfg n with
                             | Some (g, h) =>
                                 (snd (compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg g buffers),
-                                 snd (compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg h buffers))
-                            | None => (v, tf_const 0)
+                                 stall_start a_idx' dfg buffers h)
+                            | None => (v, tf_const 1)
                             end in
-                          tf_expr_if (tf_op2 tf_and en_val (tf_op2 tf_and vgate (tf_op1 tf_not vprev)))
+                          tf_expr_if (tf_op2 tf_and en_val (tf_op2 tf_and vgate vfirst))
                             (tf_const 1) acc)
                        (tf_const 0) (drive_nodes dfg p))
                     (fold_right
@@ -1397,14 +1450,14 @@ Section VariableScheduler.
                             | DFG_Drive _ _ en => guard_expr tainted dfacts fuel a_idx' dfg sbufs en
                             | _ => tf_const 1
                             end in
-                          let '(vgate, vprev) :=
+                          let '(vgate, vfirst) :=
                             match chain_gate dfg n with
                             | Some (g, h) =>
                                 (snd (compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg g buffers),
-                                 snd (compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg h buffers))
-                            | None => (v, tf_const 0)
+                                 stall_start a_idx' dfg buffers h)
+                            | None => (v, tf_const 1)
                             end in
-                          tf_expr_if (tf_op2 tf_and en_val (tf_op2 tf_and vgate (tf_op1 tf_not vprev)))
+                          tf_expr_if (tf_op2 tf_and en_val (tf_op2 tf_and vgate vfirst))
                             e acc)
                        (tf_svar (tf_dfg_ov p)) (drive_nodes dfg p))))
             (driven_ports dfg)
@@ -1791,9 +1844,9 @@ Section VariableScheduler.
   (* The delay chain is [emit]s all the way down, so it never touches var_map. *)
   Lemma stall_chain_vm: forall n id, preserves vm_nd (stall_chain n id).
   Proof.
-    induction n as [|n IH]; intro id; cbn [stall_chain].
+    intros n id. destruct n; cbn [stall_chain].
     - apply preserves_ret.
-    - apply preserves_bind; [apply emit_vm|]. intro x. apply IH.
+    - apply emit_vm.
   Qed.
 
   Lemma dataflow_ops_vm: forall ops en, preserves vm_nd (dataflow_ops en ops).

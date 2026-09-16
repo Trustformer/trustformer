@@ -19,8 +19,8 @@
 //     luck;
 //   - is NOT pipelined: a request arriving while one is in flight is a failure.
 module tb;
-  localparam int LSHA  = 3;          // must match fs_ip ip_sha  ip_lat
-  localparam int LHMAC = 5;          // must match fs_ip ip_hmac ip_lat
+  localparam int LSHA  = 140;        // must match fs_ip ip_sha  ip_lat
+  localparam int LHMAC = 275;        // must match fs_ip ip_hmac ip_lat
 
   localparam [255:0] GARB = 256'hdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef;
 
@@ -511,7 +511,7 @@ module tb;
   end
 
   initial begin
-    repeat (4000) @(posedge clk);
+    repeat (60000) @(posedge clk);
     $display("FAIL: timeout in phase [%s] (the module never became ready again)", phase);
     $fatal(1);
   end

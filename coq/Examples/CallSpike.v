@@ -120,15 +120,12 @@ Section CallSpike.
   (* 2.  THE WAIT IS REAL.                                              *)
   (* ================================================================== *)
 
-  (* [clat] chained unit stalls, so [clat] nodes each land in their own cycle
-     bucket and each takes a buffer.  A buffer's valid bit is assigned from its
-     input's validity once per cycle, so validity lags one cycle per hop.
-
-     A lone [DFG_Stall clat] would give ONE buffer and no lag at all: it
-     compiles to its argument verbatim. *)
+  (* ONE [DFG_Stall clat], whose buffer is a counter.  The chain this replaces
+     spent one buffer and one validity bit per declared cycle; the counter
+     spends one register of [counter_sz clat] bits whatever [clat] is. *)
   Definition cs_bufs := require_buffer cs_ctx cs_dfg cs_cycles.
 
-  Example chain_buys_buffers : List.length cs_bufs = clat.
+  Example wait_is_one_buffer : List.length cs_bufs = 1.
   Proof. vm_compute. reflexivity. Qed.
 
   (* The drive and the sample are clat cycles apart.  Cycles count BACKWARD
@@ -142,14 +139,19 @@ Section CallSpike.
   Example round_trip_separated : ccyc drive_nid - ccyc samp_nid = clat.
   Proof. vm_compute. reflexivity. Qed.
 
-  (* The chain is WIDTH 1, which is the entire cost argument for preferring it
-     to a counter: the archive's delay chain was rejected for being [lat] nodes
-     at the PAYLOAD width, and this is [lat] nodes at one bit. *)
-  Example chain_is_one_bit :
+  (* The stall carries no data -- a [DFG_Sample] uses only its token's validity
+     -- so its width is the counter's, not the payload's. *)
+  Example stall_is_a_counter :
     forallb (fun nd => match op nd with
-                       | DFG_Stall _ _ => Nat.eqb (sz nd) 1
+                       | DFG_Stall l _ => Nat.eqb (sz nd) (counter_sz l)
                        | _ => true end)
             (graph cs_dfg) = true.
+  Proof. vm_compute. reflexivity. Qed.
+
+  Example one_stall_node :
+    List.length (filter (fun nd => match op nd with
+                                   | DFG_Stall _ _ => true | _ => false end)
+                        (graph cs_dfg)) = 1.
   Proof. vm_compute. reflexivity. Qed.
 
   (* and the sample is not a source, so it has a defined sampling cycle *)

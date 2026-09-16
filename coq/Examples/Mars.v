@@ -277,11 +277,11 @@ Section FunctionalSpecification.
       match p with
       | ip_sha  => {| ip_req_sz  := len_sz + msg_sz;
                       ip_resp_sz := digest_sz;
-                      ip_lat     := 3;
+                      ip_lat     := 140;
                       ip_fn      := placeholder_digest |}
       | ip_hmac => {| ip_req_sz  := len_sz + digest_sz + hmac_msg_sz;
                       ip_resp_sz := digest_sz;
-                      ip_lat     := 5;
+                      ip_lat     := 275;
                       ip_fn      := placeholder_digest |}
       end.
 
@@ -675,11 +675,11 @@ Section TypedSynthesis.
        arm-to-arm, so the arms are NOT chained and the action is one round trip
        deep rather than four.
 
-       Control, taken by forcing [guards_disjoint] to false: the same 52 stall
-       nodes, depth 40 instead of 10. *)
+       550 = max(140, 275) + 275: the snapshot SHA and the AK derivation are
+       independent so they overlap, and only the signature waits for both. *)
     Definition qcycles := calc_target_cycle 40 (calc_backward_cost tfs_ctx 40 qdfg).
     Example quote_depth :
-      fold_left (fun a p => Nat.max a (snd p)) qcycles 0 = 10.
+      fold_left (fun a p => Nat.max a (snd p)) qcycles 0 = 550.
     Proof. vm_compute. reflexivity. Qed.
 
     (* one arm per index *)
