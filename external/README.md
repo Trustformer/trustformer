@@ -67,3 +67,39 @@ internally but exposes only the top 128 bits (`hmac_core.v` L52), and MARS
 needs 32 bytes. That puts the two-pass structure in the TCB; it is bounded and
 checked byte-for-byte against the reference emulator by
 `agents/mars/oracle/run-stage3.sh`.
+
+## The one-action interface
+
+`mars_ip_sha_adapter.v` and `mars_ip_hmac_adapter.v` attach the same two glue
+blocks to the **one-action** module, whose IP link is one request word and one
+response word:
+
+```
+ip_req  = {strobe, len, msg}    a one-cycle pulse
+ip_resp = digest                sampled ip_lat cycles after the strobe
+```
+
+There is no valid line and no tag, because the schedule already knows when the
+answer is due — `ip_lat` is declared in the Coq context and the wait is compiled
+into the action. That moves two obligations onto whoever attaches an IP, and the
+adapters are where they are discharged: the answer must be **ready** by `ip_lat`
+cycles after the strobe, and it must still be **on the wire** at that cycle, so
+the adapter holds the last answer rather than presenting it for a window. Each
+adapter checks the first obligation in simulation and prints `FAIL` if the IP
+overruns its declared latency.
+
+Measured on `secworks/sha256_core` through the glue, one request start to
+`valid`:
+
+| request | blocks | cycles |
+| --- | --- | --- |
+| SHA, 36 bytes | 1 | 68 |
+| SHA, 64 / 68 / 100 bytes | 2 | 135 |
+| HMAC, 13 / 32 / 42 bytes | 4 | 269 |
+
+So `ip_lat` must be at least 135 for SHA and 269 for HMAC. `coq/Examples/Mars.v`
+declares 140 and 275.
+
+`agents/mars/oracle/run-stage3-v4.sh` runs the pair against the TCG C reference
+emulator. `run-stage3.sh` is the sequential design's version of the same test and
+now belongs to `Example_MarsSeq`.
