@@ -5461,21 +5461,29 @@ Section SchedulerSimulation.
         exact (gsi_idx_bound _ _ n m msz Hin_gsi). }
       destruct (index_of_nat_bounded Hlt) as [n_idx' Hn_idx'].
       rewrite Hn_idx' in Hval |- *. cbv beta iota in Hval |- *.
-      cbn [fst]. cbn [snd] in Hval.
-      assert (Hmi : index_to_nat n_idx' = m)
-        by (apply index_to_nat_of_nat; exact Hn_idx').
-      assert (Hvn : vreg_nid a_idx n_idx' = n).
-      { unfold vreg_nid. rewrite Hmi, (buffer_slot_eq act a_idx Halign).
-        rewrite (gsi_entry_at _ _ n m msz Hin_gsi). reflexivity. }
-      assert (Hsz : ss_sz (tf_dfg_b a_idx n_idx') = szB).
-      { rewrite (buffer_register_node_size act a_idx n_idx' Halign), Hvn.
-        symmetry; exact HszB. }
-      rewrite eval1_svar_v in Hval.
-      assert (Hset := Hinv n_idx' Hval).
-      rewrite <- Hsz, eval_svar_same, Hset, Hvn.
-      unfold node_ref_expr.
-      rewrite (compile_fst_pi_irrel _ _ a_idx (build_dfg ctx act) []
-                 (length (graph (build_dfg ctx act))) n [] pi).
+      (* Both arms of the buffered branch publish the SAME validity register;
+         only the value differs, and a stall's is [tf_const 0]. *)
+      destruct (op (nth n (graph (build_dfg ctx act))
+                      {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hopn;
+        cbn [fst] in *; cbn [snd] in Hval.
+      all: try (assert (Hmi : index_to_nat n_idx' = m)
+                  by (apply index_to_nat_of_nat; exact Hn_idx');
+                assert (Hvn : vreg_nid a_idx n_idx' = n) by
+                  (unfold vreg_nid; rewrite Hmi, (buffer_slot_eq act a_idx Halign);
+                   rewrite (gsi_entry_at _ _ n m msz Hin_gsi); reflexivity);
+                assert (Hsz : ss_sz (tf_dfg_b a_idx n_idx') = szB) by
+                  (rewrite (buffer_register_node_size act a_idx n_idx' Halign), Hvn;
+                   symmetry; exact HszB);
+                rewrite eval1_svar_v in Hval;
+                assert (Hset := Hinv n_idx' Hval);
+                rewrite <- Hsz, eval_svar_same, Hset, Hvn;
+                unfold node_ref_expr;
+                rewrite (compile_fst_pi_irrel _ _ a_idx (build_dfg ctx act) []
+                           (length (graph (build_dfg ctx act))) n [] pi);
+                reflexivity).
+      (* the stall: neither side reads the register *)
+      rewrite (compile_stall_value (build_dfg ctx act) _ _ a_idx n lat arg Hopn
+                 (length (graph (build_dfg ctx act))) pi [] ltac:(lia)).
       reflexivity.
     - (* not buffered: split the validity along the op's structure *)
       cbn [compile_dfg_expr_aux BitsToLists.list_assoc] in Hval |- *.
@@ -5665,14 +5673,14 @@ Section SchedulerSimulation.
                by (rewrite Et; cbn [snd]; exact (Hthen Hcnz)).
              pose proof (Hchild tid (sz node) pt Htin Hf2 Hat) as Hct.
              rewrite Et, Et' in Hct. cbn [fst] in Hct. exact Hct.
-      + (* DFG_Stall: value and validity both pass through here, so this is the
-           DFG_Unary case.  A counting stall needs the lag invariant instead,
-           [Hval] handing over only the argument's validity. *)
-        assert (Hain : In sa (get_args ctx node))
-          by (unfold get_args; rewrite Hop; left; reflexivity).
-        unfold node_args_sz in Hfg. rewrite Hop in Hfg.
-        exact (Hchild sa (sz node) pi Hain Hfg Hval).
-      + (* SPIKE 2b: DFG_Drive, value and validity both pass through. *)
+      + (* DFG_Stall: carries no value, so both sides are [tf_const 0]. *)
+        cbn [fst].
+        repeat match goal with
+        | |- context [compile_dfg_expr_aux ?a ?b ?c ?d ?e ?f ?g ?h ?i ?j] =>
+            destruct (compile_dfg_expr_aux a b c d e f g h i j)
+        end.
+        reflexivity.
+      + (* DFG_Drive: value and validity both pass through. *)
         assert (Hain : In dn (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
         unfold node_args_sz in Hfg. rewrite Hop in Hfg.
@@ -5680,6 +5688,13 @@ Section SchedulerSimulation.
       + (* DFG_Sample: only the validity passes through, the value [tf_ivar v]
            being the same with and without buffers.  The round trip's
            value/validity decoupling, discharged here. *)
+        cbn [fst].
+        repeat match goal with
+        | |- context [compile_dfg_expr_aux ?a ?b ?c ?d ?e ?f ?g ?h ?i ?j] =>
+            destruct (compile_dfg_expr_aux a b c d e f g h i j)
+        end.
+        reflexivity.
+      + (* DFG_Join: no value either. *)
         cbn [fst].
         repeat match goal with
         | |- context [compile_dfg_expr_aux ?a ?b ?c ?d ?e ?f ?g ?h ?i ?j] =>
@@ -5921,15 +5936,17 @@ Section SchedulerSimulation.
   Qed.
 
   (* Structural exposure of the buffer-write tail of the always-ops list: after
-     the done-flag head, the remaining ops are exactly compile_dfg_buffers over
-     the aligned action's DFG (full fuel) and its require_buffer slot list. *)
+     the done-flag head come the buffer writes, and after THOSE the drive
+     writes -- one register per IP, live in every action's always half. *)
   Lemma buffer_ops_concrete (act: tfs_action sched) a_idx :
     act_idx_aligned act a_idx ->
     exists done_e,
       fst (Contract.tfs_schedule sched act)
       = done_e ::
         compile_dfg_buffers ctx bneeds (index_to_nat a_idx) (build_dfg ctx act)
-          (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []).
+          (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
+        ++ compile_dfg_drives ctx bneeds (index_to_nat a_idx) (build_dfg ctx act)
+             (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []).
   Proof.
     intros Halign.
     assert (Halign2 : @finite_index (tfs_spec_action ctx) (tfs_spec_action_fin ctx) act
@@ -5974,18 +5991,20 @@ Section SchedulerSimulation.
     let compiled := compile_dfg_expr ctx bneeds
                       (length (graph (build_dfg ctx act))) a_idx
                       (build_dfg ctx act) n buffers' in
+    let sz := snd (snd entry) in
     (fst (sched_step act ss input)).[tf_dfg_b a_idx n_idx]
-      = eval_st (tf_dfg_b a_idx n_idx) (fst compiled) ss input
+      = eval_st (tf_dfg_b a_idx n_idx)
+          (buf_value_expr act a_idx n_idx sz (fst compiled) (snd compiled) n) ss input
     /\
     (fst (sched_step act ss input)).[tf_dfg_v a_idx n_idx]
-      = eval_st (tf_dfg_v a_idx n_idx) (snd compiled) ss input.
+      = eval_st (tf_dfg_v a_idx n_idx)
+          (buf_valid_expr act a_idx n_idx sz (snd compiled) n) ss input.
   Proof.
     intros Halign Hnd. cbv zeta.
     pose proof (compile_dfg_buffers_entry act a_idx n_idx Halign) as Hmem.
     cbv zeta in Hmem.
     match goal with
-    | |- _ = eval_st _ (fst ?compiled) _ _ /\
-           _ = eval_st _ (snd ?compiled) _ _ =>
+    | |- context [buf_valid_expr _ _ _ _ (snd ?compiled) _] =>
         destruct compiled as [expr valid] eqn:Hcompiled
     end.
     destruct Hmem as [Hvalue Hvalid].
@@ -5997,12 +6016,20 @@ Section SchedulerSimulation.
     { pose proof (tfs_schedule_no_duplicates sched act) as Hnd_all.
       unfold tfs_ops_no_duplicates in *. rewrite flat_map_app in Hnd_all.
       apply (NoDup_app_l _ _ Hnd_all). }
-    assert (Hvalue_ops : In (tf_assign (tf_dfg_b a_idx n_idx) expr)
+    assert (Hvalue_ops : In (tf_assign (tf_dfg_b a_idx n_idx)
+                               (buf_value_expr act a_idx n_idx
+                                  (snd (snd (nth (index_to_nat n_idx)
+                                     (nth (index_to_nat a_idx) bneeds []) (0, (0, 0)))))
+                                  expr valid (vreg_nid a_idx n_idx)))
               (fst (Contract.tfs_schedule sched act))).
-    { rewrite Hops. right. exact Hvalue. }
-    assert (Hvalid_ops : In (tf_assign (tf_dfg_v a_idx n_idx) valid)
+    { rewrite Hops. right. apply in_or_app. left. exact Hvalue. }
+    assert (Hvalid_ops : In (tf_assign (tf_dfg_v a_idx n_idx)
+                               (buf_valid_expr act a_idx n_idx
+                                  (snd (snd (nth (index_to_nat n_idx)
+                                     (nth (index_to_nat a_idx) bneeds []) (0, (0, 0)))))
+                                  valid (vreg_nid a_idx n_idx)))
               (fst (Contract.tfs_schedule sched act))).
-    { rewrite Hops. right. exact Hvalid. }
+    { rewrite Hops. right. apply in_or_app. left. exact Hvalid. }
     split; rewrite sched_step_getst, (cycle_updates_not_done act ss input Hnd);
       unfold find_st_val.
     - rewrite (find_st_update_unique_assign _ _ _ _ _ Hnd_always Hvalue_ops).
@@ -6014,12 +6041,15 @@ Section SchedulerSimulation.
   (* SATURATION (value): after k cycles with no done flag, every buffer caching
      a node id BELOW k holds its settled value.  Induction on k over
      [compile_subst] and [compile_nobuf_step_stable]. *)
+  (* The response is re-derived at each state, so the settledness carried from
+     one cycle to the next is settledness AT THAT STATE's response. *)
   Lemma buffers_settled_run :
-    forall (act: tfs_action sched) a_idx (input: sched_input_t)
+    forall (act: tfs_action sched) a_idx (input: input_t)
            (ss0: sched_sys_state) (k: nat),
       act_idx_aligned act a_idx ->
       (forall i, 1 <= i <= k -> ~ done_set (run_n i act input ss0)) ->
-      buffers_settled act a_idx (run_n k act input ss0) input k.
+      buffers_settled act a_idx (run_n k act input ss0)
+        (sched_input input (run_n k act input ss0)) k.
   Proof.
     intros act a_idx input ss0 k Halign.
     induction k as [| k IH]; intros Hnd n_idx Hlt; [ lia | ].
@@ -6027,16 +6057,18 @@ Section SchedulerSimulation.
       by (intros i Hi; apply Hnd; lia).
     specialize (IH Hndk).
     set (ssk := run_n k act input ss0) in *.
-    assert (Hstep : ~ done_set (sched_step act ssk input))
+    assert (Hstep : ~ done_set (sched_step act ssk (sched_input input ssk)))
       by (apply (Hnd (S k)); lia).
     destruct (vreg_nid_node_range act a_idx n_idx Halign) as [Hn1 Hnlen].
-    pose proof (buffer_after_cycle act a_idx n_idx ssk input Halign Hstep) as Hba.
+    pose proof (buffer_after_cycle act a_idx n_idx ssk (sched_input input ssk)
+                  Halign Hstep) as Hba.
     cbv zeta in Hba. destruct Hba as [Hval _].
     unfold vreg_nid in Hlt, Hn1, Hnlen.
-    change (run_n (S k) act input ss0) with (sched_step act ssk input).
+    change (run_n (S k) act input ss0)
+      with (sched_step act ssk (sched_input input ssk)).
     unfold vreg_nid. rewrite Hval. unfold node_ref_expr.
-    rewrite (compile_nobuf_step_stable act a_idx ssk input Hstep).
-    apply (compile_subst act a_idx ssk input Halign k IH).
+    rewrite (compile_nobuf_step_stable act a_idx ssk (sched_input input ssk) Hstep).
+    apply (compile_subst act a_idx ssk (sched_input input ssk) Halign k IH).
     - intros e He. exact (proj1 (proj1 (filter_In _ e _) He)).
     - exact Hn1.
     - exact Hnlen.
