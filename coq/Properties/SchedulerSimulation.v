@@ -6202,7 +6202,7 @@ Section SchedulerSimulation.
         (sched_input input (run_n k act input ss0)) k.
   Proof.
     intros act a_idx input ss0 k Halign.
-    induction k as [| k IH]; intros Hnd n_idx Hlt; [ lia | ].
+    induction k as [| k IH]; intros Hnd n_idx Hlt Hns Hnl; [ lia | ].
     assert (Hndk : forall i, 1 <= i <= k -> ~ done_set (run_n i act input ss0))
       by (intros i Hi; apply Hnd; lia).
     specialize (IH Hndk).
@@ -6213,7 +6213,10 @@ Section SchedulerSimulation.
     pose proof (buffer_after_cycle act a_idx n_idx ssk (sched_input input ssk)
                   Halign Hstep) as Hba.
     cbv zeta in Hba. destruct Hba as [Hval _].
-    unfold vreg_nid in Hlt, Hn1, Hnlen.
+    unfold vreg_nid in Hlt, Hn1, Hnlen, Hns, Hnl.
+    (* this buffer caches a VALUE: not a counter, not a latch, so what the
+       cycle wrote is exactly the compiled value *)
+    unfold buf_value_expr in Hval. rewrite Hnl, Hns in Hval. cbv beta iota in Hval.
     change (run_n (S k) act input ss0)
       with (sched_step act ssk (sched_input input ssk)).
     unfold vreg_nid. rewrite Hval. unfold node_ref_expr.
