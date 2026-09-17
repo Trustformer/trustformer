@@ -5125,15 +5125,53 @@ Section SchedulerSimulation.
       reflexivity.
   Qed.
 
+  (* One step of [compile_dfg_expr_aux]'s VALUE at a node that is not a stall:
+     buffered, it is that node's own register.  Stated as a match rather than
+     under hypotheses because [bufs] is typed at [nid_t] here and at [nat]
+     inside the compiler -- convertible, but [rewrite] will not bridge them. *)
+  Lemma compile_buffered_value
+        (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var)
+                (outputs_var := o_var) (ips_var := p_var))
+        tainted dfacts a_idx n bufs :
+    match op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+    | DFG_Stall _ _ => False | _ => True end ->
+    forall fuel pi, 0 < fuel ->
+      fst (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx dfg n bufs)
+      = match BitsToLists.list_assoc bufs n with
+        | Some (m, _) =>
+            match index_of_nat
+                    (Datatypes.length (nth (index_to_nat a_idx) bneeds [])) m with
+            | Some n_idx' => tf_svar (tf_dfg_b a_idx n_idx')
+            | None => tf_const 0
+            end
+        | None =>
+            fst (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx dfg n bufs)
+        end.
+  Proof.
+    intros Hns fuel. destruct fuel as [| fuel]; [ intros; lia |].
+    intros pi _.
+    destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:E; [| reflexivity].
+    cbn [compile_dfg_expr_aux]. rewrite E. cbv beta iota.
+    destruct (index_of_nat _ m) as [n_idx' |]; [| reflexivity].
+    cbv beta iota.
+    destruct (op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}));
+      cbn [fst]; try reflexivity; destruct Hns.
+  Qed.
+
   (* Every buffer of [act]'s slot caching a node id BELOW [bound] holds its
      SETTLED value, the fully-inlined buffer-free reference expression.  Ranked
      by NODE ID, since a buffer's expression reaches only smaller ids. *)
+  (* A buffer holds its node's settled value -- for the buffers that cache a
+     VALUE at all.  A stall's holds a counter, and a sample's latches, so both
+     are excluded: the reference already reads a sample's register directly. *)
   Definition buffers_settled
       (act: tfs_action sched)
       (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
       (ss: sched_sys_state) (input: sched_input_t) (bound: nat) : Prop :=
     forall n_idx,
       vreg_nid a_idx n_idx < bound ->
+      is_sample_of act (vreg_nid a_idx n_idx) = false ->
+      stall_lat_of act (vreg_nid a_idx n_idx) = None ->
       (fst ss).[tf_dfg_b a_idx n_idx]
       = eval_st (tf_dfg_b a_idx n_idx)
           (node_ref_expr act a_idx (vreg_nid a_idx n_idx)) ss input.
@@ -5156,6 +5194,9 @@ Section SchedulerSimulation.
          other would compare a latched answer against the live port *)
       (forall x, BitsToLists.list_assoc bufs x = None ->
                  BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
+      (forall x m msz, BitsToLists.list_assoc bufs x = Some (m, msz) ->
+                 is_sample_of act x = true ->
+                 BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)) ->
       forall fuel n szB (pi: list lit),
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
@@ -5171,7 +5212,7 @@ Section SchedulerSimulation.
           (fst (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
           ss input.
   Proof.
-    intros Halign bound Hsettled bufs Hsub Hsam_sub fuel.
+    intros Halign bound Hsettled bufs Hsub Hsam_sub Hsam_same fuel.
     induction fuel as [| fuel IH];
       intros n szB pi Hn1 Hnlen Hnfuel Hnb Hself HszB; [ lia | ].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:Hla.
@@ -5200,29 +5241,43 @@ Section SchedulerSimulation.
       (* A STALL's buffer is its COUNTER, so neither side reads the register --
          both are [tf_const 0] and settledness is not needed for it.  Every
          other buffered node takes its value from the register. *)
+      assert (Hmi : index_to_nat n_idx' = m)
+        by (apply index_to_nat_of_nat; exact Hn_idx').
+      assert (Hvn : vreg_nid a_idx n_idx' = n) by
+        (unfold vreg_nid; rewrite Hmi, (buffer_slot_eq act a_idx Halign);
+         rewrite (gsi_entry_at _ _ n m msz Hin_gsi); reflexivity).
+      assert (Hsz : ss_sz (tf_dfg_b a_idx n_idx') = szB) by
+        (rewrite (buffer_register_node_size act a_idx n_idx' Halign), Hvn;
+         symmetry; exact HszB).
       destruct (op (nth n (graph (build_dfg ctx act))
                       {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hopn;
         cbn [fst].
-      all: try (assert (Hmi : index_to_nat n_idx' = m)
-                  by (apply index_to_nat_of_nat; exact Hn_idx');
-                assert (Hvn : vreg_nid a_idx n_idx' = n) by
-                  (unfold vreg_nid; rewrite Hmi, (buffer_slot_eq act a_idx Halign);
-                   rewrite (gsi_entry_at _ _ n m msz Hin_gsi); reflexivity);
-                assert (Hsz : ss_sz (tf_dfg_b a_idx n_idx') = szB) by
-                  (rewrite (buffer_register_node_size act a_idx n_idx' Halign), Hvn;
-                   symmetry; exact HszB);
-                assert (Hset := Hsettled n_idx' ltac:(rewrite Hvn; exact Hnlt));
+      all: try (assert (Hns : is_sample_of act n = false)
+                  by (unfold is_sample_of, node_op; rewrite Hopn; reflexivity);
+                assert (Hnl : stall_lat_of act n = None)
+                  by (unfold stall_lat_of, node_op; rewrite Hopn; reflexivity);
+                assert (Hset := Hsettled n_idx'
+                                  ltac:(rewrite Hvn; exact Hnlt)
+                                  ltac:(rewrite Hvn; exact Hns)
+                                  ltac:(rewrite Hvn; exact Hnl));
                 rewrite <- Hsz, eval_svar_same, Hset, Hvn;
                 unfold node_ref_expr;
                 rewrite (compile_fst_pi_irrel _ _ a_idx (build_dfg ctx act)
                            (sample_bufs act a_idx)
                            (length (graph (build_dfg ctx act))) n [] pi);
                 reflexivity).
-      (* the stall: neither side reads the register *)
-      rewrite (compile_stall_value (build_dfg ctx act) _ _ a_idx n lat arg Hopn
-                 (length (graph (build_dfg ctx act))) pi (sample_bufs act a_idx)
-                 ltac:(lia)).
-      reflexivity.
+      (* the stall: neither side reads a register, both are [tf_const 0] *)
+      { rewrite (compile_stall_value (build_dfg ctx act) _ _ a_idx n _ _ Hopn
+                   (length (graph (build_dfg ctx act))) pi (sample_bufs act a_idx)
+                   ltac:(lia)).
+        reflexivity. }
+      (* the sample: the reference reads THE SAME register, by [Hsam_same] *)
+      { rewrite (compile_buffered_value (build_dfg ctx act) _ _ a_idx n
+                   (sample_bufs act a_idx) ltac:(rewrite Hopn; exact I)
+                   (length (graph (build_dfg ctx act))) pi ltac:(lia)).
+        rewrite (Hsam_same n m msz Hla
+                   ltac:(unfold is_sample_of, node_op; rewrite Hopn; reflexivity)).
+        rewrite Hn_idx'. reflexivity. }
     - (* not buffered: both sides take the same op branch *)
       cbn [compile_dfg_expr_aux BitsToLists.list_assoc].
       rewrite Hla, (Hsam_sub n Hla). cbv beta iota.
@@ -5403,6 +5458,9 @@ Section SchedulerSimulation.
          other would compare a latched answer against the live port *)
       (forall x, BitsToLists.list_assoc bufs x = None ->
                  BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
+      (forall x m msz, BitsToLists.list_assoc bufs x = Some (m, msz) ->
+                 is_sample_of act x = true ->
+                 BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)) ->
       forall fuel n szB,
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
@@ -5418,9 +5476,9 @@ Section SchedulerSimulation.
           (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
           ss input.
   Proof.
-    intros Halign bound Hsettled bufs Hsub Hsam_sub fuel n szB.
+    intros Halign bound Hsettled bufs Hsub Hsam_sub Hsam_same fuel n szB.
     exact (compile_subst_gen act a_idx ss input Halign bound Hsettled bufs Hsub
-             Hsam_sub fuel n szB []).
+             Hsam_sub Hsam_same fuel n szB []).
   Qed.
 
   (* ==================================================================== *)
@@ -5500,6 +5558,9 @@ Section SchedulerSimulation.
          other would compare a latched answer against the live port *)
       (forall x, BitsToLists.list_assoc bufs x = None ->
                  BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
+      (forall x m msz, BitsToLists.list_assoc bufs x = Some (m, msz) ->
+                 is_sample_of act x = true ->
+                 BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)) ->
       forall fuel n szB (pi: list lit),
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
@@ -5515,7 +5576,7 @@ Section SchedulerSimulation.
           (fst (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
           ss input.
   Proof.
-    intros Halign Hinv bufs Hsub Hsam_sub fuel.
+    intros Halign Hinv bufs Hsub Hsam_sub Hsam_same fuel.
     induction fuel as [| fuel IH];
       intros n szB pi Hn1 Hnlen Hnfuel HszB Hval; [ lia | ].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:Hla.
@@ -5801,6 +5862,9 @@ Section SchedulerSimulation.
          other would compare a latched answer against the live port *)
       (forall x, BitsToLists.list_assoc bufs x = None ->
                  BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
+      (forall x m msz, BitsToLists.list_assoc bufs x = Some (m, msz) ->
+                 is_sample_of act x = true ->
+                 BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)) ->
       forall fuel n szB,
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
@@ -5816,9 +5880,9 @@ Section SchedulerSimulation.
           (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
           ss input.
   Proof.
-    intros Halign Hinv bufs Hsub Hsam_sub fuel n szB.
+    intros Halign Hinv bufs Hsub Hsam_sub Hsam_same fuel n szB.
     exact (compile_subst_valid_gen act a_idx ss input Halign Hinv bufs Hsub
-             Hsam_sub fuel n szB []).
+             Hsam_sub Hsam_same fuel n szB []).
   Qed.
 
   (* A key filtered OUT of an association list is absent from it.  This is what
@@ -6183,6 +6247,9 @@ Section SchedulerSimulation.
          other would compare a latched answer against the live port *)
       (forall x, BitsToLists.list_assoc bufs x = None ->
                  BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
+      (forall x m msz, BitsToLists.list_assoc bufs x = Some (m, msz) ->
+                 is_sample_of act x = true ->
+                 BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)) ->
       forall fuel n (pi: list lit),
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
@@ -6335,6 +6402,9 @@ Section SchedulerSimulation.
          other would compare a latched answer against the live port *)
       (forall x, BitsToLists.list_assoc bufs x = None ->
                  BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
+      (forall x m msz, BitsToLists.list_assoc bufs x = Some (m, msz) ->
+                 is_sample_of act x = true ->
+                 BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)) ->
       forall fuel n,
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
