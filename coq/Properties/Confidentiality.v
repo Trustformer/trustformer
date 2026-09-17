@@ -25,6 +25,8 @@ Section Confidentiality.
   Local Notation i_sz  := (tfs_spec_inputs_size ctx).
   Local Notation o_sz  := (tfs_spec_outputs_size ctx).
   Local Notation o_cls := (tfs_spec_outputs_class ctx).
+  Local Notation p_var := (tfs_spec_ips ctx).
+  Local Notation ips   := (tfs_spec_ip ctx).
 
   Existing Instance tfs_spec_states_fin.
   Existing Instance tfs_spec_inputs_fin.
@@ -37,7 +39,7 @@ Section Confidentiality.
     (forall x : i_var, type_denote (tf_inputs_type i_sz x)).
 
   Local Notation run ops sys input :=
-    (tf_ops_run s_sz i_sz o_sz ops sys input).
+    (tf_ops_run s_sz i_sz o_sz ips ops sys input).
   Local Notation ev w e sys input :=
     (tf_eval_expr s_sz i_sz o_sz (szB := w) e sys input).
 
@@ -73,18 +75,15 @@ Section Confidentiality.
   (* [g] records a secret-dependent enclosing branch condition.  Under such a
      guard every Public output stays unwritten: assigning even a CONSTANT to one
      inside a branch on [dp] leaks [dp]. *)
-  Fixpoint sf_ops (g: bool) (ops: @tf_ops s_var i_var o_var) : bool :=
+  Fixpoint sf_ops (g: bool) (ops: @tf_ops s_var i_var o_var p_var) : bool :=
     match ops with
     | tf_ops_base tf_nop => true
     | tf_ops_base (tf_assign _ _) => true    (* a secret register may hold anything *)
-    (* A call writes its REQUEST PORT, so it classifies as a [tf_output]: under a
-       secret-dependent guard a drive publishes the branch condition, and with it
-       whatever secret the condition came from. *)
-    | tf_ops_base (tf_call req _ _ arg _) =>
-        match o_cls req with
-        | Secret => true                     (* Secret request ports may be arbitrary *)
-        | Public => negb g && sf_expr arg
-        end
+    (* V4 denotes a call as [dst := ip_fn arg], a STATE update: the request port
+       is the scheduler's own and is no declared output, so no [o_cls] applies
+       and the case coincides with [tf_assign].  The IP bus is outside this
+       theorem's attacker view -- see THEOREM-AUDIT.md B5. *)
+    | tf_ops_base (tf_call _ _ _) => true
     | tf_ops_base (tf_output o e) =>
         match o_cls o with
         | Secret => true                     (* Secret outputs may be arbitrary *)
@@ -101,15 +100,15 @@ Section Confidentiality.
 
   (* Two reduction lemmas, so every proof below can stay in terms of [run]
      instead of unfolding the update machinery and losing the abbreviation. *)
-  Lemma run_cons (a b: @tf_ops s_var i_var o_var) sys input :
+  Lemma run_cons (a b: @tf_ops s_var i_var o_var p_var) sys input :
     run (tf_ops_cons a b) sys input = run b (run a sys input) input.
   Proof.
     unfold tf_ops_run. cbn [tf_ops_updates].
-    destruct (tf_ops_updates _ _ _ a sys input) as [u1 s1]. cbn [snd].
-    destruct (tf_ops_updates _ _ _ b s1 input) as [u2 s2]. reflexivity.
+    destruct (tf_ops_updates _ _ _ _ a sys input) as [u1 s1]. cbn [snd].
+    destruct (tf_ops_updates _ _ _ _ b s1 input) as [u2 s2]. reflexivity.
   Qed.
 
-  Lemma run_if (c: @tf_expr s_var i_var o_var) (t f: @tf_ops s_var i_var o_var)
+  Lemma run_if (c: @tf_expr s_var i_var o_var) (t f: @tf_ops s_var i_var o_var p_var)
       sys input :
     run (tf_ops_if c t f) sys input
     = if beq_dec (ev 1 c sys input) Bits.zero
@@ -162,14 +161,14 @@ Section Confidentiality.
   (* Under a non-secret-free guard, nothing Public moves at all.          *)
   (* ------------------------------------------------------------------- *)
 
-  Lemma sf_ops_guarded_frozen (ops: @tf_ops s_var i_var o_var) :
+  Lemma sf_ops_guarded_frozen (ops: @tf_ops s_var i_var o_var p_var) :
     sf_ops true ops = true ->
     forall (sys: sys_state) (input: input_t) (o: o_var),
       o_cls o = Public ->
       (snd (run ops sys input)).[o] = (snd sys).[o].
   Proof.
     induction ops; intros Hsf sys input o Hc; cbn [sf_ops] in Hsf.
-    - destruct op as [| d e | d e | rq rv d e szA szB fn]; cbn [tf_ops_run tf_ops_updates
+    - destruct op as [| d e | d e | p d e]; cbn [tf_ops_run tf_ops_updates
         tf_op_step_updates tf_op_step_commit tf_op_step_commit_output snd].
       + reflexivity.
       + reflexivity.
@@ -177,11 +176,8 @@ Section Confidentiality.
         destruct (eq_dec d o) as [Heq | Hne].
         * subst d. rewrite Hc in Hd. discriminate.
         * rewrite get_put_neq; [ reflexivity | exact Hne ].
-      + (* a call writes its REQUEST port, so this is the tf_output case *)
-        destruct (o_cls rq) eqn:Hd; [ discriminate | ].
-        destruct (eq_dec rq o) as [Heq | Hne].
-        * subst rq. rewrite Hc in Hd. discriminate.
-        * rewrite get_put_neq; [ reflexivity | exact Hne ].
+      + (* a call updates a state register, so the output env is untouched *)
+        reflexivity.
     - apply andb_prop in Hsf. destruct Hsf as [H1 H2].
       rewrite run_cons, (IHops2 H2 _ input o Hc), (IHops1 H1 sys input o Hc).
       reflexivity.
@@ -195,7 +191,7 @@ Section Confidentiality.
   (* Soundness of the statement criterion: one action.                    *)
   (* ------------------------------------------------------------------- *)
 
-  Lemma sf_ops_sound (ops: @tf_ops s_var i_var o_var) (g: bool) :
+  Lemma sf_ops_sound (ops: @tf_ops s_var i_var o_var p_var) (g: bool) :
     sf_ops g ops = true ->
     forall (sys sys': sys_state) (input: input_t),
       pub_agree sys sys' ->
@@ -203,7 +199,7 @@ Section Confidentiality.
   Proof.
     revert g. induction ops; intros g Hsf sys sys' input Hpub;
       cbn [sf_ops] in Hsf.
-    - destruct op as [| d e | d e | rq rv d e szA szB fn]; intros o Hc;
+    - destruct op as [| d e | d e | p d e]; intros o Hc;
         cbn [tf_ops_run tf_ops_updates tf_op_step_updates tf_op_step_commit
              tf_op_step_commit_output snd].
       + exact (Hpub o Hc).
@@ -219,18 +215,8 @@ Section Confidentiality.
           destruct (eq_dec d o) as [Heq | Hne].
           -- subst d. rewrite Hc in Hd. discriminate.
           -- rewrite !get_put_neq by exact Hne. exact (Hpub o Hc).
-      + (* a call writes its REQUEST port -- the tf_output case, on [rq] *)
-        destruct (o_cls rq) eqn:Hd.
-        * (* Public request port: the criterion forces a secret-free payload *)
-          destruct g; [ discriminate | ]. cbn [negb andb] in Hsf.
-          destruct (eq_dec rq o) as [Heq | Hne].
-          -- subst rq. rewrite !get_put_eq.
-             exact (sf_expr_sound e Hsf sys sys' input (o_sz o) Hpub).
-          -- rewrite !get_put_neq by exact Hne. exact (Hpub o Hc).
-        * (* Secret request port: nothing Public moves *)
-          destruct (eq_dec rq o) as [Heq | Hne].
-          -- subst rq. rewrite Hc in Hd. discriminate.
-          -- rewrite !get_put_neq by exact Hne. exact (Hpub o Hc).
+      + (* a call updates a state register, so the output env is untouched *)
+        exact (Hpub o Hc).
     - apply andb_prop in Hsf. destruct Hsf as [H1 H2].
       rewrite !run_cons.
       exact (IHops2 g H2 _ _ input (IHops1 g H1 sys sys' input Hpub)).
