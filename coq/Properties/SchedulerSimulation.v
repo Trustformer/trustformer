@@ -707,6 +707,17 @@ Section SchedulerSimulation.
   (* count reaches the node's target cycle.                                *)
   (* ==================================================================== *)
 
+  (* ---- What a DFG node is, as the buffer compiler asks ---- *)
+
+  Definition node_op (act: tfs_action sched) (n: nid_t) :=
+    op (nth n (graph (build_dfg ctx act)) {| nid := 0; op := DFG_Empty; sz := 0 |}).
+
+  Definition stall_lat_of (act: tfs_action sched) (n: nid_t) : option nat :=
+    match node_op act n with DFG_Stall l _ => Some l | _ => None end.
+
+  Definition is_sample_of (act: tfs_action sched) (n: nid_t) : bool :=
+    match node_op act n with DFG_Sample _ _ _ => true | _ => false end.
+
   (* nid of the DFG node cached by validity/value register (a_idx, n_idx). *)
   Definition vreg_nid
       (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
@@ -716,13 +727,28 @@ Section SchedulerSimulation.
              (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
              (0, (0, 0))).
 
-  (* Fully-inlined (buffer-free) reference expression for DFG node n of act. *)
+  (* The buffers a reference expression KEEPS: exactly the sample ones.  This
+     is [guard_expr]'s [sbufs] -- "buffers are substituted only for samples,
+     every other source is stable across the action".  A sample reads a LIVE
+     wire and its buffer LATCHES, so inlining through one would compare a
+     latched answer against whatever the port carries now; with two calls on a
+     port those differ, and MARS's Quote has eight samples on one. *)
+  Definition sample_bufs
+      (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+    : list (nid_t * (nat * sz_t)) :=
+    filter (fun '(n, _) => is_sample_of act n)
+           (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []).
+
+  (* Reference expression for DFG node n of act: inlined down to the sample
+     buffers, which stand for the answers already received. *)
   Definition node_ref_expr
       (act: tfs_action sched)
       (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
       (n: nat) : @tf_expr (tfs_states sched) si_var o_var :=
     fst (compile_dfg_expr ctx bneeds
-           (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n []).
+           (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n
+           (sample_bufs act a_idx)).
 
   (* [a_idx] indexes the SAME action as [act]: buffer_needs is built by mapping
      over spec_all_actions, so length (buffer_needs …) = length spec_all_actions
@@ -990,16 +1016,6 @@ Section SchedulerSimulation.
     exact Hsize.
   Qed.
 
-  (* ---- What a buffer entry actually emits, mirroring compile_dfg_buffers ---- *)
-
-  Definition node_op (act: tfs_action sched) (n: nid_t) :=
-    op (nth n (graph (build_dfg ctx act)) {| nid := 0; op := DFG_Empty; sz := 0 |}).
-
-  Definition stall_lat_of (act: tfs_action sched) (n: nid_t) : option nat :=
-    match node_op act n with DFG_Stall l _ => Some l | _ => None end.
-
-  Definition is_sample_of (act: tfs_action sched) (n: nid_t) : bool :=
-    match node_op act n with DFG_Sample _ _ _ => true | _ => false end.
 
   (* A plain buffer RECOMPUTES, a sample LATCHES as its validity rises, and a
      stall COUNTS to [lat-1].  The three shapes are why the buffer lemmas below
@@ -4822,24 +4838,59 @@ Section SchedulerSimulation.
   (* A BUFFER-FREE compiled expression reads only base state vars (tf_dfg_s),
      outputs and the input, so its value only depends on those.  This is what
      makes a settled value stable across further pre-done cycles. *)
+  (* An entry of the slot at index [m] is cached by register [n_idx']. *)
+  Lemma vreg_nid_of_entry (act: tfs_action sched) a_idx n m msz n_idx' :
+    act_idx_aligned act a_idx ->
+    In (n, (m, msz)) (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) ->
+    index_of_nat (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m
+      = Some n_idx' ->
+    vreg_nid a_idx n_idx' = n.
+  Proof.
+    intros Halign Hin Hidx.
+    assert (Hmi : index_to_nat n_idx' = m) by (apply index_to_nat_of_nat; exact Hidx).
+    unfold vreg_nid. rewrite Hmi, (buffer_slot_eq act a_idx Halign).
+    rewrite (gsi_entry_at _ _ n m msz
+               ltac:(rewrite <- (buffer_slot_eq act a_idx Halign); exact Hin)).
+    reflexivity.
+  Qed.
+
   Lemma compile_nobuf_state_indep_gen
         (act: tfs_action sched) a_idx (input: sched_input_t) (ss1 ss2: sched_sys_state)
         (tainted: list nid_t) (dfacts: list gfact) :
+    act_idx_aligned act a_idx ->
     (forall s, (fst ss1).[tf_dfg_s s] = (fst ss2).[tf_dfg_s s]) ->
     (forall o, (snd ss1).[o] = (snd ss2).[o]) ->
+    (* the reference keeps the SAMPLE buffers, so it depends on them too *)
+    (forall n_idx, is_sample_of act (vreg_nid a_idx n_idx) = true ->
+       (fst ss1).[tf_dfg_b a_idx n_idx] = (fst ss2).[tf_dfg_b a_idx n_idx]) ->
     forall fuel n szB (pi: list lit),
       tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
         (fst (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                (build_dfg ctx act) n []))
+                (build_dfg ctx act) n (sample_bufs act a_idx)))
         ss1 input
       = tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
         (fst (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                (build_dfg ctx act) n []))
+                (build_dfg ctx act) n (sample_bufs act a_idx)))
         ss2 input.
   Proof.
-    intros Hs Ho fuel.
+    intros Halign Hs Ho Hb fuel.
     induction fuel as [| fuel IH]; intros n szB pi; [ reflexivity | ].
-    cbn [compile_dfg_expr_aux BitsToLists.list_assoc]. cbv beta iota.
+    cbn [compile_dfg_expr_aux].
+    destruct (BitsToLists.list_assoc (sample_bufs act a_idx) n) as [[m msz] |] eqn:Hla.
+    { (* a SAMPLE buffer: both sides read the same register, pinned by [Hb] *)
+      destruct (index_of_nat _ m) as [n_idx' |] eqn:Hn_idx'; [| reflexivity].
+      cbv beta iota.
+      pose proof (wla_in _ _ _ Hla) as Hin.
+      unfold sample_bufs in Hin. apply filter_In in Hin. destruct Hin as [Hin Hsam].
+      assert (Hvn : vreg_nid a_idx n_idx' = n)
+        by (apply (vreg_nid_of_entry act a_idx n m msz n_idx' Halign Hin Hn_idx')).
+      assert (Hsam2 : is_sample_of act (vreg_nid a_idx n_idx') = true)
+        by (rewrite Hvn; exact Hsam).
+      destruct (op (nth n (graph (build_dfg ctx act))
+                      {| nid := 0; op := DFG_Empty; sz := 0 |}));
+        cbn [fst tf_eval_expr];
+        try (f_equal; exact (Hb n_idx' Hsam2)); reflexivity. }
+    cbv beta iota.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
       as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn den | siv sn sen | ja jb | ].
@@ -4847,15 +4898,15 @@ Section SchedulerSimulation.
     - reflexivity.
     - destruct v; cbn [fst tf_eval_expr]; [ rewrite Hs | rewrite Ho ]; reflexivity.
     - destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) arg []) as [ae ve] eqn:E1.
+                  (build_dfg ctx act) arg (sample_bufs act a_idx)) as [ae ve] eqn:E1.
       cbn [fst]. destruct op1 as [| src];
         cbn [tf_eval_expr];
         [ specialize (IH arg szB pi) | specialize (IH arg src pi) ];
         rewrite E1 in IH; cbn [fst] in IH; rewrite IH; reflexivity.
     - destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) arg1 []) as [a1e v1e] eqn:E1.
+                  (build_dfg ctx act) arg1 (sample_bufs act a_idx)) as [a1e v1e] eqn:E1.
       destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) arg2 []) as [a2e v2e] eqn:E2.
+                  (build_dfg ctx act) arg2 (sample_bufs act a_idx)) as [a2e v2e] eqn:E2.
       cbn [fst].
       pose proof (IH arg1 szB pi) as Hc1. pose proof (IH arg2 szB pi) as Hc2.
       rewrite E1 in Hc1. rewrite E2 in Hc2. cbn [fst] in Hc1, Hc2.
@@ -4869,19 +4920,19 @@ Section SchedulerSimulation.
         rewrite E1 in He1. rewrite E2 in He2. cbn [fst] in He1, He2.
         rewrite He1, He2. reflexivity.
     - destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) arg []) as [ae ve] eqn:E1.
+                  (build_dfg ctx act) arg (sample_bufs act a_idx)) as [ae ve] eqn:E1.
       cbn [fst tf_eval_expr].
       specialize (IH arg (sz (nth arg (graph (build_dfg ctx act))
                                 {| nid := 0; op := DFG_Empty; sz := 0 |})) pi).
       rewrite E1 in IH. cbn [fst] in IH. rewrite IH. reflexivity.
     - destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) cnd []) as [ce cv] eqn:Ec.
+                  (build_dfg ctx act) cnd (sample_bufs act a_idx)) as [ce cv] eqn:Ec.
       destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts
                   (ppath tainted dfacts pi cnd true) fuel a_idx
-                  (build_dfg ctx act) tid []) as [te tv] eqn:Et.
+                  (build_dfg ctx act) tid (sample_bufs act a_idx)) as [te tv] eqn:Et.
       destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts
                   (ppath tainted dfacts pi cnd false) fuel a_idx
-                  (build_dfg ctx act) eid []) as [ee ev] eqn:Ee.
+                  (build_dfg ctx act) eid (sample_bufs act a_idx)) as [ee ev] eqn:Ee.
       cbn [fst tf_eval_expr].
       pose proof (IH cnd 1 pi) as Hcc.
       pose proof (IH tid szB (ppath tainted dfacts pi cnd true)) as Hct.
@@ -4892,39 +4943,42 @@ Section SchedulerSimulation.
     - (* DFG_Stall: no value, so both sides are [tf_const 0]. *)
       cbn [fst].
       destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) sa []).
+                  (build_dfg ctx act) sa (sample_bufs act a_idx)).
       reflexivity.
     - (* DFG_Drive, pass-through. *) apply IH.
     - (* DFG_Sample -- the value is [tf_ivar v], the same expression on both
          sides, so the states cannot tell it apart. *)
       cbn [fst].
       destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) sn []).
+                  (build_dfg ctx act) sn (sample_bufs act a_idx)).
       reflexivity.
     - (* DFG_Join: no value either. *)
       cbn [fst].
       destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) ja []).
+                  (build_dfg ctx act) ja (sample_bufs act a_idx)).
       destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) jb []).
+                  (build_dfg ctx act) jb (sample_bufs act a_idx)).
       reflexivity.
     - reflexivity.
   Qed.
 
   Lemma compile_nobuf_state_indep
         (act: tfs_action sched) a_idx (input: sched_input_t) (ss1 ss2: sched_sys_state) :
+    act_idx_aligned act a_idx ->
     (forall s, (fst ss1).[tf_dfg_s s] = (fst ss2).[tf_dfg_s s]) ->
     (forall o, (snd ss1).[o] = (snd ss2).[o]) ->
+    (forall n_idx, is_sample_of act (vreg_nid a_idx n_idx) = true ->
+       (fst ss1).[tf_dfg_b a_idx n_idx] = (fst ss2).[tf_dfg_b a_idx n_idx]) ->
     forall fuel n szB,
       tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
-        (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n []))
+        (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
         ss1 input
       = tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
-        (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n []))
+        (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
         ss2 input.
   Proof.
-    intros Hs Ho fuel n szB.
-    exact (compile_nobuf_state_indep_gen act a_idx input ss1 ss2 _ _ Hs Ho
+    intros Halign Hs Ho Hb fuel n szB.
+    exact (compile_nobuf_state_indep_gen act a_idx input ss1 ss2 _ _ Halign Hs Ho Hb
              fuel n szB []).
   Qed.
 
@@ -4932,19 +4986,26 @@ Section SchedulerSimulation.
      cycle (which touches neither tf_dfg_s nor the outputs). *)
   Lemma compile_nobuf_step_stable
         (act: tfs_action sched) a_idx (ss: sched_sys_state) (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
     ~ done_set (sched_step act ss input) ->
+    (* the sample buffers must not latch during this step *)
+    (forall n_idx, is_sample_of act (vreg_nid a_idx n_idx) = true ->
+       (fst (sched_step act ss input)).[tf_dfg_b a_idx n_idx]
+       = (fst ss).[tf_dfg_b a_idx n_idx]) ->
     forall fuel n szB,
       tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
-        (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n []))
+        (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
         (sched_step act ss input) input
       = tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
-        (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n []))
+        (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
         ss input.
   Proof.
-    intro Hnd.
+    intros Halign Hnd Hb.
     apply compile_nobuf_state_indep.
+    - exact Halign.
     - intro s. exact (sched_step_preserves_svar act ss input s Hnd).
     - intro o. exact (sched_step_preserves_ovar act ss input o Hnd).
+    - exact Hb.
   Qed.
 
   (* compile_dfg_expr is fuel-invariant above the structural bound: the recursion
@@ -5090,6 +5151,11 @@ Section SchedulerSimulation.
     forall bufs,
       (forall e, In e bufs ->
          In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
+      (* the reference keeps the SAMPLE buffers, so [bufs] must keep them too:
+         a sample read through a buffer on one side and off the wire on the
+         other would compare a latched answer against the live port *)
+      (forall x, BitsToLists.list_assoc bufs x = None ->
+                 BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
       forall fuel n szB (pi: list lit),
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
@@ -5102,10 +5168,10 @@ Section SchedulerSimulation.
           (fst (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act) n bufs))
           ss input
         = tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
-          (fst (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act) n []))
+          (fst (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
           ss input.
   Proof.
-    intros Halign bound Hsettled bufs Hsub fuel.
+    intros Halign bound Hsettled bufs Hsub Hsam_sub fuel.
     induction fuel as [| fuel IH];
       intros n szB pi Hn1 Hnlen Hnfuel Hnb Hself HszB; [ lia | ].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:Hla.
@@ -5113,7 +5179,7 @@ Section SchedulerSimulation.
       assert (Hnlt : n < bound)
         by (destruct Hself as [Hnone | Hlt']; [ congruence | exact Hlt' ]).
       (* canonicalize the buffer-free side to node_ref_expr's fuel *)
-      rewrite (compile_fuel_irrel_gen act a_idx [] _ _ n Hn1 Hnlen (S fuel)
+      rewrite (compile_fuel_irrel_gen act a_idx (sample_bufs act a_idx) _ _ n Hn1 Hnlen (S fuel)
                  (length (graph (build_dfg ctx act))) pi Hnfuel Hnlen).
       cbn [compile_dfg_expr_aux]. rewrite Hla. cbv beta iota.
       assert (Hin_slot : In (n, (m, msz))
@@ -5148,16 +5214,18 @@ Section SchedulerSimulation.
                 assert (Hset := Hsettled n_idx' ltac:(rewrite Hvn; exact Hnlt));
                 rewrite <- Hsz, eval_svar_same, Hset, Hvn;
                 unfold node_ref_expr;
-                rewrite (compile_fst_pi_irrel _ _ a_idx (build_dfg ctx act) []
+                rewrite (compile_fst_pi_irrel _ _ a_idx (build_dfg ctx act)
+                           (sample_bufs act a_idx)
                            (length (graph (build_dfg ctx act))) n [] pi);
                 reflexivity).
       (* the stall: neither side reads the register *)
       rewrite (compile_stall_value (build_dfg ctx act) _ _ a_idx n lat arg Hopn
-                 (length (graph (build_dfg ctx act))) pi [] ltac:(lia)).
+                 (length (graph (build_dfg ctx act))) pi (sample_bufs act a_idx)
+                 ltac:(lia)).
       reflexivity.
     - (* not buffered: both sides take the same op branch *)
       cbn [compile_dfg_expr_aux BitsToLists.list_assoc].
-      rewrite Hla. cbv beta iota.
+      rewrite Hla, (Hsam_sub n Hla). cbv beta iota.
       set (node := nth n (graph (build_dfg ctx act))
                      {| nid := 0; op := DFG_Empty; sz := 0 |}) in *.
       subst szB.
@@ -5178,7 +5246,7 @@ Section SchedulerSimulation.
                           (build_dfg ctx act) x bufs)) ss input
                 = tf_eval_expr ss_sz si_sz oo_sz (szB := sx)
                   (fst (compile_dfg_expr_at ctx bneeds p fuel a_idx
-                          (build_dfg ctx act) x [])) ss input).
+                          (build_dfg ctx act) x (sample_bufs act a_idx))) ss input).
       { intros x sx p Hx Hwsz.
         destruct (Harg x Hx) as [Hx1 Hx2].
         destruct (wsz_node_sz act x sx Hwsz) as [Hxlen Hxsz].
@@ -5196,7 +5264,7 @@ Section SchedulerSimulation.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                     arg bufs) as [ae ve] eqn:E1.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                    arg []) as [ae' ve'] eqn:E2.
+                    arg (sample_bufs act a_idx)) as [ae' ve'] eqn:E2.
         cbn [fst].
         unfold node_args_sz in Hfg. rewrite Hop in Hfg.
         destruct op1 as [| src].
@@ -5218,9 +5286,9 @@ Section SchedulerSimulation.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                     arg2 bufs) as [a2e v2e] eqn:E2.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                    arg1 []) as [a1e' v1e'] eqn:E3.
+                    arg1 (sample_bufs act a_idx)) as [a1e' v1e'] eqn:E3.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                    arg2 []) as [a2e' v2e'] eqn:E4.
+                    arg2 (sample_bufs act a_idx)) as [a2e' v2e'] eqn:E4.
         cbn [fst].
         unfold node_args_sz in Hfg. rewrite Hop in Hfg.
         destruct op1 as [ | | | | | | szC cop | hz lz ];
@@ -5249,7 +5317,7 @@ Section SchedulerSimulation.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                     arg bufs) as [ae ve] eqn:E1.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                    arg []) as [ae' ve'] eqn:E2.
+                    arg (sample_bufs act a_idx)) as [ae' ve'] eqn:E2.
         cbn [fst].
         destruct (Harg arg Hain) as [Hx1 Hx2].
         assert (Hself' : BitsToLists.list_assoc bufs arg = None \/ arg < bound)
@@ -5274,11 +5342,11 @@ Section SchedulerSimulation.
         destruct (compile_dfg_expr_at ctx bneeds (ppath_at act pi cnd false) fuel a_idx
                     (build_dfg ctx act) eid bufs) as [ee ev] eqn:Ee.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                    cnd []) as [ce' cv'] eqn:Ec'.
+                    cnd (sample_bufs act a_idx)) as [ce' cv'] eqn:Ec'.
         destruct (compile_dfg_expr_at ctx bneeds (ppath_at act pi cnd true) fuel a_idx
-                    (build_dfg ctx act) tid []) as [te' tv'] eqn:Et'.
+                    (build_dfg ctx act) tid (sample_bufs act a_idx)) as [te' tv'] eqn:Et'.
         destruct (compile_dfg_expr_at ctx bneeds (ppath_at act pi cnd false) fuel a_idx
-                    (build_dfg ctx act) eid []) as [ee' ev'] eqn:Ee'.
+                    (build_dfg ctx act) eid (sample_bufs act a_idx)) as [ee' ev'] eqn:Ee'.
         cbn [fst].
         unfold node_args_sz in Hfg. rewrite Hop in Hfg.
         destruct Hfg as [Hf1 [Hf2 Hf3]].
@@ -5330,6 +5398,11 @@ Section SchedulerSimulation.
     forall bufs,
       (forall e, In e bufs ->
          In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
+      (* the reference keeps the SAMPLE buffers, so [bufs] must keep them too:
+         a sample read through a buffer on one side and off the wire on the
+         other would compare a latched answer against the live port *)
+      (forall x, BitsToLists.list_assoc bufs x = None ->
+                 BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
       forall fuel n szB,
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
@@ -5342,12 +5415,12 @@ Section SchedulerSimulation.
           (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n bufs))
           ss input
         = tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
-          (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n []))
+          (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
           ss input.
   Proof.
-    intros Halign bound Hsettled bufs Hsub fuel n szB.
+    intros Halign bound Hsettled bufs Hsub Hsam_sub fuel n szB.
     exact (compile_subst_gen act a_idx ss input Halign bound Hsettled bufs Hsub
-             fuel n szB []).
+             Hsam_sub fuel n szB []).
   Qed.
 
   (* ==================================================================== *)
@@ -5422,6 +5495,11 @@ Section SchedulerSimulation.
     forall bufs,
       (forall e, In e bufs ->
          In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
+      (* the reference keeps the SAMPLE buffers, so [bufs] must keep them too:
+         a sample read through a buffer on one side and off the wire on the
+         other would compare a latched answer against the live port *)
+      (forall x, BitsToLists.list_assoc bufs x = None ->
+                 BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
       forall fuel n szB (pi: list lit),
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
@@ -5434,15 +5512,15 @@ Section SchedulerSimulation.
           (fst (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act) n bufs))
           ss input
         = tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
-          (fst (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act) n []))
+          (fst (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
           ss input.
   Proof.
-    intros Halign Hinv bufs Hsub fuel.
+    intros Halign Hinv bufs Hsub Hsam_sub fuel.
     induction fuel as [| fuel IH];
       intros n szB pi Hn1 Hnlen Hnfuel HszB Hval; [ lia | ].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:Hla.
     - (* buffered leaf: its validity bit is the one that fired *)
-      rewrite (compile_fuel_irrel_gen act a_idx [] _ _ n Hn1 Hnlen (S fuel)
+      rewrite (compile_fuel_irrel_gen act a_idx (sample_bufs act a_idx) _ _ n Hn1 Hnlen (S fuel)
                  (length (graph (build_dfg ctx act))) pi Hnfuel Hnlen).
       cbn [compile_dfg_expr_aux] in Hval |- *. rewrite Hla in Hval |- *.
       cbv beta iota in Hval |- *.
@@ -5478,16 +5556,19 @@ Section SchedulerSimulation.
                 assert (Hset := Hinv n_idx' Hval);
                 rewrite <- Hsz, eval_svar_same, Hset, Hvn;
                 unfold node_ref_expr;
-                rewrite (compile_fst_pi_irrel _ _ a_idx (build_dfg ctx act) []
+                rewrite (compile_fst_pi_irrel _ _ a_idx (build_dfg ctx act)
+                           (sample_bufs act a_idx)
                            (length (graph (build_dfg ctx act))) n [] pi);
                 reflexivity).
       (* the stall: neither side reads the register *)
       rewrite (compile_stall_value (build_dfg ctx act) _ _ a_idx n lat arg Hopn
-                 (length (graph (build_dfg ctx act))) pi [] ltac:(lia)).
+                 (length (graph (build_dfg ctx act))) pi (sample_bufs act a_idx)
+                 ltac:(lia)).
       reflexivity.
     - (* not buffered: split the validity along the op's structure *)
       cbn [compile_dfg_expr_aux BitsToLists.list_assoc] in Hval |- *.
-      rewrite Hla in Hval |- *. cbv beta iota in Hval |- *.
+      rewrite Hla in Hval |- *. rewrite (Hsam_sub n Hla).
+      cbv beta iota in Hval |- *.
       set (node := nth n (graph (build_dfg ctx act))
                      {| nid := 0; op := DFG_Empty; sz := 0 |}) in *.
       subst szB.
@@ -5509,7 +5590,7 @@ Section SchedulerSimulation.
                           (build_dfg ctx act) x bufs)) ss input
                 = tf_eval_expr ss_sz si_sz oo_sz (szB := sx)
                   (fst (compile_dfg_expr_at ctx bneeds p fuel a_idx
-                          (build_dfg ctx act) x [])) ss input).
+                          (build_dfg ctx act) x (sample_bufs act a_idx))) ss input).
       { intros x sx p Hx Hwsz Hxv.
         destruct (Harg x Hx) as [Hx1 Hx2].
         destruct (wsz_node_sz act x sx Hwsz) as [Hxlen Hxsz].
@@ -5526,7 +5607,7 @@ Section SchedulerSimulation.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                     arg bufs) as [ae ve] eqn:E1.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                    arg []) as [ae' ve'] eqn:E2.
+                    arg (sample_bufs act a_idx)) as [ae' ve'] eqn:E2.
         cbn [fst]. cbn [snd] in Hval.
         unfold node_args_sz in Hfg. rewrite Hop in Hfg.
         assert (Hav : eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
@@ -5549,9 +5630,9 @@ Section SchedulerSimulation.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                     arg2 bufs) as [a2e v2e] eqn:E2.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                    arg1 []) as [a1e' v1e'] eqn:E3.
+                    arg1 (sample_bufs act a_idx)) as [a1e' v1e'] eqn:E3.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                    arg2 []) as [a2e' v2e'] eqn:E4.
+                    arg2 (sample_bufs act a_idx)) as [a2e' v2e'] eqn:E4.
         cbn [fst]. cbn [snd] in Hval.
         rewrite valid_and_eval in Hval.
         destruct (bits1_and_split _ _ Hval) as [Hv1 Hv2].
@@ -5588,7 +5669,7 @@ Section SchedulerSimulation.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                     arg bufs) as [ae ve] eqn:E1.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                    arg []) as [ae' ve'] eqn:E2.
+                    arg (sample_bufs act a_idx)) as [ae' ve'] eqn:E2.
         cbn [fst]. cbn [snd] in Hval.
         destruct (Harg arg Hain) as [Hx1 Hx2].
         assert (Hav : eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
@@ -5617,11 +5698,11 @@ Section SchedulerSimulation.
         destruct (compile_dfg_expr_at ctx bneeds pe fuel a_idx
                     (build_dfg ctx act) eid bufs) as [ee ev] eqn:Ee.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                    cnd []) as [ce' cv'] eqn:Ec'.
+                    cnd (sample_bufs act a_idx)) as [ce' cv'] eqn:Ec'.
         destruct (compile_dfg_expr_at ctx bneeds pt fuel a_idx
-                    (build_dfg ctx act) tid []) as [te' tv'] eqn:Et'.
+                    (build_dfg ctx act) tid (sample_bufs act a_idx)) as [te' tv'] eqn:Et'.
         destruct (compile_dfg_expr_at ctx bneeds pe fuel a_idx
-                    (build_dfg ctx act) eid []) as [ee' ev'] eqn:Ee'.
+                    (build_dfg ctx act) eid (sample_bufs act a_idx)) as [ee' ev'] eqn:Ee'.
         cbn [fst]. cbn [snd] in Hval.
         unfold node_args_sz in Hfg. rewrite Hop in Hfg.
         destruct Hfg as [Hf1 [Hf2 Hf3]].
@@ -5715,6 +5796,11 @@ Section SchedulerSimulation.
     forall bufs,
       (forall e, In e bufs ->
          In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
+      (* the reference keeps the SAMPLE buffers, so [bufs] must keep them too:
+         a sample read through a buffer on one side and off the wire on the
+         other would compare a latched answer against the live port *)
+      (forall x, BitsToLists.list_assoc bufs x = None ->
+                 BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
       forall fuel n szB,
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
@@ -5727,12 +5813,12 @@ Section SchedulerSimulation.
           (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n bufs))
           ss input
         = tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
-          (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n []))
+          (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
           ss input.
   Proof.
-    intros Halign Hinv bufs Hsub fuel n szB.
+    intros Halign Hinv bufs Hsub Hsam_sub fuel n szB.
     exact (compile_subst_valid_gen act a_idx ss input Halign Hinv bufs Hsub
-             fuel n szB []).
+             Hsam_sub fuel n szB []).
   Qed.
 
   (* A key filtered OUT of an association list is absent from it.  This is what
@@ -6092,6 +6178,11 @@ Section SchedulerSimulation.
     forall bufs,
       (forall e, In e bufs ->
          In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
+      (* the reference keeps the SAMPLE buffers, so [bufs] must keep them too:
+         a sample read through a buffer on one side and off the wire on the
+         other would compare a latched answer against the live port *)
+      (forall x, BitsToLists.list_assoc bufs x = None ->
+                 BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
       forall fuel n (pi: list lit),
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
@@ -6239,6 +6330,11 @@ Section SchedulerSimulation.
     forall bufs,
       (forall e, In e bufs ->
          In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
+      (* the reference keeps the SAMPLE buffers, so [bufs] must keep them too:
+         a sample read through a buffer on one side and off the wire on the
+         other would compare a latched answer against the live port *)
+      (forall x, BitsToLists.list_assoc bufs x = None ->
+                 BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
       forall fuel n,
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
@@ -6987,11 +7083,11 @@ Section SchedulerSimulation.
   (* Any fuel above the node's id computes [node_ref_expr]. *)
   Lemma nre_fuel (act: tfs_action sched) a_idx x f :
     1 <= x -> x < length (graph (build_dfg ctx act)) -> x < f ->
-    fst (compile_dfg_expr ctx bneeds f a_idx (build_dfg ctx act) x [])
+    fst (compile_dfg_expr ctx bneeds f a_idx (build_dfg ctx act) x (sample_bufs act a_idx))
     = node_ref_expr act a_idx x.
   Proof.
     intros H1 H2 H3. unfold node_ref_expr.
-    rewrite (compile_fuel_irrel act a_idx [] x H1 H2 f
+    rewrite (compile_fuel_irrel act a_idx (sample_bufs act a_idx) x H1 H2 f
                (length (graph (build_dfg ctx act))) H3 H2).
     reflexivity.
   Qed.
@@ -6999,7 +7095,7 @@ Section SchedulerSimulation.
   Lemma nre_unfold (act: tfs_action sched) a_idx n :
     1 <= n -> n < length (graph (build_dfg ctx act)) ->
     node_ref_expr act a_idx n
-    = fst (compile_dfg_expr ctx bneeds (S n) a_idx (build_dfg ctx act) n []).
+    = fst (compile_dfg_expr ctx bneeds (S n) a_idx (build_dfg ctx act) n (sample_bufs act a_idx)).
   Proof.
     intros H1 H2. symmetry.
     apply (nre_fuel act a_idx n (S n) H1 H2 (Nat.lt_succ_diag_r n)).
@@ -7059,7 +7155,7 @@ Section SchedulerSimulation.
     assert (Ha2 : arg < length (graph (build_dfg ctx act))) by lia.
     rewrite (nre_unfold act a_idx n H1 H2).
     cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
-    destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) arg [])
+    destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) arg (sample_bufs act a_idx))
       as [ae av] eqn:E.
     cbn [fst]. f_equal.
     rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3), E. reflexivity.
@@ -7082,7 +7178,7 @@ Section SchedulerSimulation.
     assert (Ha2 : arg < length (graph (build_dfg ctx act))) by lia.
     rewrite (nre_unfold act a_idx n H1 H2).
     cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
-    destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) arg [])
+    destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) arg (sample_bufs act a_idx))
       as [ae av] eqn:E.
     cbn [fst].
     rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3), E. reflexivity.
@@ -7104,7 +7200,7 @@ Section SchedulerSimulation.
     assert (Ha2 : arg < length (graph (build_dfg ctx act))) by lia.
     rewrite (nre_unfold act a_idx n H1 H2).
     cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
-    destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) arg [])
+    destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) arg (sample_bufs act a_idx))
       as [ae av] eqn:E.
     cbn [fst].
     rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3), E. reflexivity.
@@ -7121,7 +7217,7 @@ Section SchedulerSimulation.
   Proof.
     intros H1 H2 Hop. rewrite (nre_unfold act a_idx n H1 H2).
     cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
-    destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) tok []).
+    destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) tok (sample_bufs act a_idx)).
     reflexivity.
   Qed.
 
@@ -7142,7 +7238,7 @@ Section SchedulerSimulation.
     assert (Ha2 : arg < length (graph (build_dfg ctx act))) by lia.
     rewrite (nre_unfold act a_idx n H1 H2).
     cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
-    destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) arg [])
+    destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) arg (sample_bufs act a_idx))
       as [ae av] eqn:E.
     cbn [fst]. f_equal.
     rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3), E. reflexivity.
@@ -7168,9 +7264,9 @@ Section SchedulerSimulation.
     assert (Hb2 : a2 < length (graph (build_dfg ctx act))) by lia.
     rewrite (nre_unfold act a_idx n H1 H2).
     cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
-    destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) a1 [])
+    destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) a1 (sample_bufs act a_idx))
       as [e1 v1] eqn:E1.
-    destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) a2 [])
+    destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) a2 (sample_bufs act a_idx))
       as [e2 v2] eqn:E2.
     cbn [fst]. f_equal.
     - rewrite <- (nre_fuel act a_idx a1 n Hp1 Hb1 Hl1), E1. reflexivity.
@@ -7203,7 +7299,7 @@ Section SchedulerSimulation.
     assert (Hbe : eid < length (graph (build_dfg ctx act))) by lia.
     rewrite (nre_unfold act a_idx n H1 H2).
     (* compile_fst_phi normalises the branches back to the empty path *)
-    rewrite (compile_fst_phi act a_idx [] n n cnd tid eid ltac:(reflexivity) Hop).
+    rewrite (compile_fst_phi act a_idx (sample_bufs act a_idx) n n cnd tid eid ltac:(reflexivity) Hop).
     f_equal.
     - apply (nre_fuel act a_idx cnd n Hpc Hbc Hlc).
     - apply (nre_fuel act a_idx tid n Hpt Hbt Hlt).
@@ -8578,13 +8674,13 @@ Section SchedulerSimulation.
     (forall sv n, In (DFG_SVar sv, n) (var_map (build_dfg ctx act)) ->
         eval_st (tf_dfg_s sv)
           (fst (compile_dfg_expr ctx bneeds
-                  (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n []))
+                  (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
           ss input
         = (fst sp1).[sv])
     /\ (forall ov n, In (DFG_OVar ov, n) (var_map (build_dfg ctx act)) ->
         eval_out ov
           (fst (compile_dfg_expr ctx bneeds
-                  (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n []))
+                  (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
           ss input
         = (snd sp1).[ov])
     /\ (forall sv, (forall n, ~ In (DFG_SVar sv, n) (var_map (build_dfg ctx act))) ->
@@ -8671,7 +8767,7 @@ Section SchedulerSimulation.
                 ssM input
               = tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
                 (fst (compile_dfg_expr ctx bneeds
-                        (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n []))
+                        (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
                 ssM input).
     { intros v n szB Hin HszB.
       assert (Hmem : In n (map snd (var_map (build_dfg ctx act))))
