@@ -1,9 +1,6 @@
-(*! Declassification rule: exclusive or.
-
-    `xor` is invertible once one operand is known, so each operand is
-    recoverable from the node together with the other operand.  Emits two
-    unconditional instances per `DFG_Binary tf_xor` node.
-!*)
+(*! Declassification rule: exclusive or.  `xor` is invertible once one operand
+    is known, so each operand is recoverable from the node and the other.  Two
+    unconditional instances per `DFG_Binary tf_xor` node. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.

@@ -14,20 +14,11 @@ Require Import Coq.Logic.EqdepFacts.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
-(*
-    SPIKE (2026-09-10): [tf_concat] end to end, in the shape MARS actually needs.
-
-    CryptSnapshot (TCG MARS Library Spec v1r14 section 5.6.9) hashes
-        regSelect(4 bytes, big endian) || REG# || ... || ctx
-    so the message is built by concatenating fields of DIFFERENT widths in a
-    fixed order.  That is the whole reason tf_concat exists: [tf_const] carries a
-    unary [nat] and cannot express a 2^256 shift, so the "a * 2^m + b" identity
-    is unusable at these widths (measured: N.of_nat is linear in the value,
-    2.19 s at 2^24).
-
-    This module builds exactly that prefix -- a 32-bit selector concatenated
-    with a 256-bit register, giving 288 bits -- and carries it to Verilog.
- *)
+(* [tf_concat] end to end, in the shape MARS needs: CryptSnapshot (spec v1r14
+   5.6.9) hashes regSelect || REG# || ... || ctx, i.e. fields of DIFFERENT
+   widths in a fixed order.  [tf_const] carries a unary [nat], so "a * 2^m + b"
+   costs 2.19 s at 2^24 and tf_concat exists instead.  This carries a 32-bit
+   selector concatenated with a 256-bit register to Verilog. *)
 
 Section FunctionalSpecification.
 

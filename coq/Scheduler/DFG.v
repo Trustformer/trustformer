@@ -1,10 +1,6 @@
-(*! Data-flow graph datatypes for the variable scheduler.
-
-    These live below `Contract.v` so that `TFSchedContext` can carry
-    declassification rules, which are functions of a `dfg_state_t`.
-    They depend only on the three specification variable types, never on
-    `TFSchedContext` itself.
-!*)
+(*! Data-flow graph datatypes for the variable scheduler.  Below `Contract.v`,
+    so `TFSchedContext` can carry declassification rules over a `dfg_state_t`;
+    these depend only on the three specification variable types. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.
@@ -36,23 +32,12 @@ Section SchedulerTypes.
     | DFG_Binary (op: tf_binary_ops) (arg1: nid_t) (arg2: nid_t)
     | DFG_Resize (arg: nid_t)
     | DFG_Phi (cond: nid_t) (then_id: nid_t) (else_id: nid_t)
-    (* SPIKE (W-b feasibility, 2026-09-09): value passes through from [arg];
-       validity lags it.  Nothing emits this yet -- it exists to measure how
-       much of the proof development breaks on a node whose validity is NOT the
-       conjunction of its arguments' validities.
-       SPIKE 2 (2026-09-11): [lat] is the declared latency, in COST units (so
-       [lat / cost_limit] cycles).  Cost units rather than cycles only because
-       [cost_fn] does not see [cost_limit]; the real design wants cycles, which
-       is the ~27-site ripple INSIGHTS #13 describes and absorbs. *)
+    (* [arg]'s value passes through; its validity lags by [lat] CYCLES, counted
+       by the buffer this node gets ([compile_dfg_buffers]). *)
     | DFG_Stall (lat: nat) (arg: nid_t)
-    (* A round trip: drive the request, stall, sample the answer.
-
-       [en] is the path condition the call sits under, as a conjunction of
-       branch literals -- [] at the top of an action.  SYMBOLIC, not a node: a
-       guard that materialised its own AND/NOT nodes would change the graph of
-       every design with an [if], call or no call.  A drive is a conditional
-       SIDE EFFECT: unlike an assignment it has no [var_map] entry, so the phi
-       merge that makes branch writes conditional never reaches it. *)
+    (* A round trip: drive the request, stall, sample the answer.  [en] is the
+       call's path condition, SYMBOLIC so a guard materialises no nodes, and a
+       drive is a conditional SIDE EFFECT with no [var_map] entry. *)
     | DFG_Drive (p: ips_var) (arg: nid_t) (en: list (nid_t * bool))
     | DFG_Sample (p: ips_var) (tok: nid_t) (en: list (nid_t * bool))
     | DFG_Empty                

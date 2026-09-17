@@ -14,24 +14,11 @@ Require Import Coq.Logic.EqdepFacts.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
-(*
-    MARS_SEQ -- the SEQUENTIAL design, in which a crypto round trip is split
-    across MARS_Continue.  Superseded by Examples/Mars.v, which expresses one
-    command as one action via [tf_call].  Kept because it is the design the
-    oracle validated, and so the reference the one-action version is checked
-    against.
-
-    A minimal TCG MARS device, Profile [TF-MARS-S256-P2].
-
-    STAGE 1 of agents/mars/MVP.md section 8: the two crypto-free commands,
-    [MARS_CapabilityGet] and [MARS_RegRead], over two PCRs.  Every other
-    MARS_CC code has an explicit arm returning MARS_RC_COMMAND -- an
-    unrecognized code fires no rule, and [out_rc] would then retain the previous
-    command's value (REVIEW.md section 3.4).
-
-    Normative sources: spec/mars-library-v1r14.md sections 5.3.1, 8.1.2, 8.3.2;
-    reference-emulator/c/mars.c and mars.h.
- *)
+(* MARS_SEQ: a minimal TCG MARS device, Profile [TF-MARS-S256-P2], over two
+   PCRs, with each crypto round trip split across MARS_Continue.  Examples/Mars.v
+   is the one-action form and is checked against this one.  Every MARS_CC code
+   has an arm, so [out_rc] is always written (REVIEW.md 3.4).  Sources:
+   spec/mars-library-v1r14.md 5.3.1, 8.1.2, 8.3.2; reference-emulator/c/mars.c. *)
 
 Section FunctionalSpecification.
 
@@ -208,13 +195,9 @@ Section FunctionalSpecification.
     | out_sha_active    (* a SHA-256 request is outstanding         *)
     | out_hmac_req
     | out_hmac_active
-    (* Secret: the crypto ports.  ONE GROUP PER ATTACHED IP, not one group
-       multiplexed by an opcode: the two cores genuinely differ (sha256_core
-       takes raw blocks and needs no key; hmac_core takes finalize/final_len and
-       does), a shared group would force a lowest-common-denominator interface,
-       and per-IP groups are the shape V3/V4 converges on anyway.  It also lets
-       each group be right-sized -- SHA needs no key, HMAC's longest message is
-       the 42-byte KDF frame. *)
+    (* Secret: the crypto ports, ONE GROUP PER ATTACHED IP.  The two cores differ
+       (sha256_core takes raw blocks, hmac_core takes finalize/final_len and a
+       key), so per-IP groups keep each one right-sized. *)
     | out_sha_msg
     | out_sha_len
     | out_hmac_key
@@ -272,18 +255,11 @@ Section FunctionalSpecification.
     | out_hmac_len    => 16
     end.
 
-    (* Confidentiality classification (Contract.v [port_class]).  [Secret] means
-       "outside what the confidentiality guarantee quantifies over, therefore may
-       carry a secret, therefore never memory-mapped".  Spec section 5.8 requires
-       exactly this for the crypto port: DP and AK cross it.
-
-       [out_sha_len] and [out_sha_active] carry nothing sensitive today and are still
-       [Secret] -- they are part of the port group, over-classifying costs
-       nothing, and the guarantee is about which ports are COVERED.
-
-       [out_sha_req] is genuinely [Public]: it is one toggle bit an attacker may
-       observe.  Note that class and wiring are independent -- [out_sha_req] is
-       Public and goes to the IP; [out_rc] is Public and goes to the bus. *)
+    (* Confidentiality classification (Contract.v [port_class]).  [Secret] is
+       "outside what the guarantee quantifies over, so it may carry a secret and
+       stays off the memory map", which spec 5.8 requires of the crypto port
+       since DP and AK cross it.  Over-classifying a port-group member costs
+       nothing.  Class and wiring are independent. *)
     Definition fs_inputs_class (x: fs_inputs) : port_class :=
     match x with
     | in_pt | in_idx | in_dig => Public
@@ -326,13 +302,11 @@ Section FunctionalSpecification.
         else `body`
     ]}.
 
-    (* Interleaving is refused, not merely discouraged: any command issued while
-       a crypto step is in flight is rejected and leaves [out_pend] and the request
-       untouched (MVP.md section 5.3).  MARS_Continue is the exception by
-       construction -- it is the thing that advances [out_pend] -- and an excluded
-       command answers MARS_RC_COMMAND regardless, since there is nothing to
-       refuse.  Busy is never an out_rc of its own: section 6.2 has no BUSY code and
-       3 is Reserved, so the host reads busy from [out_pend] (REVIEW.md 3.2). *)
+    (* Interleaving is REFUSED: a command issued with a crypto step in flight is
+       rejected, leaving [out_pend] and the request untouched (MVP.md 5.3).
+       MARS_Continue is the exception, being what advances [out_pend].  Section
+       6.2 has no BUSY code, so the host reads busy from [out_pend]
+       (REVIEW.md 3.2). *)
     Definition guard_busy (body: @tf_ops fs_states fs_inputs fs_outputs Empty_set)
         : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
     {[
@@ -349,25 +323,11 @@ Section FunctionalSpecification.
           (tf_op2 (tf_concat digest_sz digest_sz) (tf_ovar pcr) (tf_ivar in_dig))
           (tf_const 0).
 
-    (* Per-group handshake predicates: a response counts when the group has a
-       request outstanding, the IP asserts valid, AND the tag echoes the request
-       bit that was driven at issue.  [tf_ovar] reads the pre-cycle value, so
-       [_req] here is the one that was sent.
-
-       There is no [armed] bit any more, and its removal is a fix rather than a
-       simplification.  Two-phase arming -- arm only while valid is low -- was
-       REVIEW.md section 2.1's "no DSL change" fallback, offered BEFORE the
-       request tag existed; that section calls the tag the proper fix.  With
-       both, two consecutive requests to the SAME group deadlock: MARS_Quote's
-       KDF step completes and immediately issues SIGN, so [_active] never drops,
-       the adapter never deasserts valid (A7), and the second request can never
-       arm.  Quote would wedge at step 3 every time.
-
-       The tag alone is sound and strictly more informative.  A core holding
-       [done] from the previous request echoes the PREVIOUS tag, which no longer
-       equals [_req] -- so instead of silently failing to arm, the module now
-       raises a protocol violation and enters failure mode.  Detected beats
-       stuck. *)
+    (* Per-group handshake: a response counts when the group has a request
+       outstanding, the IP asserts valid, AND the tag echoes the request bit
+       driven at issue ([tf_ovar] reads the pre-cycle value, so [_req] is the one
+       sent).  The tag alone binds it: a core holding [done] from an earlier
+       request echoes that request's tag and raises a protocol violation. *)
     Definition resp_ok (v_valid v_tag: fs_inputs) (o_req o_active: fs_outputs)
         : @tf_expr fs_states fs_inputs fs_outputs :=
         tf_op2 tf_and
@@ -385,18 +345,10 @@ Section FunctionalSpecification.
           (tf_op2 (tf_cmp 1 tf_neq) (tf_ivar v_tag) (tf_ovar o_req)).
 
     (* Issue a request: drive the port, flip the request bit, mark the group
-       active, record the step.  Flipping [_req] is what makes the next response
-       bindable: a leftover answer to the previous request carries the previous
-       tag and can no longer match.
-
-       If the IP misbehaves anyway, the module is fail-stop.  Either the tag
-       mismatches and it enters failure mode, or no valid ever arrives and it
-       WEDGES -- this campaign's term (MVP.md section 6, REVIEW.md section 2.8)
-       for [out_pend] nonzero forever: a step is recorded in flight, every
-       command is refused, and no Continue can clear it because the completion
-       guard can never be satisfied.  Deliberate, because at the KDF->SIGN step
-       latching an unbound result would publish the Attestation Key on
-       [out_dout].  The only recovery is _MARS_Init. *)
+       active, record the step.  Flipping [_req] binds the next response, since
+       a leftover answer carries the earlier tag.  A misbehaving IP leaves it
+       fail-stop: failure mode on a tag mismatch, or WEDGED with [out_pend]
+       nonzero, recoverable only by _MARS_Init (REVIEW.md 2.8). *)
     Definition issue_sha (step: nat)
                      (msg: @tf_expr fs_states fs_inputs fs_outputs) (len: nat)
         : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
@@ -413,23 +365,15 @@ Section FunctionalSpecification.
        the tag echoes the request bit that was driven at issue.  [tf_ovar] reads
        the pre-cycle value, so [out_sha_req] here is the one that was sent. *)
 
-    (* A protocol violation by the crypto IP or its glue: a step IS outstanding
-       and the IP asserts valid for a DIFFERENT request.  Spec section 5.6
-       requires out_failure mode on "any other internal error", and an answer to a
-       request that is not the outstanding one is exactly that.
+    (* A protocol violation: a step IS outstanding and the IP asserts valid for a
+       DIFFERENT request, which spec 5.6 makes an internal error.  Keyed on
+       [_active], true exactly while a request is outstanding on that group, so a
+       mismatched tag is an error rather than noise. *)
 
-       Keyed on [_active], deliberately: it is true exactly while a request is
-       outstanding on that group, which is what makes a mismatched tag an
-       error rather than noise.  Keying on [out_pend] catches both that and a genuine mismatch, while
-       still excluding the two harmless cases -- an early Continue (valid low)
-       and a spurious Continue with nothing outstanding (out_pend = 0). *)
-
-    (* Enter out_failure mode.  Zeroizes like [finish] -- a faulting IP is precisely
-       when nothing should be left driven on the trusted port (REVIEW.md section
-       2.7) -- and clears [out_pend] so the device is in ONE unambiguous stuck state
-       (failed) rather than two overlapping ones (failed and wedged).  Every
-       command except MARS_CapabilityGet now answers MARS_RC_FAILURE until
-       _MARS_Init reinitializes (spec section 5.3.1). *)
+    (* Enter out_failure mode.  Zeroizes like [finish], a faulting IP being exactly
+       when the trusted port should carry nothing (REVIEW.md 2.7), and clears
+       [out_pend] for ONE unambiguous stuck state.  Every command but
+       MARS_CapabilityGet answers MARS_RC_FAILURE until _MARS_Init (spec 5.3.1). *)
     (* Zeroize every group, whichever one misbehaved: a faulting IP is exactly
        when nothing should be left driven on any trusted port. *)
     Definition zeroize : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
@@ -459,19 +403,11 @@ Section FunctionalSpecification.
         let $out_rc    := #MARS_RC_SUCCESS
     ]}.
 
-    (* Commands are refused until _MARS_Init has COMPLETED.  This is what stops
-       MARS_Quote deriving AK = KDF(0,'R',ctx) from a zero DP, which anyone could
-       compute (REVIEW.md section 2.2).
-
-       [out_st] is not redundant with [in_init_req]: the request authorises
-       STARTING an initialization, [out_st] records that one finished, and Init
-       is a KDF round trip -- so there is a window where the request is asserted
-       and DP is still zero.  MVP.md section 2.2 deviation 3.
-
-       MARS_CapabilityGet is exempt, on the same rule that exempts it from
-       failure mode: it always answers.  It reads no state a pending step or an
-       uninitialized DP could affect -- every value it returns is a Profile
-       constant. *)
+    (* Commands are refused until _MARS_Init COMPLETES, which keeps MARS_Quote
+       from deriving AK = KDF(0,'R',ctx) off a zero DP (REVIEW.md 2.2).
+       [in_init_req] authorises STARTING an initialization; [out_st] records
+       that one finished (MVP.md 2.2 deviation 3).  MARS_CapabilityGet is
+       exempt: every value it returns is a Profile constant. *)
     Definition guard_init (body: @tf_ops fs_states fs_inputs fs_outputs Empty_set)
         : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
     {[
@@ -480,16 +416,11 @@ Section FunctionalSpecification.
         else `body`
     ]}.
 
-    (* CryptSkdf's framing, from reference-emulator/c/hw_sha2.c -- the spec text
-       does not give it, so the Profile pins it (MVP.md section 2):
-
-         HMAC(parent, [1]_4 || label || 0x00 || ctx || [8192]_4)
-
-       For CryptDpInit the parent is PS, the label is MARS_LD = 'D' and the
-       context is the three bytes "prd".  13 bytes, left-aligned in the 512-bit
-       port.  Built from byte-sized constants on purpose: [tf_const] carries a
-       unary nat, so "prd" as one 24-bit literal (7369828) would be ~1s of
-       [N.of_nat] per elaboration where three 8-bit ones are free. *)
+    (* CryptSkdf's framing, pinned by the Profile from hw_sha2.c (MVP.md 2):
+       HMAC(parent, [1]_4 || label || 0x00 || ctx || [8192]_4).  CryptDpInit
+       takes parent = PS, label = MARS_LD 'D', ctx = "prd": 13 bytes,
+       left-aligned in the 512-bit port.  Byte-sized constants keep
+       [tf_const]'s unary nat small -- a 24-bit literal costs ~1s to elaborate. *)
     Definition dpinit_msg : @tf_expr fs_states fs_inputs fs_outputs :=
         tf_op2 (tf_concat 104 408)
           (tf_op2 (tf_concat 32 72) (tf_const 1)
@@ -502,17 +433,10 @@ Section FunctionalSpecification.
           (tf_const 0).
 
     (* CryptSnapshot, spec section 5.6.9 / reference mars.c:
-
-         regSelect (4 bytes, BIG ENDIAN) || REG[i] for each selected i || nonce
-
-       Big-endian regSelect is informative in the spec and comes from the
-       reference implementation, so the Profile pins it (MVP.md section 2).
-       Four shapes over two PCRs, three distinct lengths: 36 / 68 / 68 / 100
-       bytes, left-aligned in the 1024-bit SHA port.
-
-       Note the trailing field is the NONCE, not the context: MARS_Quote calls
-       CryptSnapshot(snapshot, regSelect, nonce, nlen).  The context goes to the
-       KDF at the next step, which is a different message entirely. *)
+       regSelect (4 bytes, BIG ENDIAN) || REG[i] for each selected i || nonce.
+       The Profile pins the endianness (MVP.md 2).  Four shapes over two PCRs,
+       three lengths -- 36 / 68 / 68 / 100 bytes, left-aligned in the 1024-bit
+       SHA port.  The trailing field is the NONCE. *)
     Definition snap_none : @tf_expr fs_states fs_inputs fs_outputs :=
         tf_op2 (tf_concat 288 736)
           (tf_op2 (tf_concat 32 256) (tf_ivar in_regsel) (tf_ivar in_nonce))
@@ -575,23 +499,11 @@ Section FunctionalSpecification.
     Definition unsupported : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
         guard_failure {[ let $out_rc := #MARS_RC_COMMAND ]}.
 
-    (* An output variable HOLDS its value unless an action writes it, so a stale
-       result survives every command that does not overwrite it -- after a Quote,
-       [out_dout] would keep driving the signature on 256 wires until the next
-       RegRead.  Every command therefore clears the RESULT registers first.
-
-       Scope matters, and only these two (later [snap]) may be cleared:
-         - [out_pcr0]/[out_pcr1]/[out_failure] -- and later [out_st]/[out_pend] -- are
-           outputs only because non-secret state is modelled that way
-           (MVP.md section 6.1).  Clearing them per command would wipe the
-           measurement chain on every command.
-         - the trusted crypt_* ports must stay STABLE from the request arm to
-           the completion arm, so clearing them at command start would destroy
-           an in-flight request.  Their rule is the opposite shape: zeroize at
-           sequence end and in every error arm (REVIEW.md section 2.7).
-
-       Measured free: +1 node on CapabilityGet, +0 on RegRead, +2 on an excluded
-       command; no change to buffers or to any action's cycle bounds. *)
+    (* An output HOLDS its value until an action writes it, so a Quote's signature
+       would keep driving 256 wires until the next RegRead.  Every command clears
+       the RESULT registers first.  The device-state outputs stay (MVP.md 6.1),
+       and the crypt_* ports keep an in-flight request stable, zeroizing at
+       sequence end and in every error arm instead (REVIEW.md 2.7). *)
     Definition clear_results (body: @tf_ops fs_states fs_inputs fs_outputs Empty_set)
         : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
     {[
@@ -651,12 +563,9 @@ Section FunctionalSpecification.
                     let $out_rc := #MARS_RC_VALUE
             ]}
 
-        (* MARS_RegRead -- spec section 8.3.2.  An out-of-range index is
-           MARS_RC_REG (7), not MARS_RC_VALUE, and [out_dout] reads zero because
-           [clear_results] already cleared it.  The C emulator instead leaves
-           the CALLER's buffer untouched, which has no analogue on an MMIO
-           result register; either way the host contract is the same, "check out_rc
-           before using out_dout". *)
+        (* MARS_RegRead -- spec section 8.3.2.  An out-of-range index gives
+           MARS_RC_REG (7) and [out_dout] reads zero from [clear_results].  The
+           host contract either way: check out_rc before using out_dout. *)
         | act_regread =>
             guard_failure (guard_init (guard_busy {[
                 if ($in_idx ==[arg_sz] #0) then
@@ -738,20 +647,11 @@ Section FunctionalSpecification.
                     let $out_rc := #MARS_RC_VALUE
             ]}
 
-        (* _MARS_Init -- spec section 5.4.  Not a TCG command: it is gated on a
-           protected input the platform drives, never software (section 5.8).
-
-           Exempt from all three guards, and each exemption is load-bearing:
-             - from [guard_failure], because section 5.3.1 says failure mode
-               persists "until reinitialized" -- so Init is what clears it;
-             - from [guard_busy] and from [guard_init], because Init is the ONLY
-               recovery from a wedged crypto step (REVIEW.md section 2.8), and a
-               gate on [out_st = 0] would make the wedge permanent.
-
-           Protection therefore comes entirely from [in_init_req] being a Secret
-           input that is never memory-mapped, which is exactly where spec
-           section 5.8 puts it.  This refines MVP.md section 6.3 step 3, which
-           also gated Init on [st = 0]. *)
+        (* _MARS_Init -- spec section 5.4, a Profile command gated on [in_init_req],
+           which the platform drives (section 5.8).  It runs unguarded because it
+           is what clears failure mode (5.3.1) and the ONLY recovery from a wedged
+           crypto step (REVIEW.md 2.8).  Protection comes from [in_init_req] being
+           a Secret input, which is where spec 5.8 puts it. *)
         | act_init =>
             {[
                 if ($in_init_req ==[1] #1) then
@@ -778,17 +678,11 @@ Section FunctionalSpecification.
         | act_derive           => unsupported
         | act_dpderive         => unsupported
         | act_publicread       => unsupported
-        (* MARS_Quote -- spec section 8.5.1.  Four strobes, three round trips:
-             1  this arm      -> SNAP : hash regSelect || REGs || nonce
-             2  Continue      -> KDF  : AK  = HMAC(DP, [1]||'R'||0||ctx||[L])
-             3  Continue      -> SIGN : sig = HMAC(AK, snapshot)
-             4  Continue      -> idle : dout := sig, AK zeroized
-
-           Step 3 -> 4 is the one REVIEW.md section 2.1 is about: consecutive
-           arms assign the result to [st_ak] and then to [out_dout], which is
-           Public, so one cycle of staleness would publish the Attestation Key
-           in clear.  Arming plus tag binding is what stops it, and the
-           adversarial vectors below attack exactly that. *)
+        (* MARS_Quote -- spec 8.5.1.  Four strobes, three round trips: SNAP hashes
+           regSelect || REGs || nonce, KDF derives AK, SIGN signs the snapshot,
+           and the last Continue publishes dout and zeroizes AK.  Step 3 -> 4 is
+           REVIEW.md 2.1: consecutive arms write [st_ak] then Public [out_dout],
+           so tag binding is what keeps the AK off the wire. *)
         | act_quote =>
             guard_failure (guard_init (guard_busy {[
                 if ($in_nlen !=[arg_sz] #32) then
@@ -961,12 +855,10 @@ Section Vectors.
                       = Bits.of_nat 16 MARS_RC_VALUE.
     Proof. reflexivity. Qed.
 
-    (* An invalid tag clears [out_cap] rather than leaving it stale: no command may
-       return a previous command's result.  This is where the module and the C
-       emulator DIVERGE by design -- oracle/stage1.expected shows the 0x0fff
-       sentinel surviving in_pt = 0, 12 and 13, because there the sentinel lives in
-       the CALLER's buffer, which an MMIO result register has no analogue for.
-       Either way the host contract is the same: check out_rc before using out_cap. *)
+    (* An invalid tag CLEARS [out_cap], so no command returns a previous command's
+       result.  A documented divergence from the C emulator, whose sentinel lives
+       in the caller's buffer (oracle/stage1.expected, in_pt = 0, 12, 13).  The
+       host contract either way: check out_rc before using out_cap. *)
     Definition o_cap_sentinel := with_out o_zero out_cap (Bits.of_nat 16 4095).
     Example cap_cleared_on_invalid : cap_of act_capabilityget 0 0 o_cap_sentinel
                       = Bits.zero.
@@ -1048,13 +940,9 @@ Section Vectors.
         = Ob~1.
     Proof. reflexivity. Qed.
 
-    (* ---------------------------------------------------------------------
-       Stage 2: the crypto handshake.
-
-       These are the cases REVIEW.md section 2.1 is about.  A mock IP is just a
-       choice of (in_sha_res, in_sha_valid, in_sha_tag) on the input vector, so
-       every attack below is expressible here, before any real crypto exists.
-       --------------------------------------------------------------------- *)
+    (* Stage 2, the crypto handshake: the cases REVIEW.md 2.1 is about.  A mock IP
+       is a choice of (in_sha_res, in_sha_valid, in_sha_tag) on the input vector,
+       so every attack below is expressible against the module alone. *)
 
     (* Step 1: host issues PcrExtend(in_idx, in_dig). *)
     Definition ext (idx dig: nat) out :=
@@ -1207,11 +1095,8 @@ Section Vectors.
 
     (* --- ATTACK: the IP holds done high across requests ------------------- *)
     (* A real core (secworks/sha256, OpenTitan hmac) holds [done] until the next
-       start.  It therefore answers the NEW request while still showing the tag
-       of the OLD one, and that mismatch is now a detected protocol violation
-       rather than a silent failure to arm.  This is why two-phase arming was
-       dropped in favour of the tag: the tag turns the same situation from
-       "stuck" into "failure mode, with a reason". *)
+       start, so it answers a NEW request while still showing the earlier tag.
+       The tag turns that into failure mode with a reason. *)
     Definition issued_stuck :=
         run_in act_pcrextend
           (arg_full 0 0 7 0 true false 0 false false 0 false 0 0 0 32 32) o_pcrs.
@@ -1221,8 +1106,8 @@ Section Vectors.
     Example stuck_active : get issued_stuck out_sha_active = Ob~1.
     Proof. reflexivity. Qed.
 
-    (* The core is still showing its PREVIOUS result, so its tag is the previous
-       request bit -- which no longer matches. *)
+    (* The core is still showing an earlier result, so its tag is that request's
+       bit and the comparison fails. *)
     Example stuck_stale_tag_failure : get (cont 666 true false issued_stuck) out_failure = Ob~1.
     Proof. reflexivity. Qed.
     Example stuck_stale_tag_rc      : get (cont 666 true false issued_stuck) out_rc

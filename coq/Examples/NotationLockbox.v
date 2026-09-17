@@ -14,13 +14,8 @@ Require Import Coq.Logic.EqdepFacts.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
-(*
-    An example specification and synthesis of a simple lockbox.
-    The hardware module has a single internal state register (32 bits) and supports two actions (set, test).
-    Actions are triggered through a command register, where the first 1 bit indicates if the command is valid,
-    and the remaining bits indicate the action to perform.
-
- *)
+(* A simple lockbox: one 32-bit state register and two actions (set, test),
+   triggered through a command register whose first bit marks it valid. *)
 
 Section FunctionalSpecification.
 

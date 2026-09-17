@@ -6,17 +6,10 @@ Require Import Trustformer.Semantics.
 Require Import Trustformer.Scheduler.Contract.
 Require Import Trustformer.Scheduler.VariableScheduler.
 
-(*
-    Regression cases for the forward taint analysis (`get_tainted`) and for the
-    criticality test that `compile_dfg_expr` derives from it.
-
-    Each action below isolates one rule. The assertions are stated over the *number
-    of critical phi nodes* rather than over node ids, so they survive renumbering of
-    the DFG.
-
-    See agents/GENERAL_REQUIREMENTS.md 1.1/1.6 and
-    agents/taint-tagging-soundness/PLAN.md for what each case is guarding against.
- *)
+(* Regressions for the forward taint analysis (`get_tainted`) and the
+   criticality test `compile_dfg_expr` derives from it.  Each action isolates one
+   rule, asserted over the NUMBER of critical phi nodes so renumbering the DFG
+   leaves them standing.  See agents/GENERAL_REQUIREMENTS.md 1.1/1.6. *)
 
 Section FunctionalSpecification.
 
@@ -176,8 +169,8 @@ Section TaintAnalysis.
         List.length (public_dsts tfs_ctx (dfg_of a)).
 
     (* Baseline: a pre-action secret read taints, so the phi on it is critical.
-       The read node is its own var_map root under DFG_SVar, which used to
-       declassify it. *)
+       The read node is its own var_map root under DFG_SVar, which
+       [public_dsts] excludes. *)
     Example secret_read_is_critical : critical_count act_secret_read = 1
         := ltac:(vm_compute; reflexivity).
 

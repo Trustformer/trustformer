@@ -9,14 +9,10 @@ Require Import Trustformer.TypedSynthesis.
 Require Import Trustformer.Scheduler.Contract.
 Require Import Trustformer.Scheduler.VariableScheduler.
 
-(*
-    The paper's running example: the 'lockbox' with a retry counter
-    (paper/sections/05_design/01_functional_spec.tex, fig:example-spec),
-    reproduced verbatim.
-
-    This is the module behind fig:dfg1, fig:dfgA5 and fig:dfgB5, and the first
-    example in the tree that uses arithmetic ([tf_sub]).
- *)
+(* The paper's running example, verbatim: the lockbox with a retry counter
+   (paper/sections/05_design/01_functional_spec.tex, fig:example-spec).  The
+   module behind fig:dfg1, fig:dfgA5 and fig:dfgB5, and the tree's first use of
+   arithmetic ([tf_sub]). *)
 
 Section FunctionalSpecification.
 

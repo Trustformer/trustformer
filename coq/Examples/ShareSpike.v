@@ -1,19 +1,11 @@
 (* ===================================================================== *)
 (*  SPIKE: does the lowering preserve SHARING?                           *)
 (* ===================================================================== *)
-(*
-    [compile_dfg_expr_aux] turns the DFG -- a DAG -- into a [tf_expr], and
-    [tf_expr] has no binder.  So a node reachable by K paths is written out K
-    times, and K is exponential in the depth of the sharing.
-
-    This action builds a chain where each state var is used TWICE by the next:
-
-      st0 := in_a + in_a
-      st1 := st0 + st0        ... stN := st(N-1) + st(N-1)
-
-    N+1 nodes, 2^N paths.  If the lowering shares, the compiled expression is
-    linear in N; if it duplicates, it doubles with every step.
-*)
+(* [compile_dfg_expr_aux] turns a DAG into a binder-free [tf_expr], so a node
+   reachable by K paths is written K times.  This chain uses each state var
+   TWICE in the next -- st0 := in_a + in_a, stN := st(N-1) + st(N-1) -- giving
+   N+1 nodes and 2^N paths: linear in N if the lowering shares, doubling per
+   step if it duplicates. *)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.

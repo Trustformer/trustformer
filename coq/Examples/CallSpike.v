@@ -2,23 +2,8 @@
 (*  SPIKE: a call, through build_dfg, measured.                          *)
 (* ===================================================================== *)
 (*
-    The first action in the tree that actually CONTAINS a [tf_call].  Every
-    earlier measurement hand-built its graph, so nothing exercised the real
-    lowering: "all 11 designs byte-identical" proved the new node kinds were
-    inert and nothing more.
-
-    What is measured here:
-
-      1. a call emits a DRIVE, so it is written by an ALWAYS-op rather than by
-         a done-op;
-      2. the request is not an output at all, so no done-op can write it;
-
-      3. the delay chain buys REAL cycles: the sample is scheduled [lat] cycles
-         after the drive, and costs [lat] buffers of one bit rather than one
-         buffer at the payload width.
-
-    (3) is the one that was missing.  A lone [DFG_Stall lat] compiles to its
-    argument verbatim, so it never delayed anything -- it only declared a cost.
+    A call emits a DRIVE, written by an always-op; the request is not an output,
+    so no done-op can write it; and the sample is scheduled [lat] cycles later.
 *)
 
 Require Import Koika.Frontend.
@@ -42,8 +27,7 @@ Section CallSpike.
   Inductive cs_action  := act_call.
   Inductive cs_states  := st_res.
   Inductive cs_inputs  := in_msg.
-  (* No outputs at all: the only port this design had was the IP request, and
-     that is no longer an output. *)
+  (* No outputs at all: the IP request is a scheduler register, not a port. *)
   Definition cs_outputs := Empty_set.
 
   Definition cs_states_size  (_: cs_states)  : nat := cw.
@@ -109,8 +93,8 @@ Section CallSpike.
   Example req_is_driven : driven_ports cs_ctx cs_dfg = [cs_crypto].
   Proof. vm_compute. reflexivity. Qed.
 
-  (* There is no longer an [assigned_port] check to make: a request port is not
-     an output, so no action can write it and the conflict is unsayable. *)
+  (* A request port is outside the design's outputs, so no action can name it
+     and the drive/assign conflict is unsayable. *)
 
   (* exactly one drive for the one call *)
   Example one_drive : List.length (drive_nodes cs_ctx cs_dfg cs_crypto) = 1.
@@ -120,9 +104,7 @@ Section CallSpike.
   (* 2.  THE WAIT IS REAL.                                              *)
   (* ================================================================== *)
 
-  (* ONE [DFG_Stall clat], whose buffer is a counter.  The chain this replaces
-     spent one buffer and one validity bit per declared cycle; the counter
-     spends one register of [counter_sz clat] bits whatever [clat] is. *)
+  (* The wait is ONE [DFG_Stall clat] and so ONE buffer -- its counter. *)
   Definition cs_bufs := require_buffer cs_ctx cs_dfg cs_cycles.
 
   Example wait_is_one_buffer : List.length cs_bufs = 1.
@@ -139,8 +121,7 @@ Section CallSpike.
   Example round_trip_separated : ccyc drive_nid - ccyc samp_nid = clat.
   Proof. vm_compute. reflexivity. Qed.
 
-  (* The stall carries no data -- a [DFG_Sample] uses only its token's validity
-     -- so its width is the counter's, not the payload's. *)
+  (* Its width is the counter's: a [DFG_Sample] uses only the token's validity. *)
   Example stall_is_a_counter :
     forallb (fun nd => match op nd with
                        | DFG_Stall l _ => Nat.eqb (sz nd) (counter_sz l)
@@ -163,18 +144,10 @@ End CallSpike.
 (* ===================================================================== *)
 (*  End-to-end: through TypedSynthesis and out to Verilog.               *)
 (* ===================================================================== *)
-(*
-    The point of extracting this one is to READ THE GENERATED HARDWARE.  Every
-    claim about the drive so far is Coq-level, and this project's record is that
-    both of the archive's design bugs were timing bugs invisible in Coq.
-
-    What to look for in build/Example_CallSpike.v:
-
-      - the IP request is assigned from ALWAYS logic, not only under the done gate;
-      - its else-branch reads the port's own previous value, i.e. it HOLDS;
-      - it has exactly one driver (scripts/check-drivers.sh);
-      - in_resp is read LIVE, not out of the action-start input latch.
-*)
+(* Extracted so the hardware can be READ and RUN (sim/tb_call.sv).  In
+   build/Example_CallSpike.v: the request assigned from ALWAYS logic, its
+   else-branch reading the port's own previous value so it HOLDS, one driver,
+   and the response read LIVE off the wire. *)
 
 Require Import Trustformer.TypedSynthesis.
 
@@ -331,17 +304,10 @@ End TwoCallsChained.
 (* TWO CALLS ON ONE IP: BROKEN WHEN INDEPENDENT, CORRECT WHEN CHAINED *)
 (* ================================================================== *)
 
-(* INDEPENDENT calls now SEQUENCE, exactly as chained ones always did.
-
-   There is one set of request wires, so two calls physically must take turns.
-   Before the ordering join both drives landed in the SAME cycle: the fold kept
-   only the latest, the earlier request never reached the IP, and both samples
-   read the same wire -- so both destinations got the answer to the later
-   request. One request sent, two identical results, no diagnostic.
-
-   The join makes the second call's delay chain depend on the first call's
-   sample, so the second drive lands in the first sample's cycle, lat after the
-   first drive. *)
+(* INDEPENDENT calls SEQUENCE, as chained ones do: one set of request wires
+   means two calls take turns.  The ordering join puts the second call's stall
+   under the first call's sample, so the second drive lands in that sample's
+   cycle, [lat] after the first drive. *)
 Example independent_calls_sequence :
   List.map tcyc2 tc_drives = [3; 6].
 Proof. vm_compute. reflexivity. Qed.
@@ -363,15 +329,10 @@ Proof. vm_compute. reflexivity. Qed.
 (* ===================================================================== *)
 (*  End-to-end for TWO sequenced calls on one IP.                        *)
 (* ===================================================================== *)
-(*
-    tc_ctx's action contains two calls on the same req/resp pair with
-    INDEPENDENT arguments -- the case that silently collided before the
-    ordering join.  What to look for in build/Example_TwoCallSpike.v:
-
-      - TWO strobe pulses on ip_req_sec_..._arg's top bit, lat apart;
-      - the payload changing between them and HELD in between;
-      - a single driver.
-*)
+(* Two calls on one IP with INDEPENDENT arguments.  In
+   build/Example_TwoCallSpike.v: TWO strobe pulses on the request's top bit
+   [lat] apart, the payload changing between them and HELD in between, and a
+   single driver.  Run by sim/tb_two.sv. *)
 
 Section TwoCallSynthesis.
 
@@ -414,13 +375,9 @@ Extraction "Example_TwoCallSpike.ml" tc_prog.
 (*  End-to-end for two CHAINED calls: call 2's argument is call 1's       *)
 (*  result, so the calls carry a real data dependency.                   *)
 (* ===================================================================== *)
-(*
-    Extracted because the independent-argument case is not the hard one.
-    Here call 2's payload does not exist until call 1's answer has landed,
-    so the drive, the sample latch and the ordering join all have to agree
-    on WHEN -- and a strobe that is a level rather than a pulse sends the
-    IP a payload that has not been computed yet.
-*)
+(* Call 2's payload exists only once call 1's answer has landed, so the drive,
+   the sample latch and the ordering join must agree on WHEN.  A strobe held as
+   a level would send a payload still being computed.  Run by sim/tb_chain.sv. *)
 
 Section TwoCallsChainedSynthesis.
 
@@ -462,15 +419,10 @@ Extraction "Example_ChainedCallSpike.ml" tc2_prog.
 (* ===================================================================== *)
 (*  A call under a BRANCH.                                               *)
 (* ===================================================================== *)
-(*
-    Both arms of an [if] call the same IP with different payloads.  A drive is
-    emitted into the graph by the call, not by the branch, so the question this
-    measures is whether the two drives are mutually exclusive in TIME or
-    whether both reach the wire and the fold silently picks one.
-
-    MARS needs the answer: PcrExtend selects a PCR with an [if], and Quote
-    selects a snapshot shape with four.
-*)
+(* Both arms of an [if] call the same IP with different payloads.  A call emits
+   its drive, not the branch, so this measures whether the two drives are
+   mutually exclusive in TIME.  MARS needs it: PcrExtend selects a PCR with an
+   [if] and Quote a snapshot shape with four. *)
 
 Section BranchCall.
 
@@ -554,15 +506,9 @@ Extraction "Example_BranchCallSpike.ml" bc_prog.
 (*  A branch on a CALL RESULT.                                           *)
 (* ===================================================================== *)
 (*
-    Every other spike guards its drives on an INPUT.  Here the [if] tests the
-    answer to a previous call, so the drive's path guard reaches through a
-    [DFG_Sample].
-
-    That is the one source in the graph which is not stable across the action:
-    a sample reads a live wire the IP holds up for a single cycle, which is
-    why a sample's buffer latches rather than recomputes.  A guard is compiled
-    for the cycle its drive fires in, so this shape asks whether it reaches
-    the latch or the wire.
+    The [if] tests a previous call's answer, so the guard reaches through a
+    [DFG_Sample] -- the one source not stable across the action, which is why a
+    guard must read its latch rather than the live wire.
 *)
 
 Section GuardOnResult.

@@ -14,25 +14,11 @@ Require Import Coq.Logic.EqdepFacts.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
-(*
-    SPIKE (2026-09-09): a WIDE and DEEP module, to de-risk the MARS campaign's
-    Stage 0.  Every existing example in this tree is 32 bits and compiles to a
-    fully combinational single cycle (max pipeline depth ever built: 3 buffers,
-    in SchedExample).  A MARS action is 256 bits and tens of stages deep, so the
-    buffering machinery -- and in particular [valid_settled_run] /
-    [buffers_settled_run], which the archive flags as "strictly harder for
-    anything with cross-cycle state" -- has never been exercised at that scale.
-
-    This module is deliberately not MARS: it is the cheapest thing that is both
-    wide (256-bit datapath) and deep (a low cost limit forces the operator chain
-    to be split across many buffered stages).
-
-    NOTE on constants: every literal here is small on purpose.  [tf_const]
-    carries a Coq unary [nat] lowered through [N.of_nat], which is linear in the
-    VALUE -- measured 2.2 s at 2^24 and growing linearly, so a 256-bit literal is
-    not expressible.  That is the reason MARS needs a real [tf_concat] rather
-    than the [a * 2^m + b] identity.
- *)
+(* The cheapest module that is both WIDE (256-bit datapath) and DEEP (a low cost
+   limit splits the operator chain across many buffered stages), exercising the
+   buffering machinery -- [valid_settled_run], [buffers_settled_run] -- at MARS
+   scale.  Every literal is small on purpose: [tf_const] carries a unary [nat]
+   through [N.of_nat], 2.2 s at 2^24, which is why [tf_concat] exists. *)
 
 Section FunctionalSpecification.
 

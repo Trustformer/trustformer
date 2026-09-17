@@ -9,21 +9,9 @@ Require Export Trustformer.Scheduler.DFG.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
-(* Confidentiality classification of a spec variable's port.
-
-   [Public]  attacker-visible by design.  The confidentiality guarantee
-             quantifies over exactly these, and only these may be memory-mapped.
-   [Secret]  may carry a secret, so it is outside that guarantee and must never
-             be attacker-visible.  Over-classifying is safe: a port that happens
-             to carry nothing sensitive but must not be host-driven -- a
-             protected reset request, say -- is [Secret] too, because "never
-             bus-mapped" is the protection wanted and a separate class would buy
-             vocabulary rather than safety.
-
-   The classification is DECLARED here and generated into the port name by
-   [TypedSynthesis.ext_fn_specs].  It is deliberately not part of the variable's
-   own name: a hand-written prefix can disagree with the declaration and nothing
-   would catch it. *)
+(* Confidentiality classification of a spec variable's port: [Public] is
+   attacker-visible and memory-mappable, [Secret] is everything else, and
+   [TypedSynthesis.ext_fn_specs] generates the declared class into the name. *)
 Inductive port_class := Public | Secret.
 
 Definition class_tag (c: port_class) : string :=
@@ -139,10 +127,9 @@ Record TFSchedule := {
      while the spec gates on `done_val <> 0`, so they must coincide *)
   tfs_done_signal_size: tfs_states_size tfs_done_signal = 1;
 
-  (* the done signal is (re)computed every cycle by the always-ops (fst); combined
-     with tfs_schedule_no_duplicates this guarantees the done register is NOT written
-     by the done-ops (snd), which the HW requires since it reads the done register at
-     P1 in the done-gate before the done-ops run their P0 writes *)
+  (* The always-ops (fst) recompute done every cycle; with
+     tfs_schedule_no_duplicates that leaves done to them alone, which the HW
+     needs because the done-gate reads the register at P1 before the P0 writes. *)
   tfs_done_signal_assigned_by_always: forall a,
     In (StOp tfs_done_signal)
        (flat_map (fun op =>
@@ -188,25 +175,10 @@ Section SchedulerSpec.
     (input: input_t) :=
     List.map (fun op => tf_op_step_updates s_sz i_sz o_sz no_ips op sys_state input) ops.
 
-  (* Definition tfs_reset_states_list
-    (states_to_reset: list s_var)
-    (sys_state: sys_state_t)
-    : sys_state_t :=
-    List.fold_left (fun (st : sys_state_t) (v : s_var) =>
-      let st_env' := ContextEnv.(putenv) (fst st) v (tfs_states_init tf_sched_ctx v) in
-      (st_env', snd st)
-    ) states_to_reset sys_state. *)
-
   Definition tfs_reset_updates
     (states_to_reset: list s_var)
     :=
     List.map (fun v => tf_st_update s_sz o_sz v (tfs_states_init tf_sched_ctx v)) states_to_reset.
-
-  (* Definition tfs_commit_updates
-    updates
-    (sys_state: sys_state_t)
-    : sys_state_t :=
-    List.fold_left (fun (st : sys_state_t) u => tf_op_step_commit s_sz o_sz st u) updates sys_state. *)
 
   Fixpoint find_st_update (x: s_var) (ups: list (tf_update s_sz o_sz)) : option (bits_t (s_sz x)) :=
     match ups with

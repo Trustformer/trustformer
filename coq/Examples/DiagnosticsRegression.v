@@ -1,11 +1,6 @@
-(*!
-    Regressions for the diagnostics layer (Scheduler/Show.v, Scheduler/Audit.v).
-
-    These pin the *rendering*, not the analysis -- the analysis itself is pinned
-    by LockboxTriesTaint.v, which these examples reuse.  What can silently break
-    here is the mapping back from node ids to source: a report that says
-    [CR_no_rule 3] is not wrong, it is unusable.
-!*)
+(*! Regressions for the diagnostics layer (Scheduler/Show.v, Scheduler/Audit.v).
+    These pin the RENDERING; LockboxTriesTaint.v pins the analysis they reuse.
+    What breaks silently here is the mapping from node ids back to source. !*)
 
 Require Import Koika.Frontend.
 

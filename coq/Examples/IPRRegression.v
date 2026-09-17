@@ -1,18 +1,8 @@
-(*
-    Regression example for the IPR / latency-noninterference results.
-
-    The specification is the classic timing side channel: a password check whose
-    branch condition depends on a secret register.  The point of the file is to
-    pin down, on a concrete context, that
-
-      (a) the taint analysis marks that branch condition as secret-dependent,
-      (b) the latency function [L] is genuinely computable, and
-      (c) the IPR theorems instantiate at a real context rather than vacuously.
-
-    (c) is the part that catches signature drift: if a hypothesis of any of the
-    main theorems is strengthened, the [Definition]s at the foot stop type
-    checking.
-*)
+(* Regression for the IPR / latency-noninterference results over the classic
+   timing side channel: a password check branching on a secret register.  Pins,
+   at a concrete context, that the taint analysis marks the branch condition
+   secret-dependent, that [L] is computable, and that the theorems instantiate
+   for real -- the last catching signature drift at the [Definition]s below. *)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.
@@ -167,12 +157,9 @@ Section TheoremInstantiation.
     { intros act a_idx' input'.
       apply (decl_sound_of_instances tfs_ctx cost Hdecls).
       intros i Hi. cbn in Hi. destruct Hi. }
-    (* This context declares every input and output [Public], so the stated
-       hypotheses -- which quantify over ALL outputs and use one shared input --
-       are more than [L_public] now asks for.  Instantiating input' := input and
-       weakening the rest at the use site keeps this regression's statement
-       unchanged, which is the point: the headline got stronger without this
-       client having to say anything new. *)
+    (* Every input and output here is [Public], so these hypotheses are stronger
+       than [L_public] asks for.  Instantiating input' := input and weakening at
+       the use site keeps the regression's statement fixed. *)
     exact (L_public tfs_ctx cost Hdecls Hdguard fs_check a_idx input input
              sp0 sp0' ss0 ss0' Halign Hst Hst'
              (fun v _ => eq_refl)

@@ -14,13 +14,9 @@ Require Import Trustformer.Examples.LockboxTries.
 Require Import Coq.Lists.List.
 Import ListNotations.
 
-(*
-    The taint-analysis claims the paper makes about its running example, as
-    machine-checked facts.
-
-    fig:dfgA5 (paper/sections/05_design/03_taint_analysis.tex): with [tries]
-    secret, *every* phi is critical, so [action_test] must be constant time.
- *)
+(* The paper's taint-analysis claims about its running example, machine-checked.
+   fig:dfgA5 (paper/sections/05_design/03_taint_analysis.tex): with [tries]
+   secret every phi is critical, so [action_test] is constant time. *)
 
 Section FigureA.
 
@@ -178,10 +174,9 @@ Section FigureB.
       = [CR_no_rule 6; CR_no_rule 6; CR_no_rule 6].
     Proof. vm_compute. reflexivity. Qed.
 
-    (* The action assigns exactly the three variables the specification writes.
-       A variable a branch merely READS is not an assignment and must not
-       appear here -- it used to, which is what produced the identity phi the
-       figure does not draw. *)
+    (* The action assigns exactly the three variables the specification writes: a
+       variable a branch merely READS stays out, which is what keeps an identity
+       phi out of the figure. *)
     Example var_map_is_the_written_variables :
       map fst (var_map dfgB)
       = [DFG_OVar fsB_out_tries; DFG_OVar fsB_out_status; DFG_OVar fsB_out_secret].
@@ -277,12 +272,9 @@ End Obligation.
 Print Assumptions lockboxB_uncond_sound.
 Print Assumptions lockboxB_decl_guard_sound.
 
-(*
-    Cycle bounds.  [action_bounds] reports the best and worst case a *circuit*
-    can exhibit; the latency of one concrete input is [L] in Properties/IPR.v,
-    which exists for the proofs and is not meant to be evaluated.
-    [fst = snd] certifies that the action is constant time.
- *)
+(* Cycle bounds: [action_bounds] reports a CIRCUIT's best and worst case, where
+   [L] in Properties/IPR.v gives one concrete input's latency for the proofs.
+   [fst = snd] certifies the action is constant time. *)
 
 Section Bounds.
 
@@ -302,12 +294,10 @@ Section Bounds.
       action_bounds ctxA_blackbox 10 (build_dfg ctxA_blackbox fs_act_test) = (1, 1).
     Proof. vm_compute. reflexivity. Qed.
 
-    (* Making [tries] public separates the bounds: the guard [tries != 0] is no
-       longer tainted, so its phi selects instead of ANDing both branches, and
-       the locked-out case never pays for the [tries - 1] stage.  One cycle when
-       [tries] is exhausted, two when it is not.  This is only visible because a
-       source node is never buffered -- the shared [tries] read would otherwise
-       drag the fast branch into the second stage as well. *)
+    (* Making [tries] public separates the bounds: an untainted [tries != 0] lets
+       its phi SELECT rather than AND both branches, so the locked-out case skips
+       the [tries - 1] stage -- one cycle when [tries] is exhausted, two when it
+       is not.  Visible only because source nodes stay buffer-free. *)
     Example public_tries_separates_the_bounds :
       action_bounds ctxB_blackbox 4 (build_dfg ctxB_blackbox fs_act_test) = (1, 2)
       /\ action_bounds ctxB_whitebox 4 (build_dfg ctxB_whitebox fs_act_test) = (1, 2).
@@ -323,26 +313,18 @@ Section Bounds.
 
 End Bounds.
 
-(*
-    04_hardware_generation.tex §"Valid signal generation" works its example on
-    exactly this action at exactly this schedule: four valid signals, for
-    [out_secret], [tries], [out_status] and [buf].  At cost limit 4 there is
-    precisely one buffer -- node 12, the [tries - 1] subtraction -- so it IS the
-    paper's [buf].
- *)
+(* 04_hardware_generation.tex "Valid signal generation" works its example on
+   this action at this schedule: four valid signals, for [out_secret], [tries],
+   [out_status] and [buf].  At cost limit 4 the one buffer is node 12, the
+   [tries - 1] subtraction, so it IS the paper's [buf]. *)
 
 Section ValidSignals.
 
-    (* [valid_expr_and] absorbs [tf_const 1], so a [done] signal that reduces to
-       a single valid variable is the statement that every OTHER root's valid
-       signal is [Const 0b1].  The paper: "the valid signal expressions for
-       out_secret, out_status and buf are all Const 0b1 since they only depend
-       on source nodes".  [buf]'s own valid is [Const 1] too -- which is only
-       true because a source node is no longer buffered: the [tries] read it
-       depends on used to be a buffer, and a buffer's valid signal is a
-       variable, not a constant.
-       The buffer's valid register is bound out of the schedule itself rather
-       than written down, so the assertion needs no [Vect.index] literals. *)
+    (* [valid_expr_and] absorbs [tf_const 1], so a [done] reducing to a single
+       valid variable says every OTHER root's valid signal is [Const 0b1] -- the
+       paper's claim for out_secret, out_status and buf, which holds of [buf]
+       too because source nodes stay buffer-free.  The valid register is bound
+       out of the schedule, so the assertion needs no [Vect.index] literals. *)
     Example valid_signals_all_phis_critical :
       match fst (schedule ctxA_blackbox 4 (buffer_needs ctxA_blackbox 4) fs_act_test) with
       | [ tf_assign dst_done e_done;
@@ -356,14 +338,11 @@ Section ValidSignals.
       end.
     Proof. vm_compute. repeat split; reflexivity. Qed.
 
-    (* The non-critical case.  The paper says: "If tries is <> 0 and
-       pin = in_pin then the valid signal is the current valid signal of buf,
-       else it is the constant true."  The compiler says the opposite on the
-       INNER test, and the compiler is right: [tries - 1] -- the only buffered
-       node -- sits in the WRONG-pin branch (LockboxTries.v, [fs_act_test]),
-       while the matching-pin branch assigns the constant [tries_reset], which
-       is a source node and valid at once.  So the wait on [buf] happens exactly
-       when [tries <> 0] AND [pin <> in_pin]. *)
+    (* The non-critical case.  The paper inverts the INNER test; the compiler is
+       right: [tries - 1], the only buffered node, sits in the WRONG-pin branch
+       (LockboxTries.v, [fs_act_test]), while the matching-pin branch assigns the
+       source-node constant [tries_reset].  So [buf] is waited on exactly when
+       [tries <> 0] AND [pin <> in_pin]. *)
     Example valid_signals_no_phi_critical :
       match fst (schedule ctxB_whitebox 4 (buffer_needs ctxB_whitebox 4) fs_act_test) with
       | [ tf_assign dst_done e_done;

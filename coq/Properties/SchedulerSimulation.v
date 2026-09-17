@@ -25,9 +25,8 @@ Require Import Lia.
 Import ListNotations.
 
 (* Structural facts about [find_st_update] over an append, proved against an
-   ABSTRACT schedule: stated over the concrete [tfs_schedule ctx cost_limit]
-   record each [Qed] costs ~6 s, because the kernel unfolds that record while
-   re-checking the induction. *)
+   ABSTRACT schedule: over the concrete record each [Qed] costs ~6 s, since the
+   kernel unfolds it while re-checking the induction. *)
 Section FindUpdateAppend.
   Context (SCH: TFSchedule).
 
@@ -185,10 +184,9 @@ Section SchedulerSimulation.
   Qed.
 
   (* find_st_update skips a head update that does not assign the queried state. *)
-  (* A call update writes a state var too, so "not a tf_st_update of x" is no
-     longer enough to skip the head -- the statement needs the second
-     disequality.  INSIGHTS #18's shape: a definition and a lemma statement,
-     not a script. *)
+  (* A call update writes a state var too, so skipping the head needs the second
+     disequality as well.  INSIGHTS #18's shape: a definition and a lemma
+     statement, not a script. *)
   Lemma find_st_update_skip_cons x (u: tf_update ss_sz oo_sz) ups :
     (forall v, u <> tf_st_update _ _ x v) ->
     (forall ov ovv v, u <> tf_call_update _ _ ov ovv x v) ->
@@ -207,9 +205,8 @@ Section SchedulerSimulation.
 
   (* Predicate: op writes state x. *)
   Definition op_assigns_st (x: tfs_states sched) (op: @tf_op (tfs_states sched) i_var o_var) : Prop :=
-    (* SPIKE E1: tf_assign is no longer the ONLY state-writing op, so this
-       characterisation had to gain a disjunct.  This is the one break in the
-       whole experiment that is not mechanical. *)
+    (* E1: a call writes state too, so this characterisation carries a disjunct
+       over both state-writing ops. *)
     (exists e, op = tf_assign x e) \/ (exists rq rv e szA szB (fn: bits_t szA -> bits_t szB), op = tf_call rq rv x e fn).
   (* Predicate: op writes output x.  A call writes its REQUEST port, so this
      needed the same second disjunct [op_assigns_st] has.  The two predicates
@@ -499,10 +496,9 @@ Section SchedulerSimulation.
     cbn [tf_eval_expr]. apply convert_same.
   Qed.
 
-  (* Eval/convert commute at a state-variable leaf: reading [tf_svar v] at its
-     own size and then converting to [szB] equals reading it directly at [szB].
-     This is the (star) obligation instance for a buffered DFG_Var node, whose
-     declared node size equals the register's natural size [ss_sz v]. *)
+  (* Eval/convert commute at a state-variable leaf: [tf_svar v] read at its own
+     size then converted to [szB] equals reading it at [szB].  The (star)
+     obligation for a buffered DFG_Var node, whose size is [ss_sz v]. *)
   Lemma eval_convert_svar (v: tfs_states sched) (szB: nat)
         (ss: sched_sys_state) (input: input_t) :
     Semantics.convert (szA := ss_sz v) (szB := szB)
@@ -746,27 +742,18 @@ Section SchedulerSimulation.
       (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) : Prop :=
     index_to_nat a_idx = @finite_index _ (tfs_action_fin sched) act.
 
-  (* RETRACTED (superseded by [buffers_settled] / [buffers_settled_run]).
-     This cycle-ranked invariant is kept only for reference: ranking buffer
-     saturation by [node_cycle] is UNSOUND, because [require_buffer] also
-     buffers same-cycle nodes, so a buffer chain can be deeper than
-     [max_cycle].  Saturation is now ranked by NODE ID instead (args have
-     strictly smaller ids, so depth n <= n).  Unused. *)
+  (* Reference only, and UNUSED: ranking buffer saturation by [node_cycle] is
+     unsound, since [require_buffer] also buffers same-cycle nodes.  The live
+     rank is NODE ID -- see [buffers_settled] / [buffers_settled_run]. *)
   Definition buffer_inv
       (act: tfs_action sched)
       (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
       (ss: sched_sys_state) (input: input_t) (k: nat) : Prop :=
     forall n_idx,
       let n := vreg_nid a_idx n_idx in
-      (* validity bit is SET once the node's target cycle has been reached.
-         NOTE (soundness): only the SOUND direction [node_cycle <= k -> valid]
-         is kept.  The converse [valid -> node_cycle <= k] is FALSE for buffered
-         nodes whose compiled validity is data-dependent (an untainted Phi's
-         validity is [valid_expr_and cond (valid_expr_if cond then else)], which
-         can fire EARLY when the runtime-selected branch settles before the
-         static node_cycle = MAX over both branches).  This mirrors the same
-         one-directional weakening already applied to the done signal
-         ([done_by_max_cycle] replacing the false [done <-> max_cycle <= k]). *)
+      (* The validity bit is SET once the node's target cycle is reached.  ONE
+         DIRECTION only: a data-dependent validity can fire early, so the
+         converse fails, matching [done_by_max_cycle]'s weakening. *)
       ( node_cycle act n <= k -> (fst ss).[tf_dfg_v a_idx n_idx] <> Bits.zero )
       (* and when the target cycle has been reached, the value register holds
          the settled reference value *)
@@ -3510,9 +3497,8 @@ Section SchedulerSimulation.
      underneath var_map_output_has_cost. *)
 
   (* The build_dfg monad invariant: every var_map entry's nid names a graph node.
-     Holds vacuously of the empty start state and is preserved by dataflow_ops;
-     the preservation step (over emit/set_var/ensure_var/merge_maps + the two
-     compiler Fixpoints) is the sole remaining assumption here. *)
+     Vacuous at the empty start state; the preservation step over dataflow_ops
+     is the sole remaining assumption here. *)
   Definition vmg (s : dfg_state_t (states_var:=s_var)(inputs_var:=i_var)(outputs_var:=o_var)) : Prop :=
     forall k id, In (k, id) (var_map s) ->
                  exists node, In node (graph s) /\ nid node = id.
@@ -3749,11 +3735,9 @@ Section SchedulerSimulation.
     split; [ exact g | apply vi; exact Hv ].
   Qed.
 
-  (* The genuine control-flow-merge core: if every then/else binding names a
-     node in the current graph, then after merge_maps the graph grows and every
-     resulting binding names a node in the new graph.  merge_maps emits Phi
-     nodes and otherwise forwards then/else nids.  This is the sole remaining
-     assumption underneath dataflow_ops_preserves_vmg. *)
+  (* The control-flow-merge core: if every then/else binding names a node of the
+     current graph, then after merge_maps every resulting binding names a node
+     of the grown graph.  The sole assumption under dataflow_ops_preserves_vmg. *)
 
   Lemma nidwf_gmono (s s': dstate) id :
     nidwf s id -> gmono s s' -> nidwf s' id.
@@ -4032,10 +4016,9 @@ Section SchedulerSimulation.
     exists node. split; [ rewrite <- in_rev; exact Hng | exact Hnn ].
   Qed.
 
-  (* Well-formedness of build_dfg: every var_map output node has a cost entry
-     (it appears in the graph, so calc_backward_cost assigns it a cost).  The
-     cost-existence reasoning is now fully proved; only the purely structural
-     var_map_snd_is_graph_nid remains assumed. *)
+  (* Well-formedness of build_dfg: every var_map output node has a cost entry,
+     being in the graph.  The cost-existence half is proved; the structural
+     var_map_snd_is_graph_nid is assumed. *)
   Lemma var_map_output_has_cost :
     forall (act: tfs_action sched) n,
       In n (map snd (var_map (build_dfg ctx act))) ->
@@ -4055,10 +4038,8 @@ Section SchedulerSimulation.
   Qed.
 
   (* Every buffered nid has a strictly positive target cycle: require_buffer
-     only buffers (a) a node's args that live in a DIFFERENT cycle — and since
-     backward cost is non-increasing along edges, an arg's target cycle is >=
-     the node's, and being buffered it differs, so it is > 0 — or (b) a var_map
-     output whose target cycle is explicitly > 0. *)
+     takes args in a DIFFERENT cycle (backward cost is non-increasing along
+     edges, so such an arg sits strictly later) or var_map outputs above 0. *)
   Lemma require_buffer_cycle_pos :
     forall (act: tfs_action sched) n,
       In n (require_buffer ctx (build_dfg ctx act)
@@ -4098,10 +4079,9 @@ Section SchedulerSimulation.
       intro H; discriminate H.
   Qed.
 
-  (* Every buffered nid is a REAL node of the forward graph.  The arg-part of
-     require_buffer holds args of graph nodes (positive, below their consumer);
-     the out-part holds var_map values (positive by build_dfg_args_pos, and a
-     graph nid by var_map_snd_is_graph_nid). *)
+  (* Every buffered nid is a REAL node of the forward graph: the arg-part holds
+     args of graph nodes, the out-part var_map values (positive by
+     build_dfg_args_pos, graph nids by var_map_snd_is_graph_nid). *)
   Lemma require_buffer_node_range :
     forall (act: tfs_action sched) n,
       In n (require_buffer ctx (build_dfg ctx act)
@@ -4159,9 +4139,9 @@ Section SchedulerSimulation.
   Qed.
 
 
-  (* I(0) for the RETRACTED cycle-ranked [buffer_inv]: established by start_rel
-     (all validity bits zero at the start; only nodes with target cycle 0 are
-     immediately valid).  Unused; see the note on [buffer_inv]. *)
+  (* I(0) for the cycle-ranked [buffer_inv], from start_rel: every validity bit
+     is zero at the start, so only target-cycle-0 nodes are immediately valid.
+     UNUSED -- see the note on [buffer_inv]. *)
   Lemma buffer_inv_init :
     forall (act: tfs_action sched) a_idx (sp0: src_sys_state)
            (ss0: sched_sys_state) (input: input_t),
@@ -4206,12 +4186,9 @@ Section SchedulerSimulation.
 
   (* Every op emitted by compile_dfg_buffers is a tf_assign to a tf_dfg_b or
      tf_dfg_v register — never a base state var tf_dfg_s (nor the done flag). *)
-  (* Every op emitted by compile_dfg_drives is a [tf_assign (tf_dfg_ov o)] --
-     a SCHEDULER register, not an output and not a base state var.  That is the
-     whole content of the reframe: because a drive writes a register the
-     scheduler invented, the always half still writes no outputs, and
-     [always_ops_no_out] stays TRUE rather than becoming the one false theorem
-     this campaign found. *)
+  (* Every op compile_dfg_drives emits is a [tf_assign (tf_dfg_ov o)], i.e. a
+     SCHEDULER register.  That is what keeps [always_ops_no_out] true: the
+     always half writes registers the scheduler invented, never outputs. *)
   Lemma compile_dfg_drives_no_out
     (a_idx: nat)
     (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var) (outputs_var := o_var))
@@ -4430,9 +4407,8 @@ Section SchedulerSimulation.
   Qed.
 
   (* Packages the phi step of the VALUE component in one equation, so proofs
-     never have to destructure the three branch compiles themselves.  Stated
-     over variables: writing the concrete analysis arguments out makes the
-     destructs miss (implicit/notation mismatches). *)
+     never destructure the three branch compiles.  Stated over variables --
+     concrete analysis arguments make the destructs miss. *)
   Lemma compile_fst_phi_gen (tainted: list nid_t)
         (dfacts: list gfact) (pi: list lit) a_idx
         (dfg: @dfg_state_t s_var i_var o_var)
@@ -4600,11 +4576,9 @@ Section SchedulerSimulation.
     - intro o. exact (sched_step_preserves_ovar act ss input o Hnd).
   Qed.
 
-  (* compile_dfg_expr is fuel-invariant above the structural bound: for the
-     forward build_dfg graph, any two fuels strictly above a node's position
-     produce the same compiled (expr, valid) pair.  The recursion only descends
-     into strictly-smaller arg positions, so fuel beyond [n] is never consumed.
-     This lets us canonicalize node_ref_expr / compile calls to a single fuel. *)
+  (* compile_dfg_expr is fuel-invariant above the structural bound: the recursion
+     descends only into strictly-smaller arg positions, so any two fuels above a
+     node's position agree.  Canonicalises compile calls to a single fuel. *)
   Lemma compile_fuel_irrel_gen (act: tfs_action sched) a_idx buffers
         (tainted: list nid_t) (dfacts: list gfact) :
     forall n,
@@ -4691,13 +4665,9 @@ Section SchedulerSimulation.
     exact (compile_fuel_irrel_gen act a_idx buffers _ _ n Hn1 Hnlen f1 f2 [] Hf1 Hf2).
   Qed.
 
-  (* Every buffer register of [act]'s slot whose cached node id is BELOW [bound]
-     holds its SETTLED value, i.e. the fully-inlined buffer-free reference
-     expression of the node it caches.  This is the guard-free form of
-     buffer_inv's value conjunct, relativized by NODE ID: a buffer's compiled
-     expression only ever reaches strictly smaller node ids, so the id is the
-     rank along which saturation is proved (the target cycle is NOT a valid
-     rank — [require_buffer] also buffers same-cycle nodes). *)
+  (* Every buffer of [act]'s slot caching a node id BELOW [bound] holds its
+     SETTLED value, the fully-inlined buffer-free reference expression.  Ranked
+     by NODE ID, since a buffer's expression reaches only smaller ids. *)
   Definition buffers_settled
       (act: tfs_action sched)
       (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
@@ -4708,25 +4678,9 @@ Section SchedulerSimulation.
       = eval_st (tf_dfg_b a_idx n_idx)
           (node_ref_expr act a_idx (vreg_nid a_idx n_idx)) ss input.
 
-  (* SUBSTITUTION (2b).  Once every buffer register holds its settled value,
-     compiling a node WITH buffers evaluates exactly like compiling it
-     buffer-free: each buffered leaf reads a register that, by hypothesis,
-     already equals the inlined expression it replaced.
-
-     SIZE DISCIPLINE.  The only hypothesis needed on the demanded size is
-     [szB = sz node]: every operand slot of a compiled expression demands its
-     argument at that argument's OWN declared size — [tf_not]/binary/Phi via
-     [wfg_build_dfg], [tf_cmp szC] via the operator's own width (which [wfg]
-     also pins on the args), and [DFG_Resize] definitionally (the compiler emits
-     [tf_resize (sz arg_node)]).  At a buffered leaf the register width matches
-     by [buffer_register_node_size], so the [convert] cast is the identity.
-
-     BOUND DISCIPLINE.  Settledness is only assumed for buffers caching a node
-     id below [bound].  The recursion descends to strictly smaller ids, so a
-     child of a node [n <= bound] satisfies [x < bound]; the TOP-level caller
-     (compiling buffer [n] itself, whose entry [compile_dfg_buffers] removed
-     from the slot) instead supplies the left disjunct [list_assoc bufs n = None]
-     and therefore need not assume that [n]'s own register is already settled. *)
+  (* SUBSTITUTION: once every buffer holds its settled value, compiling a node
+     WITH buffers evaluates exactly as buffer-free.  Needs [szB = sz node], and
+     settledness only for ids below [bound]. *)
   Lemma compile_subst_gen
         (act: tfs_action sched)
         (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
@@ -4936,10 +4890,8 @@ Section SchedulerSimulation.
           by (unfold get_args; rewrite Hop; left; reflexivity).
         unfold node_args_sz in Hfg. rewrite Hop in Hfg.
         exact (Hchild dn (sz node) pi Hain Hfg).
-      + (* SPIKE 2b: DFG_Sample -- only the VALIDITY comes from the token.  The
-           value is [tf_ivar v], identical with and without buffers, so the
-           substitution is trivial on this half.  That asymmetry is the whole
-           point of the node. *)
+      + (* DFG_Sample: only the VALIDITY comes from the token, so the value
+           [tf_ivar v] is identical with and without buffers. *)
         cbn [fst].
         repeat match goal with
         | |- context [compile_dfg_expr_aux ?a ?b ?c ?d ?e ?f ?g ?h ?i ?j] =>
@@ -5041,13 +4993,9 @@ Section SchedulerSimulation.
         exfalso. rewrite Hcz, beq_dec_refl in Hb. discriminate.
   Qed.
 
-  (* SUBSTITUTION, gated by VALIDITY.  Wherever a node's compiled validity
-     expression fires, its compiled value expression agrees with the buffer-free
-     one.  The recursion is justified by the validity conjunctions: a binary
-     node's validity is the AND of its children's, and an untainted Phi's is
-     [and cond (if cond then_valid else_valid)] -- which validates exactly the
-     branch that [tf_expr_if] selects, so the unselected (possibly unsettled)
-     branch is never read. *)
+  (* SUBSTITUTION, gated by VALIDITY: wherever a node's compiled validity fires,
+     its value agrees with the buffer-free one.  An untainted Phi validates
+     exactly the branch [tf_expr_if] selects, so it reads no unsettled one. *)
   Lemma compile_subst_valid_gen
         (act: tfs_action sched)
         (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
@@ -5300,11 +5248,9 @@ Section SchedulerSimulation.
                by (rewrite Et; cbn [snd]; exact (Hthen Hcnz)).
              pose proof (Hchild tid (sz node) pt Htin Hf2 Hat) as Hct.
              rewrite Et, Et' in Hct. cbn [fst] in Hct. exact Hct.
-      + (* DFG_Stall: value AND validity both pass through, so this is the
-           DFG_Unary case with nothing to do.  A REAL W-b stall breaks exactly
-           here: its validity is not the argument's, so [Hval] would no longer
-           hand over the argument's validity and this bullet would need the
-           lag invariant instead. *)
+      + (* DFG_Stall: value and validity both pass through here, so this is the
+           DFG_Unary case.  A counting stall needs the lag invariant instead,
+           [Hval] handing over only the argument's validity. *)
         assert (Hain : In sa (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
         unfold node_args_sz in Hfg. rewrite Hop in Hfg.
@@ -5314,10 +5260,9 @@ Section SchedulerSimulation.
           by (unfold get_args; rewrite Hop; left; reflexivity).
         unfold node_args_sz in Hfg. rewrite Hop in Hfg.
         exact (Hchild dn (sz node) pi Hain Hfg Hval).
-      + (* SPIKE 2b: DFG_Sample -- THE interesting bullet.  Only the validity
-           passes through; the value is [tf_ivar v] and is the same with and
-           without buffers.  This is the value/validity decoupling a real
-           round trip needs, and it discharges here rather than blocking. *)
+      + (* DFG_Sample: only the validity passes through, the value [tf_ivar v]
+           being the same with and without buffers.  The round trip's
+           value/validity decoupling, discharged here. *)
         cbn [fst].
         repeat match goal with
         | |- context [compile_dfg_expr_aux ?a ?b ?c ?d ?e ?f ?g ?h ?i ?j] =>
@@ -5374,13 +5319,9 @@ Section SchedulerSimulation.
       + exact IH.
   Qed.
 
-  (* SETTLE BOUND.  Buffers are ranked by NODE ID, not by target cycle: a
-     buffer's compiled expression only reaches strictly smaller ids
-     (args_lt_fwd), so a buffer caching node [n] settles by cycle [n].  Note the
-     target cycle is NOT a valid rank — require_buffer's out-part buffers every
-     var_map output with a nonzero cycle, so a buffer can read another buffer at
-     the SAME target cycle (see agents/scheduler-simulation for the
-     counterexample), which is why the whole run is bounded by the graph size. *)
+  (* SETTLE BOUND.  Buffers rank by NODE ID (args_lt_fwd), so a buffer caching
+     node [n] settles by cycle [n] and the run is bounded by the graph size.
+     The target cycle is NOT a rank: two buffers can share one. *)
   Definition settle_bound (act: tfs_action sched) : nat :=
     length (graph (build_dfg ctx act)).
 
@@ -5515,10 +5456,9 @@ Section SchedulerSimulation.
     apply index_to_nat_of_nat. exact Hidx.
   Qed.
 
-  (* GATEWAY: the compiled done signal is the tf_dfg_done assignment of the
-     combined validity over EXACTLY the concrete per-output validity exprs
-     (snd of compile_dfg_expr for each nodup var_map output nid), evaluated with
-     the aligned action's DFG, full fuel, and its require_buffer slot list. *)
+  (* GATEWAY: the compiled done signal is [tf_dfg_done] assigned the combined
+     validity over EXACTLY the per-output validity exprs, at the aligned
+     action's DFG, full fuel and require_buffer slot list. *)
   Lemma done_exprs_concrete (act: tfs_action sched) a_idx :
     act_idx_aligned act a_idx ->
     exists rest,
@@ -5654,12 +5594,9 @@ Section SchedulerSimulation.
       reflexivity.
   Qed.
 
-  (* SATURATION (value).  After k cycles without a done flag, every buffer
-     caching a node id BELOW k holds its settled (buffer-free) value.  Induction
-     on k: the cycle recomputes the buffer from its slot minus itself, all the
-     buffers it can read cache strictly smaller ids and are settled by the IH
-     (compile_subst), and a pre-done cycle does not disturb the settled value
-     itself (compile_nobuf_step_stable). *)
+  (* SATURATION (value): after k cycles with no done flag, every buffer caching
+     a node id BELOW k holds its settled value.  Induction on k over
+     [compile_subst] and [compile_nobuf_step_stable]. *)
   Lemma buffers_settled_run :
     forall (act: tfs_action sched) a_idx (input: input_t)
            (ss0: sched_sys_state) (k: nat),
@@ -5814,11 +5751,9 @@ Section SchedulerSimulation.
           rewrite Bits.and_ones_l. apply Bits.and_ones_l.
         * rewrite valid_and_eval, Hcv, Bits.and_ones_l.
           apply (valid_if_eval ce tv ev _ input Htv Hev).
-      + (* DFG_Stall: validity passes through unchanged.  THIS is the bullet a
-           real W-b stall cannot discharge -- its validity is the argument's
-           delayed, so "the argument is valid now" does not give "the stall is
-           valid now", and the lemma would have to be restated over a cycle
-           index rather than proved pointwise. *)
+      + (* DFG_Stall: validity passes through unchanged here.  A counting stall
+           delays it, so this lemma restates over a cycle index rather than
+           holding pointwise. *)
         assert (Hain : In sa (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
         pose proof (Hchild sa pi Hain) as Ha.
@@ -5904,12 +5839,9 @@ Section SchedulerSimulation.
   Qed.
 
 
-  (* SOUND semantic core (Phase 2): a done cycle exists no later than
-     S (settle_bound).  Either the done flag already fired at some cycle <=
-     settle_bound (early done — harmless, yields an earlier witness), or it did
-     not, in which case every buffer has settled and validated by cycle
-     settle_bound (its node id is < settle_bound = the graph size), so the
-     combined validity — hence the done flag — fires at S (settle_bound). *)
+  (* SOUND semantic core (Phase 2): a done cycle exists by S (settle_bound).
+     Either done fired earlier, which yields an earlier witness, or every buffer
+     settled and validated by settle_bound and the combined validity fires. *)
   Lemma done_by_settle_bound :
     forall (act: tfs_action sched) (sp0: src_sys_state)
            (ss0: sched_sys_state) (input: input_t),
@@ -5956,10 +5888,9 @@ Section SchedulerSimulation.
         [ unfold settle_bound; lia | right; unfold settle_bound; lia ].
   Qed.
 
-  (* PHASE 2 (progress): a FIRST done cycle exists.  Obtained as the least
-     cycle N <= S (settle_bound act) at which the done flag fires (well-ordering
-     over the decidable predicate [done_set (run_n k …)]), so "not done before
-     N" holds by construction. *)
+  (* PHASE 2 (progress): a FIRST done cycle exists, the least N <= S
+     (settle_bound act) at which done fires (well-ordering over the decidable
+     [done_set (run_n k ...)]), so "not done before N" holds by construction. *)
   Lemma scheduler_reaches_done :
     forall (act: tfs_action sched) (sp0: src_sys_state)
            (ss0: sched_sys_state) (input: input_t),
@@ -6394,13 +6325,9 @@ Section SchedulerSimulation.
     reflexivity.
   Qed.
 
-  (* THE INVARIANT (Phase 3b).  At EVERY cycle of a run started from a state
-     whose validity bits are clear, a buffer whose validity bit is set holds its
-     settled (fully inlined, buffer-free) value.  Unlike the Phase-2 saturation
-     lemmas this needs no "not yet done" hypothesis: a done cycle clears all the
-     validity bits, so the invariant is re-established vacuously, and a pre-done
-     cycle recomputes each buffer from an expression whose buffered leaves are
-     exactly the ones its own validity conjunction demands. *)
+  (* THE INVARIANT (Phase 3b): from a state with clear validity bits, at EVERY
+     cycle a buffer whose validity bit is set holds its settled value.  A done
+     cycle clears the bits, so no "not yet done" hypothesis is needed. *)
   Lemma valid_settled_run :
     forall (act: tfs_action sched) a_idx (input: input_t)
            (ss0: sched_sys_state) (k: nat),
@@ -7017,10 +6944,9 @@ Section SchedulerSimulation.
         * exact (IH Hla a Hin).
   Qed.
 
-  (* var_map effects of the two updating steps, stated purely with [In] so that
-     no [eq_dec] instance has to be written down in a statement (the instance
-     Coq picks when ELABORATING a statement need not be syntactically the one
-     baked into [ensure_var]'s body, which breaks [destruct]/[reflexivity]). *)
+  (* var_map effects of the two updating steps, stated with [In] so no [eq_dec]
+     instance appears in a statement: the one Coq elaborates need not match
+     [ensure_var]'s syntactically, which breaks [destruct]/[reflexivity]. *)
   Lemma ensure_var_vm_head (v: dvar) (s: wst) id s' :
     ensure_var ctx v s = (id, s') -> In (v, id) (var_map s').
   Proof.
@@ -7319,11 +7245,9 @@ Section SchedulerSimulation.
       - rewrite (nval_var_ovar act a_idx ss input ov id Hat). exact (Hoo ov).
     Qed.
 
-    (* [get_var] returns a node denoting the CURRENT source value, and keeps
-       the invariant: either the binding already existed, or the read node
-       holds the initial value — which the frame condition says IS the current
-       one, precisely because the variable had no binding.  A read does not
-       touch [var_map], so the invariant carries over unchanged. *)
+    (* [get_var] returns a node denoting the CURRENT source value: either the
+       binding existed, or the read node holds the initial value, which the
+       frame condition makes the current one.  A read leaves [var_map] alone. *)
     Lemma get_var_sem (s s': wst) (v: dvar) id sp :
       0 < length (graph s) ->
       get_var ctx v s = (id, s') ->
@@ -7821,11 +7745,9 @@ Section SchedulerSimulation.
            (tf_eval_expr s_sz i_sz o_sz (szB := s_sz dst) e sp input), snd sp).
     Proof. reflexivity. Qed.
 
-    (* THE DENOTATION, at the spec level: a call assigns its destination the
-       value of its RESPONSE port, and its argument [e] does not appear on the
-       right-hand side at all.  That absence is the whole content of Spike
-       1.5's R instantiation -- nothing here claims the response is a function
-       of the request, which is what makes it satisfiable for a TRNG. *)
+    (* THE DENOTATION at the spec level, in this file's R form: a call assigns its
+       destination the value of its RESPONSE port, with the argument [e] absent
+       from the right-hand side. *)
     Lemma ops_run_call (rq: o_var) (rv: i_var) (dst: s_var) e
         {szA szB} (fn: bits_t szA -> bits_t szB)
         (sp: src_sys_state) :
@@ -7957,16 +7879,9 @@ Section SchedulerSimulation.
             { intro He. subst v. exact (Hno res_id Hhead). }
             rewrite (src_get_put_o_neq sp dst _ v Hnv).
             apply Hfr1. intros n Hin. exact (Hno n (Hkeep v n Hin Hnv)).
-        + (* A call, composed from the two cases above: the tf_output argument
-             for the REQUEST, then the tf_assign argument for the RESPONSE,
-             joined through an intermediate source state [(fst sp, put rq)].
-
-             [tf_ivar] ignores the state, so the response value is the same
-             before and after the request write.  That is what lets the two
-             halves compose with no sequencing side condition -- and it is the
-             same fact that makes the R instantiation the cheap one: a response
-             that depended on the request would need the request's effect
-             threaded into its own evaluation. *)
+        + (* A call composed from the two cases above: the tf_output argument for
+             the REQUEST then the tf_assign one for the RESPONSE.  [tf_ivar]
+             ignores the state, so they need no sequencing side condition. *)
           cbn [dataflow_ops].
           (* --- the request half --- *)
           pose proof (dataflow_expr_fg expr (dfg_var_size ctx (DFG_OVar rq)) s

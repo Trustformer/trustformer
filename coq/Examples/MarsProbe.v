@@ -7,18 +7,11 @@ Require Import Trustformer.Examples.MarsSeq.
 Require Import Coq.Lists.List.
 Import ListNotations.
 
-(*
-    Probe for the MARS module: how large is each command's DFG, how deep does
-    the scheduler pipeline it, how many cycles does a host wait, and how much of
-    it is forced constant-time.  Pinned so a change that silently rebalances the
-    schedule fails loudly.
-
-    These are CYCLE counts, not timing.  Concatenation is genuinely free
-    (cost_fn gives tf_concat 0 -- it selects wires), so a wide datapath costs
-    AREA, not depth; what costs cycles is a deep chain, and this module's only
-    ones are the eleven-arm capability lookup and the four-arm regSelect chain.
-    Cost limit 10 is a scheduling parameter, not a delay model.
- *)
+(* Probe for MARS: each command's DFG size, pipeline depth, host wait and
+   constant-time share, pinned so a silent rebalance fails loudly.  These are
+   CYCLE counts: [tf_concat] costs 0 (it selects wires), so width costs AREA and
+   depth costs cycles -- here the eleven-arm capability lookup and the four-arm
+   regSelect chain.  Cost limit 10 is a scheduling parameter. *)
 
 Definition dfg_cap   := build_dfg tfs_ctx act_capabilityget.
 Definition dfg_reg   := build_dfg tfs_ctx act_regread.

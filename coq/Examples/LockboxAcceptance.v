@@ -1,17 +1,8 @@
-(*! Phase F: the paper's lockbox, as an acceptance test.
-
-    `paper/sections/05_design/03_taint_analysis.tex`, "Backwards Untainting",
-    makes two concrete claims:
-
-      - standard lockbox (`tries` secret, fig. A5): ALL phi nodes are critical;
-      - modified lockbox (`tries` public, fig. B5): NO phi node is critical,
-        because `==[sz]` is conditionally untainted under `!=[2] = true` and
-        every phi depending on it lies on a path where `!=[2]` is true.
-
-    The two contexts below differ only in whether the specification publishes
-    `tries`.  Everything else -- the rule set, the analysis, the compiler -- is
-    identical.
-!*)
+(*! The paper's lockbox as an acceptance test for "Backwards Untainting"
+    (paper/sections/05_design/03_taint_analysis.tex): with `tries` secret
+    (fig. A5) every phi node is critical; with `tries` public (fig. B5) none is,
+    `==[sz]` being conditionally untainted under `!=[2] = true`.  The two
+    contexts below differ only in whether the spec publishes `tries`. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.
@@ -147,13 +138,10 @@ Section Contexts.
       /\ length (graph (build_dfg ctx_B lb_act_test)) = 23.
     Proof. split; vm_compute; reflexivity. Qed.
 
-    (* fig. A5.  Node 3 is [!=[tsz]] and node 6 is [==[lsz]].  Nothing
-       declassifies the tries comparison, so its phis stay critical; the pin
-       comparison IS declassified -- PhiCUT recovers it from a phi with two
-       distinct constant branches -- but only under [(3, true)], a path the
-       compiler never reaches because the outer phi is critical and therefore
-       does not extend the path.  This is the paper's "all phi nodes are
-       critical". *)
+    (* fig. A5: node 3 is [!=[tsz]], node 6 is [==[lsz]].  The tries comparison
+       keeps its phis critical; PhiCUT declassifies the pin comparison, but only
+       under [(3, true)], a path a critical outer phi leaves unextended.  Hence
+       the paper's "all phi nodes are critical". *)
     Example lb_secret_tries_all_critical :
       crit_report_all ctx_A (build_dfg ctx_A lb_act_test)
       = [CR_no_rule 3;

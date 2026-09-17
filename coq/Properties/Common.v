@@ -651,24 +651,6 @@ Section LogHelpers.
     reflexivity.
   Qed.
 
-  (* Lemma may_write_log_cons :
-    forall log1 log2 idx idx' le P,
-      may_write (reg_t:=reg_t) (R:=R) (REnv:=REnv) log1 (log_cons idx' le log2) P idx = 
-      (if eq_dec idx' idx then 
-        (if P =? P0 && is_write0 (kind le) (port le) then
-          false
-        else
-          may_write log1 log2 P idx) 
-      else 
-        may_write log1 log2 P idx).
-  Proof.
-    intros. unfold may_write. rewrite !SemanticProperties.log_existsb_app.
-    destruct (eq_dec idx' idx); simpl.
-    - subst idx. destruct (is_write0 (kind le) (port le)) eqn:His.
-      + rewrite !log_existsb_cons. rewrite !eq_dec_refl. rewrite !His. bool_step.
-       simpl. reflexivity.
-    - simpl. rewrite log_existsb_empty. reflexivity.
-  Qed. *)
 
   Lemma latest_write_log_cons_read :
     forall log idx idx' le,
@@ -785,10 +767,3 @@ Proof.
   - destruct H as [H1 H2]. apply not_in_app; assumption.
 Qed.
 
-(* Section InterpActionRewritesHelper.
-
-  Lemma rew_interp_action_code:
-    forall {reg_t: Type} {REnv: Env reg_t} {R: reg_t -> type} r sigma ctx log_r log_a e rest,
-      interp_action r sigma ctx log_r log_a (rew [fun _ => _] e in rest) = interp_action r sigma ctx log_r log_a rest.
-
-End InterpActionRewritesHelper. *)

@@ -1,17 +1,6 @@
-(*! Human-readable rendering of the scheduler's analysis output.
-
-    The analyses in `VariableScheduler.v` answer in node ids: `get_tainted`
-    returns a `list nat`, and `crit_report_all` returns things like
-    `[CR_no_rule 3; CR_no_rule 6]`.  That is the right internal representation
-    and the wrong thing to show a user, who wrote `$tries != #0`, not `3`.
-
-    This file is pure presentation: `string` in, `string` out, no dependency in
-    the other direction.  Nothing under `coq/Properties/` imports it, and
-    nothing here may change what the compiler emits.
-
-    Legend used throughout: [$x] state variable, [@x] output variable,
-    [?x] input, [#n] constant.
-!*)
+(*! Human-readable rendering of the scheduler's analyses, which answer in node
+    ids.  Pure presentation, imported by nothing under `coq/Properties/`.
+    Legend: [$x] state variable, [@x] output, [?x] input, [#n] constant. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.

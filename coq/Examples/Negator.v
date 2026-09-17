@@ -14,13 +14,8 @@ Require Import Coq.Logic.EqdepFacts.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
-(*
-    An example specification and synthesis of a simple negator module.
-    The hardware module has a single internal state register (32 bits) and supports four actions (nop, neg, read, write).
-    Actions are triggered through a command register, where the first 1 bit indicates if the command is valid,
-    and the remaining bits indicate the action to perform.
-
- *)
+(* A negator: one 32-bit state register and four actions (nop, neg, read,
+   write), triggered through a command register whose first bit marks it valid. *)
 
 Section FunctionalSpecification.
 

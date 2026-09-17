@@ -10,37 +10,11 @@ Require Import Trustformer.Scheduler.VariableScheduler.
 Require Import Coq.Lists.List.
 Import ListNotations.
 
-(*
-    SPIKE (agents/one-action, 2026-09-10): what does WAITING actually cost?
-
-    The archived external-call mechanism cost (L+2) x argument_width flip-flops
-    per call site, and it is easy to conclude from that that declared latency is
-    inherently expensive.  It is not.  That cost was a property of the
-    mechanism: `refactor/external2` emitted L+1 chained DFG_Delay nodes plus one
-    more, each at the argument width, and `cost_fn (DFG_Delay _) = cost_limit`
-    forced every one onto its own cycle and therefore into its own buffer.  It
-    was a shift register, copying the value forward once per cycle, and it
-    existed only because the scheduler advances validity monotonically by node
-    RANK -- inserting nodes was the only way to express "later".
-
-    A stall does not need any of that.  [require_buffer] allocates ONE buffer per
-    value that crosses a cycle boundary -- it collects argument nids and
-    [nodup]s them -- so a value held for one cycle and a value held for sixteen
-    cost exactly the same.
-
-    This file measures both shapes with the machinery that exists today, so it
-    carries no proof risk:
-
-      act_chain  the archive's shape: the value is passed THROUGH k nodes, each
-                 costing a full cycle.  Buffers grow with k.
-      act_hold   the stall's shape: one value is computed early and consumed k
-                 cycles later, while unrelated work occupies those cycles.
-                 One buffer, whatever k is.
-
-    Multiplication costs 5 and the cost limit here is 5, so each [tf_mul] is a
-    cycle of its own -- which is exactly what `cost_fn (DFG_Delay _) =
-    cost_limit` did in the archive.
- *)
+(* What WAITING costs, in two shapes.  [act_chain] passes a value THROUGH k
+   nodes each costing a full cycle, so buffers grow with k -- the archived
+   (L+2) x width per call site.  [act_hold] computes a value early and consumes
+   it k cycles later, for ONE buffer whatever k is, since [require_buffer]
+   [nodup]s per value crossing a boundary.  [tf_mul] costs a cycle at limit 5. *)
 
 Section Spike.
 
@@ -107,31 +81,10 @@ Section Spike.
 
   (* --- and what it would cost to HOLD instead ------------------------- *)
 
-  (* This is the half that CANNOT be measured with the machinery that exists
-     today, and finding that out is the useful part of the spike.
-
-     [calc_backward_cost] costs the graph BACKWARD from the output, so a node
-     with a short path to its consumer is placed as LATE as it can be.  A value
-     computed "early" therefore is not early at all -- the scheduler simply
-     schedules it next to its consumer and it never crosses a boundary.  A first
-     attempt here put a [tf_not] alongside a 16-deep chain and measured no extra
-     buffer at all, because the [tf_not] had been moved to the last cycle.
-
-     Nothing in the current scheduler PINS a producer to an early cycle.  That
-     is exactly what a stall node introduces, and it is also why the archive
-     reached for a chain: with validity advancing monotonically by node rank,
-     inserting nodes was the only way to express "later".
-
-     What the allocator will do once a producer can be pinned is not in doubt,
-     because it is structural.  [require_buffer] collects, for every node, the
-     arguments whose cycle differs from its own, and [nodup]s the result: ONE
-     entry per value that crosses a boundary, regardless of how many cycles it
-     waits.  A held value is one nid however far apart producer and consumer
-     are; a chain is k nids.  1 versus k, and the difference is the mechanism,
-     not the waiting.
-
-     Spike 2 is therefore not "measure the hold" but "make a producer pinnable",
-     i.e. give [DFG_Stall] a latency and a [must_buffer], which is the campaign's
-     first real rung. *)
+  (* Pinning a producer EARLY needs the stall's own latency: [calc_backward_cost]
+     costs the graph backward from the output, so a node with a short path to its
+     consumer is scheduled right beside it and crosses no boundary.  A [tf_not]
+     placed alongside a 16-deep chain measures no extra buffer for exactly that
+     reason.  StallLatencySpike.v measures the pinned shape. *)
 
 End Spike.

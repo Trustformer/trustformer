@@ -1,13 +1,6 @@
-(*! Declassification rule: phi with two distinct constant branches.
-
-    If a phi selects between two constants that differ *as bitvectors at the
-    node's width*, the selector is recoverable from the node's value.  This is
-    the paper's PhiCUT.
-
-    The instance is unconditional (`di_guard = []`): the conditionality of the
-    lockbox comes from the phi node itself being only guarded-derivable, and is
-    added by `decl_compose`, not by this rule.
-!*)
+(*! Declassification rule: a phi between two constants differing AS BITVECTORS
+    at the node's width makes the selector recoverable -- the paper's PhiCUT.
+    Unconditional; `decl_compose` adds the lockbox's guard from the phi. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.

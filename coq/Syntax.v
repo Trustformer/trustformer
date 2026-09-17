@@ -7,10 +7,9 @@ Require Import Koika.Utils.Environments.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
-(* An attached IP block.  Both ports are the scheduler's own: the request is a
+(* An attached IP block.  Both ports are the scheduler's own -- the request a
    drive register routed to [ext_ip_req], the response a live read from
-   [ext_ip_resp].  Neither is a port of the design, so an action cannot name
-   one and neither needs a confidentiality declaration. *)
+   [ext_ip_resp] -- so an action names neither and neither is declared. *)
 
 Record ip_decl := {
   ip_req_sz  : nat;         (* request width, driven mid-action *)

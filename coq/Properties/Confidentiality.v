@@ -10,54 +10,9 @@ Require Import Trustformer.Scheduler.Contract.
 Require Import Coq.Lists.List.
 Import ListNotations.
 
-(*
-    VALUE-level confidentiality, over action SEQUENCES.
-
-    The companion to IPR.v: that file says the cycle count carries nothing
-    secret, this one says the VALUES on the Public ports do not either.  They
-    are deliberately separate theorems -- one is about what the outputs are, the
-    other about how long they take, and conflating them is how information-flow
-    arguments go wrong (agents/mars/INSIGHTS.md).
-
-    WHY SEQUENCES.  Per-action is unsound.  [crypt_key := dp] in one action and
-    [dout := crypt_key] in the next each satisfy a per-action criterion in
-    isolation, and DP is published (REVIEW.md section 2.4).  The invariant that
-    survives composition is "every Public output is secret-free; Secret outputs
-    may be arbitrary", carried across the whole sequence.
-
-    WHAT IS PROVED is a FACTORISATION, not an indistinguishability.  Read it as:
-
-      the Public outputs are a function of the public data and the IP's
-      responses; the secret registers are not among the arguments.
-
-    Formally: two runs whose SECRET STATE differs arbitrarily, starting from
-    Public outputs that agree and driven by the SAME inputs, end with Public
-    outputs that still agree.  Fixing the inputs is what isolates the module's
-    own contribution -- so the content is that the only route from ps/dp/ak to
-    an attacker-visible port is out through a Secret port and back in as an IP
-    response.  The module's wiring adds nothing.
-
-    IT DOES NOT SAY TWO DEVICES WITH DIFFERENT SECRETS LOOK THE SAME.  They do
-    not, and obviously so: different DP means a different crypt_key, so the IP
-    returns a different hmac_res and MARS_Quote returns a different signature.
-    Those two runs violate the shared-input hypothesis and the theorem says
-    nothing whatever about them -- correctly, because [dout = HMAC(AK, snap)] IS
-    a function of AK by construction and exporting a DP-derived MAC is the
-    entire point of MARS_Quote.
-
-    The shared input is MVP.md section 9 A1 made concrete: A1 says crypt_res is
-    the HMAC of the presented message, i.e. a FUNCTION of what the module sent.
-    Quantifying over runs where that function returned the same value is how the
-    module's own dataflow is separated from the cryptography's.
-
-    The honest reading is therefore ROADMAP.md's tiers: the only route from a
-    secret to a Public port is through the crypto oracle.  Everything the module
-    does with its own wires is covered here; what the oracle does with the key
-    is HMAC's security, not a datapath property.  Refining the shared input into
-    an explicit oracle f(key, msg) is the remaining strengthening; it needs the
-    trusted inputs to be computed from the trusted outputs during the run, which
-    the single-step semantics does not currently express.
- *)
+(* VALUE-level confidentiality over action SEQUENCES: the Public outputs are a
+   function of the public data and the IP's responses, with the secret registers
+   not among the arguments.  Full reading in coq/Properties/README.md. *)
 
 Section Confidentiality.
 
@@ -101,12 +56,9 @@ Section Confidentiality.
   (* The criterion, decidable and syntactic.                              *)
   (* ------------------------------------------------------------------- *)
 
-  (* "Secret-free": mentions no secret register and no read of a Secret
-     output.  Inputs are allowed at any class because the theorem shares them
-     between the two runs -- see the header.  A read of a Secret OUTPUT is not
-     allowed, and that is the clause REVIEW.md section 2.4 is about: output
-     variables are readable, so without it [crypt_key := dp] followed by
-     [dout := crypt_key] would pass. *)
+  (* "Secret-free": mentions no secret register and no read of a Secret output.
+     Inputs are free at any class, since the theorem shares them between the two
+     runs.  The Secret-output clause is REVIEW.md 2.4; see the README. *)
   Fixpoint sf_expr (e: @tf_expr s_var i_var o_var) : bool :=
     match e with
     | tf_const _ => true
@@ -118,26 +70,16 @@ Section Confidentiality.
     | tf_expr_if c t f => sf_expr c && (sf_expr t && sf_expr f)
     end.
 
-  (* [g] records that some enclosing branch condition was NOT secret-free.
-     Under such a guard no Public output may be written at all -- assigning a
-     CONSTANT to a public output inside a branch on [dp] leaks [dp], which is
-     why the enclosing-condition clause is load-bearing rather than cosmetic. *)
+  (* [g] records a secret-dependent enclosing branch condition.  Under such a
+     guard every Public output stays unwritten: assigning even a CONSTANT to one
+     inside a branch on [dp] leaks [dp]. *)
   Fixpoint sf_ops (g: bool) (ops: @tf_ops s_var i_var o_var) : bool :=
     match ops with
     | tf_ops_base tf_nop => true
     | tf_ops_base (tf_assign _ _) => true    (* a secret register may hold anything *)
-    (* A call is NOT simply "as tf_assign": it writes its REQUEST PORT, so it
-       carries exactly the leak a tf_output does and must be classified the same
-       way.  A call under a secret-dependent guard, writing a Public request
-       port, publishes the branch condition -- and with it whatever secret the
-       condition was computed from.  Treating a call as harmless here was safe
-       only while its argument was inert; the moment the request became a real
-       write it stopped being safe, and this lemma is what caught it.
-
-       Note the agreement with Probe 2d, reached independently from the drive
-       side: a Public port that moves in a data-dependent way is
-       attacker-visible.  The proof obligation and the security obligation are
-       the same obligation. *)
+    (* A call writes its REQUEST PORT, so it classifies as a [tf_output]: under a
+       secret-dependent guard a drive publishes the branch condition, and with it
+       whatever secret the condition came from.  See the README. *)
     | tf_ops_base (tf_call req _ _ arg _) =>
         match o_cls req with
         | Secret => true                     (* Secret request ports may be arbitrary *)
@@ -345,11 +287,9 @@ Section Confidentiality.
       exact (sf_ops_sound _ false (Hall a) sys sys' input Hpub).
   Qed.
 
-  (* The reading that matters: with the IP's responses held fixed, the secret
-     registers contribute NOTHING to any Public port -- for any command
-     sequence.  Named for what it rules out, a direct flow, rather than for
-     indistinguishability, which is a different and false claim: two devices
-     with different DP produce different quotes, and are meant to. *)
+  (* With the IP's responses held fixed, the secret registers contribute NOTHING
+     to any Public port, for any command sequence.  Named for the direct flow it
+     rules out; see coq/Properties/README.md for what it does NOT claim. *)
   Corollary no_direct_secret_flow
       (acts: list (tfs_spec_action ctx)) (input: input_t)
       (secrets secrets': ContextEnv.(env_t) (tf_states_type s_sz))

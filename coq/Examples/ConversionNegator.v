@@ -15,14 +15,9 @@ Require Import Coq.Program.Equality.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
-(*
-    An example specification and synthesis of a simple ConversionNegator module.
-    The hardware module has a single internal state register (4 bits) and supports four actions (nop, neg, read, write).
-    Actions are triggered through a command register, where the first 1 bit indicates if the command is valid,
-    and the remaining bits indicate the action to perform.
-
-    The inputs it receives are 6bits, while it outputs 8bit values
- *)
+(* A ConversionNegator: one 4-bit state register, four actions (nop, neg,
+   read, write) triggered through a command register whose first bit marks the
+   command valid.  6-bit inputs, 8-bit outputs. *)
 
 Section FunctionalSpecification.
 

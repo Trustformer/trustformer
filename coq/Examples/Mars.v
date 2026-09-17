@@ -16,24 +16,11 @@ Import ListNotations.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
-(*
-    ONE COMMAND = ONE ACTION.  A crypto round trip is a [tf_call] inside the
-    command that needs it, so MARS_Continue is gone and with it out_pend, the
-    request/active/tag handshake bits and the crypto port groups.  The
-    sequential design it replaces is Examples/MarsSeq.v, which the oracle
-    validated and which this is checked against.
-
-    A minimal TCG MARS device, Profile [TF-MARS-S256-P2].
-
-    STAGE 1 of agents/mars/MVP.md section 8: the two crypto-free commands,
-    [MARS_CapabilityGet] and [MARS_RegRead], over two PCRs.  Every other
-    MARS_CC code has an explicit arm returning MARS_RC_COMMAND -- an
-    unrecognized code fires no rule, and [out_rc] would then retain the previous
-    command's value (REVIEW.md section 3.4).
-
-    Normative sources: spec/mars-library-v1r14.md sections 5.3.1, 8.1.2, 8.3.2;
-    reference-emulator/c/mars.c and mars.h.
- *)
+(* A minimal TCG MARS device, Profile [TF-MARS-S256-P2], over two PCRs.  One
+   command = one action: a crypto round trip is a [tf_call] inside the command
+   that needs it.  Every MARS_CC code has an arm, so [out_rc] is always written
+   (REVIEW.md 3.4).  Sources: spec/mars-library-v1r14.md 5.3.1, 8.1.2, 8.3.2;
+   reference-emulator/c/mars.c and mars.h. *)
 
 Section FunctionalSpecification.
 
@@ -74,8 +61,8 @@ Section FunctionalSpecification.
     Definition MARS_PT_ALG_AKDF   := 11.
 
     (* The Profile itself (MVP.md section 2).  Symmetric only, so ALG_AKDF is
-       TPM_ALG_ERROR and both asymmetric key lengths are zero, which is what
-       excludes MARS_PublicRead. *)
+       TPM_ALG_ERROR, both asymmetric key lengths are zero, and MARS_PublicRead
+       falls outside it. *)
     Definition PROFILE_COUNT_PCR  := 2.
     Definition PROFILE_COUNT_TSR  := 0.
     Definition PROFILE_LEN_DIGEST := 32.
@@ -89,8 +76,7 @@ Section FunctionalSpecification.
     Definition PROFILE_ALG_AKDF   := 0.    (* TPM_ALG_ERROR                *)
 
     (* One action per MARS_CC code (mars.h L105-118).  Codes 0..12 are the
-       specification's; MARS_Init and MARS_Continue take Profile-declared codes
-       >= 13 and arrive in Stage 2. *)
+       specification's; MARS_Init takes a Profile-declared code. *)
     Inductive fs_action :=
     | act_selftest           (* MARS_CC_SelfTest          0 *)
     | act_capabilityget      (* MARS_CC_CapabilityGet     1 *)
@@ -124,8 +110,7 @@ Section FunctionalSpecification.
     | act_quote            => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~0~1~0
     | act_sign             => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~0~1~1
     | act_signatureverify  => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~1~0~0
-    (* 0xFFFF, deliberately not adjacent to the 0..12 range: MARS_Init is a
-       PERMANENT Profile command and never has to be renumbered. *)
+    (* 0xFFFF, clear of the 0..12 range: MARS_Init is a permanent Profile command. *)
     | act_init             => Ob~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1~1
     end.
 
@@ -138,9 +123,7 @@ Section FunctionalSpecification.
         destruct a1; destruct a2; try reflexivity; try discriminate.
     Qed.
 
-    (* Secrets.  Unused in Stage 1: PS arrives at Init and DP/AK are derived by
-       the crypto port, both of which are Stage 2 onwards.  Declared here so the
-       attacker model (secrets = states_var) is fixed from the first commit. *)
+    (* Secrets: the attacker model is secrets = states_var. *)
     Inductive fs_states :=
     | st_ps
     | st_dp
@@ -156,13 +139,9 @@ Section FunctionalSpecification.
     | in_pt            (* MARS_CapabilityGet: property tag        *)
     | in_idx           (* MARS_RegRead / MARS_PcrExtend: index    *)
     | in_dig           (* MARS_PcrExtend: the digest to extend    *)
-    (* The crypto results no longer arrive on inputs: an IP response is the
-       scheduler's own port, named by the IP rather than declared here. *)
 
-    (* From the platform, not from software.  [in_ps] is the Primary Seed and is
-       secret outright; [in_init_req] leaks nothing, but software must never be
-       able to drive it (spec section 5.8) -- and [Secret] already delivers
-       "never bus-mapped", which is the protection wanted. *)
+    (* Platform-driven, so both are [Secret], which delivers "never bus-mapped"
+       (spec section 5.8).  [in_ps] is the Primary Seed. *)
     | in_ps
     | in_init_req
     (* MARS_Quote *)
@@ -173,9 +152,8 @@ Section FunctionalSpecification.
     | in_ctxlen
     .
 
-    (* PCRs are OUTPUT variables, not state variables: they are meant to be
-       public (MARS_RegRead hands them out), and making them secret would taint
-       the whole Quote datapath.  MVP.md section 6.1. *)
+    (* PCRs are OUTPUT variables: MARS_RegRead hands them out, and Public keeps
+       the Quote datapath untainted.  MVP.md section 6.1. *)
     Inductive fs_outputs :=
     (* Public: results *)
     | out_rc
@@ -188,9 +166,6 @@ Section FunctionalSpecification.
 
     | out_st         (* 0 = uninitialized, 1 = DP is valid       *)
     | out_snap       (* MARS_Quote: the device snapshot           *)
-    (* [out_ctx] is GONE: it existed only because inputs are re-sampled on
-       every step, so a multi-step command could mix two invocations'
-       arguments.  One action reads [in_ctx] once. *)
     .
 
     Definition fs_states_size (x: fs_states) : nat :=
@@ -231,24 +206,15 @@ Section FunctionalSpecification.
     end.
 
     (* Confidentiality classification (Contract.v [port_class]).  [Secret] means
-       "outside what the confidentiality guarantee quantifies over, therefore may
-       carry a secret, therefore never memory-mapped".  Spec section 5.8 requires
-       exactly this for the crypto port: DP and AK cross it.
-
-       Every port here is Public: the crypto port groups are gone, so nothing
-       carrying a secret crosses the design's own ports any more.  An IP link
-       nothing, and the guarantee is about which ports are COVERED.
-
-       construction. *)
-
-
+       "outside what the guarantee quantifies over, so it may carry a secret and
+       stays off the memory map"; the guarantee is about which ports it COVERS.
+       An IP link is a port of neither side, so DP and AK cross no declared
+       port.  Spec section 5.8. *)
     Definition fs_inputs_class (x: fs_inputs) : port_class :=
     match x with
-    | in_pt | in_idx | in_dig => Public
-
-
-    | in_ps | in_init_req                      => Secret
-    (* Quote's arguments are the host's own; nothing secret about them. *)
+    | in_pt | in_idx | in_dig                            => Public
+    | in_ps | in_init_req                                => Secret
+    (* Quote's arguments are the host's own. *)
     | in_regsel | in_nonce | in_ctx | in_nlen | in_ctxlen => Public
     end.
 
@@ -257,22 +223,20 @@ Section FunctionalSpecification.
     (* handshake bits an observer could see on the bus edge anyway *)
     | out_rc | out_cap | out_dout | out_pcr0 | out_pcr1 | out_failure
     | out_st | out_snap => Public
-
     end.
 
-    (* The two attached IPs.  A request is ONE word, so a multi-field request
-       is packed: SHA takes [len || msg], HMAC takes [len || key || msg].
-
-       [ip_fn] is the SPEC's claim about what the block computes.  Nothing in
-       the lowering reads it -- the circuit samples the wire -- so a real
-       SHA-256 model is not needed to synthesize, and the placeholder below is
-       marked rather than hidden.  Proving a call computes the right thing is
-       a separate lemma, deferred. *)
+    (* The two attached IPs.  A request is ONE word, so a multi-field request is
+       packed: SHA takes [len || msg], HMAC takes [len || key || msg].  [ip_fn]
+       is the spec's claim about what the block computes; the circuit samples
+       the wire, so the placeholder below is marked as one.  Proving a call
+       computes the right thing is a separate lemma, deferred. *)
     Definition placeholder_digest {n} (v: bits_t n) : bits_t digest_sz :=
       Bits.slice 0 digest_sz v.
 
     Inductive fs_ips := ip_sha | ip_hmac.
 
+    (* [ip_lat] is measured on external/glue over secworks/sha256_core -- 135
+       and 269 cycles -- plus margin. *)
     Definition fs_ip (p: fs_ips) : ip_decl :=
       match p with
       | ip_sha  => {| ip_req_sz  := len_sz + msg_sz;
@@ -316,19 +280,11 @@ Section FunctionalSpecification.
           (tf_op2 (tf_concat digest_sz digest_sz) (tf_ovar pcr) (tf_ivar in_dig))
           (tf_const 0).
 
-    (* Commands are refused until _MARS_Init has COMPLETED.  This is what stops
-       MARS_Quote deriving AK = KDF(0,'R',ctx) from a zero DP, which anyone could
-       compute (REVIEW.md section 2.2).
-
-       [out_st] is not redundant with [in_init_req]: the request authorises
-       STARTING an initialization, [out_st] records that one finished, and Init
-       is a KDF round trip -- so there is a window where the request is asserted
-       and DP is still zero.  MVP.md section 2.2 deviation 3.
-
-       MARS_CapabilityGet is exempt, on the same rule that exempts it from
-       failure mode: it always answers.  It reads no state a pending step or an
-       uninitialized DP could affect -- every value it returns is a Profile
-       constant. *)
+    (* Commands are refused until _MARS_Init COMPLETES, which keeps MARS_Quote
+       from deriving AK = KDF(0,'R',ctx) off a zero DP (REVIEW.md section 2.2).
+       [in_init_req] authorises STARTING an initialization; [out_st] records
+       that one finished (MVP.md section 2.2 deviation 3).  MARS_CapabilityGet
+       is exempt: every value it returns is a Profile constant. *)
     Definition guard_init (body: @tf_ops fs_states fs_inputs fs_outputs fs_ips)
         : @tf_ops fs_states fs_inputs fs_outputs fs_ips :=
     {[
@@ -337,16 +293,11 @@ Section FunctionalSpecification.
         else `body`
     ]}.
 
-    (* CryptSkdf's framing, from reference-emulator/c/hw_sha2.c -- the spec text
-       does not give it, so the Profile pins it (MVP.md section 2):
-
-         HMAC(parent, [1]_4 || label || 0x00 || ctx || [8192]_4)
-
-       For CryptDpInit the parent is PS, the label is MARS_LD = 'D' and the
-       context is the three bytes "prd".  13 bytes, left-aligned in the 512-bit
-       port.  Built from byte-sized constants on purpose: [tf_const] carries a
-       unary nat, so "prd" as one 24-bit literal (7369828) would be ~1s of
-       [N.of_nat] per elaboration where three 8-bit ones are free. *)
+    (* CryptSkdf's framing, pinned by the Profile from hw_sha2.c (MVP.md 2):
+       HMAC(parent, [1]_4 || label || 0x00 || ctx || [8192]_4).  CryptDpInit
+       takes parent = PS, label = MARS_LD 'D', ctx = "prd": 13 bytes,
+       left-aligned in the 512-bit port.  Byte-sized constants keep
+       [tf_const]'s unary nat small -- a 24-bit literal costs ~1s to elaborate. *)
     Definition dpinit_msg : @tf_expr fs_states fs_inputs fs_outputs :=
         tf_op2 (tf_concat 104 408)
           (tf_op2 (tf_concat 32 72) (tf_const 1)
@@ -359,17 +310,10 @@ Section FunctionalSpecification.
           (tf_const 0).
 
     (* CryptSnapshot, spec section 5.6.9 / reference mars.c:
-
-         regSelect (4 bytes, BIG ENDIAN) || REG[i] for each selected i || nonce
-
-       Big-endian regSelect is informative in the spec and comes from the
-       reference implementation, so the Profile pins it (MVP.md section 2).
-       Four shapes over two PCRs, three distinct lengths: 36 / 68 / 68 / 100
-       bytes, left-aligned in the 1024-bit SHA port.
-
-       Note the trailing field is the NONCE, not the context: MARS_Quote calls
-       CryptSnapshot(snapshot, regSelect, nonce, nlen).  The context goes to the
-       KDF at the next step, which is a different message entirely. *)
+       regSelect (4 bytes, BIG ENDIAN) || REG[i] for each selected i || nonce.
+       The Profile pins the endianness (MVP.md section 2).  Four shapes over two
+       PCRs, three lengths -- 36 / 68 / 68 / 100 bytes, left-aligned in the
+       1024-bit SHA port.  The trailing field is the NONCE. *)
     Definition snap_none : @tf_expr fs_states fs_inputs fs_outputs :=
         tf_op2 (tf_concat 288 736)
           (tf_op2 (tf_concat 32 256) (tf_ivar in_regsel) (tf_ivar in_nonce))
@@ -389,9 +333,8 @@ Section FunctionalSpecification.
                 (tf_ivar in_nonce))))
           (tf_const 0).
 
-    (* The AK derivation frame: same CryptSkdf shape as [dpinit_msg], with a
-       32-byte context instead of the three-byte "prd".  42 bytes.  Reads
-       [in_ctx] directly -- one action, so there is nothing to latch. *)
+    (* The AK derivation frame: [dpinit_msg]'s CryptSkdf shape over a 32-byte
+       [in_ctx].  42 bytes. *)
 
     Definition ak_kdf_msg : @tf_expr fs_states fs_inputs fs_outputs :=
         tf_op2 (tf_concat 336 176)
@@ -402,15 +345,13 @@ Section FunctionalSpecification.
                   (tf_const 8192)))))
           (tf_const 0).
 
-    (* CryptSign's message is the 32-byte snapshot, left-aligned -- read from
-       the state var the snapshot call wrote. *)
+    (* CryptSign's message: the 32-byte snapshot the SHA call wrote, left-aligned. *)
     Definition sign_msg : @tf_expr fs_states fs_inputs fs_outputs :=
         tf_op2 (tf_concat digest_sz 256) (tf_svar st_snap) (tf_const 0).
 
-    (* A request is one word.  SHA takes [len || msg]; HMAC takes
-       [len || key || msg].  The IP glue unpacks -- which is what a single
-       request bus means, and the reason [ip_req_sz] is one number.
-       [len] is an expression because message shapes differ in length. *)
+    (* A request is one word, so [ip_req_sz] is one number and the IP glue
+       unpacks: SHA takes [len || msg], HMAC [len || key || msg].  [len] is an
+       expression because message shapes differ in length. *)
     Definition call_sha (dst: fs_states)
                         (len msg: @tf_expr fs_states fs_inputs fs_outputs)
         : @tf_ops fs_states fs_inputs fs_outputs fs_ips :=
@@ -436,23 +377,11 @@ Section FunctionalSpecification.
     Definition unsupported : @tf_ops fs_states fs_inputs fs_outputs fs_ips :=
         guard_failure {[ let $out_rc := #MARS_RC_COMMAND ]}.
 
-    (* An output variable HOLDS its value unless an action writes it, so a stale
-       result survives every command that does not overwrite it -- after a Quote,
-       [out_dout] would keep driving the signature on 256 wires until the next
-       RegRead.  Every command therefore clears the RESULT registers first.
-
-       Scope matters, and only these two (later [snap]) may be cleared:
-         - [out_pcr0]/[out_pcr1]/[out_failure] -- and later [out_st]/[out_pend] -- are
-           outputs only because non-secret state is modelled that way
-           (MVP.md section 6.1).  Clearing them per command would wipe the
-           measurement chain on every command.
-         - the trusted crypt_* ports must stay STABLE from the request arm to
-           the completion arm, so clearing them at command start would destroy
-           an in-flight request.  Their rule is the opposite shape: zeroize at
-           sequence end and in every error arm (REVIEW.md section 2.7).
-
-       Measured free: +1 node on CapabilityGet, +0 on RegRead, +2 on an excluded
-       command; no change to buffers or to any action's cycle bounds. *)
+    (* An output HOLDS its value until an action writes it, so a Quote's
+       signature would keep driving 256 wires until the next RegRead.  Every
+       command clears the RESULT registers first.  The scope is exactly these
+       two: [out_pcr0]/[out_pcr1]/[out_failure]/[out_st] carry device state
+       across commands (MVP.md section 6.1).  Costs +1 node on CapabilityGet. *)
     Definition clear_results (body: @tf_ops fs_states fs_inputs fs_outputs fs_ips)
         : @tf_ops fs_states fs_inputs fs_outputs fs_ips :=
     {[
@@ -461,8 +390,7 @@ Section FunctionalSpecification.
         `body`
     ]}.
 
-    (* One arm per command code.  Wrapped by [fs_transitions] below, which is
-       the only definition the scheduler sees. *)
+    (* One arm per command code; [fs_transitions] below wraps it for the scheduler. *)
     Definition fs_command
         (act: fs_action)
         :
@@ -470,9 +398,9 @@ Section FunctionalSpecification.
         :=
         match act with
 
-        (* MARS_CapabilityGet -- spec section 8.1.2.  Note there is NO out_failure
-           guard: section 5.3.1 excludes this command from out_failure mode.  All
-           eleven Table 6 tags, then MARS_RC_VALUE. *)
+        (* MARS_CapabilityGet -- spec section 8.1.2.  Section 5.3.1 exempts it
+           from failure mode, so it runs unguarded.  All eleven Table 6 tags,
+           then MARS_RC_VALUE. *)
         | act_capabilityget =>
             {[
                 if ($in_pt ==[arg_sz] #MARS_PT_PCR) then
@@ -512,12 +440,9 @@ Section FunctionalSpecification.
                     let $out_rc := #MARS_RC_VALUE
             ]}
 
-        (* MARS_RegRead -- spec section 8.3.2.  An out-of-range index is
-           MARS_RC_REG (7), not MARS_RC_VALUE, and [out_dout] reads zero because
-           [clear_results] already cleared it.  The C emulator instead leaves
-           the CALLER's buffer untouched, which has no analogue on an MMIO
-           result register; either way the host contract is the same, "check out_rc
-           before using out_dout". *)
+        (* MARS_RegRead -- spec section 8.3.2.  An out-of-range index gives
+           MARS_RC_REG (7) and [out_dout] reads zero from [clear_results].  The
+           host contract either way: check out_rc before using out_dout. *)
         | act_regread =>
             guard_failure (guard_init {[
                 if ($in_idx ==[arg_sz] #0) then
@@ -545,10 +470,9 @@ Section FunctionalSpecification.
                 else
                     let $out_rc := #MARS_RC_REG
             ]})
-        (* _MARS_Init -- spec section 5.4.  Gated on a protected input the platform
-           drives, never software (section 5.8), and exempt from the failure and
-           init guards: it is what clears failure mode.  ONE action now -- the
-           DP derivation is a call, not a second command. *)
+        (* _MARS_Init -- spec section 5.4.  Gated on [in_init_req], which the
+           platform drives (section 5.8), and it runs unguarded because it is
+           what clears failure mode.  The DP derivation is a call. *)
         | act_init =>
             {[
                 if ($in_init_req ==[1] #1) then
@@ -556,12 +480,10 @@ Section FunctionalSpecification.
                     let $out_failure    := #0;
                     let $out_pcr0       := #0;
                     let $out_pcr1       := #0;
-                    (* [st_ps] was just assigned, and statement order is
-                       genuinely sequential (REVIEW.md section 4), so this reads
-                       the NEW seed rather than the previous one. *)
+                    (* Statement order is sequential (REVIEW.md section 4), so
+                       [st_ps] reads the seed assigned above. *)
                     `call_hmac st_dp (tf_const 13) (tf_svar st_ps) dpinit_msg`;
-                    (* the last step of the reset sequence: DP is valid from
-                       here on, and it is valid in THIS action *)
+                    (* the last step of the reset sequence: DP is valid from here *)
                     let $st_ak  := #0;
                     let $out_st := #1;
                     let $out_rc := #MARS_RC_SUCCESS
@@ -576,25 +498,11 @@ Section FunctionalSpecification.
         | act_derive           => unsupported
         | act_dpderive         => unsupported
         | act_publicread       => unsupported
-        (* MARS_Quote -- spec section 8.5.1.  THREE round trips, ONE action:
-
-             snap = SHA (regSelect || REGs || nonce)
-             AK   = HMAC(DP, [1]||'R'||0||ctx||[L])
-             sig  = HMAC(AK, snap)
-
-           Two are on the same IP and the third reads the second's result, so
-           this is the sequenced and the chained case at once -- the shapes
-           Example_TwoCallSpike and Example_ChainedCallSpike measure.
-
-           regSelect picks the snapshot's SHAPE, inside the payload, so there is
-           still exactly one SHA call.  Four arms around the call would be four
-           round trips.
-
-           REVIEW.md section 2.1's hazard is gone rather than defended against.
-           It was that consecutive ARMS assign to [st_ak] and then to
-           [out_dout], so one cycle of staleness would publish the Attestation
-           Key in clear.  There are no consecutive arms: the scheduler orders
-           the three samples by the data dependency between them. *)
+        (* MARS_Quote -- spec section 8.5.1.  Three round trips in one action:
+           snap = SHA(regSelect || REGs || nonce), AK = HMAC(DP, kdf frame),
+           sig = HMAC(AK, snap) -- the sequenced and chained cases at once.
+           regSelect picks the snapshot's SHAPE inside the payload, so one SHA
+           call covers all four arms. *)
         | act_quote =>
             guard_failure (guard_init {[
                 if ($in_nlen !=[arg_sz] #32) then
@@ -610,8 +518,7 @@ Section FunctionalSpecification.
                 else if ($in_regsel ==[32] #3) then
                     `call_sha st_snap (tf_const 100) snap_both`; `quote_sign`
                 else
-                    (* regSelect names a register this Profile does not
-                       implement -- mars.c: regSelect >> PROFILE_COUNT_REG *)
+                    (* regSelect reaches past PROFILE_COUNT_REG -- mars.c *)
                     let $out_rc := #MARS_RC_REG
             ]})
         | act_sign             => unsupported
@@ -646,37 +553,28 @@ Section TypedSynthesis.
         tfs_spec_action_fin := _;
         tfs_spec_action_ops := fs_transitions;
 
-        (* Pinned empty, and it must stay empty: one unsound user-supplied
-           declassification rule unbalances a secret-dependent phi.
-           REVIEW.md section 4. *)
-        (* no attached IP: no call names a response port here *)
-        (* no IP drives any port here, so nothing can conflict with one *)
         tfs_spec_ips := fs_ips;
         tfs_spec_ips_fin := _;
         tfs_spec_ip := fs_ip;
 
+        (* Pinned empty: one unsound declassification rule unbalances a
+           secret-dependent phi.  REVIEW.md section 4. *)
         tfs_spec_decls := []
     |}.
 
-    (* The call structure, per command.  This is the property the one-action
-       form is FOR: a crypto round trip lives inside the command that needs it,
-       and choosing a payload does not multiply the round trips. *)
+    (* The call structure, per command: a round trip lives inside the command
+       that needs it, at one round trip per payload choice. *)
     Definition qdfg := build_dfg tfs_ctx act_quote.
-    (* One arm per snapshot shape, so four SHA drives -- but their guards are
-       DISJOINT, so they are not chained: the action is one round trip deep,
-       not four.  [quote_depth] is what pins that down. *)
+    (* One arm per snapshot shape, so four SHA drives on disjoint guards;
+       [quote_depth] pins the depth they add up to. *)
     Example quote_four_sha  : List.length (drive_nodes tfs_ctx qdfg ip_sha)  = 4.
     Proof. vm_compute. reflexivity. Qed.
     Example quote_eight_hmac : List.length (drive_nodes tfs_ctx qdfg ip_hmac) = 8.
     Proof. vm_compute. reflexivity. Qed.
 
-    (* THE MEASUREMENT that makes branching around a call affordable.  Four arms
-       emit four SHA drives and eight HMAC drives, but their guards are disjoint
-       arm-to-arm, so the arms are NOT chained and the action is one round trip
-       deep rather than four.
-
-       550 = max(140, 275) + 275: the snapshot SHA and the AK derivation are
-       independent so they overlap, and only the signature waits for both. *)
+    (* Disjoint guards keep the four arms at one round trip:
+       550 = max(140, 275) + 275, the snapshot SHA overlapping the AK
+       derivation, with only the signature waiting for both. *)
     Definition qcycles := calc_target_cycle 40 (calc_backward_cost tfs_ctx 40 qdfg).
     Example quote_depth :
       fold_left (fun a p => Nat.max a (snd p)) qcycles 0 = 550.

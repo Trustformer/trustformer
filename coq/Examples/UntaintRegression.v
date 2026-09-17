@@ -14,17 +14,11 @@ Require Import Trustformer.Rules.PhiConst.
 Require Import Coq.Lists.List.
 Import ListNotations.
 
-(*
-    Contrast test for whitebox untainting.
-
-    One specification, two contexts: without declassification rules the phi on
-    the secret is critical, and with the negation rule it is not -- because the
-    specification already publishes `!secret`, so the attacker can invert it.
-
-    This is what `TaintRegression.v` cannot show: that supplying a rule changes
-    the analysis, and that the resulting design still satisfies the IPR
-    obligation.
- *)
+(* Contrast test for whitebox untainting: one specification, two contexts.  Bare,
+   the phi on the secret is critical; with the negation rule it is not, the spec
+   already publishing `!secret` for the attacker to invert.  Shows what
+   `TaintRegression.v` cannot -- that a rule changes the analysis and the design
+   still meets the IPR obligation. *)
 
 Section FunctionalSpecification.
 

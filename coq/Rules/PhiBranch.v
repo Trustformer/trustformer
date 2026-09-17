@@ -1,14 +1,6 @@
-(*! Declassification rule: a phi and its selected branch agree on that branch.
-
-    For `n = Phi c t e`, whenever `c` holds the node's value IS the then-branch's
-    value, so each determines the other.  This is the paper's PhiAUT, and it is
-    the first shipped rule with a NON-EMPTY guard: the fact is only true on the
-    path where the selector has the matching value.
-
-    Both directions are emitted.  Downward (`n` justifies `t`) is what carries a
-    published output into a nested conditional -- the lockbox pattern, where the
-    inner phi is derivable only under the outer selector.
-!*)
+(*! Declassification rule: for `n = Phi c t e`, wherever `c` holds the node's
+    value IS the then-branch's -- the paper's PhiAUT, the one rule with a
+    NON-EMPTY guard.  Both directions, downward giving the lockbox pattern. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.
@@ -127,7 +119,7 @@ Section Soundness.
     destruct (wsz_node_sz ctx cost_limit act eid _ Hfe) as [_ Hesz].
 
     (* the guard names the selector, so [pi_holds] is exactly its value *)
-    (* generalised over the input: the two runs no longer share one *)
+    (* generalised over the input: the two runs carry their own *)
     assert (Hsel : forall (b: bool) (inp: input_t) (ss: sched_sys_state),
               pi_holds ctx cost_limit act a_idx inp [(cnd, b)] ss ->
               nval ctx cost_limit act a_idx ss inp

@@ -1241,13 +1241,9 @@ Section SynthesisCorrectness.
         pose proof (IHexpr2 l3 l4 cmp_sz).
         destruct (eval_expr_aux expr2 l3 sys input). cbn in *. subst.
         destruct (eval_expr_aux expr2 l4 sys input). cbn in *. subst. reflexivity.
-      + (* tf_concat.  Identical in shape to the tf_cmp bullet above: the
-           binary case of [eval_expr_aux] evaluates BOTH operands at [szB]
-           first, threading the log, and only then enters the operator match.
-           Those two szB evaluations are dead in this branch but their [let]s
-           still bind the log, so they must be destructed before the hi_sz /
-           lo_sz ones can reduce.  Only the two size arguments differ from
-           tf_cmp. *)
+      + (* tf_concat, shaped like the tf_cmp bullet above: [eval_expr_aux]'s
+           binary case binds both operands at [szB] before the operator match,
+           so those dead [let]s are destructed first. *)
         cbn.
         pose proof (IHexpr1 log1 log2 szB).
         destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
@@ -1975,10 +1971,9 @@ Section SynthesisCorrectness.
           -- simpl in HNoDup_aff. inversion HNoDup_aff; subst.
              rewrite may_write_all_log_cons_neq; [|assumption].
              apply may_write_all_expr_log; assumption.
-      (* A call emits TWO writes -- the request port, then the destination -- so
-         this is the tf_output bullet followed by the tf_assign bullet, with the
-         IH applied only after both.  [H0] is generalised over [rest] and
-         [log_a], which is what makes the second step possible. *)
+      (* A call emits TWO writes -- request port, then destination -- so this is
+         the tf_output bullet then the tf_assign bullet, with the IH applied
+         after both.  [H0] is generalised over [rest] and [log_a] for that. *)
       + simpl. simpl in Hwr0_aff.
         apply may_write_all_cons in Hwr0_aff.
         destruct Hwr0_aff as [Hwr0_req Hwr0_rest0].
@@ -2254,10 +2249,9 @@ Section SynthesisCorrectness.
   Qed.
   Local Opaque may_write.
 
-  (* Value-level bridge: the HW value read at P1 for tf_reg x from the always-ops log
-     (falling back to r) equals the abstract find_st_val over tfs_get_updates.
-     The may_write hypothesis guarantees the pre-existing logs don't write tf_reg x,
-     so the fallback threads through to r.[tf_reg x] = (fst sys).[x]. *)
+  (* Value-level bridge: the HW value read at P1 for [tf_reg x] off the
+     always-ops log equals [find_st_val] over [tfs_get_updates], the may_write
+     hypothesis leaving [tf_reg x] alone in the prior logs. *)
   Lemma read_aux_log_reg_val :
     forall sys r ops input log_r log_a x,
       state_matches sys r ->
@@ -2503,22 +2497,15 @@ Section SynthesisCorrectness.
                | exact (IHa Hc) ].
   Qed.
 
-  (* Lemma affected_regs_fst_not_in_snd:
-    forall act reg, 
-      In reg (affected_regs (fst (spec_schedule act))) 
-      -> ~ In reg (affected_regs (snd (spec_schedule act))).
-  Proof. *)
-
   (* The StOp/OutOp flat_map used by tfs_ops_no_duplicates. *)
   Local Notation ops_tags ops :=
     (flat_map (fun op =>
        match op with
        | tf_assign dst _ => [StOp dst]
        | tf_output dst _ => [OutOp dst]
-       (* E1.  A call WRITES a state var, so it must carry a StOp tag -- this is
-          the DEBT-3 wildcard shape, and omitting the arm makes the NoDup
-          obligation strictly EASIER rather than breaking a proof, so the build
-          would stay green while the hardware wrote a register twice. *)
+       (* E1.  A call WRITES a state var, so it carries a StOp tag.  The DEBT-3
+          wildcard shape: omitting this arm weakens the NoDup obligation
+          silently, leaving the build green over a doubly-written register. *)
        | tf_call req _ dst _ _ => [OutOp req; StOp dst]
        | _ => []
        end) ops).
@@ -2932,74 +2919,6 @@ Section SynthesisCorrectness.
         * exact Hwr0_snd.
   Qed.
 
-  (*
-  Lemma interp_rule_correct :
-    forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
-           (act: spec_action) (input: input_t)
-           (sigma: forall f, Sig_denote (Sigma f))
-           log,
-      state_matches sys r ->
-      ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
-      ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
-      may_read_all log P0 (map tf_reg spec_all_states) = true ->
-      may_write_all log log_empty P0 (map tf_reg spec_all_states) = true ->
-      may_read_all log P0 (map tf_in spec_all_inputs) = true ->
-      may_write_all log log_empty P0 (map tf_in spec_all_inputs) = true ->
-      may_read_all log P0 (map tf_out spec_all_outputs) = true ->
-      may_write_all log log_empty P0 (map tf_out spec_all_outputs) = true ->
-      may_read log P0 (tf_ready) = true ->
-      may_write log log_empty P0 (tf_ready) = true ->
-      may_read log P0 (tf_cmd) = true ->
-      may_write log log_empty P0 (tf_cmd) = true ->
-      let guard_log := if Bits.single r.[tf_ready] then log_after_cmd_guard_rdy act sigma else log_cons tf_cmd Read0 (log_cons tf_ready Read0 log_empty) in
-      interp_rule r sigma log (rules (rule_cmd act)) = Some (construct_log sys act input r.[tf_ready] guard_log).
-  Proof.
-    intros sys r act input sigma log Hstate Hinput_rdy Hinput_nrdy.
-    intros Hrd0_st Hwr0_st Hrd0_in Hwr0_in Hrd0_out Hwr0_out Hrd0_rdy Hwr0_ready Hrd0_cmd Hwr0_cmd.
-    unfold interp_rule, rules.
-
-    rewrite interp_action_seq. unfold opt_bind.
-    rewrite (interp_action_cmd_guard sys r act input sigma log); try assumption.
-
-    setoid_rewrite (interp_action_cmd sys r act input sigma log 
-              (if Bits.single r.[tf_ready] 
-                then log_after_cmd_guard_rdy act sigma 
-                else log_cons tf_cmd Read0 (log_cons tf_ready Read0 log_empty))).
-    - reflexivity.
-    - assumption.
-    - assumption.
-    - assumption.
-    - assumption.
-    - destruct (reg_ready_or_not r) as [Hready | Hnotready].
-      + rewrite Hready. cbn. unfold log_after_cmd_guard_rdy. 
-        rewrite !may_write_all_log_cons_neq. rewrite may_write_all_fold_cons_w0_inputs. rewrite !may_write_all_log_cons_neq. assumption.
-        all: (try exact not_in_reg_ready_all_states); (try exact not_in_reg_cmd_all_states).
-        intros. rewrite in_map_iff in H. destruct H as [x0 [Heq Hin]]. subst. exact (not_in_reg_reg_all_inputs x0).
-      + rewrite Hnotready. cbn. rewrite !may_write_all_log_cons_neq. assumption.
-        all: (try exact not_in_reg_ready_all_states); (try exact not_in_reg_cmd_all_states).
-    - apply may_read_all0_implies_may_read_all1. assumption.  
-    - assumption.
-    - destruct (reg_ready_or_not r) as [Hready | Hnotready].
-      + rewrite Hready. cbn. unfold log_after_cmd_guard_rdy. 
-        rewrite !may_write_all_log_cons_neq. rewrite may_write_all_fold_cons_w0_inputs. rewrite !may_write_all_log_cons_neq. assumption.
-        all: (try exact not_in_reg_ready_all_outputs); (try exact not_in_reg_cmd_all_outputs).
-        intros. rewrite in_map_iff in H. destruct H as [x0 [Heq Hin]]. subst. exact (not_in_reg_out_all_inputs x0).
-      + rewrite Hnotready. cbn. rewrite !may_write_all_log_cons_neq. assumption.
-        all: (try exact not_in_reg_ready_all_outputs); (try exact not_in_reg_cmd_all_outputs).
-    - destruct (reg_ready_or_not r) as [Hready | Hnotready].
-      + rewrite Hready. cbn. unfold log_after_cmd_guard_rdy.
-        rewrite may_write_log_cons_eq. rewrite may_write_log_cons_neq. 
-        rewrite may_write_fold_cons_w0_inputs. rewrite !may_write_log_cons_eq. simpl. rewrite !andb_true_r.
-        * apply may_write0_implies_may_write1. assumption. 
-        * exact not_in_reg_ready_all_inputs. 
-        * intro. congruence.
-      + rewrite Hnotready. cbn. rewrite may_write_log_cons_neq. rewrite may_write_log_cons_eq. simpl. rewrite !andb_true_r.
-        * apply may_write0_implies_may_write1. assumption.
-        * intro. congruence.
-  (* Time Qed. *)
-  Admitted. (* SPEEDUP *)
-  (* ??? seconds *)
-   *)
 
   Definition good_log (log: Log R ContextEnv) : Prop :=
     may_read_all log P0 (map tf_reg spec_all_states) = true /\

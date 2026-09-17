@@ -583,17 +583,9 @@ Section TypedSynthesis.
           
           Seq (Guard valid_bit) (
             Seq (Guard (Binop (PrimTyped.Bits2 (PrimTyped.EqBits spec_action_reg_size false)) data_val (Const cmd_enc))) (
-              (* Every input is still LATCHED here, response ports included, and
-                 that is deliberate.  The latch is what an ordinary [tf_ivar]
-                 read consumes; a response port's read bypasses it (see
-                 [expr_to_action]), so its latch entry is simply never read.
-                 Filtering it out would save one register and one sample per
-                 response port and change NOTHING else -- both reads denote
-                 [input v], so no proof can tell them apart -- and it would cost
-                 ~15 edits across the [interp_action_buffer_inputs] /
-                 [may_write_fold_cons_w0_inputs] family, which is stated over
-                 [spec_all_inputs] throughout.  Left as an optimisation, not a
-                 correctness matter. *)
+              (* Every input is LATCHED here, response ports included.  A
+                 response read bypasses its latch ([expr_to_action]), so
+                 dropping that entry is an open optimisation. *)
               rule_buffer_inputs spec_all_inputs (
 
                 Seq (Write P0 tf_cmd (Const cmd_enc)) (
@@ -632,23 +624,18 @@ Section TypedSynthesis.
 
 End TypedSynthesis.
 
-(* ====== Graded-opacity policy (campaign: synthesis-usability, Phase 1) ======
-   These definitions build large dependently-typed Koika terms. We forbid
-   *implicit* reduction (simpl/cbn) so proofs don't blow up, while still allowing
-   *explicit* reduction (unfold / cbv [..] / change) at the leaves where Koika
-   typing requires it (e.g. R (tf_reg x) = bits_t ...). Behavior-preserving. *)
+(* Graded opacity: these build large dependently-typed Koika terms, so implicit
+   reduction (simpl/cbn) is forbidden and explicit reduction (unfold, cbv,
+   change) stays available at the leaves Koika typing needs it. *)
 Arguments _reg_t_finite _ : simpl never.
 Arguments system_schedule _ : simpl never.
 Arguments Sigma _ _ : simpl never.
 Arguments r _ _ : simpl never.
-(* NOTE: `Arguments R _ _ : simpl never` is intentionally NOT enabled yet.
-   It breaks proofs that rely on `simpl` reducing R (e.g. Synthesis.v ~1773).
-   Enable it in Phase 3 together with rewriting those sites via the R_* lemmas
-   below (R hardening is entangled with the proof scripts). *)
+(* `Arguments R _ _ : simpl never` waits on Synthesis.v ~1773, which relies on
+   `simpl` reducing R; enable it together with the R_* lemmas below. *)
 
-(* Per-branch rewrite lemmas for R. Once `R` is `simpl never`, proofs use these to
-   reduce R at the leaves where Koika typing needs a concrete `bits_t`, instead of
-   relying on `simpl`/`cbn` unfolding all of R. *)
+(* Per-branch rewrite lemmas for R: once R is `simpl never`, proofs use these to
+   reduce it at the leaves Koika typing needs a concrete `bits_t` at. *)
 Section R_branches.
   Context (tf_ctx: TFSynthContext).
   Local Notation sctx := (tf_sched_ctx tf_ctx).

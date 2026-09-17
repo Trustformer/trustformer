@@ -10,22 +10,10 @@ Require Import Trustformer.Scheduler.VariableScheduler.
 Require Import Coq.Lists.List.
 Import ListNotations.
 
-(*
-    SPIKE 2a (agents/one-action, 2026-09-11): now that [DFG_Stall] carries a
-    latency, can a producer actually be pinned EARLIER than its consumer, and
-    what does the hold cost?
-
-    Spike 1 could not answer this: with every node costing the same, backward
-    costing placed a would-be-early producer right next to its consumer, so
-    "computed early, consumed late" was inexpressible.  A stall with a declared
-    latency is the missing pin.
-
-    The graphs here are built BY HAND rather than through [build_dfg], because
-    nothing in the DSL emits a stall yet -- that is the drive-node work of
-    Spike 2b.  Hand-building is not a cheat: [calc_backward_cost],
-    [calc_target_cycle] and [require_buffer] are exactly the functions the real
-    pipeline runs, and they take a [dfg_state] rather than an action.
- *)
+(* A [DFG_Stall]'s latency PINS a producer earlier than its consumer, and this
+   measures the gap and what the hold costs.  The graphs are hand-built, which
+   [calc_backward_cost], [calc_target_cycle] and [require_buffer] accept
+   directly -- they take a [dfg_state] rather than an action. *)
 
 Section Spike.
 
@@ -100,17 +88,11 @@ Section Spike.
   (* M1.  A PRODUCER CAN NOW BE PINNED ARBITRARILY EARLY.               *)
   (* ================================================================== *)
 
-  (* The consumer stays at the end of the axis and the producer moves away from
-     it by exactly [L / climit] cycles.  Spike 1 could not produce ANY
-     separation: a lone [tf_not] placed beside a 16-deep chain was simply
-     rescheduled into the last cycle, because nothing pinned it.
-
-     Note WHERE the latency lands.  [bc_aux] assigns a node and its arguments
-     the same running max, so the gap between a node and its consumer comes
-     from the NODE's own [cost_fn], not the consumer's -- INSIGHTS #48,
-     [backward_cost_arg_self].  The stall and its argument therefore share a
-     cycle, and the CONSUMER is pushed L/climit cycles later.  That is the
-     right shape for a round trip: drive and stall together, sample later. *)
+  (* The consumer stays at the end of the axis and the producer moves [L / climit]
+     cycles away.  [bc_aux] gives a node and its arguments the same running max,
+     so the gap comes from the NODE's own [cost_fn] ([backward_cost_arg_self]):
+     the stall shares a cycle with its argument and the CONSUMER moves later.
+     That is the round trip's shape -- drive and stall together, sample later. *)
 
   Example consumer_at_end_5  : cyc 5  3 = 0.  Proof. vm_compute. reflexivity. Qed.
   Example producer_pinned_5  : cyc 5  2 = 5.  Proof. vm_compute. reflexivity. Qed.
@@ -125,51 +107,21 @@ Section Spike.
   (* M2.  THE HOLD COSTS ONE BUFFER, AT EVERY LATENCY.                  *)
   (* ================================================================== *)
 
-  (* This is Spike 1's unmeasurable half, now measured.  [require_buffer]
-     collects the arguments whose cycle differs from their consumer's and
-     [nodup]s them, so a value held across sixteen cycles contributes exactly
-     one nid -- the same as one held across a single cycle.
-
-     Against the archive, at the same sixteen cycles: [chain_bufs 16 = 16] in
-     StallCostSpike.v, versus 1 here.  Both at 256 bits.  The archive's
-     (L+2) x width was the delay CHAIN, not the waiting, and DEBT-2's warning
-     about an inflated [cost_fn] does not carry over to a single node. *)
+  (* [require_buffer] [nodup]s the arguments whose cycle differs from their
+     consumer's, so a value held across sixteen cycles costs exactly one nid,
+     the same as one held across a single cycle.  Against [chain_bufs 16 = 16]
+     in StallCostSpike.v, both at 256 bits: the archive's (L+2) x width was the
+     delay CHAIN, and a single node carries none of it. *)
 
   Example hold_one_buffer_5  : hold_bufs 5  = 1. Proof. vm_compute. reflexivity. Qed.
   Example hold_one_buffer_20 : hold_bufs 20 = 1. Proof. vm_compute. reflexivity. Qed.
   Example hold_one_buffer_80 : hold_bufs 80 = 1. Proof. vm_compute. reflexivity. Qed.
 
-  (* ================================================================== *)
-  (* WHAT THIS DOES NOT SHOW                                            *)
-  (* ================================================================== *)
-
-  (* 1. Nothing in the DSL emits a stall.  These graphs are hand-built; giving
-        the surface language a way to produce one is Spike 2b, and 1.6 showed
-        that needs the PORT DRIVE to become a node -- a stall on its own has no
-        request-to-response edge to sit on.
-     2. The latency is in COST units because [cost_fn] does not see
-        [cost_limit].  Cycles need it to, which is the ~27-site ripple
-        INSIGHTS #13 measured and absorbed with a Local Notation.
-     3. The validity network is untouched.  [compile_valid_ones_gen] still
-        saturates over node IDs, so a stalling node's validity does not yet
-        lag its value -- that is Spike 3, and it is what makes the hold real
-        rather than merely scheduled.
-     4. No [must_buffer] predicate was needed.  The plan anticipated one; the
-        measurement says a declared cost already puts the value in exactly one
-        buffer, so the extra mechanism is unmotivated until something else
-        demands it. *)
-
 End Spike.
 
-(*
-    SPIKE 2b (2026-09-11): the round trip.
-
-    Spike 1.6 measured that nothing ordered a response after a request: give a
-    trusted input's value some work to feed and its read was scheduled in the
-    SAME cycle as the request's own operand, because a port write was not a node
-    and a trusted input read was a [source_op].  [DFG_Drive] and [DFG_Sample]
-    are those two gaps closed, and this section measures the result.
- *)
+(* The round trip: [DFG_Drive] makes a port write a node and [DFG_Sample] makes
+   a response read one, so the two are ordered by an edge.  PortDriveSpike.v
+   measures what happens without them. *)
 
 Section RoundTrip.
 
@@ -228,41 +180,23 @@ Section RoundTrip.
   Proof. vm_compute. reflexivity. Qed.
 
   (* ================================================================== *)
-  (* THE SAMPLE IS NO LONGER A SOURCE OP.                               *)
+  (* A SAMPLE IS NOT A SOURCE OP                                        *)
   (* ================================================================== *)
 
-  (* This is the other half of 1.6's negative result.  [require_buffer] never
-     buffers a [source_op], and the comment at VariableScheduler.v:421 gives
-     the reason outright -- "inputs are latched at action start", which is true
-     of a host input and false of a crypto result.  A [DFG_Sample] is not a
-     source, so it can be buffered and it has a defined sampling cycle; a plain
-     [DFG_Input] still is one, which is correct for a host input. *)
+  (* [require_buffer] leaves a [source_op] unbuffered because inputs are latched
+     at action start -- true of a host input, false of a crypto result.  A
+     [DFG_Sample] is buffered and has a defined sampling cycle; a plain
+     [DFG_Input] stays a source, which is right for a host input. *)
 
   (* ================================================================== *)
   (* NO OFF-BY-ONE, AT ANY REMAINDER.                                   *)
   (* ================================================================== *)
 
-  (* The worry: cycles come from [calc_target_cycle], which is integer
-     DIVISION by [climit], and integer division is not linear -- so a gap could
-     in principle round to L or L+1 depending on where the downstream cost
-     happens to fall relative to a [climit] boundary.
-
-     It cannot, and the reason is that [cost_fn] contributes an EXACT MULTIPLE
-     of [climit]:
-
-         (c + L*climit) / climit  =  c/climit + L     for every c
-
-     Adding a whole number of [climit]s shifts the quotient by exactly that
-     number, whatever the remainder of [c].  This is precisely why the latency
-     is declared in CYCLES and converted in [cost_fn], rather than declared in
-     cost units: a raw cost of L would give a gap of L/climit, which DOES round,
-     and for L < climit rounds to ZERO -- the sample landing in the same cycle
-     as the request, which is the stale-response hazard.
-
-     Measured rather than argued.  [trip_pad L m] is the round trip with [m]
-     unit-cost operations downstream of the sample, so the sample's own
-     accumulated cost is [m] and its remainder runs through every residue mod
-     [climit] = 5 as [m] goes 0..5. *)
+  (* Cycles come from [calc_target_cycle], an integer DIVISION by [climit], and
+     the gap is EXACT because [cost_fn] contributes a whole multiple of it:
+     [(c + L*climit) / climit = c/climit + L] for every [c].  That is why the
+     latency is declared in CYCLES.  [trip_pad L m] runs the sample's remainder
+     through every residue mod [climit] = 5 as [m] goes 0..5. *)
 
   Fixpoint not_chain (base m: nat)
     : list (@dfg_node_t sl_states sl_inputs sl_outputs sl_ips) :=
@@ -320,20 +254,5 @@ Section RoundTrip.
 
   Example plain_input_still_is : is_source sl_ctx (trip 20) 1 = true.
   Proof. vm_compute. reflexivity. Qed.
-
-  (* ================================================================== *)
-  (* WHAT 2b DOES NOT DO                                                *)
-  (* ================================================================== *)
-
-  (* 1. [var_map] is untouched: it still holds ONE nid per output var, so an
-        action still cannot drive a port twice.  The drive NODE is a
-        prerequisite for fixing that, not the fix.
-     2. Output writes still happen in the done half.  Moving them is the
-        Contract.v / TypedSynthesis.v pair INSIGHTS #25 says cannot land as two
-        green steps, and it is still the expensive part of this rung.
-     3. Nothing in the DSL emits a drive, a stall or a sample; these graphs are
-        hand-built.  Surface syntax is Spike 1.5's [tf_call], unimplemented.
-     4. The validity network still saturates over node IDs, so the sample's
-        validity does not yet LAG -- Spike 3. *)
 
 End RoundTrip.

@@ -145,52 +145,13 @@ Section Properties.
 
 End Properties.
 
-(*
-Fixpoint string_id_of_nat (n : nat) : string :=
-  match n with
-    | 0 => "0"
-    | S n' => "S" ++ string_id_of_nat n'
-  end.
-
-Eval compute in (string_id_of_nat 5).
-
-Section Properties.
-    
-  Lemma string_id_of_nat_inj (n m : nat) :
-    string_id_of_nat n = string_id_of_nat m -> n = m.
-  Proof.
-    intros H. 
-    generalize dependent m.
-    induction n. 
-    {
-      intros.
-      simpl in H. destruct m.
-      - reflexivity.
-      - inversion H.
-    }
-    {
-      intros.
-      destruct m.
-      - inversion H.
-      - injection H as H_inj. assert (n = m) by (apply IHn; assumption). subst n.
-        reflexivity.
-    }
-
-  Qed.
-
-End Properties. *)
 
 (* ===================================================================== *)
 (*  FiniteType / Show / EqDec plumbing                                   *)
 (* ===================================================================== *)
-(*
-    A design with no attached IP names its IPs by [Empty_set]; a lowered
-    schedule's inputs are the design's inputs PLUS one response per IP.  Koika
-    provides instances for neither shape.
-
-    Note: inside [Koika.Frontend], bare [length] is [String.length] and bare
-    [map] is [Env.map], so the list operations below are qualified.
-*)
+(* Instances for [Empty_set] (a design with no IP) and for sums (a lowered
+   schedule's inputs: the design's, plus one response per IP).  Inside
+   [Koika.Frontend] bare [length]/[map] are String/Env, hence the qualifiers. *)
 
 Require Import Koika.Frontend.
 

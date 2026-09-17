@@ -1,13 +1,6 @@
-(*! Declassification rule: bitwise negation.
-
-    `not` loses no information, so a node's operand is recoverable from the
-    node itself.  Emits one unconditional instance (`di_guard = []`) per
-    `DFG_Unary tf_not` node.
-
-    Each rule in this directory is self-contained: the computable
-    instantiation plus its `instance_sound` proof.  Users pick the rules they
-    want in `tfs_spec_decls`; picking none reproduces blackbox behaviour.
-!*)
+(*! Declassification rule: `not` is invertible, so a node's operand is
+    recoverable from it.  Each rule here is self-contained and users pick the
+    ones they want in `tfs_spec_decls`, the empty list giving blackbox. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.

@@ -10,27 +10,11 @@ Require Import Trustformer.Scheduler.VariableScheduler.
 Require Import Coq.Lists.List.
 Import ListNotations.
 
-(*
-    Regression for the V2a fix: declassification must happen only at outputs the
-    attacker can actually SEE.
-
-    The hole this pins (REVIEW.md section 2.3, and structurally
-    GENERAL_REQUIREMENTS.md section 1.1 one step further out): [read_var]
-    deliberately shares read nodes, so a TOP-LEVEL assignment of a secret to an
-    output makes that output's [var_map] root the [DFG_Var (DFG_SVar _)] node
-    itself.  [public_dsts] returns it, [untainted_roots] contains it, and
-    [get_tainted] drops it -- untainting the secret for the WHOLE action,
-    including a branch condition that reads it.  The branch then gets a
-    branch-selecting valid signal and its latency leaks the comparison.
-
-    [crit_report] cannot catch this: [phi_crit_reason] returns [None] exactly
-    when the condition is untainted, which is the case here.
-
-    One specification, two contexts differing only in the classification of
-    [out_key].  Classified [Public] -- the pre-V2a behaviour, where every
-    [DFG_OVar] root declassified -- the leak is present and silent.  Classified
-    [Secret], the secret stays tainted and the branch is correctly critical.
- *)
+(* Declassification happens only at outputs the attacker can SEE (REVIEW.md
+   2.3, GENERAL_REQUIREMENTS.md 1.1).  [read_var] shares read nodes, so a
+   top-level secret-to-output assignment would otherwise untaint that secret for
+   the WHOLE action, leaking a branch condition's latency past [crit_report].
+   One spec, two contexts differing only in [out_key]'s classification. *)
 
 Section FunctionalSpecification.
 
@@ -106,7 +90,7 @@ Section FunctionalSpecification.
         tfs_spec_decls := []
     |}.
 
-    Definition ctx_leaky  := mk Public.   (* pre-V2a behaviour *)
+    Definition ctx_leaky  := mk Public.   (* [out_key] Public: every [DFG_OVar] root declassifies *)
     Definition ctx_fixed  := mk Secret.   (* the crypto port, classified *)
 
 End FunctionalSpecification.
@@ -145,10 +129,9 @@ Section Contrast.
       crit ctx_leaky (build_dfg ctx_leaky act_read) = 0.
     Proof. vm_compute. reflexivity. Qed.
 
-    (* Branching on an output the attacker CANNOT see must be critical.  This
-       is the twin of the write-side hole: [self_tainted] used to mark only
-       [DFG_SVar] reads, so a read of [crypt_key] -- which holds DP -- was
-       treated as public. *)
+    (* Branching on an output the attacker cannot see must be critical: the twin
+       of the write-side hole, since [crypt_key] holds DP and [self_tainted]
+       must taint that read as well as the [DFG_SVar] one. *)
     Example read_secret_is_critical :
       crit ctx_fixed (build_dfg ctx_fixed act_read) = 1.
     Proof. vm_compute. reflexivity. Qed.

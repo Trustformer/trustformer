@@ -12,13 +12,8 @@ Require Import Trustformer.Scheduler.VariableScheduler.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
-(*
-    An example specification and TypedSynthesis of a simple negator module.
-    The hardware module has a single internal state register (32 bits) and supports two actions (nop, neg).
-    Actions are triggered through a command register, where the first 1 bit indicates if the command is valid,
-    and the remaining bits indicate the action to perform.
-
- *)
+(* A negator: one 32-bit state register and two actions (nop, neg), triggered
+   through a command register whose first bit marks it valid. *)
 
 Section FunctionalSpecification.
 

@@ -10,33 +10,11 @@ Require Import Trustformer.Scheduler.VariableScheduler.
 Require Import Coq.Lists.List.
 Import ListNotations.
 
-(*
-    SPIKE 1.6 (agents/one-action, 2026-09-10): can one action drive a port
-    twice, and can anything order a request before its response?
-
-    MARS_Quote is three round trips, two of them back-to-back on the SAME port
-    group (Examples/Mars.v:775).  "One command = one action" therefore needs an
-    action to drive one port with two different values at two different cycles
-    and to read the two answers back in order.  Spike 1.5 settled where the
-    answer's VALUE comes from; this file asks whether the request side can be
-    expressed at all.
-
-    Three measurements, all with machinery that exists today, so no proof risk.
-    All three are negative, and the third is the one that decides the shape of
-    Spike 2.
-
-    A note on the cycle axis, because it is counter-intuitive and the numbers
-    below are unreadable without it.  [calc_backward_cost] accumulates work
-    BACKWARDS from the roots, and [calc_target_cycle] divides by the cost limit,
-    so a node's number is the work REMAINING between it and the end of the
-    action: bigger means EARLIER.  In act_reqresp below the input in_x is 4 and
-    the final multiply that consumes it is 1, which is only consistent that way
-    round -- a consumer cannot be ready before its producer.  (The comment at
-    SchedulerSimulation.v:630 reads "the earliest cycle its value is available",
-    which is loose about the direction while being right that the action is done
-    at the MAX.)  Every claim below is stated so that it does not depend on
-    which way the axis runs.
- *)
+(* Three measurements of the port-write machinery WITHOUT a drive node, which
+   is what MARS_Quote's back-to-back round trips need and what [DFG_Drive] /
+   [DFG_Sample] were introduced for (StallLatencySpike.v).
+   READING THE CYCLE AXIS: [calc_backward_cost] accumulates from the roots, so a
+   node's number is the work REMAINING and bigger means EARLIER. *)
 
 Section Spike.
 
@@ -134,8 +112,8 @@ Section Spike.
     List.length (var_map (build_dfg pd_ctx act_twice)) = 1.
   Proof. vm_compute. reflexivity. Qed.
 
-  (* nid 2 is [DFG_Input in_y] -- the second write.  nid 1, [DFG_Input in_x],
-     is the first, and it is gone from the map. *)
+  (* [var_map] holds nid 2, [DFG_Input in_y]: the SECOND write, one nid per var,
+     so the first write's nid 1 is absent. *)
   Example twice_second_wins :
     map snd (var_map (build_dfg pd_ctx act_twice)) = [2].
   Proof. vm_compute. reflexivity. Qed.
@@ -151,12 +129,10 @@ Section Spike.
   (* M2.  A PORT IS DRIVEN ONLY AT THE DONE CYCLE.                      *)
   (* ================================================================== *)
 
-  (* [schedule] returns (always_ops, done_ops); [compile_dfg_aux] (:1070) turns
-     var_map into the tf_output/tf_assign writes and [schedule] (:1100) puts
-     them in the DONE half, which tfs_next_cycle applies only when done fires
-     (Contract.v:247).  So the port carries its value for the last cycle of the
-     action and no earlier -- there is no cycle at which an IP could see a
-     request AND the action still be running to receive the answer. *)
+  (* [compile_dfg_aux] turns var_map into the tf_output/tf_assign writes and
+     [schedule] puts them in the DONE half, which [tfs_next_cycle] applies as
+     done fires.  So a var_map port carries its value on the action's LAST
+     cycle only, leaving no cycle for the answer to arrive in. *)
 
   Definition count_outputs {s i o} (ops: list (@tf_op s i o Empty_set)) : nat :=
     List.length (filter (fun op => match op with
@@ -171,43 +147,28 @@ Section Spike.
     count_outputs (snd (VariableScheduler.schedule pd_ctx climit (VariableScheduler.buffer_needs pd_ctx climit) act_twice)) = 1.
   Proof. vm_compute. reflexivity. Qed.
 
-  (* CONFIRMED IN THE GENERATED VERILOG, not only in Coq -- this is a hardware
-     timing claim, and INSIGHTS says both design bugs the archived campaign
-     found were timing bugs invisible in Coq.  In build/Example_Mars.v the port
-     register updates as
-
-       out_out_sha_msg <= _rule_cmd_act_init_out12
-
-     whose Quote arm is gated by [_107 = _wF_rule_cmd_act_quote0 && _28], and
-     [_28] -- a conjunction of the action's validity bits -- is the SAME wire
-     that raises [st_done] (line 710).  The port changes on the done cycle and
-     on no other. *)
+  (* CONFIRMED IN THE GENERATED VERILOG, this being a hardware timing claim: the
+     port register's Quote arm was gated by a conjunction of the action's
+     validity bits -- the SAME wire that raises [st_done] -- so the port changed
+     on the done cycle and on no other. *)
 
   (* ================================================================== *)
   (* M3.  NOTHING ORDERS THE RESPONSE AFTER THE REQUEST.                *)
   (* ================================================================== *)
 
-  (* A port write is not a DFG node -- var_map is a side table, and [get_args]
-     (:328) has no case for it -- so there is no edge from the request to
-     anything.  The response read is just an unrelated root.
-
-     act_reqresp LOOKS fine: in_resp (nid 10) sits at the opposite end of the
-     axis from in_x (nid 1). *)
+  (* A var_map port write is a side-table entry, not a DFG node, and [get_args]
+     has no case for one, so nothing edges the request to the response read.
+     act_reqresp LOOKS fine: in_resp sits at the far end of the axis. *)
 
   Example reqresp_looks_ordered : cyc act_reqresp 10 = 0.
   Proof. vm_compute. reflexivity. Qed.
   Example reqresp_request_input : cyc act_reqresp 1 = 4.
   Proof. vm_compute. reflexivity. Qed.
 
-  (* But that is an artefact of the answer being stored without being used: its
-     backward cost is 0 because nothing follows it.  Give it work to feed, and
-     the response read lands in the SAME cycle as the request's own operand --
-     nid 10 is [DFG_Input in_resp], nid 1 is [DFG_Input in_x].
-
-     This is the measurement that matters, and it is independent of which way
-     the cycle axis runs: whatever cycle the request's inputs are read in, the
-     crypto ANSWER is read in that same cycle.  Not L cycles later.  Not after
-     the request.  Together. *)
+  (* That is an artefact of the answer being stored unused, so its backward cost
+     is 0.  Give it work to feed and the response read lands in the SAME cycle
+     as the request's own operand.  This holds whichever way the axis runs:
+     the answer is read in the cycle the request's inputs are. *)
 
   Example resp_used_same_cycle_as_request :
     cyc act_resp_used 10 = cyc act_resp_used 1.
@@ -216,37 +177,19 @@ Section Spike.
   Example resp_used_both_at_4 : cyc act_resp_used 10 = 4.
   Proof. vm_compute. reflexivity. Qed.
 
-  (* And the cycle number is moot in any case.  [source_op] (:421) classifies
-     DFG_Input as a source, and [require_buffer] never buffers a source; the
-     comment there states the reason -- "inputs are latched at action start", so
-     re-reading one in a later stage is free and always correct.  That is true
-     of a host input and false of a crypto result.  In hardware every read of
-     in_resp returns the value latched when the action began, whatever cycle the
-     scheduler nominally assigned to the node.  REVIEW.md section 1.5, confirmed
-     from the cost model rather than from the Verilog. *)
+  (* The cycle number is moot in any case: [source_op] classifies [DFG_Input] as
+     a source and [require_buffer] leaves sources unbuffered, inputs being
+     latched at action start.  So every read of a response port returns the
+     value latched when the action began.  REVIEW.md section 1.5. *)
 
   (* ================================================================== *)
   (* WHAT SPIKE 2 HAS TO CARRY, GIVEN THE ABOVE                         *)
   (* ================================================================== *)
 
-  (* A [DFG_Stall] with a latency is necessary and NOT sufficient.  A stall
-     delays a value along an edge, and the request-to-response path has no edge
-     to delay: the write is a var_map entry, the read is a source node, and
-     nothing connects them.  Pinning an arbitrary producer (the Spike 2 rung as
-     currently written) does not create that edge either.
-
-     Three things have to become true together, and they are one change:
-
-       1. a port drive is a NODE, so it has a cycle and can be an argument;
-       2. a var can be driven at several cycles, so var_map stops being a
-          one-nid-per-var table for driven ports;
-       3. a trusted input read is a NODE that depends on a drive through a
-          stall, so it stops being a source op and acquires a defined
-          sampling cycle.
-
-     (1) and (2) also move the output write out of the done half, which is the
-     [Contract.v] / [TypedSynthesis.v] pair that INSIGHTS #25 says cannot land
-     as two green steps.  That is the real cost of this rung, and it is not the
-     DFG constructor. *)
+  (* A [DFG_Stall]'s latency delays a value along an EDGE, and the three
+     measurements above show the request-to-response path has none.  Three
+     things become true together: a port drive is a NODE with a cycle, a driven
+     port leaves var_map's one-nid-per-var table, and a response read is a NODE
+     under a stall with a defined sampling cycle. *)
 
 End Spike.

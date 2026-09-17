@@ -1,12 +1,5 @@
-(*! Information-Preserving Refinement.
-
-    Campaign: agents/ipr-proof/PLAN.md
-
-    The end goal is that an action's latency is a function of attacker-visible
-    data only.  This file currently holds the groundwork for Phase 1 (taint
-    soundness): the fold-accumulator reasoning for [get_tainted], and the
-    propagation fact that a node inherits its arguments' taint.
-!*)
+(*! Information-Preserving Refinement: an action's latency is a function of
+    attacker-visible data only.  Campaign: agents/ipr-proof/PLAN.md !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.
@@ -292,10 +285,8 @@ Section IPR.
     rewrite Hop, Hcls. cbn [orb]. left. reflexivity.
   Qed.
 
-  (* The input-side sibling of [svar_tainted] and [ovar_secret_tainted].  Same
-     proof; [DFG_Input] is a different constructor from [DFG_Var], which is
-     exactly why it needed its own arm in [self_tainted] rather than being
-     covered by the existing ones. *)
+  (* The input-side sibling of [svar_tainted] and [ovar_secret_tainted], same
+     proof over [self_tainted]'s own [DFG_Input] arm. *)
   Lemma input_secret_tainted (act: tfs_action sched) (node: node_t) (iv: i_var) :
     List.In node (graph (build_dfg ctx act)) ->
     op node = DFG_Input iv ->
@@ -323,10 +314,8 @@ Section IPR.
     rewrite Hop, Hcls. cbn [orb]. left. reflexivity.
   Qed.
 
-  (* SPIKE 2b.  The sample-side sibling of [input_secret_tainted].  A sample
-     reads a trusted port, so it is a taint source for the same reason a secret
-     [DFG_Input] is -- and it needed its own arm in [self_tainted] for the same
-     reason too: a wildcard would have swallowed it and left IPR unsound. *)
+  (* The sample-side sibling of [input_secret_tainted]: a sample reads a trusted
+     port, so it is a taint source, on [self_tainted]'s [DFG_Sample] arm. *)
   Lemma sample_secret_tainted (act: tfs_action sched) (node: node_t) (iv: i_var) tok :
     List.In node (graph (build_dfg ctx act)) ->
     op node = DFG_Sample iv tok ->
@@ -371,25 +360,12 @@ Section IPR.
     (sz (nth n (graph (build_dfg ctx act))
            {| nid := 0; op := DFG_Empty; sz := 0 |})).
 
-  (* Widths are the nodes' own declared widths throughout: [node_args_sz] says
-     every consumer reads its arguments at exactly their declared size, so this
-     is no weaker than quantifying over all widths -- and unlike that version it
-     is implied by plain equality of the observable outputs. *)
-  (* The public view, over TWO runs.  The runs may differ in secret state and in
-     secret inputs; they agree on exactly what an attacker drives or observes.
-
-     Secret inputs are free to differ, and get no different treatment from
-     secret state.  Sharing one [input] across both runs would make every input
-     trivially derivable and the statement would say nothing about
-     input-dependent timing -- the analysis would then be stricter than the
-     theorem, which is the failure mode this file has already been bitten by
-     once on the output side.
-
-     What this does NOT model, deliberately: [crypt_res] is a free value here,
-     whereas physically it is whatever the IP returned for the request we sent
-     (MVP.md section 9, A1).  Free is STRONGER than oracle-determined, so the
-     latency result is not weakened by it -- but the value-level confidentiality
-     theorem cannot be stated this way and must consume A1 instead. *)
+  (* Widths are the nodes' own declared widths throughout ([node_args_sz]), so
+     this is as strong as quantifying over all widths and follows from plain
+     equality of the observable outputs. *)
+  (* The public view over TWO runs: they agree on what an attacker drives or
+     observes and may differ in secret state AND inputs.  A response is FREE
+     here, stronger than oracle-determined for latency (MVP.md 9 A1). *)
   Definition pub_eq (act: tfs_action sched) (a_idx: a_index)
       (input input': input_t) (ss ss': sched_sys_state) : Prop :=
     (forall v : i_var, tfs_spec_inputs_class ctx v = Public -> input v = input' v)
@@ -417,10 +393,8 @@ Section IPR.
   (* [untainted_roots].                                                     *)
   (* ------------------------------------------------------------------- *)
 
-  (* Only a PUBLIC destination declassifies.  The [Public] hypothesis is what
-     keeps this lemma honest after V2a: an output the attacker cannot see is not
-     part of the public view, so its root is not derivable from it, and a secret
-     written there must stay tainted (REVIEW.md section 2.3). *)
+  (* Only a PUBLIC destination declassifies: the public view covers exactly
+     those, so a secret written anywhere else stays tainted.  REVIEW.md 2.3. *)
   Lemma public_dst_derivable (act: tfs_action sched) (a_idx: a_index)
       (input: input_t) (o: o_var) (r: nid_t) :
     tfs_spec_outputs_class ctx o = Public ->
@@ -518,9 +492,9 @@ Section IPR.
     - exact (IH _ (saturate_step_derivable act a_idx input acc Hacc) n Hin).
   Qed.
 
-  (* Constants are the same in any two runs; a PUBLIC input is too, because the
-     attacker drives it and [pub_eq] makes the two runs agree on it.  A secret
-     input is not, which is why [trivially_public] no longer admits one. *)
+  (* Constants agree across any two runs, and a PUBLIC input does too because the
+     attacker drives it and [pub_eq] pins it.  [trivially_public] admits exactly
+     those, a secret input being a taint source. *)
   Lemma trivial_derivable (act: tfs_action sched) (a_idx: a_index)
       (input: input_t) (n: nid_t) :
     List.In n (trivially_public ctx (build_dfg ctx act)) ->
@@ -555,11 +529,9 @@ Section IPR.
     - exact (trivial_derivable act a_idx input m Hm).
   Qed.
 
-  (* The width in [pub_eq]'s second conjunct is the output variable's own width,
-     so that conjunct really is "the two states publish the same values" -- which
-     is what lets latency be indexed by observable data rather than by state.
-     Stated at [tfs_outputs_size sched] rather than the convertible
-     [dfg_var_size], so that it rewrites against [dfg_action_semantics]. *)
+  (* [pub_eq]'s second conjunct is at the output's own width, so it reads "the
+     two states publish the same values".  Stated at [tfs_outputs_size sched],
+     to rewrite against [dfg_action_semantics]. *)
   Lemma pub_eq_root_width (act: tfs_action sched) (o: o_var) (r: nid_t) :
     List.In (DFG_OVar o, r) (var_map (build_dfg ctx act)) ->
     nsz act r = tfs_outputs_size sched o.
@@ -637,11 +609,9 @@ Section IPR.
       [ assumption | intros v _; reflexivity | assumption ].
   Qed.
 
-  (* ... and that consequent is false as soon as the register can hold two
-     values the node's width still tells apart. At width 0 a register really is
-     derivable, so this hypothesis is exactly [0 < width] rather than an
-     artefact. [nsz act n] is the register's own width for every node [build_dfg]
-     actually builds, but no lemma records that, so it is left explicit here. *)
+  (* ... and that consequent fails once the register holds two values the node's
+     width tells apart, so [0 < width] is the real hypothesis.  [nsz act n] is
+     explicit because no lemma records it as the register's own width. *)
   Theorem svar_not_derivable (act: tfs_action sched) (a_idx: a_index)
       (input: input_t) (n: nid_t) (sv: s_var) :
     publishes_nothing act ->
@@ -811,10 +781,8 @@ Section IPR.
       rewrite (Hder_at cnd _ Hc Hgc), (Hder_at tid _ Ht Hgt),
               (Hder_at eid _ He Hge). reflexivity.
 
-    - (* DFG_Stall: derivability passes straight through, because the stall's
-         reference expression IS its argument's.  A real W-b stall is derivable
-         for the same reason -- the DELAY is a public constant, so it adds
-         nothing an attacker could not already compute. *)
+    - (* DFG_Stall: derivability passes through, since the stall's reference
+         expression IS its argument's and the delay is a public constant. *)
       assert (Ha : List.In sa (get_args ctx (nth n (graph (build_dfg ctx act))
                                                {| nid := 0; op := DFG_Empty; sz := 0 |})))
         by (unfold get_args; rewrite Eop; left; reflexivity).
@@ -830,12 +798,9 @@ Section IPR.
       rewrite (nre_drive ctx cost_limit act a_idx n dov dn H1 Hlen Eop).
       exact (Hder_at dn _ Ha Hfg).
 
-    - (* SPIKE 2b: DFG_Sample -- NOT like the stall.  Its reference expression
-         is the PORT, so this bullet mirrors DFG_Input instead: a public port
-         agrees across the two runs, and a secret one is a taint source, so an
-         untainted node cannot be one.  That second half only closes because
-         [self_tainted] gained a [DFG_Sample] arm; without it the wildcard
-         swallows the node and this case is simply false. *)
+    - (* DFG_Sample mirrors DFG_Input, its reference expression being the
+         PORT: a public port agrees across runs, a secret one is a taint source
+         on [self_tainted]'s [DFG_Sample] arm. *)
       rewrite (nre_sample ctx cost_limit act a_idx n siv sn H1 Hlen Eop).
       cbn [tf_eval_expr]. destruct Hpub as [Hipub _].
       destruct (tfs_spec_inputs_class ctx siv) eqn:Hcls.
@@ -990,12 +955,9 @@ Section IPR.
     exact (untainted_gderivable act a_idx input [] s Hs1 Hs2 Hs3).
   Qed.
 
-  (* What the compiler's own producer owes the proof: every fact it records is
-     really a guarded derivability.  Note there is no disjunctive [gderivable]:
-     "derivable under (A or B)" is not provable -- the two runs could satisfy
-     different disjuncts and genuinely differ -- so a node derivable on several
-     paths gets several entries, each with its own conjunctive guard, and the
-     compiler only ever uses the entry its current path implies. *)
+  (* What the compiler's producer owes the proof: every fact it records is a
+     guarded derivability.  [gderivable] stays conjunctive, so a node derivable
+     on several paths gets one entry per path. *)
   Definition base_sound (act: tfs_action sched) (a_idx: a_index)
       (input: input_t) (base: list gfact) : Prop :=
     forall c g, List.In (c, g) base -> gderivable act a_idx input g c.
@@ -1486,10 +1448,9 @@ Section IPR.
                   dn bufs) as [ae ve] eqn:E1.
       pose proof (IH dn pi Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
       rewrite E1 in Ha. cbn [snd] in Ha |- *. exact Ha.
-    - (* SPIKE 2b: DFG_Sample -- its VALIDITY is the token's by construction in
-         [compile_dfg_expr_aux], so validity passes through here exactly as for
-         the stall, even though the VALUE does not.  The decoupling costs
-         nothing on this side. *)
+    - (* DFG_Sample: its VALIDITY is the token's by construction in
+         [compile_dfg_expr_aux], so validity passes through as for a stall
+         though the VALUE does not. *)
       assert (Hain : List.In sn (get_args ctx node))
         by (unfold get_args; rewrite Hop; left; reflexivity).
       destruct (Hrange sn Hain) as [Ha1 Ha2].
@@ -1754,11 +1715,8 @@ Section IPR.
     (forall ov, (snd ss ).[ov] = (snd sp ).[ov]) ->
     (forall sv, (fst ss').[tf_dfg_s sv] = (fst sp').[sv]) ->
     (forall ov, (snd ss').[ov] = (snd sp').[ov]) ->
-    (* PUBLIC outputs only, before and after.  An attacker cannot see a
-       [Secret] output, so requiring the two runs to agree on one would weaken
-       the hypothesis and, with it, the theorem: [crypt_key] holds DP, and two
-       runs differing in DP would simply fall outside a statement quantified
-       over all outputs. *)
+    (* PUBLIC outputs only, before and after: quantifying over [Secret] ones too
+       would strengthen the hypothesis and so weaken the theorem. *)
     (forall ov, tfs_spec_outputs_class ctx ov = Public ->
                 (snd sp).[ov] = (snd sp').[ov]) ->
     (forall ov, tfs_spec_outputs_class ctx ov = Public ->
@@ -1789,10 +1747,9 @@ Section IPR.
     act_idx_aligned ctx cost_limit act a_idx ->
     start_rel ctx cost_limit sp0  ss0  ->
     start_rel ctx cost_limit sp0' ss0' ->
-    (* PUBLIC data only, and nothing else: the two runs may differ in secret
-       state AND in secret inputs.  This is the statement an attacker could
-       actually try to exploit -- everything it constrains is something they
-       already drive or observe. *)
+    (* PUBLIC data only: the two runs may differ in secret state AND secret
+       inputs, so everything constrained here is something the attacker already
+       drives or observes. *)
     (forall v,  tfs_spec_inputs_class  ctx v  = Public -> input v = input' v) ->
     (forall ov, tfs_spec_outputs_class ctx ov = Public ->
                 (snd sp0).[ov] = (snd sp0').[ov]) ->

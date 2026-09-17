@@ -27,14 +27,11 @@ Definition bufs10 := Eval vm_compute in (map (@length _) (buffer_needs tfs_ctx 1
 Definition bounds10 := Eval vm_compute in (action_bounds tfs_ctx 10 dfg0).
 Definition bufs20 := Eval vm_compute in (map (@length _) (buffer_needs tfs_ctx 20)).
 Definition bounds20 := Eval vm_compute in (action_bounds tfs_ctx 20 dfg0).
-(* Same chain, same widths, three different cost limits.  cost_fn takes [sz] and
-   discards it, so these numbers track the LIMIT and not any physical delay: at
-   limit 20 the whole ten-operator 256-bit chain sits in ~2 cycles, i.e. five
-   chained 256-bit adds in one combinational path.  Experiment on 2026-09-09:
-   making add/sub cost [2 + sz/128] rebuilt the ENTIRE development green (only
-   these pinned probe values changed, to 26/6/3) and left all eight 32-bit
-   examples byte-identical -- so a width-aware cost model is free to adopt; only
-   the choice of delay model is open. *)
+(* Same chain and widths at three cost limits.  [cost_fn] discards [sz], so
+   these track the LIMIT rather than a physical delay: at limit 20 the whole
+   ten-operator 256-bit chain sits in ~2 cycles.  A width-aware model is free to
+   adopt -- costing add/sub at [2 + sz/128] moves only these three values, to
+   26/6/3, and leaves the eight 32-bit examples byte-identical. *)
 Example probe_bounds10 : bounds10 = (4, 4). Proof. reflexivity. Qed.
 Example probe_bounds20 : bounds20 = (2, 2). Proof. reflexivity. Qed.
 

@@ -1,23 +1,9 @@
-// Behavioural testbench for Example_Mars -- the ONE-ACTION MARS.
-//
-// Reading the generated Verilog is not running it, and this design had never
-// been run at all: the sequential vectors tested [out_pend] transitions, which
-// the one-action form deleted, and only the four spikes were simulated.
-//
-// The two attached IPs are modelled as deterministic functions of the WHOLE
-// request word (length included).  They are not SHA-256 and not HMAC -- the
-// spec's [ip_fn] is a marked placeholder, so there is nothing to agree with --
-// but every expected value below is computed by applying the SAME function to a
-// request payload this testbench builds INDEPENDENTLY from the framing in
-// coq/Examples/Mars.v.  So a wrong argument, a wrong field order, a wrong
-// length or a wrong key is a failure here, even though the digest itself is
-// arbitrary.
-//
-// Each IP, as in the spike testbenches:
-//   - presents its answer for EXACTLY ONE cycle, and drives GARBAGE otherwise,
-//     so sampling on the wrong cycle latches garbage rather than passing by
-//     luck;
-//   - is NOT pipelined: a request arriving while one is in flight is a failure.
+// Behavioural testbench for Example_Mars, the one-action MARS.  Both IPs are
+// modelled as functions of the whole request word, and every expected value is
+// that function applied to a payload built independently from Mars.v -- so a
+// wrong length, field order or key fails though the digest itself is arbitrary.
+// Each IP answers for exactly ONE cycle, drives garbage otherwise, and rejects
+// a request while one is in flight.
 module tb;
   localparam int LSHA  = 140;        // must match fs_ip ip_sha  ip_lat
   localparam int LHMAC = 275;        // must match fs_ip ip_hmac ip_lat

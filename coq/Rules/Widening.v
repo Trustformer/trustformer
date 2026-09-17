@@ -1,16 +1,6 @@
-(*! Declassification rule: widening resize.
-
-    A widening resize keeps every source bit, so the operand is recoverable
-    from the node.  Narrowing is not invertible, hence the width check.
-
-    The obligation reduces to injectivity of [Semantics.convert] when
-    [szA <= szB], i.e. [Bits.slice 0 szB x = Bits.slice 0 szB y -> x = y].
-    Koika ships no slice lemmas at the vector level, but it does ship a
-    LIST-level characterisation ([BitsToLists.slice]) together with
-    [vect_to_list_inj], and at offset 0 the list form is just
-    [vect_to_list x ++ repeat false (szB - szA)].  That avoids the [rew] casts
-    in [vect_extend_end_firstn] entirely.
-!*)
+(*! Declassification rule: a widening resize keeps every source bit, so the
+    operand is recoverable; the width check restricts it to [szA <= szB].  The
+    obligation is [Semantics.convert]'s injectivity, via [BitsToLists.slice]. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.

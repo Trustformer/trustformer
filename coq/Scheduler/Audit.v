@@ -1,13 +1,6 @@
-(*! One entry point for [is this design safe, and what does it cost].
-
-    Answering that today means calling `get_tainted`, `crit_report_all`,
-    `action_bounds` and `require_buffer` separately and knowing what each
-    returns.  `audit` runs all of them on one action and packs the answers into
-    a record; `audit_report` renders that record; `audit_dot` draws it.
-
-    Like `Show.v` this is presentation only -- nothing under `coq/Properties/`
-    imports it, and it cannot change what the compiler emits.
-!*)
+(*! One entry point for [is this design safe, and what does it cost]: `audit`
+    packs `get_tainted`, `crit_report_all`, `action_bounds` and `require_buffer`
+    into a record, `audit_report` renders it, `audit_dot` draws it. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.

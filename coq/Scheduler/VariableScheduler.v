@@ -108,52 +108,9 @@ Section VariableScheduler.
     let! _ := put_state ({| graph := new_node :: graph s; var_map := var_map s |}) in
     ret next_id.
 
-  (* A WAIT THAT ACTUALLY WAITS.
-
-     A single [DFG_Stall lat] does not delay anything in hardware: it compiles to
-     its argument verbatim (see [compile_dfg_expr_aux]), so its validity fires
-     the moment its argument's does.  All it ever did was declare a COST, which
-     moves nodes between cycle buckets and therefore changes buffering -- and a
-     held value costs ONE buffer however long the declared wait (Spike 1), so
-     even that bought at most a single cycle.
-
-     What produces real waiting is a chain of nodes each costing one cycle: the
-     scheduler puts each in its own cycle bucket, [require_buffer] gives each its
-     own buffer, and a buffer's valid bit is assigned from its input's validity
-     once per cycle.  So validity lags by exactly one cycle per hop, and [lat]
-     hops lag by [lat] cycles.  Spike 1 measured precisely this shape --
-     [chain_1]/[chain_4]/[chain_16] give 1/4/16 buffers.
-
-     The chain is WIDTH 1, and that is what makes it cheap.  The archive's
-     [emit_delay_chain] was rejected because it chained [lat] nodes at the
-     ARGUMENT width -- INSIGHTS #1's (L+2)x256 for a crypto payload.  Here the
-     chain carries no data at all: a [DFG_Sample] uses only its token's
-     VALIDITY and discards the token's value, so one bit per hop suffices.  The
-     payload itself still rides in the single buffer Spike 1 measured.  For a
-     256-bit request at lat 20 that is 256 + 2x20 bits, against the archive's
-     20x256.
-
-     Chosen over a counter (INSIGHTS #1's suggestion) because in these constructs
-     a counter needs a width, an adder, a comparator against a constant, a
-     saturating conditional and the width-conversion dance, plus an invariant
-     relating count to elapsed cycles -- where a chain needs none of it and
-     reuses the buffer machinery unchanged.  The cost difference is a handful of
-     flops at these widths. *)
-  (* The most recent [DFG_Sample] on [v], if any.  [graph] is latest-first
-     (emit conses), so [find] returns the latest -- i.e. PROGRAM ORDER, since the
-     graph is built in program order.
-
-     This is what lets independent calls on one IP be SEQUENCED rather than
-     rejected.  There is one set of request wires, so two calls that can BOTH
-     fire must take turns; without an ordering edge both drives land in the same
-     cycle, the fold keeps only the latest, and the earlier request is silently
-     lost while both samples read the same wire (measured in CallSpike).
-
-     "Can both fire" is the condition, not "both exist".  Two calls whose path
-     guards are DISJOINT -- opposite sides of one [if] -- never contend, because
-     only the taken arm drives.  Chaining them anyway would cost a full round
-     trip per arm and buy nothing, which is what made branching around a call
-     look expensive enough to want a workaround. *)
+  (* The most recent [DFG_Sample] on [v] in PROGRAM ORDER; [graph] is
+     latest-first, so [find] returns it.  One IP has one set of request wires,
+     so two calls that can both fire take turns on this edge. *)
   Definition guards_disjoint (g1 g2: list (nid_t * bool)) : bool :=
     existsb (fun l1 => existsb (fun l2 =>
                andb (Nat.eqb (fst l1) (fst l2))
@@ -174,7 +131,7 @@ Section VariableScheduler.
   (* wide enough to count 0 .. n-1 *)
   Definition counter_sz (n: nat) : nat := S (Nat.log2 n).
 
-  (* ONE node, whose buffer is a COUNTER -- see [compile_dfg_buffers]. *)
+  (* The wait: ONE node, whose buffer counts -- see [compile_dfg_buffers]. *)
   Definition stall_chain (n: nat) (id: nid_t) : M nid_t :=
     match n with
     | 0 => ret id
@@ -190,16 +147,9 @@ Section VariableScheduler.
     let! _ := put_state ({| graph := graph s'; var_map := new_map |}) in
     ret id.
 
-  (* Reads are shared on the GRAPH, not through [var_map].  A [DFG_Var v] node
-     denotes the register's value at the start of the action -- state is only
-     written when [done] fires -- so it is the same value in every branch and
-     any existing node may be reused.  That sharing is load-bearing: the taint
-     and declassification analyses are node-id based, so without it a rule that
-     untaints the read behind an output no longer untaints the read behind a
-     branch condition on the same variable.
-     The two extra guards on the found node (its size, and a positive nid) are
-     what make it usable without threading a new graph invariant through the
-     builder; every node the builder actually emits satisfies both. *)
+  (* Reads are shared on the GRAPH: a [DFG_Var v] is the register's value at
+     action start, so every branch sees the same node.  The taint and
+     declassification analyses are node-id based and rely on that sharing. *)
   Definition read_var (dfg_v : dfg_vars) : M nid_t :=
     let! s := get_state in
     match find (fun nd =>
@@ -214,13 +164,9 @@ Section VariableScheduler.
     | None => emit (DFG_Var dfg_v) (dfg_var_size dfg_v)
     end.
 
-  (* A READ must not enter [var_map].  [var_map] is the set of variables the
-     action ASSIGNS -- it drives [compile_dfg_aux], [crit_report_all] and the
-     phi merge at the end of a branch.  Caching a read there made a variable
-     that a branch merely reads indistinguishable from one it writes, so
-     [merge_key] hit its asymmetric case and emitted a phi between two copies of
-     the same value.  An assignment still wins over the read cache, hence the
-     [var_map] lookup first. *)
+  (* [var_map] holds the variables the action ASSIGNS, so reads stay out of it
+     and [merge_key] keeps its symmetric case at a branch end.  An assignment
+     wins over the read cache, hence the [var_map] lookup first. *)
   Definition get_var (dfg_v : dfg_vars) : M nid_t :=
     let! s := get_state in
       match BitsToLists.list_assoc (var_map s) dfg_v with
@@ -362,46 +308,16 @@ Section VariableScheduler.
       | tf_output dst expr =>
         let! res_id := dataflow_expr expr (dfg_var_size (DFG_OVar dst)) in
         set_var (DFG_OVar dst) res_id
-      (* A call lowers to BOTH halves of the round trip, mirroring the two-write
-         [tf_call_update] in Semantics.v: the request payload onto [req], and
-         the destination from a read of the RESPONSE port.  Emitting only one of
-         them would make the spec and the hardware disagree on a port or a
-         register, which is what scheduler_done_correct compares.
-
-         Still untimed: both writes land through [var_map], so the port is
-         driven at the done cycle like any other output.  Making the request
-         land EARLY -- a DFG_Drive feeding a DFG_Stall feeding a DFG_Sample --
-         is the next rung, and it is this line that changes again. *)
-      (* THE ROUND TRIP, as a graph.
-
-         The request is a DRIVE, not a [set_var].  A [set_var] puts the port in
-         [var_map], and var_map writes are emitted into the DONE half -- the
-         action's final cycle -- so the IP would receive the request as the
-         action ends and no response could arrive inside the action.  A drive is
-         emitted as an always-op instead (see [compile_dfg_drives]), so the
-         request is on the wire DURING the action and held.
-
-         The stall hangs off the DRIVE, not off the payload, so the declared
-         latency is measured from the cycle the port is driven rather than from
-         whenever the argument happened to be computed.  The sample then hangs
-         off the stall, which is what gives the response read an edge back to
-         the request.  This is exactly the shape Spike 2b measured by hand:
-         in_x -> drive -> stall<L> -> sample. *)
+      (* THE ROUND TRIP, as a graph: arg -> drive -> stall<lat> -> sample.  A
+         drive is an always-op ([compile_dfg_drives]), so the request is on the
+         wire DURING the action and [lat] runs from the cycle it is driven. *)
       | tf_call ip dst arg =>
         let! s0 := get_state in
         let! arg_id := dataflow_expr arg (ip_req_sz (ip_of ip)) in
         let! drive_id := emit (DFG_Drive ip arg_id en) (ip_req_sz (ip_of ip)) in
-        (* SEQUENCING.  If an earlier call in this action already used this IP,
-           hang the delay chain off a JOIN of this drive and that call's sample
-           rather than off the drive alone.  A DFG_Binary's validity is the AND
-           of its arguments (valid_expr_and), so the join cannot fire until the
-           previous response has been taken -- and since a node shares a cycle
-           with its arguments, the new drive lands in the previous sample's
-           cycle, exactly lat after the previous drive.
-
-           Width 1: only the join's VALIDITY is used, its value is discarded by
-           the chain and then by the sample.  tf_or is arbitrary -- any binary op
-           would do, because nothing reads the result. *)
+        (* SEQUENCING: an earlier call on this IP puts a JOIN of this drive and
+           that call's sample under the stall.  A [DFG_Binary]'s validity is the
+           AND of its arguments, so the join waits for the previous response. *)
         let! head := match last_sample s0 ip en with
                      | None => ret drive_id
                      | Some prev => emit (DFG_Binary tf_or drive_id prev) 1
@@ -498,14 +414,9 @@ Section VariableScheduler.
     (* SPIKE: a stall is a register, not combinational logic.  The real W-b
        design needs a separate [must_buffer] predicate rather than an inflated
        cost -- see the archive's DEBT-2. *)
-    (* [lat] comes from [tfs_spec_ip_lat] and is in CYCLES.  The cost model
-       works in cost units and [calc_target_cycle] divides by [cost_limit], so
-       multiplying here makes the resulting cycle count EXACT: adding a whole
-       multiple of [cost_limit] shifts the quotient by exactly that many cycles,
-       whatever the remainder.  A latency declared directly in cost units would
-       give a gap of lat/cost_limit, which rounds -- to ZERO when lat <
-       cost_limit.  Regressions: StallLatencySpike [sep_pad_r0..r5],
-       [sep_lat_0..6]. *)
+    (* [ip_lat] is in CYCLES, so scale by [cost_limit]: a whole multiple shifts
+       [calc_target_cycle]'s quotient by exactly that many cycles, whatever the
+       remainder.  Regressions: StallLatencySpike [sep_pad_r0..r5], [sep_lat_0..6]. *)
     | DFG_Stall lat _ => lat * cost_limit
     (* SPIKE 2b: a drive and a sample are wiring, not logic. *)
     | DFG_Drive _ _ _ => 0
@@ -535,10 +446,7 @@ Section VariableScheduler.
     in
     fold_left aux (List.rev (graph dfg)) [].
 
-  (* 
-    Step 3, 4, 5, 6 are very simplistic for now.
-    Good performant HLS is not our focus, so we keep it simple.
-  *)
+  (* Steps 3-6 stay simple: performant HLS is out of scope here. *)
 
   (* ============================== *)
   (* = Step 3: Distance Splitting = *)
@@ -556,11 +464,9 @@ Section VariableScheduler.
   (* = Step 4: Buffer Allocation  = *)
   (* ============================== *)
 
-  (* A source op holds the same value for the whole action: constants are
-     literals, inputs are latched at action start, and the spec-visible state is
-     only written at the done cycle.  Re-reading it in a later stage therefore
-     costs nothing and is always correct, so it must never get a buffer -- a
-     buffer would make every consumer wait a cycle for a value already there. *)
+  (* A source op holds one value for the whole action -- constants are literals,
+     inputs are latched at action start, state is written at done -- so it is
+     re-read in any later stage and stays buffer-free. *)
   Definition source_op (o : dfg_op) : bool :=
     match o with
     | DFG_Const _ | DFG_Input _ | DFG_Var _ => true
@@ -638,21 +544,9 @@ Section VariableScheduler.
   (* = Step 5: Taint Analysis     = *)
   (* ============================== *)
 
-  (* Declassification sites: the roots of assignments to destinations an
-     attacker can actually see.
-
-     [DFG_SVar] is excluded because a secret register is not a public
-     destination -- that was the fix for GENERAL_REQUIREMENTS.md section 1.1.
-     [DFG_OVar] is now filtered on the DECLARED class for the same reason one
-     step further out: an output the attacker cannot see is not a public
-     destination either.  Without this, writing a secret to a [Secret] output
-     untaints that secret for the whole action -- [read_var] shares read nodes,
-     so a top-level [crypt_key := dp] makes [var_map[crypt_key]] the
-     [DFG_Var (DFG_SVar dp)] node itself, [public_dsts] returns it,
-     [untainted_roots] contains it, and [get_tainted] drops it, including for a
-     branch condition reading [dp].  [crit_report] cannot detect this:
-     [phi_crit_reason] returns [None] exactly when the condition is untainted.
-     REVIEW.md section 2.3. *)
+  (* Declassification sites: the roots of assignments to destinations the
+     attacker observes, so [DFG_OVar] filtered on the DECLARED class and
+     [DFG_SVar] excluded.  GENERAL_REQUIREMENTS.md 1.1, REVIEW.md 2.3. *)
   Definition public_dsts (dfg: dfg_state) : list (nid_t) :=
     map snd (filter (fun '(v, _) =>
       match v with
@@ -698,16 +592,11 @@ Section VariableScheduler.
         if Nat.eqb (length acc') (length acc) then acc else saturate f dfg acc'
     end.
 
-  (* Constants and inputs hold the same value in any two runs, so they are
-     derivable under no guard.  Both saturations seed with them: without it an
-     unconditional rule whose source is an input -- the paper's "binary
-     operations under the condition that one operand is known" -- could never
-     fire, and a shared constant would become a hub in [decl_facts]. *)
-  (* Values that enter the graph already known to the attacker.  A constant is
-     in the source text; an input is one the attacker drives -- but only if it
-     is declared [Public].  A [Secret] input is driven by the environment inside
-     the trust boundary (the crypto IP's result), never by the attacker, so it
-     is not trivially public and belongs with the other taint sources. *)
+  (* Constants and public inputs agree across any two runs, so they are
+     derivable under the empty guard and seed both saturations. *)
+  (* Values that enter the graph already known to the attacker: constants, and
+     inputs declared [Public].  A [Secret] input comes from inside the trust
+     boundary, so it belongs with the taint sources. *)
   Definition trivially_public (dfg: dfg_state) : list nid_t :=
     filter (fun k => match op (nth k (graph dfg)
                                  {| nid := 0; op := DFG_Empty; sz := 0 |}) with
@@ -746,20 +635,9 @@ Section VariableScheduler.
       let args := get_args node in
       (* Only a read of pre-action secret state is a taint source: inputs and reads of
          the pre-action output state are both visible to the attacker. *)
-      (* Taint SOURCES.  One rule at every point a value enters the graph: it is
-         public exactly when it is declared public.
-
-           DFG_Const            always public -- it is in the source text
-           DFG_Input v          by [inputs_var_class]
-           DFG_Var (DFG_SVar _) always secret -- states ARE the secrets under
-                                the attacker model
-           DFG_Var (DFG_OVar o) by [outputs_var_class]
-
-         and symmetrically only a [Public] destination declassifies
-         ([public_dsts]).  A secret input is treated no differently from secret
-         state: both are values the attacker neither drives nor observes.
-         [DFG_Const] and public [DFG_Input] are seeded untainted by
-         [trivially_public] rather than here. *)
+      (* Taint SOURCES, one rule per point a value enters the graph: a constant
+         is public, an input and a [DFG_OVar] take their declared class, and a
+         [DFG_SVar] is secret -- states ARE the secrets under the attacker model. *)
       let self_tainted := match op node with
         | DFG_Var (DFG_SVar _) => true
         | DFG_Var (DFG_OVar o) => match outputs_var_class o with
@@ -783,7 +661,7 @@ Section VariableScheduler.
         | inr _ => false
         end) args 
       in
-      (* If this node is output, then its no longer tainted *)
+      (* An output node is declassified here. *)
       match mem (nid node) untainted with
         | inl m => taint_map
         | inr _ => if is_tainted then (nid node) :: taint_map else taint_map
@@ -796,21 +674,9 @@ Section VariableScheduler.
      latency is required, and a critical phi already waits for both branches.
      See agents/taint-tagging-soundness/PLAN.md issue E. *)
 
-  (* Producer v2.  A base of facts "node [c] is derivable whenever guard [g]
-     holds", seeded from [untainted_roots] at the empty guard and saturated by
-     [decl_compose]: an instance fires once every one of its sources has some
-     fact, and its target's guard is the instance's own guard conjoined with
-     the chosen source guards.  A declassification may therefore rest on other
-     *guarded* facts -- which is what the paper's lockbox needs, since PhiCUT's
-     source is a phi node that is itself only guarded-derivable.
-
-     DISJUNCTION is expressed by several entries for the same node, not by a
-     disjunctive guard: "derivable under (A or B)" is not a provable statement
-     (the two runs could satisfy different disjuncts and genuinely differ),
-     whereas "derivable under A" and "derivable under B" separately are, and
-     the consumer only ever needs the clause the current path implies.  Hence
-     the Cartesian product below: one combined guard per way of picking a fact
-     for each source. *)
+  (* Facts "node [c] is derivable whenever guard [g] holds", seeded from
+     [untainted_roots] and saturated by [decl_compose].  DISJUNCTION is several
+     entries for one node, hence the Cartesian product below. *)
   Definition gfact := (nid_t * list lit)%type.
 
   Definition gfacts_of (base: list gfact) (c: nid_t) : list (list lit) :=
@@ -875,10 +741,9 @@ Section VariableScheduler.
     end.
 
 
-  (* First the expression, then the valid signal.  [tainted] and [dfacts] are
-     threaded rather than recomputed, and [pi] is the path of selector literals
-     under which this occurrence is compiled: criticality is per *occurrence*,
-     since a declassification is only valid where its guard holds. *)
+  (* First the expression, then the valid signal.  [pi] is the path of selector
+     literals this occurrence is compiled under: criticality is per OCCURRENCE,
+     since a declassification holds exactly where its guard does. *)
 
   (* A phi is critical at this occurrence when its condition is tainted and NO
      recorded guard for it is implied by the path. *)
@@ -886,10 +751,9 @@ Section VariableScheduler.
       (c: nid_t) (pi: list lit) : bool :=
     mem_nid c tainted && negb (declassified_at dfacts c pi).
 
-  (* A CRITICAL phi reads both branch validities unconditionally, so its
-     branches must not be compiled under an extended path: a declassification
-     that only holds on the selected side would leak through the AND.  A
-     non-critical phi selects, so its branches do learn the selector. *)
+  (* A CRITICAL phi reads both branch validities unconditionally, so it compiles
+     its branches under the UNEXTENDED path; a selecting phi extends it with the
+     selector. *)
   Definition phi_path (crit: bool) (c: nid_t) (b: bool) (pi: list lit) : list lit :=
     if crit then pi else (c, b) :: pi.
 
@@ -1023,10 +887,9 @@ Section VariableScheduler.
      the winner's branches are required. *)
   Definition wmax (a b: wcycle) : wcycle := if Nat.ltb (fst a) (fst b) then b else a.
 
-  (* Two LOWER bounds, on the other hand, must BOTH be attained, so the path is
-     the conjunction of their branches.  Should the two disagree on a branch the
-     conjunction is unsatisfiable and the true lower bound is higher -- which
-     keeps [ta_cycles_lo] a bound, but makes the witness merely indicative. *)
+  (* Two LOWER bounds must BOTH be attained, so their paths conjoin.  If the two
+     disagree on a branch the conjunction is unsatisfiable and the true lower
+     bound is higher, so [ta_cycles_lo] stays a bound with an indicative witness. *)
   Definition wmax_lo (a b: wcycle) : wcycle :=
     (Nat.max (fst a) (fst b), wunion (snd a) (snd b)).
 
@@ -1088,9 +951,8 @@ Section VariableScheduler.
     let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel n in (fst l, fst u).
 
   (* The action is done when every variable it writes is valid, so the bounds
-     are the maxima over the roots.  Reported as a NUMBER of cycles, i.e. the
-     deepest stage index plus one: a fully combinational action is (1, 1).
-     [fst = snd] is a certificate that the action is constant time. *)
+     are maxima over the roots, counted in CYCLES (combinational is (1, 1)).
+     [fst = snd] certifies the action is constant time. *)
   Definition action_bounds_w (dfg: dfg_state) : wcycle * wcycle :=
     let tainted := get_tainted dfg in
     let dfacts := decl_facts dfg in
@@ -1128,9 +990,8 @@ Section VariableScheduler.
         match BitsToLists.list_assoc buffers nid with
         | Some (n_idx, n_sz) => match index_of_nat (length (nth (index_to_nat a_idx) bn [])) n_idx with
                               | Some n_idx' =>
-                                  (* A STALL's buffer holds its counter, not its
-                                     value, so only the validity comes from the
-                                     register and the value passes through. *)
+                                  (* a stall's buffer is its counter, so only
+                                     the validity comes from the register *)
                                   match op (nth nid (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0; |}) with
                                   | DFG_Stall _ arg =>
                                       (fst (compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg buffers),
@@ -1172,17 +1033,13 @@ Section VariableScheduler.
                 else
                   valid_expr_and cond_val (valid_expr_if cond_expr then_val else_val)
               )
-          (* SPIKE (W-b feasibility): pass-through of BOTH value and validity,
-             i.e. an identity node.  This measures the churn of adding a DFG
-             constructor without perturbing any example.  The real W-b returns
-             the argument's value with a LAGGED validity -- that decoupling is
-             the part that needs a new register family. *)
+          (* A stall's VALUE is its argument's; the lag lives in its validity,
+             which [compile_dfg_buffers] counts out. *)
           | DFG_Stall _ arg1 =>
               compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers
-          (* SPIKE 2b: a drive passes its value through -- it is the message on
-             its way to the port.  A SAMPLE is the interesting one: its VALUE is
-             the port, but its VALIDITY is the token's, so value and validity
-             decouple exactly where the round trip needs them to. *)
+          (* A drive passes its value through: it is the message on its way to
+             the port.  A sample's VALUE is the port and its VALIDITY the
+             token's, which is where the round trip decouples the two. *)
           | DFG_Drive _ arg1 _ =>
               compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers
           | DFG_Sample p tok _ =>
@@ -1214,34 +1071,17 @@ Section VariableScheduler.
             | Some n_idx' => 
               let buffers' := filter (fun '(b_nid, _) => negb (Nat.eqb b_nid nid)) buffers in
               let '(expr, valid) := compile_dfg_expr_aux tainted dfacts [] fuel a_idx' dfg nid buffers' in
-              (* A buffer normally RECOMPUTES its value every cycle, which is
-                 sound while every source is stable within an action -- inputs
-                 latched at start, state stable until done.
-
-                 A [DFG_Sample] reads a LIVE wire, which is not stable: the IP
-                 presents its answer for one cycle. Recomputing therefore tracks
-                 the wire, and by the done cycle the buffer holds the LAST value
-                 seen rather than the value at the sample cycle. With two
-                 sequenced calls the earlier call's result was simply wrong, and
-                 nothing at the Coq level showed it -- only the Verilog did.
-
-                 So a sample's buffer LATCHES instead: it captures on the cycle
-                 its validity RISES and holds thereafter. The delayed copy of the
-                 validity needs no new register -- [tf_dfg_v] is itself a
-                 register, so reading it gives the validity as of the previous
-                 cycle. Restricted to samples, so every existing design compiles
-                 to exactly the same hardware. *)
+              (* A buffer RECOMPUTES every cycle, sound while its sources are
+                 stable across the action.  A [DFG_Sample] reads a LIVE wire, so
+                 its buffer LATCHES as its validity RISES and holds thereafter. *)
               let is_sample :=
                 match op (nth nid (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}) with
                 | DFG_Sample _ _ _ => true
                 | _ => false
                 end in
-              (* A STALL waits by COUNTING, not by passing a token down a chain
-                 of one-cycle buffers.  Its buffer is the counter: it advances
-                 while the argument is valid and saturates at [lat-1], so the
-                 validity rises exactly [lat] cycles after the argument's and
-                 stays up.  One register of [log2 lat] bits per call site,
-                 whatever [lat] is. *)
+              (* A stall's buffer is a COUNTER: it advances while the argument is
+                 valid and saturates at [lat-1], so the validity rises exactly
+                 [lat] cycles after the argument's and stays up. *)
               let stall_lat :=
                 match op (nth nid (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}) with
                 | DFG_Stall l _ => Some l
@@ -1289,24 +1129,9 @@ Section VariableScheduler.
   Definition driven_ports (_: dfg_state) : list ips_var :=
     @finite_elements ips_var ips_var_fin.
 
-  (* The node carrying [n]'s validity one cycle later -- the head of [n]'s delay
-     chain.  That delayed copy is what turns a monotone validity into a rising
-     edge, and so a held port into a pulse.
-
-     A SEQUENCED call puts an ordering join between the drive and its chain, so
-     the stall consumes the join rather than the drive.  Look through one binary
-     node as well.  Getting this wrong is not a proof failure: the detector
-     silently degenerates to [v && ~false] = [v], the strobe is held high for the
-     whole action instead of pulsing, and only the Verilog shows it. *)
-  (* The head of [n]'s delay chain, paired with the node that head DELAYS: the
-     drive itself, or the ordering join when the call is sequenced.
-
-     Both halves are needed because a drive's strobe is the rising edge of what
-     the chain delays, [gate && ~head].  Using the drive's own validity as the
-     gate is correct only for an unsequenced call: behind a join the drive is
-     valid from cycle 0 while the head is not, so [~head] holds for the whole
-     wait and the strobe is a LEVEL rather than a pulse -- which masks the
-     earlier request entirely.  Measured, not reasoned: see the testbenches. *)
+  (* [n]'s stall, paired with the node it waits on: the drive itself, or the
+     ordering join when the call is SEQUENCED, which is why this looks through
+     one binary node. *)
   Definition chain_gate (dfg: dfg_state) (n: nid_t) : option (nid_t * nid_t) :=
     let stall_of := fun (m: nid_t) =>
       match find (fun nd => match op nd with
@@ -1334,10 +1159,7 @@ Section VariableScheduler.
   Definition chain_head (dfg: dfg_state) (n: nid_t) : option nid_t :=
     match chain_gate dfg n with Some (_, h) => Some h | None => None end.
 
-  (* The FIRST cycle of a stall's wait, read straight off its counter.  This is
-     what the chain needed the rising-edge trick for, and the two bugs that
-     trick caused -- a guard one cycle late, a join that never rises -- are not
-     expressible against a counter. *)
+  (* The first cycle of a stall's wait: its counter is still zero. *)
   Definition stall_start (a_idx: Vect.index (length bn)) (dfg: dfg_state)
     (buffers: list (nid_t * (nat * sz_t))) (h: nid_t) : expr_t :=
     match BitsToLists.list_assoc buffers h with
@@ -1350,34 +1172,12 @@ Section VariableScheduler.
     | None => tf_const 0
     end.
 
-  (* A drive is emitted as an ALWAYS-op, unlike a [tf_output] from [var_map]
-     which goes to the done half.  That is the whole point: the done half runs
-     only on the action's final cycle, so a request emitted there reaches the IP
-     as the action ends and no response can come back inside the action.
-
-     Two differences from [compile_dfg_buffers], and both matter:
-
-     - A buffer is recomputed unconditionally every cycle, because its value is
-       only ever read through its validity bit.  A PORT is read by hardware we
-       do not control, so it must never carry garbage: the drive HOLDS the old
-       value until its validity fires.  [tf_ovar o] reads the pre-cycle value,
-       so this is a latch, not a combinational loop.
-     - Validity is monotone, so once a drive fires the port keeps that value for
-       the rest of the action.  That turns "the trusted ports must stay stable
-       from the request to the response" (Examples/Mars.v:582) from a module
-       discipline into a property of the lowering.
-
-     Several drives to one port become ONE op with the latest outermost, so a
-     later request overrides an earlier one exactly when its validity arrives.
-     That is a defined meaning, not two sequenced round trips -- deciding
-     whether the surface should reject it is still open. *)
-  (* The path condition as an expression: each literal is the branch value,
-     negated when the else side was taken.  An empty guard is [1], so a call
-     at the top of an action compiles exactly as it did before.
-
-     Compiled WITHOUT buffer substitution, SAMPLES EXCEPTED: the strobe is a
-     one-cycle edge and a buffer lags its value by a cycle, while a sample is
-     the one source not stable across the action, so it must keep its latch. *)
+  (* A drive is an ALWAYS-op, so the request is on the wire during the action.
+     The port HOLDS its old value until the drive's validity fires, and validity
+     is monotone, so it stays stable from there to the response. *)
+  (* The path condition: each literal, negated on the else side; empty is [1].
+     Compiled for the cycle the drive fires in, so buffers are substituted only
+     for samples -- every other source is stable across the action. *)
   Definition guard_expr (tainted: list nid_t) (dfacts: list gfact) (fuel: nat)
     (a_idx: Vect.index (length bn)) (dfg: dfg_state)
     (sbufs: list (nid_t * (nat * sz_t))) (en: list (nid_t * bool)) : expr_t :=
@@ -1402,19 +1202,9 @@ Section VariableScheduler.
     match index_of_nat (length bn) a_idx with
     | None => []
     | Some a_idx' =>
-        (* ONE scheduler register per driven port holding {strobe, payload}.
-
-           BOTH halves select on the PULSE, not on the drive's validity. A
-           drive's validity is monotone -- and for an input-derived payload it is
-           trivially true -- so folding on it makes the outermost drive win
-           always, and with two calls the earlier request's payload never reaches
-           the wire at all. The pulse is one cycle and the pulses are disjoint,
-           so folding on it gives: take request k's payload at request k's cycle,
-           then HOLD it (else-branch is the register's own previous value) until
-           the next pulse.
-
-           Only the Verilog showed this: at the Coq level both folds typecheck
-           and the cycle assignment is correct either way. *)
+        (* ONE scheduler register per driven port, holding {strobe, payload}.
+           BOTH halves select on the PULSE: pulses are one cycle and disjoint,
+           so request k's payload is taken at its own cycle and then HELD. *)
         map (fun p =>
                tf_assign (tf_dfg_ov p)
                  (tf_op2 (tf_concat 1 (ip_req_sz (ip_of p)))
@@ -1462,26 +1252,6 @@ Section VariableScheduler.
                        (tf_svar (tf_dfg_ov p)) (drive_nodes dfg p))))
             (driven_ports dfg)
     end.
-
-  (* Fixpoint combine_pair_step (exprs : list expr_t) : list expr_t :=
-    match exprs with
-    | e1 :: e2 :: rest => (valid_expr_and e1 e2) :: combine_pair_step rest
-    | _ => exprs
-    end.
-
-  Fixpoint combine_balanced_helper (fuel : nat) (exprs : list expr_t) : expr_t :=
-    match fuel with
-    | 0 => tf_const 1 (* should not happen *)
-    | S f =>
-      match exprs with
-      | [] => tf_const 1
-      | [e] => e
-      | _ => combine_balanced_helper f (combine_pair_step exprs)
-      end
-    end.
-
-  Definition combine_valid_exprs (exprs : list expr_t) : expr_t :=
-    combine_balanced_helper (length exprs) exprs. *)
 
   Fixpoint combine_valid_exprs (exprs: list (@tf_expr tf_dfg_states (inputs_var + ips_var) outputs_var)) : @tf_expr tf_dfg_states (inputs_var + ips_var) outputs_var :=
     match exprs with
@@ -1857,10 +1627,8 @@ Section VariableScheduler.
       + apply preserves_ret.
       + apply preserves_bind; [apply dataflow_expr_vm|]. intro x. apply set_var_vm.
       + apply preserves_bind; [apply dataflow_expr_vm|]. intro x. apply set_var_vm.
-      + (* payload, drive, ordering join, delay chain, sample, dest write --
-           and only the LAST touches var_map.  [get_state] is the identity on
-           state, and the join is an [emit] or a [ret]; neither records
-           anything. *)
+      + (* payload, drive, ordering join, stall, sample, dest write -- only the
+           LAST touches var_map; [get_state], [emit] and [ret] record nothing. *)
         apply preserves_bind; [intros s Hs; exact Hs|]. intro s0.
         apply preserves_bind; [apply dataflow_expr_vm|]. intro x.
         apply preserves_bind; [apply emit_vm|]. intro y.
@@ -2195,13 +1963,9 @@ Section VariableScheduler.
         * apply buffers_tags_in in Hxb. apply final_tags_in in Hxf.
           destruct Hxb as [a' [n' [-> | ->]]];
             destruct Hxf as [[sv Hs]|[ov Ho]]; discriminate.
-        * (* Once a drive writes a SCHEDULER register rather than an output,
-             this stops being the interesting case.  A drive tag is
-             [StOp (tf_dfg_ov o)]; a final tag is [StOp (tf_dfg_s sv)] or
-             [OutOp ov].  Different constructors, so [discriminate] separates
-             them, and the driven/assigned exclusion that used to do this work
-             is gone entirely: driven-ness is DECLARED, so a driven port is never
-             a final tag in the first place. *)
+        * (* A drive tag is [StOp (tf_dfg_ov o)] and a final tag is
+             [StOp (tf_dfg_s sv)] or [OutOp ov] -- different constructors, so
+             [discriminate] separates them. *)
           apply drives_tags_in in Hxd. apply final_tags_in in Hxf.
           destruct Hxd as [o [-> _]].
           destruct Hxf as [[sv Hs]|[ov Ho]]; discriminate.

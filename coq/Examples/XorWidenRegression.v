@@ -1,14 +1,8 @@
-(*! Regression for the two rules no other example exercises.
-
-    `xor_rule` is the paper's "binary operations under the condition that one
-    operand is known": publishing `secret ^ mask` with a public `mask` input
-    declassifies `secret`.  This only works because both saturations seed with
-    the trivially-public nodes -- a mask supplied as an INPUT is never a public
-    destination.
-
-    `widen_rule` covers the other half: a narrow secret published at a wider
-    output goes through a widening resize, which keeps every bit.
-!*)
+(*! Regression for the two rules no other example exercises.  `xor_rule` is the
+    paper's "binary operations under the condition that one operand is known":
+    publishing `secret ^ mask` at a public `mask` declassifies `secret`, which
+    works because both saturations seed with the trivially-public nodes.
+    `widen_rule` covers a narrow secret published at a wider output. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.
