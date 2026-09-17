@@ -12,7 +12,7 @@ Import ListNotations.
 
 (* VALUE-level confidentiality over action SEQUENCES: the Public outputs are a
    function of the public data and the IP's responses, with the secret registers
-   not among the arguments.  Full reading in coq/Properties/README.md. *)
+   outside that set.  Per-action is unsound, hence the sequence (REVIEW.md 2.4). *)
 
 Section Confidentiality.
 
@@ -58,7 +58,7 @@ Section Confidentiality.
 
   (* "Secret-free": mentions no secret register and no read of a Secret output.
      Inputs are free at any class, since the theorem shares them between the two
-     runs.  The Secret-output clause is REVIEW.md 2.4; see the README. *)
+     runs.  The Secret-output clause is REVIEW.md 2.4. *)
   Fixpoint sf_expr (e: @tf_expr s_var i_var o_var) : bool :=
     match e with
     | tf_const _ => true
@@ -79,7 +79,7 @@ Section Confidentiality.
     | tf_ops_base (tf_assign _ _) => true    (* a secret register may hold anything *)
     (* A call writes its REQUEST PORT, so it classifies as a [tf_output]: under a
        secret-dependent guard a drive publishes the branch condition, and with it
-       whatever secret the condition came from.  See the README. *)
+       whatever secret the condition came from. *)
     | tf_ops_base (tf_call req _ _ arg _) =>
         match o_cls req with
         | Secret => true                     (* Secret request ports may be arbitrary *)
@@ -289,7 +289,7 @@ Section Confidentiality.
 
   (* With the IP's responses held fixed, the secret registers contribute NOTHING
      to any Public port, for any command sequence.  Named for the direct flow it
-     rules out; see coq/Properties/README.md for what it does NOT claim. *)
+     rules out, the shared-response hypothesis being MVP.md 9 A1. *)
   Corollary no_direct_secret_flow
       (acts: list (tfs_spec_action ctx)) (input: input_t)
       (secrets secrets': ContextEnv.(env_t) (tf_states_type s_sz))

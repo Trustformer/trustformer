@@ -23,9 +23,7 @@ Section MarsDischarge.
 
   (* For MARS: with the IP's responses held fixed, PS, DP and AK contribute
      nothing to any Public port, for any command sequence, so every
-     DP-dependence of [dout] factors through the IP (MVP.md section 9, A1).
-     What this rules out, and what it leaves out, is in
-     coq/Properties/README.md. *)
+     DP-dependence of [dout] factors through the IP (MVP.md section 9, A1). *)
   Theorem mars_no_direct_secret_flow
       (acts: list (tfs_spec_action tfs_ctx))
       (input: forall x, bits_t (fs_inputs_size x))

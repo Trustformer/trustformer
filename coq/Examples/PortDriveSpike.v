@@ -104,7 +104,7 @@ Section Spike.
   (* M1.  THE SECOND DRIVE ERASES THE FIRST.                            *)
   (* ================================================================== *)
 
-  (* [tf_output dst e] is [set_var (DFG_OVar dst) res_id] (VariableScheduler.v
+  (* [tf_output dst e] is [set_var (DFG_OVar dst) res_id] (SchedulerCore.v
      :279) and [var_map] holds ONE nid per variable.  Two writes to out_req
      therefore leave one entry, naming the SECOND value. *)
 
@@ -140,11 +140,11 @@ Section Spike.
                                    | _ => false end) ops).
 
   Example port_never_driven_early :
-    count_outputs (fst (VariableScheduler.schedule pd_ctx climit (VariableScheduler.buffer_needs pd_ctx climit) act_twice)) = 0.
+    count_outputs (fst (SchedulerCore.schedule pd_ctx climit (SchedulerCore.buffer_needs pd_ctx climit) act_twice)) = 0.
   Proof. vm_compute. reflexivity. Qed.
 
   Example port_driven_at_done :
-    count_outputs (snd (VariableScheduler.schedule pd_ctx climit (VariableScheduler.buffer_needs pd_ctx climit) act_twice)) = 1.
+    count_outputs (snd (SchedulerCore.schedule pd_ctx climit (SchedulerCore.buffer_needs pd_ctx climit) act_twice)) = 1.
   Proof. vm_compute. reflexivity. Qed.
 
   (* CONFIRMED IN THE GENERATED VERILOG, this being a hardware timing claim: the
