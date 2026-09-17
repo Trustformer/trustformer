@@ -325,7 +325,7 @@ Section SchedulerCore.
            AND of its arguments, so the join waits for the previous response. *)
         let! head := match last_sample s0 ip en with
                      | None => ret drive_id
-                     | Some prev => emit (DFG_Binary tf_or drive_id prev) 1
+                     | Some prev => emit (DFG_Join drive_id prev) 1
                      end in
         let! stall_id := stall_chain (ip_lat (ip_of ip)) head in
         let! samp_id := emit (DFG_Sample ip stall_id en) (dfg_var_size (DFG_SVar dst)) in
@@ -385,6 +385,7 @@ Section SchedulerCore.
     | DFG_Stall _ arg => [arg]
     | DFG_Drive _ arg en => arg :: map fst en
     | DFG_Sample _ tok _ => [tok]
+    | DFG_Join a b => [a; b]
     | DFG_Empty => []
     end.
 
@@ -426,6 +427,9 @@ Section SchedulerCore.
     (* SPIKE 2b: a drive and a sample are wiring, not logic. *)
     | DFG_Drive _ _ _ => 0
     | DFG_Sample _ _ _ => 0
+    (* Same as the [DFG_Binary tf_or] it replaces, so the schedule is unmoved:
+       its validity is a real AND gate even though it carries no value. *)
+    | DFG_Join _ _ => 1
     | DFG_Empty => 0
     end.
 
@@ -849,6 +853,9 @@ Section SchedulerCore.
             | DFG_Stall _ a => crit_report_aux dfg tainted dfacts pi fuel' a bufs
             | DFG_Drive _ a _ => crit_report_aux dfg tainted dfacts pi fuel' a bufs
             | DFG_Sample _ t _ => crit_report_aux dfg tainted dfacts pi fuel' t bufs
+            | DFG_Join a b =>
+                crit_report_aux dfg tainted dfacts pi fuel' a bufs
+                ++ crit_report_aux dfg tainted dfacts pi fuel' b bufs
             | _ => []
             end
         end
@@ -939,6 +946,11 @@ Section SchedulerCore.
         | DFG_Sample _ t _ =>
             let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel' t in
             (wbump here l, wbump here u)
+        (* Like a binary: the ordering join is valid when both arguments are. *)
+        | DFG_Join a b =>
+            let '(l1, u1) := node_bounds_w dfg tainted dfacts cycles pi fuel' a in
+            let '(l2, u2) := node_bounds_w dfg tainted dfacts cycles pi fuel' b in
+            (wbump here (wmax_lo l1 l2), wbump here (wmax u1 u2))
         | DFG_Phi c t e =>
             let crit := phi_crit tainted dfacts c pi in
             let '(lc, uc) := node_bounds_w dfg tainted dfacts cycles pi fuel' c in
@@ -1050,6 +1062,12 @@ Section SchedulerCore.
           | DFG_Sample p tok _ =>
               let '(_, tok_val) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg tok buffers in
               (tf_ivar (inr p), tok_val)
+          (* ORDERING only: the validity is the AND the sequencing needs, and
+             the value is a constant because nothing reads it. *)
+          | DFG_Join a b =>
+              let '(_, val_a) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg a buffers in
+              let '(_, val_b) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg b buffers in
+              (tf_const 0, valid_expr_and val_a val_b)
           | DFG_Empty => (tf_const 0, tf_const 0) (* should not happen *)
           end
         end
@@ -1150,7 +1168,7 @@ Section SchedulerCore.
     | Some h => Some (n, h)
     | None =>
         match find (fun nd => match op nd with
-                              | DFG_Binary _ a _ => Nat.eqb a n
+                              | DFG_Join a _ => Nat.eqb a n
                               | _ => false
                               end) (graph dfg) with
         | Some j => match stall_of (nid j) with

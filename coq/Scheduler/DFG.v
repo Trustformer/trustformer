@@ -40,6 +40,10 @@ Section SchedulerTypes.
        drive is a conditional SIDE EFFECT with no [var_map] entry. *)
     | DFG_Drive (p: ips_var) (arg: nid_t) (en: list (nid_t * bool))
     | DFG_Sample (p: ips_var) (tok: nid_t) (en: list (nid_t * bool))
+    (* An ORDERING constraint and no value: valid when both arguments are, so a
+       second call on an IP waits for the first to answer.  It carries no value,
+       hence no relation between its width and its arguments. *)
+    | DFG_Join (a: nid_t) (b: nid_t)
     | DFG_Empty                
     .
 

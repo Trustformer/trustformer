@@ -153,6 +153,8 @@ Section Rendering.
         | DFG_Drive v a _ => "drive[" +++ show v +++ "](" +++ show_node_aux dfg d a +++ ")"
         | DFG_Sample v t _ => "sample[" +++ show v +++ "](" +++ show_node_aux dfg d t +++ ")"
         | DFG_Stall l a => "stall<" +++ show l +++ ">(" +++ show_node_aux dfg d a +++ ")"
+        | DFG_Join a b => "join(" +++ show_node_aux dfg d a +++ ", "
+                              +++ show_node_aux dfg d b +++ ")"
         | DFG_Empty => "<empty>"
         end
     end.
@@ -238,6 +240,7 @@ Section Rendering.
     | DFG_Stall _ _ => "stall"
     | DFG_Drive _ _ _ => "drive"
     | DFG_Sample _ _ _ => "sample"
+    | DFG_Join _ _ => "join"
     | DFG_Empty => "empty"
     end.
 
