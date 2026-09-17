@@ -797,11 +797,11 @@ Definition tfs_schedule (ctx: TFSchedContext) (cost_limit: nat) : TFSchedule :=
 
 (* Keeps every existing use site unchanged while the taint set is computed once
    per top-level call rather than at every phi. *)
-Notation compile_dfg_expr ctx cost_limit bn fuel a_idx dfg n bufs :=
-  (compile_dfg_expr_aux ctx cost_limit bn (get_tainted ctx dfg) (decl_facts ctx dfg) []
+Notation compile_dfg_expr ctx bn fuel a_idx dfg n bufs :=
+  (compile_dfg_expr_aux ctx bn (get_tainted ctx dfg) (decl_facts ctx dfg) []
      fuel a_idx dfg n bufs).
 
 (* Same, at an explicit path: proofs that recurse into phi branches need it. *)
-Notation compile_dfg_expr_at ctx cost_limit bn pi fuel a_idx dfg n bufs :=
-  (compile_dfg_expr_aux ctx cost_limit bn (get_tainted ctx dfg) (decl_facts ctx dfg) pi
+Notation compile_dfg_expr_at ctx bn pi fuel a_idx dfg n bufs :=
+  (compile_dfg_expr_aux ctx bn (get_tainted ctx dfg) (decl_facts ctx dfg) pi
      fuel a_idx dfg n bufs).
