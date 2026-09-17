@@ -1007,12 +1007,12 @@ Section SchedulerCore.
         match BitsToLists.list_assoc buffers nid with
         | Some (n_idx, n_sz) => match index_of_nat (length (nth (index_to_nat a_idx) bn [])) n_idx with
                               | Some n_idx' =>
-                                  (* a stall's buffer is its counter, so only
-                                     the validity comes from the register *)
+                                  (* a stall's buffer is its COUNTER: the register
+                                     is the count, and the stall carries no
+                                     value, so only the validity comes back *)
                                   match op (nth nid (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0; |}) with
-                                  | DFG_Stall _ arg =>
-                                      (fst (compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg buffers),
-                                       tf_svar (tf_dfg_v a_idx n_idx'))
+                                  | DFG_Stall _ _ =>
+                                      (tf_const 0, tf_svar (tf_dfg_v a_idx n_idx'))
                                   | _ => (tf_svar (tf_dfg_b a_idx n_idx'), tf_svar (tf_dfg_v a_idx n_idx'))
                                   end
                               | None => (tf_const 0, tf_const 0) (* should not happen *)
@@ -1050,10 +1050,12 @@ Section SchedulerCore.
                 else
                   valid_expr_and cond_val (valid_expr_if cond_expr then_val else_val)
               )
-          (* A stall's VALUE is its argument's; the lag lives in its validity,
-             which [compile_dfg_buffers] counts out. *)
+          (* A stall CARRIES NO VALUE -- it is the counter [compile_dfg_buffers]
+             counts out, and the answer arrives on the wire at the sample.  Only
+             its validity, which lags its argument's by [lat] cycles, is read. *)
           | DFG_Stall _ arg1 =>
-              compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers
+              let '(_, v) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers in
+              (tf_const 0, v)
           (* A drive passes its value through: it is the message on its way to
              the port.  A sample's VALUE is the port and its VALIDITY the
              token's, which is where the round trip decouples the two. *)

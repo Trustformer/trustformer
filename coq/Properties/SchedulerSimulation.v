@@ -1427,6 +1427,7 @@ Section SchedulerSimulation.
     exists nd. split; [ exact Hin | reflexivity ].
   Qed.
 
+
   Lemma emit_full op sz (s: wst) :
     winv s ->
     (forall x, In x (get_args ctx {| nid := length (graph s); op := op; sz := sz |}) -> wnidwf s x) ->
@@ -1524,14 +1525,14 @@ Section SchedulerSimulation.
     end; intro H.
     - unfold ret in H. injection H as Hid Hs. subst s'. left.
       apply find_some in Ef. destruct Ef as [Hin Hpred]. cbv beta in Hpred.
-      destruct (op nd) as [ c | iv | v' | uop a | bop a1 a2 | a | cd t e | slat sa | dov dn | siv sn | ] eqn:Eo;
+      destruct (op nd) as [ c | iv | v2 | uop a | bop a1 a2 | a | cd t e | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo;
         try discriminate Hpred.
       apply andb_true_iff in Hpred. destruct Hpred as [Hpred Hpos].
       apply andb_true_iff in Hpred. destruct Hpred as [Hveq Hsz].
-      destruct (eq_dec v' v) as [Hvv | _]; [ | discriminate Hveq ].
+      destruct (eq_dec v2 v) as [Hvv | _]; [ | discriminate Hveq ].
       apply Nat.eqb_eq in Hsz. apply Nat.ltb_lt in Hpos.
       assert (Hnd : nd = {| nid := id; op := DFG_Var v; sz := dfg_var_size ctx v |}).
-      { destruct nd as [n0 o0 z0]; cbn in *. subst o0. subst v'. subst z0.
+      { destruct nd as [n0 o0 z0]; cbn in *. subst o0. subst v2. subst z0.
         rewrite <- Hid. reflexivity. }
       rewrite Hnd in Hin. split; [ exact Hin | split; [ rewrite <- Hid; exact Hpos | reflexivity ] ].
     - right. exact H.
@@ -1908,11 +1909,15 @@ Section SchedulerSimulation.
         | _ => wsz s a1 (sz node) /\ wsz s a2 (sz node)
         end
     | DFG_Phi c t e => wsz s c 1 /\ wsz s t (sz node) /\ wsz s e (sz node)
-    (* SPIKE: a stall passes its argument through unchanged, so the argument is
-       read at the node's own size -- same discipline as DFG_Unary tf_not. *)
-    | DFG_Stall _ a => wsz s a (sz node)
+    (* The round trip is a VALIDITY chain, and only the drive carries a value:
+       the payload IS read at the drive's own width.  A stall's size is its
+       COUNTER's width and it carries no value; a sample reads its token for
+       validity alone, its own value being [tf_ivar (inr p)]; and the ordering
+       join has no value either.  None of the three relates two widths. *)
     | DFG_Drive _ a _ => wsz s a (sz node)
-    | DFG_Sample _ t _ => wsz s t (sz node)
+    | DFG_Stall _ _ => True
+    | DFG_Sample _ _ _ => True
+    | DFG_Join _ _ => True
     | _ => True
     end.
 
@@ -1923,14 +1928,13 @@ Section SchedulerSimulation.
     node_args_sz s node -> wgmono s s' -> node_args_sz s' node.
   Proof.
     unfold node_args_sz. intros H Hg.
-    destruct (op node) as [c|v|v|uop a|bop a1 a2|a|cd t e|sa|dov dn den|siv sn sen|];
-      [ exact I | exact I | exact I | | | exact I | | | | | exact I ].
+    destruct (op node) as [c|v|v|uop a|bop a1 a2|a|cd t e|sa|dov dn den|siv sn sen|ja jb|];
+      [ exact I | exact I | exact I | | | exact I | | exact I | | exact I | exact I | exact I ].
     - destruct uop; eapply wsz_gmono; eauto.
     - destruct bop; destruct H as [H1 H2]; split; eapply wsz_gmono; eauto.
     - destruct H as [H1 [H2 H3]]; repeat split; eapply wsz_gmono; eauto.
-    - eapply wsz_gmono; eauto.
-    - (* SPIKE 2b: DFG_Drive, one argument like the stall. *) eapply wsz_gmono; eauto.
-    - (* SPIKE 2b: DFG_Sample, one token argument. *) eapply wsz_gmono; eauto.
+    - (* only the drive carries a value; stall, sample and join are [True] *)
+      eapply wsz_gmono; eauto.
   Qed.
 
   Lemma emit_fg op size (s: wst) :
@@ -2350,7 +2354,7 @@ Section SchedulerSimulation.
         assert (Hhead : let (hid, sh) :=
                           match last_sample ctx s ip en with
                           | None => ret ctx drive_id
-                          | Some prev => emit ctx (DFG_Binary tf_or drive_id prev) 1
+                          | Some prev => emit ctx (DFG_Join drive_id prev) 1
                           end sd in
                         wgmono sd sh /\ wnidwf sh hid /\ winv sh).
         { destruct (last_sample ctx s ip en) as [prev |] eqn:Elast.
@@ -2362,7 +2366,7 @@ Section SchedulerSimulation.
           - unfold ret. split; [ apply wgmono_refl | split; [ exact Nd | exact Pd ] ]. }
         destruct (match last_sample ctx s ip en with
                   | None => ret ctx drive_id
-                  | Some prev => emit ctx (DFG_Binary tf_or drive_id prev) 1
+                  | Some prev => emit ctx (DFG_Join drive_id prev) 1
                   end sd) as [head_id sh] eqn:Eh.
         destruct Hhead as [Gh [Nh Ph]].
         rewrite (bind_red _ _ sd _ _ Eh).
@@ -2689,11 +2693,14 @@ Section SchedulerSimulation.
   Qed.
 
   Lemma dataflow_ops_fg :
-    forall (ops: @tf_ops s_var i_var o_var p_var) (en: list (nid_t * bool)) (s: wst), winv s -> wvsz s -> wfg s ->
-      let (u, s') := dataflow_ops ctx en ops s in wgmono s s' /\ winv s' /\ wvsz s' /\ wfg s'.
+    forall (ops: @tf_ops s_var i_var o_var p_var) (en: list (nid_t * bool)) (s: wst),
+      winv s -> wvsz s -> wfg s ->
+      (forall x, In x (map fst en) -> wnidwf s x) ->
+      let (u, s2) := dataflow_ops ctx en ops s in
+      wgmono s s2 /\ winv s2 /\ wvsz s2 /\ wfg s2.
   Proof.
     induction ops as [op | op1 IHops1 op2 IHops2 | cond op1 IHops1 op2 IHops2];
-      intros en s Hinv Hvsz Hfg.
+      intros en s Hinv Hvsz Hfg Hen.
     - (* base *)
       destruct op.
       + (* nop *) simpl. unfold ret. split; [ apply wgmono_refl | split; [ exact Hinv | split; [ exact Hvsz | exact Hfg ] ] ].
@@ -2717,35 +2724,122 @@ Section SchedulerSimulation.
         destruct (set_var ctx (DFG_OVar dst) res_id s1) as [u s'] eqn:Es.
         destruct Hs as [Gs [Ps [Qs Fs]]].
         split; [ eapply wgmono_trans; eauto | split; [ exact Ps | split; [ exact Qs | exact Fs ] ] ].
-      + (* a call: the tf_assign shape twice -- request, then response *)
+      + (* THE ROUND TRIP, carrying wvsz and wfg through the four emits.  Only
+           the drive's [node_args_sz] says anything: the rest of the spine is
+           validity, so its obligations are [True]. *)
         simpl.
-        pose proof (dataflow_expr_fg arg (dfg_var_size ctx (DFG_OVar req)) s Hinv Hvsz Hfg) as Ha.
-        destruct (dataflow_expr ctx arg (dfg_var_size ctx (DFG_OVar req)) s) as [arg_id sa] eqn:Ea.
+        rewrite (bind_red (get_state ctx) _ s _ _ (get_state_red s)).
+        pose proof (dataflow_expr_fg arg (ip_req_sz (tfs_spec_ip ctx ip)) s Hinv Hvsz Hfg) as Ha.
+        destruct (dataflow_expr ctx arg (ip_req_sz (tfs_spec_ip ctx ip)) s)
+          as [arg_id sa] eqn:Ea.
         destruct Ha as [Ga [Na [Pa [Qa [Sa Fa]]]]].
-        rewrite (bind_red (dataflow_expr ctx arg (dfg_var_size ctx (DFG_OVar req))) _ s _ _ Ea).
-        pose proof (set_var_fg (DFG_OVar req) arg_id sa Pa Qa Fa Na Sa) as Hq.
-        destruct (set_var ctx (DFG_OVar req) arg_id sa) as [uq sq] eqn:Eq.
-        destruct Hq as [Gq [Pq [Qq Fq]]].
-        rewrite (bind_red (set_var ctx (DFG_OVar req) arg_id) _ sa _ _ Eq).
-        pose proof (dataflow_expr_fg (tf_ivar resp) (dfg_var_size ctx (DFG_SVar dst)) sq Pq Qq Fq) as He.
-        destruct (dataflow_expr ctx (tf_ivar resp) (dfg_var_size ctx (DFG_SVar dst)) sq) as [res_id s1] eqn:Ee.
-        destruct He as [Ge [Ne [Pe [Qe [Se Fe]]]]].
-        rewrite (bind_red (dataflow_expr ctx (tf_ivar resp) (dfg_var_size ctx (DFG_SVar dst))) _ sq _ _ Ee).
-        pose proof (set_var_fg (DFG_SVar dst) res_id s1 Pe Qe Fe Ne Se) as Hs.
-        destruct (set_var ctx (DFG_SVar dst) res_id s1) as [u s'] eqn:Es.
+        rewrite (bind_red (dataflow_expr ctx arg (ip_req_sz (tfs_spec_ip ctx ip)))
+                   _ s _ _ Ea).
+        assert (Hen_a : forall x, In x (map fst en) -> wnidwf sa x)
+          by (intros x Hx; eapply wnidwf_gmono; [ apply Hen, Hx | exact Ga ]).
+        (* the drive *)
+        assert (Hd : let (id, s') :=
+                       emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sa in
+                     wgmono sa s' /\ wnidwf s' id /\ winv s' /\ wvsz s' /\
+                     wsz s' id (ip_req_sz (tfs_spec_ip ctx ip)) /\ wfg s').
+        { apply emit_fg; [ exact Pa | exact Qa | exact Fa | | ].
+          - intros x Hx. cbn [get_args] in Hx.
+            destruct Hx as [<- | Hx]; [ exact Na | exact (Hen_a x Hx) ].
+          - unfold node_args_sz. cbn [op]. exact Sa. }
+        destruct (emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sa)
+          as [drive_id sd] eqn:Ed.
+        destruct Hd as [Gd [Nd [Pd [Qd [Sd Fd]]]]].
+        rewrite (bind_red (emit ctx (DFG_Drive ip arg_id en)
+                             (ip_req_sz (tfs_spec_ip ctx ip))) _ sa _ _ Ed).
+        (* the ordering join *)
+        assert (Hhead : let (hid, sh) :=
+                          match last_sample ctx s ip en with
+                          | None => ret ctx drive_id
+                          | Some prev => emit ctx (DFG_Join drive_id prev) 1
+                          end sd in
+                        wgmono sd sh /\ wnidwf sh hid /\ winv sh /\ wvsz sh /\ wfg sh).
+        { destruct (last_sample ctx s ip en) as [prev |] eqn:Elast.
+          - pose proof (emit_fg (DFG_Join drive_id prev) 1 sd Pd Qd Fd) as Hj.
+            match type of Hj with
+            | ?A -> ?B -> _ =>
+                assert (HA : A) by
+                  (intros x Hx; cbn [get_args] in Hx;
+                   destruct Hx as [<- | [<- | []]]; [ exact Nd |];
+                   eapply wnidwf_gmono; [ exact (last_sample_nidwf s ip en prev Elast) |];
+                   eapply wgmono_trans; [ exact Ga | exact Gd ]);
+                assert (HB : B) by (unfold node_args_sz; cbn [op]; exact I);
+                specialize (Hj HA HB)
+            end.
+            destruct (emit ctx (DFG_Join drive_id prev) 1 sd) as [hid sh].
+            destruct Hj as [Gj [Nj [Pj [Qj [_ Fj]]]]].
+            split; [ exact Gj | split; [ exact Nj | split; [ exact Pj
+              | split; [ exact Qj | exact Fj ] ] ] ].
+          - unfold ret. split; [ apply wgmono_refl | split; [ exact Nd
+              | split; [ exact Pd | split; [ exact Qd | exact Fd ] ] ] ]. }
+        destruct (match last_sample ctx s ip en with
+                  | None => ret ctx drive_id
+                  | Some prev => emit ctx (DFG_Join drive_id prev) 1
+                  end sd) as [head_id sh] eqn:Eh.
+        destruct Hhead as [Gh [Nh [Ph [Qh Fh]]]].
+        rewrite (bind_red _ _ sd _ _ Eh).
+        (* the stall *)
+        assert (Hstall : let (sid, s1) :=
+                           stall_chain ctx (ip_lat (tfs_spec_ip ctx ip)) head_id sh in
+                         wgmono sh s1 /\ wnidwf s1 sid /\ winv s1 /\ wvsz s1 /\ wfg s1).
+        { unfold stall_chain. destruct (ip_lat (tfs_spec_ip ctx ip)) as [| l].
+          - unfold ret. split; [ apply wgmono_refl | split; [ exact Nh
+              | split; [ exact Ph | split; [ exact Qh | exact Fh ] ] ] ].
+          - pose proof (emit_fg (DFG_Stall (S l) head_id) (counter_sz (S l)) sh Ph Qh Fh) as Ht.
+            match type of Ht with
+            | ?A -> ?B -> _ =>
+                assert (HA : A) by
+                  (intros x Hx; cbn [get_args] in Hx;
+                   destruct Hx as [<- | []]; exact Nh);
+                assert (HB : B) by (unfold node_args_sz; cbn [op]; exact I);
+                specialize (Ht HA HB)
+            end.
+            destruct (emit ctx (DFG_Stall (S l) head_id) (counter_sz (S l)) sh) as [sid s1].
+            destruct Ht as [Gt [Nt [Pt [Qt [_ Ft]]]]].
+            split; [ exact Gt | split; [ exact Nt | split; [ exact Pt
+              | split; [ exact Qt | exact Ft ] ] ] ]. }
+        destruct (stall_chain ctx (ip_lat (tfs_spec_ip ctx ip)) head_id sh)
+          as [stall_id s1] eqn:Es1.
+        destruct Hstall as [Gt [Nt [Pt [Qt Ft]]]].
+        rewrite (bind_red (stall_chain ctx (ip_lat (tfs_spec_ip ctx ip)) head_id)
+                   _ sh _ _ Es1).
+        (* the sample, which is what [dst] is set from *)
+        assert (Hsm : let (id, s') :=
+                        emit ctx (DFG_Sample ip stall_id en)
+                          (dfg_var_size ctx (DFG_SVar dst)) s1 in
+                      wgmono s1 s' /\ wnidwf s' id /\ winv s' /\ wvsz s' /\
+                      wsz s' id (dfg_var_size ctx (DFG_SVar dst)) /\ wfg s').
+        { apply emit_fg; [ exact Pt | exact Qt | exact Ft | | ].
+          - intros x Hx. cbn [get_args] in Hx. destruct Hx as [<- | []]. exact Nt.
+          - unfold node_args_sz. cbn [op]. exact I. }
+        destruct (emit ctx (DFG_Sample ip stall_id en)
+                    (dfg_var_size ctx (DFG_SVar dst)) s1) as [samp_id s2] eqn:Esm.
+        destruct Hsm as [Gm [Nm [Pm [Qm [Sm Fm]]]]].
+        rewrite (bind_red (emit ctx (DFG_Sample ip stall_id en)
+                             (dfg_var_size ctx (DFG_SVar dst))) _ s1 _ _ Esm).
+        pose proof (set_var_fg (DFG_SVar dst) samp_id s2 Pm Qm Fm Nm Sm) as Hs.
+        destruct (set_var ctx (DFG_SVar dst) samp_id s2) as [u s3] eqn:Es.
         destruct Hs as [Gs [Ps [Qs Fs]]].
         split;
           [ eapply wgmono_trans; [ exact Ga |];
-            eapply wgmono_trans; [ exact Gq |];
-            eapply wgmono_trans; [ exact Ge |]; exact Gs
+            eapply wgmono_trans; [ exact Gd |];
+            eapply wgmono_trans; [ exact Gh |];
+            eapply wgmono_trans; [ exact Gt |];
+            eapply wgmono_trans; [ exact Gm |]; exact Gs
           | split; [ exact Ps | split; [ exact Qs | exact Fs ] ] ].
     - (* cons *)
       simpl.
-      pose proof (IHops1 s Hinv Hvsz Hfg) as H1.
+      pose proof (IHops1 en s Hinv Hvsz Hfg Hen) as H1.
       destruct (dataflow_ops ctx en op1 s) as [u1 s1] eqn:E1.
       destruct H1 as [G1 [P1 [Q1 F1]]].
       rewrite (bind_red (dataflow_ops ctx en op1) _ s _ _ E1).
-      pose proof (IHops2 s1 P1 Q1 F1) as H2.
+      assert (Hen1 : forall x, In x (map fst en) -> wnidwf s1 x)
+        by (intros x Hx; eapply wnidwf_gmono; [ apply Hen, Hx | exact G1 ]).
+      pose proof (IHops2 en s1 P1 Q1 F1 Hen1) as H2.
       destruct (dataflow_ops ctx en op2 s1) as [u2 s2] eqn:E2.
       destruct H2 as [G2 [P2 [Q2 F2]]].
       split; [ eapply wgmono_trans; eauto | split; [ exact P2 | split; [ exact Q2 | exact F2 ] ] ].
@@ -2758,7 +2852,10 @@ Section SchedulerSimulation.
       rewrite (bind_red (dataflow_expr ctx cond 1) _ s _ _ Ec).
       rewrite (bind_red (get_state ctx) _ s1 _ _ (get_state_red s1)).
       (* then branch *)
-      pose proof (IHops1 s1 Pc Qc Fc) as Hthen.
+      assert (Hen_t : forall x, In x (map fst ((cond_id, true) :: en)) -> wnidwf s1 x).
+      { intros x Hx. cbn [map In] in Hx. destruct Hx as [<- | Hx]; [ exact Nc |].
+        eapply wnidwf_gmono; [ apply Hen, Hx | exact Gc ]. }
+      pose proof (IHops1 ((cond_id, true) :: en) s1 Pc Qc Fc Hen_t) as Hthen.
       destruct (dataflow_ops ctx ((cond_id, true) :: en) op1 s1) as [ut s_then] eqn:Et.
       destruct Hthen as [Gthen [Pthen [Qthen Fthen]]].
       rewrite (bind_red (dataflow_ops ctx ((cond_id, true) :: en) op1) _ s1 _ _ Et).
@@ -2787,7 +2884,11 @@ Section SchedulerSimulation.
       { intros node Hin. unfold sR in Hin; simpl in Hin.
         eapply node_args_sz_gmono; [ apply Fthen; exact Hin | exact GsR_then ]. }
       (* else branch on sR *)
-      pose proof (IHops2 sR PsR QsR FsR) as Helse.
+      assert (Hen_e : forall x, In x (map fst ((cond_id, false) :: en)) -> wnidwf sR x).
+      { intros x Hx. eapply wnidwf_gmono;
+          [ apply Hen_t; cbn [map In] in Hx |- *; exact Hx
+          | eapply wgmono_trans; [ exact Gthen | exact Gthen_sR ] ]. }
+      pose proof (IHops2 ((cond_id, false) :: en) sR PsR QsR FsR Hen_e) as Helse.
       destruct (dataflow_ops ctx ((cond_id, false) :: en) op2 sR) as [ue s_else] eqn:Ee.
       destruct Helse as [Gelse [Pelse [Qelse Felse]]].
       rewrite (bind_red (dataflow_ops ctx ((cond_id, false) :: en) op2) _ sR _ _ Ee).
@@ -2843,7 +2944,11 @@ Section SchedulerSimulation.
     1 <= length (graph s)
     /\ (forall k id, In (k, id) (var_map s) -> 1 <= id)
     /\ (forall node, In node (graph s) -> forall x, In x (get_args ctx node) -> 1 <= x)
-    /\ (forall node, In node (graph s) -> op node = DFG_Empty -> nid node = 0).
+    /\ (forall node, In node (graph s) -> op node = DFG_Empty -> nid node = 0)
+    (* Only the sentinel has id 0.  A call SEQUENCED after another reads the
+       earlier sample back out of the graph ([last_sample]), and [emit_pos]
+       wants that id positive. *)
+    /\ (forall node, In node (graph s) -> op node <> DFG_Empty -> 1 <= nid node).
 
   Lemma ensure_var_vmap v (s: wst) id s' :
     ensure_var ctx v s = (id, s') ->
@@ -2853,15 +2958,28 @@ Section SchedulerSimulation.
     injection H as <- <-. eexists. reflexivity.
   Qed.
 
+  (* [last_sample] returns a SAMPLE node found in the graph, so gpos puts its
+     id above the sentinel. *)
+  Lemma last_sample_pos (s: wst) ip en prev :
+    gpos s -> last_sample ctx s ip en = Some prev -> 1 <= prev.
+  Proof.
+    intros [_ [_ [_ [_ Hnz]]]]. unfold last_sample.
+    destruct (find _ (graph s)) as [nd |] eqn:Ef; [| discriminate].
+    intro H. injection H as <-.
+    apply find_some in Ef. destruct Ef as [Hin Hpred].
+    apply Hnz; [ exact Hin |].
+    intro He. rewrite He in Hpred. cbn in Hpred. discriminate Hpred.
+  Qed.
+
   Lemma emit_pos op sz (s: wst) :
     gpos s -> op <> DFG_Empty ->
     (forall x, In x (get_args ctx {| nid := length (graph s); op := op; sz := sz |}) -> 1 <= x) ->
     let (id, s') := emit ctx op sz s in 1 <= id /\ gpos s'.
   Proof.
-    intros [Hlen [Hvm [Hargs Hemp]]] Hne Hnew.
+    intros [Hlen [Hvm [Hargs [Hemp Hnz]]]] Hne Hnew.
     rewrite emit_red.
     split; [ exact Hlen | ].
-    split; [ | split; [ | split ] ].
+    split; [ | split; [ | split; [ | split ] ] ].
     - cbn [graph length]. lia.
     - cbn [var_map]. exact Hvm.
     - cbn [graph]. intros node Hin x Hx. destruct Hin as [<-|Hin].
@@ -2870,6 +2988,9 @@ Section SchedulerSimulation.
     - cbn [graph]. intros node Hin He. destruct Hin as [<-|Hin].
       + cbn in He. exfalso. apply Hne. exact He.
       + exact (Hemp node Hin He).
+    - cbn [graph]. intros node Hin He. destruct Hin as [<-|Hin].
+      + cbn [nid]. exact Hlen.
+      + exact (Hnz node Hin He).
   Qed.
 
   Lemma ensure_var_pos v (s: wst) :
@@ -2879,12 +3000,12 @@ Section SchedulerSimulation.
     intros Hp.
     destruct (ensure_var ctx v s) as [id s'] eqn:Ev.
     pose proof (ensure_var_graph v s id s' Ev) as [Hg Hid].
-    pose proof (ensure_var_vmap v s id s' Ev) as [f Hvm'].
-    destruct Hp as [Hlen [Hvm [Hargs Hemp]]].
+    pose proof (ensure_var_vmap v s id s' Ev) as [f Hvm2].
+    destruct Hp as [Hlen [Hvm [Hargs [Hemp Hnz]]]].
     split; [ rewrite Hid; exact Hlen | ].
-    split; [ | split; [ | split ] ].
+    split; [ | split; [ | split; [ | split ] ] ].
     - rewrite Hg. cbn [graph length]. lia.
-    - rewrite Hvm'. intros k id0 Hin. destruct Hin as [Heq|Hin].
+    - rewrite Hvm2. intros k id0 Hin. destruct Hin as [Heq|Hin].
       + injection Heq as <- <-. rewrite Hid; exact Hlen.
       + apply filter_In in Hin. destruct Hin as [Hin _]. exact (Hvm k id0 Hin).
     - rewrite Hg. cbn [graph]. intros node Hin x Hx. destruct Hin as [<-|Hin].
@@ -2893,21 +3014,25 @@ Section SchedulerSimulation.
     - rewrite Hg. cbn [graph]. intros node Hin He. destruct Hin as [<-|Hin].
       + cbn in He. discriminate He.
       + exact (Hemp node Hin He).
+    - rewrite Hg. cbn [graph]. intros node Hin He. destruct Hin as [<-|Hin].
+      + cbn [nid]. exact Hlen.
+      + exact (Hnz node Hin He).
   Qed.
 
   Lemma set_var_pos v id (s: wst) :
     gpos s -> 1 <= id ->
     let (u, s') := set_var ctx v id s in gpos s'.
   Proof.
-    intros [Hlen [Hvm [Hargs Hemp]]] Hi.
+    intros [Hlen [Hvm [Hargs [Hemp Hnz]]]] Hi.
     unfold set_var, bind, get_state, put_state. simpl.
-    split; [ | split; [ | split ] ].
+    split; [ | split; [ | split; [ | split ] ] ].
     - cbn [graph length]. exact Hlen.
     - cbn [var_map]. intros k id0 Hin. destruct Hin as [Heq|Hin].
       + injection Heq as <- <-. exact Hi.
       + apply filter_In in Hin. destruct Hin as [Hin _]. exact (Hvm k id0 Hin).
     - cbn [graph]. exact Hargs.
     - cbn [graph]. exact Hemp.
+    - cbn [graph]. exact Hnz.
   Qed.
 
   Lemma get_var_pos v (s: wst) :
@@ -3107,12 +3232,14 @@ Section SchedulerSimulation.
   Qed.
 
   Lemma dataflow_ops_pos :
-    forall (ops: @tf_ops s_var i_var o_var p_var) (en: list (nid_t * bool)) (s: wst), gpos s ->
-      let (u, s') := dataflow_ops ctx en ops s in gpos s'.
+    forall (ops: @tf_ops s_var i_var o_var p_var) (en: list (nid_t * bool)) (s: wst),
+      gpos s ->
+      (forall x, In x (map fst en) -> 1 <= x) ->
+      let (u, s2) := dataflow_ops ctx en ops s in gpos s2.
   Proof.
     induction ops as [op | op1 IHops1 op2 IHops2 | cond op1 IHops1 op2 IHops2];
-      intros en s Hp.
-    - destruct op as [ | dst expr | dst expr | rq rv dst expr szA szB fn ].
+      intros en s Hp Hen.
+    - destruct op as [ | dst expr | dst expr | ip dst arg ].
       + simpl. unfold ret. exact Hp.
       + simpl.
         pose proof (dataflow_expr_pos expr (dfg_var_size ctx (DFG_SVar dst)) s Hp) as He.
@@ -3130,27 +3257,76 @@ Section SchedulerSimulation.
         pose proof (set_var_pos (DFG_OVar dst) res_id s1 Pe Ne) as Hs.
         destruct (set_var ctx (DFG_OVar dst) res_id s1) as [u s'] eqn:Es.
         exact Hs.
-      + (* a call: request payload and write, then response read and write *)
+      + (* THE ROUND TRIP.  [prev] comes back out of the graph via [last_sample],
+           and gpos's last clause is what makes its id positive. *)
         simpl.
-        pose proof (dataflow_expr_pos expr (dfg_var_size ctx (DFG_OVar rq)) s Hp) as Ha.
-        destruct (dataflow_expr ctx expr (dfg_var_size ctx (DFG_OVar rq)) s) as [arg_id sa] eqn:Ea.
+        rewrite (bind_red (get_state ctx) _ s _ _ (get_state_red s)).
+        pose proof (dataflow_expr_pos arg (ip_req_sz (tfs_spec_ip ctx ip)) s Hp) as Ha.
+        destruct (dataflow_expr ctx arg (ip_req_sz (tfs_spec_ip ctx ip)) s)
+          as [arg_id sa] eqn:Ea.
         destruct Ha as [Na Pa].
-        rewrite (bind_red (dataflow_expr ctx expr (dfg_var_size ctx (DFG_OVar rq))) _ s _ _ Ea).
-        pose proof (set_var_pos (DFG_OVar rq) arg_id sa Pa Na) as Hq.
-        destruct (set_var ctx (DFG_OVar rq) arg_id sa) as [uq sq] eqn:Eq.
-        rewrite (bind_red (set_var ctx (DFG_OVar rq) arg_id) _ sa _ _ Eq).
-        pose proof (dataflow_expr_pos (tf_ivar rv) (dfg_var_size ctx (DFG_SVar dst)) sq Hq) as He.
-        destruct (dataflow_expr ctx (tf_ivar rv) (dfg_var_size ctx (DFG_SVar dst)) sq) as [res_id s1] eqn:Ee.
-        destruct He as [Ne Pe].
-        rewrite (bind_red (dataflow_expr ctx (tf_ivar rv) (dfg_var_size ctx (DFG_SVar dst))) _ sq _ _ Ee).
-        pose proof (set_var_pos (DFG_SVar dst) res_id s1 Pe Ne) as Hs.
-        destruct (set_var ctx (DFG_SVar dst) res_id s1) as [u s'] eqn:Es.
+        rewrite (bind_red (dataflow_expr ctx arg (ip_req_sz (tfs_spec_ip ctx ip)))
+                   _ s _ _ Ea).
+        assert (Hd : let (id, s') :=
+                       emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sa in
+                     1 <= id /\ gpos s').
+        { apply emit_pos; [ exact Pa | discriminate |].
+          intros x Hx. cbn [get_args] in Hx.
+          destruct Hx as [<- | Hx]; [ exact Na | exact (Hen x Hx) ]. }
+        destruct (emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sa)
+          as [drive_id sd] eqn:Ed.
+        destruct Hd as [Nd Pd].
+        rewrite (bind_red (emit ctx (DFG_Drive ip arg_id en)
+                             (ip_req_sz (tfs_spec_ip ctx ip))) _ sa _ _ Ed).
+        assert (Hhead : let (hid, sh) :=
+                          match last_sample ctx s ip en with
+                          | None => ret ctx drive_id
+                          | Some prev => emit ctx (DFG_Join drive_id prev) 1
+                          end sd in
+                        1 <= hid /\ gpos sh).
+        { destruct (last_sample ctx s ip en) as [prev |] eqn:Elast.
+          - apply emit_pos; [ exact Pd | discriminate |].
+            intros x Hx. cbn [get_args] in Hx.
+            destruct Hx as [<- | [<- | []]]; [ exact Nd |].
+            exact (last_sample_pos s ip en prev Hp Elast).
+          - unfold ret. split; [ exact Nd | exact Pd ]. }
+        destruct (match last_sample ctx s ip en with
+                  | None => ret ctx drive_id
+                  | Some prev => emit ctx (DFG_Join drive_id prev) 1
+                  end sd) as [head_id sh] eqn:Eh.
+        destruct Hhead as [Nh Ph].
+        rewrite (bind_red _ _ sd _ _ Eh).
+        assert (Hstall : let (sid, s1) :=
+                           stall_chain ctx (ip_lat (tfs_spec_ip ctx ip)) head_id sh in
+                         1 <= sid /\ gpos s1).
+        { unfold stall_chain. destruct (ip_lat (tfs_spec_ip ctx ip)) as [| l].
+          - unfold ret. split; [ exact Nh | exact Ph ].
+          - apply emit_pos; [ exact Ph | discriminate |].
+            intros x Hx. cbn [get_args] in Hx. destruct Hx as [<- | []]. exact Nh. }
+        destruct (stall_chain ctx (ip_lat (tfs_spec_ip ctx ip)) head_id sh)
+          as [stall_id s1] eqn:Es1.
+        destruct Hstall as [Nt Pt].
+        rewrite (bind_red (stall_chain ctx (ip_lat (tfs_spec_ip ctx ip)) head_id)
+                   _ sh _ _ Es1).
+        assert (Hsm : let (id, s') :=
+                        emit ctx (DFG_Sample ip stall_id en)
+                          (dfg_var_size ctx (DFG_SVar dst)) s1 in
+                      1 <= id /\ gpos s').
+        { apply emit_pos; [ exact Pt | discriminate |].
+          intros x Hx. cbn [get_args] in Hx. destruct Hx as [<- | []]. exact Nt. }
+        destruct (emit ctx (DFG_Sample ip stall_id en)
+                    (dfg_var_size ctx (DFG_SVar dst)) s1) as [samp_id s2] eqn:Esm.
+        destruct Hsm as [Nm Pm].
+        rewrite (bind_red (emit ctx (DFG_Sample ip stall_id en)
+                             (dfg_var_size ctx (DFG_SVar dst))) _ s1 _ _ Esm).
+        pose proof (set_var_pos (DFG_SVar dst) samp_id s2 Pm Nm) as Hs.
+        destruct (set_var ctx (DFG_SVar dst) samp_id s2) as [u s3] eqn:Es.
         exact Hs.
     - simpl.
-      pose proof (IHops1 s Hp) as H1.
+      pose proof (IHops1 en s Hp Hen) as H1.
       destruct (dataflow_ops ctx en op1 s) as [u1 s1] eqn:E1.
       rewrite (bind_red (dataflow_ops ctx en op1) _ s _ _ E1).
-      pose proof (IHops2 s1 H1) as H2.
+      pose proof (IHops2 en s1 H1 Hen) as H2.
       destruct (dataflow_ops ctx en op2 s1) as [u2 s2] eqn:E2.
       exact H2.
     - simpl.
@@ -3159,20 +3335,25 @@ Section SchedulerSimulation.
       destruct Hc as [Nc Pc].
       rewrite (bind_red (dataflow_expr ctx cond 1) _ s _ _ Ec).
       rewrite (bind_red (get_state ctx) _ s1 _ _ (get_state_red s1)).
-      pose proof (IHops1 s1 Pc) as Hthen.
+      assert (Hen_t : forall x, In x (map fst ((cond_id, true) :: en)) -> 1 <= x).
+      { intros x Hx. cbn [map In] in Hx. destruct Hx as [<- | Hx];
+          [ exact Nc | exact (Hen x Hx) ]. }
+      pose proof (IHops1 ((cond_id, true) :: en) s1 Pc Hen_t) as Hthen.
       destruct (dataflow_ops ctx ((cond_id, true) :: en) op1 s1) as [ut s_then] eqn:Et.
       rewrite (bind_red (dataflow_ops ctx ((cond_id, true) :: en) op1) _ s1 _ _ Et).
       rewrite (bind_red (get_state ctx) _ s_then _ _ (get_state_red s_then)).
       set (sR := {| graph := graph s_then; var_map := var_map s1 |} : wst).
       rewrite (bind_red (put_state ctx sR) _ s_then _ _ (put_state_red sR s_then)).
       assert (PsR : gpos sR).
-      { destruct Pc as [_ [Hvm1 _]]. destruct Hthen as [Hlt [_ [Habt Hempt]]].
-        split; [ | split; [ | split ] ].
+      { destruct Pc as [_ [Hvm1 _]]. destruct Hthen as [Hlt [_ [Habt [Hempt Hnzt]]]].
+        split; [ | split; [ | split; [ | split ] ] ].
         - unfold sR; cbn [graph]. exact Hlt.
         - unfold sR; cbn [var_map]. exact Hvm1.
         - unfold sR; cbn [graph]. exact Habt.
-        - unfold sR; cbn [graph]. exact Hempt. }
-      pose proof (IHops2 sR PsR) as Helse.
+        - unfold sR; cbn [graph]. exact Hempt.
+        - unfold sR; cbn [graph]. exact Hnzt. }
+      pose proof (IHops2 ((cond_id, false) :: en) sR PsR
+                    (fun x Hx => Hen_t x Hx)) as Helse.
       destruct (dataflow_ops ctx ((cond_id, false) :: en) op2 sR) as [ue s_else] eqn:Ee.
       rewrite (bind_red (dataflow_ops ctx ((cond_id, false) :: en) op2) _ sR _ _ Ee).
       rewrite (bind_red (get_state ctx) _ s_else _ _ (get_state_red s_else)).
@@ -3189,12 +3370,13 @@ Section SchedulerSimulation.
       rewrite (bind_red (get_state ctx) _ s_final _ _ (get_state_red s_final)).
       set (sF := {| graph := graph s_final; var_map := final_vars |} : wst).
       rewrite (put_state_red sF s_final).
-      destruct Pfinal as [Hlf [_ [Habf Hempf]]].
-      split; [ | split; [ | split ] ].
+      destruct Pfinal as [Hlf [_ [Habf [Hempf Hnzf]]]].
+      split; [ | split; [ | split; [ | split ] ] ].
       + unfold sF; cbn [graph]. exact Hlf.
       + unfold sF; cbn [var_map]. exact Nfinal.
       + unfold sF; cbn [graph]. exact Habf.
       + unfold sF; cbn [graph]. exact Hempf.
+      + unfold sF; cbn [graph]. exact Hnzf.
   Qed.
 
   (* Forward-graph corollary: in build_dfg's exported graph, no arg and no
@@ -3209,18 +3391,22 @@ Section SchedulerSimulation.
   Proof.
     intro act.
     assert (Hempty : gpos {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |}).
-    { split; [ | split; [ | split ] ].
+    { split; [ | split; [ | split; [ | split ] ] ].
       - cbn. lia.
       - intros k id Hin. destruct Hin.
       - intros node Hin x Hx. cbn in Hin. destruct Hin as [<-|[]]. cbn in Hx. destruct Hx.
-      - intros node Hin He. cbn in Hin. destruct Hin as [<-|[]]. cbn. reflexivity. }
+      - intros node Hin He. cbn in Hin. destruct Hin as [<-|[]]. cbn. reflexivity.
+      - intros node Hin He. cbn in Hin. destruct Hin as [<-|[]]. cbn in He.
+        exfalso. apply He. reflexivity. }
     unfold build_dfg.
-    pose proof (dataflow_ops_pos (tfs_spec_action_ops ctx act)
-                  {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |} Hempty) as Hop.
-    destruct (dataflow_ops ctx (tfs_spec_action_ops ctx act)
+    (* the top-level path condition is empty, so its literals are vacuous *)
+    pose proof (dataflow_ops_pos (tfs_spec_action_ops ctx act) []
+                  {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |} Hempty
+                  (fun x Hx => match Hx with end)) as Hop.
+    destruct (dataflow_ops ctx [] (tfs_spec_action_ops ctx act)
                 {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |})
       as [u final] eqn:Ed.
-    destruct Hop as [_ [Hvm [Hargs Hemp]]].
+    destruct Hop as [_ [Hvm [Hargs [Hemp _]]]].
     cbn [graph var_map]. split; [ | split ].
     - exact Hvm.
     - intros node Hin x Hx. apply in_rev in Hin. exact (Hargs node Hin x Hx).
@@ -3241,9 +3427,10 @@ Section SchedulerSimulation.
       - unfold nid_seq. reflexivity.
       - intros a Ha x Hx. simpl in Ha. destruct Ha as [<-|[]]. simpl in Hx. destruct Hx. }
     unfold build_dfg.
-    pose proof (dataflow_ops_full (tfs_spec_action_ops ctx act)
-                  {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |} Hempty) as Hop.
-    destruct (dataflow_ops ctx (tfs_spec_action_ops ctx act)
+    pose proof (dataflow_ops_full (tfs_spec_action_ops ctx act) []
+                  {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |} Hempty
+                  (fun x Hx => match Hx with end)) as Hop.
+    destruct (dataflow_ops ctx [] (tfs_spec_action_ops ctx act)
                 {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |})
       as [u final] eqn:Ed.
     destruct Hop as [_ [Hvmg [Hns Hargs]]].
@@ -3271,10 +3458,10 @@ Section SchedulerSimulation.
     { intros node Hin. simpl in Hin. destruct Hin as [<-|[]].
       unfold node_args_sz. cbn [op]. exact I. }
     unfold build_dfg.
-    pose proof (dataflow_ops_fg (tfs_spec_action_ops ctx act)
+    pose proof (dataflow_ops_fg (tfs_spec_action_ops ctx act) []
                   {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |}
-                  Hempty Hemvsz Hemfg) as Hop.
-    destruct (dataflow_ops ctx (tfs_spec_action_ops ctx act)
+                  Hempty Hemvsz Hemfg (fun x Hx => match Hx with end)) as Hop.
+    destruct (dataflow_ops ctx [] (tfs_spec_action_ops ctx act)
                 {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |})
       as [u final] eqn:Ed.
     destruct Hop as [_ [_ [_ Ffinal]]].
@@ -3298,9 +3485,10 @@ Section SchedulerSimulation.
       - unfold nid_seq. reflexivity.
       - intros a Ha x Hx. simpl in Ha. destruct Ha as [<-|[]]. simpl in Hx. destruct Hx. }
     unfold build_dfg.
-    pose proof (dataflow_ops_full (tfs_spec_action_ops ctx act)
-                  {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |} Hempty) as Hop.
-    destruct (dataflow_ops ctx (tfs_spec_action_ops ctx act)
+    pose proof (dataflow_ops_full (tfs_spec_action_ops ctx act) []
+                  {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |} Hempty
+                  (fun x Hx => match Hx with end)) as Hop.
+    destruct (dataflow_ops ctx [] (tfs_spec_action_ops ctx act)
                 {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |})
       as [u final] eqn:Ed.
     destruct Hop as [_ [_ [Hns _]]].
@@ -4607,7 +4795,7 @@ Section SchedulerSimulation.
     cbn [compile_dfg_expr_aux BitsToLists.list_assoc]. cbv beta iota.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ].
+      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn den | siv sn sen | ja jb | ].
     - reflexivity.
     - reflexivity.
     - destruct v; cbn [fst tf_eval_expr]; [ rewrite Hs | rewrite Ho ]; reflexivity.
@@ -4738,7 +4926,7 @@ Section SchedulerSimulation.
                 = compile_dfg_expr_aux ctx bneeds tainted dfacts p f2' a_idx dfg x buffers).
       { intros x p Hx. destruct (Harg x Hx) as [Hx1 Hx2].
         apply (IH x Hx2 Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen)); lia. }
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ] eqn:Hop.
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Hop.
       + reflexivity.
       + reflexivity.
       + destruct v; reflexivity.
@@ -4901,7 +5089,7 @@ Section SchedulerSimulation.
         apply (IH x sx p Hx1 Hxlen);
           [ lia | lia | right; lia | symmetry; exact Hxsz ]. }
       pose proof (wfg_build_dfg act node Hnode_in) as Hfg.
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn den | siv sn sen | ja jb | ]
         eqn:Hop.
       + (* Const *) reflexivity.
       + (* Input *) reflexivity.
@@ -5215,7 +5403,7 @@ Section SchedulerSimulation.
         destruct (wsz_node_sz act x sx Hwsz) as [Hxlen Hxsz].
         apply (IH x sx p Hx1 Hxlen ltac:(lia) (eq_sym Hxsz) Hxv). }
       pose proof (wfg_build_dfg act node Hnode_in) as Hfg.
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn den | siv sn sen | ja jb | ]
         eqn:Hop.
       + (* Const *) reflexivity.
       + (* Input *) reflexivity.
@@ -5824,7 +6012,7 @@ Section SchedulerSimulation.
       { intros x p Hx. destruct (Harg x Hx) as [Hx1 Hx2].
         apply (IH x p Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen));
           [ lia | lia | right; lia ]. }
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ]
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn den | siv sn sen | ja jb | ]
         eqn:Hop.
       + cbn [snd]. apply eval1_const1.
       + cbn [snd]. apply eval1_const1.
@@ -6543,10 +6731,10 @@ Section SchedulerSimulation.
     { intros node Hin. simpl in Hin. destruct Hin as [<-|[]].
       unfold node_args_sz. cbn [op]. exact I. }
     unfold build_dfg.
-    pose proof (dataflow_ops_fg (tfs_spec_action_ops ctx act)
+    pose proof (dataflow_ops_fg (tfs_spec_action_ops ctx act) []
                   {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |}
-                  Hempty Hemvsz Hemfg) as Hop.
-    destruct (dataflow_ops ctx (tfs_spec_action_ops ctx act)
+                  Hempty Hemvsz Hemfg (fun x Hx => match Hx with end)) as Hop.
+    destruct (dataflow_ops ctx [] (tfs_spec_action_ops ctx act)
                 {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |})
       as [u final] eqn:Ed.
     destruct Hop as [_ [_ [Hvsz _]]].
@@ -7144,7 +7332,7 @@ Section SchedulerSimulation.
     - left. injection Heq as Hk Hn. split; [ symmetry; exact Hk | symmetry; exact Hn ].
     - apply filter_In in Hin. destruct Hin as [Hin Hb]. cbv beta iota in Hb.
       right. split; [ exact Hin | ].
-      intro He. subst v'.
+      intro He. subst v2.
       match type of Hb with
       | (if ?X then _ else _) = true => destruct X as [Heq2 | Hne2]
       end.
@@ -8232,7 +8420,7 @@ Section SchedulerSimulation.
       /\ var_map (build_dfg ctx act) = var_map Fin.
   Proof.
     unfold exports, build_dfg.
-    destruct (dataflow_ops ctx (tfs_spec_action_ops ctx act)
+    destruct (dataflow_ops ctx [] (tfs_spec_action_ops ctx act)
                 {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |})
       as [u final] eqn:Ed.
     destruct u. exists final.
