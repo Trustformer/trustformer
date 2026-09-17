@@ -2292,7 +2292,11 @@ Section SchedulerSimulation.
         pose proof (set_var_full (DFG_SVar dst) res_id s1 Pe Ne) as Hs.
         destruct (set_var ctx (DFG_SVar dst) res_id s1) as [u s'] eqn:Es.
         destruct Hs as [Gs Ps].
-        split; [ repeat (eapply wgmono_trans; eauto) | exact Ps ].
+        split;
+          [ eapply wgmono_trans; [ exact Ga |];
+            eapply wgmono_trans; [ exact Gq |];
+            eapply wgmono_trans; [ exact Ge |]; exact Gs
+          | exact Ps ].
     - (* cons *)
       simpl.
       pose proof (IHops1 s Hinv) as H1.
@@ -2617,7 +2621,11 @@ Section SchedulerSimulation.
         pose proof (set_var_fg (DFG_SVar dst) res_id s1 Pe Qe Fe Ne Se) as Hs.
         destruct (set_var ctx (DFG_SVar dst) res_id s1) as [u s'] eqn:Es.
         destruct Hs as [Gs [Ps [Qs Fs]]].
-        split; [ repeat (eapply wgmono_trans; eauto) | split; [ exact Ps | split; [ exact Qs | exact Fs ] ] ].
+        split;
+          [ eapply wgmono_trans; [ exact Ga |];
+            eapply wgmono_trans; [ exact Gq |];
+            eapply wgmono_trans; [ exact Ge |]; exact Gs
+          | split; [ exact Ps | split; [ exact Qs | exact Fs ] ] ].
     - (* cons *)
       simpl.
       pose proof (IHops1 s Hinv Hvsz Hfg) as H1.
@@ -3938,7 +3946,11 @@ Section SchedulerSimulation.
         pose proof (set_var_ospecv (DFG_SVar dst) res_id s1 n1 v1) as Hs.
         destruct (set_var ctx (DFG_SVar dst) res_id s1) as [u s2].
         destruct Hs as [g2 v2].
-        split; [ repeat (eapply gmono_trans; eauto) | exact v2 ].
+        split;
+          [ eapply gmono_trans; [ exact ga |];
+            eapply gmono_trans; [ exact gq |];
+            eapply gmono_trans; [ exact g1 |]; exact g2
+          | exact v2 ].
     - (* tf_ops_cons *)
       cbn [dataflow_ops]. unfold bind.
       specialize (IH1 s Hv).
