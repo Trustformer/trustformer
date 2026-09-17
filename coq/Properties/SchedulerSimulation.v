@@ -990,6 +990,46 @@ Section SchedulerSimulation.
     exact Hsize.
   Qed.
 
+  (* ---- What a buffer entry actually emits, mirroring compile_dfg_buffers ---- *)
+
+  Definition node_op (act: tfs_action sched) (n: nid_t) :=
+    op (nth n (graph (build_dfg ctx act)) {| nid := 0; op := DFG_Empty; sz := 0 |}).
+
+  Definition stall_lat_of (act: tfs_action sched) (n: nid_t) : option nat :=
+    match node_op act n with DFG_Stall l _ => Some l | _ => None end.
+
+  Definition is_sample_of (act: tfs_action sched) (n: nid_t) : bool :=
+    match node_op act n with DFG_Sample _ _ _ => true | _ => false end.
+
+  (* A plain buffer RECOMPUTES, a sample LATCHES as its validity rises, and a
+     stall COUNTS to [lat-1].  The three shapes are why the buffer lemmas below
+     cannot treat a buffer as caching the value of its node. *)
+  Definition buf_value_expr (act: tfs_action sched) a_idx n_idx
+      (sz: nat) (expr valid: @tf_expr (tfs_states sched) si_var o_var) (n: nid_t)
+      : @tf_expr (tfs_states sched) si_var o_var :=
+    let cnt := tf_svar (tf_dfg_b a_idx n_idx) in
+    match stall_lat_of act n with
+    | Some l =>
+        tf_expr_if (tf_op2 tf_and valid
+                      (tf_op1 tf_not (tf_op2 (tf_cmp sz tf_eq) cnt (tf_const (pred l)))))
+          (tf_op2 tf_add cnt (tf_const 1)) cnt
+    | None =>
+        if is_sample_of act n
+        then tf_expr_if (tf_op2 tf_and valid
+                           (tf_op1 tf_not (tf_svar (tf_dfg_v a_idx n_idx))))
+               expr cnt
+        else expr
+    end.
+
+  Definition buf_valid_expr (act: tfs_action sched) a_idx n_idx
+      (sz: nat) (valid: @tf_expr (tfs_states sched) si_var o_var) (n: nid_t)
+      : @tf_expr (tfs_states sched) si_var o_var :=
+    match stall_lat_of act n with
+    | Some l =>
+        tf_op2 (tf_cmp sz tf_eq) (tf_svar (tf_dfg_b a_idx n_idx)) (tf_const (pred l))
+    | None => valid
+    end.
+
   (* The selected entry emits its value/validity assignment pair. *)
   Lemma compile_dfg_buffers_entry
         (act: tfs_action sched)
@@ -1004,11 +1044,14 @@ Section SchedulerSimulation.
     let compiled := compile_dfg_expr ctx bneeds
                       (length (graph (build_dfg ctx act))) a_idx
                       (build_dfg ctx act) n buffers' in
-    In (tf_assign (tf_dfg_b a_idx n_idx) (fst compiled))
+    let sz := snd (snd entry) in
+    In (tf_assign (tf_dfg_b a_idx n_idx)
+          (buf_value_expr act a_idx n_idx sz (fst compiled) (snd compiled) n))
        (compile_dfg_buffers ctx bneeds (index_to_nat a_idx)
           (build_dfg ctx act) buffers)
     /\
-    In (tf_assign (tf_dfg_v a_idx n_idx) (snd compiled))
+    In (tf_assign (tf_dfg_v a_idx n_idx)
+          (buf_valid_expr act a_idx n_idx sz (snd compiled) n))
        (compile_dfg_buffers ctx bneeds (index_to_nat a_idx)
           (build_dfg ctx act) buffers).
   Proof.
@@ -1372,6 +1415,17 @@ Section SchedulerSimulation.
   Proof. reflexivity. Qed.
 
   (* --- per-primitive invariant lemmas --- *)
+
+  (* [last_sample] returns the nid of a node it found in the graph. *)
+  Lemma last_sample_nidwf (s: wst) ip en prev :
+    last_sample ctx s ip en = Some prev -> wnidwf s prev.
+  Proof.
+    unfold last_sample.
+    destruct (find _ (graph s)) as [nd |] eqn:Ef; [| discriminate].
+    intro H. injection H as <-.
+    apply find_some in Ef. destruct Ef as [Hin _].
+    exists nd. split; [ exact Hin | reflexivity ].
+  Qed.
 
   Lemma emit_full op sz (s: wst) :
     winv s ->
@@ -1857,8 +1911,8 @@ Section SchedulerSimulation.
     (* SPIKE: a stall passes its argument through unchanged, so the argument is
        read at the node's own size -- same discipline as DFG_Unary tf_not. *)
     | DFG_Stall _ a => wsz s a (sz node)
-    | DFG_Drive _ a => wsz s a (sz node)
-    | DFG_Sample _ t => wsz s t (sz node)
+    | DFG_Drive _ a _ => wsz s a (sz node)
+    | DFG_Sample _ t _ => wsz s t (sz node)
     | _ => True
     end.
 
@@ -1869,7 +1923,7 @@ Section SchedulerSimulation.
     node_args_sz s node -> wgmono s s' -> node_args_sz s' node.
   Proof.
     unfold node_args_sz. intros H Hg.
-    destruct (op node) as [c|v|v|uop a|bop a1 a2|a|cd t e|sa|dov dn|siv sn|];
+    destruct (op node) as [c|v|v|uop a|bop a1 a2|a|cd t e|sa|dov dn den|siv sn sen|];
       [ exact I | exact I | exact I | | | exact I | | | | | exact I ].
     - destruct uop; eapply wsz_gmono; eauto.
     - destruct bop; destruct H as [H1 H2]; split; eapply wsz_gmono; eauto.
@@ -2236,11 +2290,14 @@ Section SchedulerSimulation.
   (* --- operations compiler --- *)
 
   Lemma dataflow_ops_full :
-    forall ops (s: wst), winv s ->
-      let (u, s') := dataflow_ops ctx ops s in wgmono s s' /\ winv s'.
+    forall (ops: @tf_ops s_var i_var o_var p_var) (en: list (nid_t * bool)) (s: wst),
+      winv s ->
+      (* a drive carries its path condition, and [get_args] reaches those nodes *)
+      (forall x, In x (map fst en) -> wnidwf s x) ->
+      let (u, s2) := dataflow_ops ctx en ops s in wgmono s s2 /\ winv s2.
   Proof.
     induction ops as [op | op1 IHops1 op2 IHops2 | cond op1 IHops1 op2 IHops2];
-      intros s Hinv.
+      intros en s Hinv Hen.
     - (* base *)
       destruct op.
       + (* nop *) simpl. unfold ret. split; [ apply wgmono_refl | exact Hinv ].
@@ -2264,37 +2321,96 @@ Section SchedulerSimulation.
         destruct (set_var ctx (DFG_OVar dst) res_id s1) as [u s'] eqn:Es.
         destruct Hs as [Gs Ps].
         split; [ eapply wgmono_trans; eauto | exact Ps ].
-      + (* a call is FOUR steps: request payload, request write, response read,
-           destination write -- so the tf_assign shape runs twice. *)
+      + (* THE ROUND TRIP: arg -> drive -> (join) -> stall -> sample -> dst.
+           Four emits where the old shape had two set_vars, and the drive's
+           path condition is an argument, hence [Hen]. *)
         simpl.
-        pose proof (dataflow_expr_full arg (dfg_var_size ctx (DFG_OVar req)) s Hinv) as Ha.
-        destruct (dataflow_expr ctx arg (dfg_var_size ctx (DFG_OVar req)) s) as [arg_id sa] eqn:Ea.
+        rewrite (bind_red (get_state ctx) _ s _ _ (get_state_red s)).
+        pose proof (dataflow_expr_full arg (ip_req_sz (tfs_spec_ip ctx ip)) s Hinv) as Ha.
+        destruct (dataflow_expr ctx arg (ip_req_sz (tfs_spec_ip ctx ip)) s)
+          as [arg_id sa] eqn:Ea.
         destruct Ha as [Ga [Na Pa]].
-        rewrite (bind_red (dataflow_expr ctx arg (dfg_var_size ctx (DFG_OVar req))) _ s _ _ Ea).
-        pose proof (set_var_full (DFG_OVar req) arg_id sa Pa Na) as Hq.
-        destruct (set_var ctx (DFG_OVar req) arg_id sa) as [uq sq] eqn:Eq.
-        destruct Hq as [Gq Pq].
-        rewrite (bind_red (set_var ctx (DFG_OVar req) arg_id) _ sa _ _ Eq).
-        pose proof (dataflow_expr_full (tf_ivar resp) (dfg_var_size ctx (DFG_SVar dst)) sq Pq) as He.
-        destruct (dataflow_expr ctx (tf_ivar resp) (dfg_var_size ctx (DFG_SVar dst)) sq) as [res_id s1] eqn:Ee.
-        destruct He as [Ge [Ne Pe]].
-        rewrite (bind_red (dataflow_expr ctx (tf_ivar resp) (dfg_var_size ctx (DFG_SVar dst))) _ sq _ _ Ee).
-        pose proof (set_var_full (DFG_SVar dst) res_id s1 Pe Ne) as Hs.
-        destruct (set_var ctx (DFG_SVar dst) res_id s1) as [u s'] eqn:Es.
+        rewrite (bind_red (dataflow_expr ctx arg (ip_req_sz (tfs_spec_ip ctx ip)))
+                   _ s _ _ Ea).
+        assert (Hen_a : forall x, In x (map fst en) -> wnidwf sa x)
+          by (intros x Hx; eapply wnidwf_gmono; [ apply Hen, Hx | exact Ga ]).
+        (* the drive *)
+        assert (Hd : let (id, s') :=
+                       emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sa in
+                     wgmono sa s' /\ wnidwf s' id /\ winv s').
+        { apply emit_full; [ exact Pa |].
+          intros x Hx. cbn [get_args] in Hx.
+          destruct Hx as [<- | Hx]; [ exact Na | exact (Hen_a x Hx) ]. }
+        destruct (emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sa)
+          as [drive_id sd] eqn:Ed.
+        destruct Hd as [Gd [Nd Pd]].
+        rewrite (bind_red (emit ctx (DFG_Drive ip arg_id en)
+                             (ip_req_sz (tfs_spec_ip ctx ip))) _ sa _ _ Ed).
+        (* the join, when an earlier call on this IP is still outstanding *)
+        assert (Hhead : let (hid, sh) :=
+                          match last_sample ctx s ip en with
+                          | None => ret ctx drive_id
+                          | Some prev => emit ctx (DFG_Binary tf_or drive_id prev) 1
+                          end sd in
+                        wgmono sd sh /\ wnidwf sh hid /\ winv sh).
+        { destruct (last_sample ctx s ip en) as [prev |] eqn:Elast.
+          - apply emit_full; [ exact Pd |].
+            intros x Hx. cbn [get_args] in Hx.
+            destruct Hx as [<- | [<- | []]]; [ exact Nd |].
+            eapply wnidwf_gmono; [ exact (last_sample_nidwf s ip en prev Elast) |].
+            eapply wgmono_trans; [ exact Ga | exact Gd ].
+          - unfold ret. split; [ apply wgmono_refl | split; [ exact Nd | exact Pd ] ]. }
+        destruct (match last_sample ctx s ip en with
+                  | None => ret ctx drive_id
+                  | Some prev => emit ctx (DFG_Binary tf_or drive_id prev) 1
+                  end sd) as [head_id sh] eqn:Eh.
+        destruct Hhead as [Gh [Nh Ph]].
+        rewrite (bind_red _ _ sd _ _ Eh).
+        (* the stall: ONE node, or nothing at all when the latency is zero *)
+        assert (Hstall : let (sid, s1) :=
+                           stall_chain ctx (ip_lat (tfs_spec_ip ctx ip)) head_id sh in
+                         wgmono sh s1 /\ wnidwf s1 sid /\ winv s1).
+        { unfold stall_chain. destruct (ip_lat (tfs_spec_ip ctx ip)).
+          - unfold ret. split; [ apply wgmono_refl | split; [ exact Nh | exact Ph ] ].
+          - apply emit_full; [ exact Ph |].
+            intros x Hx. cbn [get_args] in Hx. destruct Hx as [<- | []]. exact Nh. }
+        destruct (stall_chain ctx (ip_lat (tfs_spec_ip ctx ip)) head_id sh)
+          as [stall_id s1] eqn:Es1.
+        destruct Hstall as [Gt [Nt Pt]].
+        rewrite (bind_red (stall_chain ctx (ip_lat (tfs_spec_ip ctx ip)) head_id)
+                   _ sh _ _ Es1).
+        (* the sample *)
+        assert (Hsm : let (id, s') :=
+                        emit ctx (DFG_Sample ip stall_id en)
+                          (dfg_var_size ctx (DFG_SVar dst)) s1 in
+                      wgmono s1 s' /\ wnidwf s' id /\ winv s').
+        { apply emit_full; [ exact Pt |].
+          intros x Hx. cbn [get_args] in Hx. destruct Hx as [<- | []]. exact Nt. }
+        destruct (emit ctx (DFG_Sample ip stall_id en)
+                    (dfg_var_size ctx (DFG_SVar dst)) s1) as [samp_id s2] eqn:Esm.
+        destruct Hsm as [Gm [Nm Pm]].
+        rewrite (bind_red (emit ctx (DFG_Sample ip stall_id en)
+                             (dfg_var_size ctx (DFG_SVar dst))) _ s1 _ _ Esm).
+        pose proof (set_var_full (DFG_SVar dst) samp_id s2 Pm Nm) as Hs.
+        destruct (set_var ctx (DFG_SVar dst) samp_id s2) as [u s3] eqn:Es.
         destruct Hs as [Gs Ps].
         split;
           [ eapply wgmono_trans; [ exact Ga |];
-            eapply wgmono_trans; [ exact Gq |];
-            eapply wgmono_trans; [ exact Ge |]; exact Gs
+            eapply wgmono_trans; [ exact Gd |];
+            eapply wgmono_trans; [ exact Gh |];
+            eapply wgmono_trans; [ exact Gt |];
+            eapply wgmono_trans; [ exact Gm |]; exact Gs
           | exact Ps ].
     - (* cons *)
       simpl.
-      pose proof (IHops1 s Hinv) as H1.
-      destruct (dataflow_ops ctx op1 s) as [u1 s1] eqn:E1.
+      pose proof (IHops1 en s Hinv Hen) as H1.
+      destruct (dataflow_ops ctx en op1 s) as [u1 s1] eqn:E1.
       destruct H1 as [G1 P1].
-      rewrite (bind_red (dataflow_ops ctx op1) _ s _ _ E1).
-      pose proof (IHops2 s1 P1) as H2.
-      destruct (dataflow_ops ctx op2 s1) as [u2 s2] eqn:E2.
+      rewrite (bind_red (dataflow_ops ctx en op1) _ s _ _ E1).
+      assert (Hen1 : forall x, In x (map fst en) -> wnidwf s1 x)
+        by (intros x Hx; eapply wnidwf_gmono; [ apply Hen, Hx | exact G1 ]).
+      pose proof (IHops2 en s1 P1 Hen1) as H2.
+      destruct (dataflow_ops ctx en op2 s1) as [u2 s2] eqn:E2.
       destruct H2 as [G2 P2].
       split; [ eapply wgmono_trans; eauto | exact P2 ].
     - (* if *)
@@ -2307,10 +2423,13 @@ Section SchedulerSimulation.
       (* get_state -> s_orig = s1 *)
       rewrite (bind_red (get_state ctx) _ s1 _ _ (get_state_red s1)).
       (* then branch *)
-      pose proof (IHops1 s1 Pc) as Hthen.
-      destruct (dataflow_ops ctx op1 s1) as [ut s_then] eqn:Et.
+      assert (Hen_t : forall x, In x (map fst ((cond_id, true) :: en)) -> wnidwf s1 x).
+      { intros x Hx. cbn [map In] in Hx. destruct Hx as [<- | Hx]; [ exact Nc |].
+        eapply wnidwf_gmono; [ apply Hen, Hx | exact Gc ]. }
+      pose proof (IHops1 ((cond_id, true) :: en) s1 Pc Hen_t) as Hthen.
+      destruct (dataflow_ops ctx ((cond_id, true) :: en) op1 s1) as [ut s_then] eqn:Et.
       destruct Hthen as [Gthen Pthen].
-      rewrite (bind_red (dataflow_ops ctx op1) _ s1 _ _ Et).
+      rewrite (bind_red (dataflow_ops ctx ((cond_id, true) :: en) op1) _ s1 _ _ Et).
       (* get_state -> s_then *)
       rewrite (bind_red (get_state ctx) _ s_then _ _ (get_state_red s_then)).
       (* restore put_state *)
@@ -2329,10 +2448,14 @@ Section SchedulerSimulation.
         - unfold nid_seq, sR; simpl. exact Hnst.
         - unfold sR; simpl. exact Habt. }
       (* else branch on sR *)
-      pose proof (IHops2 sR PsR) as Helse.
-      destruct (dataflow_ops ctx op2 sR) as [ue s_else] eqn:Ee.
+      assert (Hen_e : forall x, In x (map fst ((cond_id, false) :: en)) -> wnidwf sR x).
+      { intros x Hx. eapply wnidwf_gmono;
+          [ apply Hen_t; cbn [map In] in Hx |- *; exact Hx
+          | eapply wgmono_trans; [ exact Gthen | exact Gthen_sR ] ]. }
+      pose proof (IHops2 ((cond_id, false) :: en) sR PsR Hen_e) as Helse.
+      destruct (dataflow_ops ctx ((cond_id, false) :: en) op2 sR) as [ue s_else] eqn:Ee.
       destruct Helse as [Gelse Pelse].
-      rewrite (bind_red (dataflow_ops ctx op2) _ sR _ _ Ee).
+      rewrite (bind_red (dataflow_ops ctx ((cond_id, false) :: en) op2) _ sR _ _ Ee).
       (* get_state -> s_else *)
       rewrite (bind_red (get_state ctx) _ s_else _ _ (get_state_red s_else)).
       (* compose gmono s1 -> s_else *)
@@ -2566,11 +2689,11 @@ Section SchedulerSimulation.
   Qed.
 
   Lemma dataflow_ops_fg :
-    forall ops (s: wst), winv s -> wvsz s -> wfg s ->
-      let (u, s') := dataflow_ops ctx ops s in wgmono s s' /\ winv s' /\ wvsz s' /\ wfg s'.
+    forall (ops: @tf_ops s_var i_var o_var p_var) (en: list (nid_t * bool)) (s: wst), winv s -> wvsz s -> wfg s ->
+      let (u, s') := dataflow_ops ctx en ops s in wgmono s s' /\ winv s' /\ wvsz s' /\ wfg s'.
   Proof.
     induction ops as [op | op1 IHops1 op2 IHops2 | cond op1 IHops1 op2 IHops2];
-      intros s Hinv Hvsz Hfg.
+      intros en s Hinv Hvsz Hfg.
     - (* base *)
       destruct op.
       + (* nop *) simpl. unfold ret. split; [ apply wgmono_refl | split; [ exact Hinv | split; [ exact Hvsz | exact Hfg ] ] ].
@@ -2619,11 +2742,11 @@ Section SchedulerSimulation.
     - (* cons *)
       simpl.
       pose proof (IHops1 s Hinv Hvsz Hfg) as H1.
-      destruct (dataflow_ops ctx op1 s) as [u1 s1] eqn:E1.
+      destruct (dataflow_ops ctx en op1 s) as [u1 s1] eqn:E1.
       destruct H1 as [G1 [P1 [Q1 F1]]].
-      rewrite (bind_red (dataflow_ops ctx op1) _ s _ _ E1).
+      rewrite (bind_red (dataflow_ops ctx en op1) _ s _ _ E1).
       pose proof (IHops2 s1 P1 Q1 F1) as H2.
-      destruct (dataflow_ops ctx op2 s1) as [u2 s2] eqn:E2.
+      destruct (dataflow_ops ctx en op2 s1) as [u2 s2] eqn:E2.
       destruct H2 as [G2 [P2 [Q2 F2]]].
       split; [ eapply wgmono_trans; eauto | split; [ exact P2 | split; [ exact Q2 | exact F2 ] ] ].
     - (* if *)
@@ -2636,9 +2759,9 @@ Section SchedulerSimulation.
       rewrite (bind_red (get_state ctx) _ s1 _ _ (get_state_red s1)).
       (* then branch *)
       pose proof (IHops1 s1 Pc Qc Fc) as Hthen.
-      destruct (dataflow_ops ctx op1 s1) as [ut s_then] eqn:Et.
+      destruct (dataflow_ops ctx ((cond_id, true) :: en) op1 s1) as [ut s_then] eqn:Et.
       destruct Hthen as [Gthen [Pthen [Qthen Fthen]]].
-      rewrite (bind_red (dataflow_ops ctx op1) _ s1 _ _ Et).
+      rewrite (bind_red (dataflow_ops ctx ((cond_id, true) :: en) op1) _ s1 _ _ Et).
       rewrite (bind_red (get_state ctx) _ s_then _ _ (get_state_red s_then)).
       (* restore put_state *)
       set (sR := {| graph := graph s_then; var_map := var_map s1 |} : wst).
@@ -2665,9 +2788,9 @@ Section SchedulerSimulation.
         eapply node_args_sz_gmono; [ apply Fthen; exact Hin | exact GsR_then ]. }
       (* else branch on sR *)
       pose proof (IHops2 sR PsR QsR FsR) as Helse.
-      destruct (dataflow_ops ctx op2 sR) as [ue s_else] eqn:Ee.
+      destruct (dataflow_ops ctx ((cond_id, false) :: en) op2 sR) as [ue s_else] eqn:Ee.
       destruct Helse as [Gelse [Pelse [Qelse Felse]]].
-      rewrite (bind_red (dataflow_ops ctx op2) _ sR _ _ Ee).
+      rewrite (bind_red (dataflow_ops ctx ((cond_id, false) :: en) op2) _ sR _ _ Ee).
       rewrite (bind_red (get_state ctx) _ s_else _ _ (get_state_red s_else)).
       assert (Gs1_selse : wgmono s1 s_else)
         by (eapply wgmono_trans; [ exact Gthen | eapply wgmono_trans; [ exact Gthen_sR | exact Gelse ] ]).
@@ -2984,11 +3107,11 @@ Section SchedulerSimulation.
   Qed.
 
   Lemma dataflow_ops_pos :
-    forall ops (s: wst), gpos s ->
-      let (u, s') := dataflow_ops ctx ops s in gpos s'.
+    forall (ops: @tf_ops s_var i_var o_var p_var) (en: list (nid_t * bool)) (s: wst), gpos s ->
+      let (u, s') := dataflow_ops ctx en ops s in gpos s'.
   Proof.
     induction ops as [op | op1 IHops1 op2 IHops2 | cond op1 IHops1 op2 IHops2];
-      intros s Hp.
+      intros en s Hp.
     - destruct op as [ | dst expr | dst expr | rq rv dst expr szA szB fn ].
       + simpl. unfold ret. exact Hp.
       + simpl.
@@ -3025,10 +3148,10 @@ Section SchedulerSimulation.
         exact Hs.
     - simpl.
       pose proof (IHops1 s Hp) as H1.
-      destruct (dataflow_ops ctx op1 s) as [u1 s1] eqn:E1.
-      rewrite (bind_red (dataflow_ops ctx op1) _ s _ _ E1).
+      destruct (dataflow_ops ctx en op1 s) as [u1 s1] eqn:E1.
+      rewrite (bind_red (dataflow_ops ctx en op1) _ s _ _ E1).
       pose proof (IHops2 s1 H1) as H2.
-      destruct (dataflow_ops ctx op2 s1) as [u2 s2] eqn:E2.
+      destruct (dataflow_ops ctx en op2 s1) as [u2 s2] eqn:E2.
       exact H2.
     - simpl.
       pose proof (dataflow_expr_pos cond 1 s Hp) as Hc.
@@ -3037,8 +3160,8 @@ Section SchedulerSimulation.
       rewrite (bind_red (dataflow_expr ctx cond 1) _ s _ _ Ec).
       rewrite (bind_red (get_state ctx) _ s1 _ _ (get_state_red s1)).
       pose proof (IHops1 s1 Pc) as Hthen.
-      destruct (dataflow_ops ctx op1 s1) as [ut s_then] eqn:Et.
-      rewrite (bind_red (dataflow_ops ctx op1) _ s1 _ _ Et).
+      destruct (dataflow_ops ctx ((cond_id, true) :: en) op1 s1) as [ut s_then] eqn:Et.
+      rewrite (bind_red (dataflow_ops ctx ((cond_id, true) :: en) op1) _ s1 _ _ Et).
       rewrite (bind_red (get_state ctx) _ s_then _ _ (get_state_red s_then)).
       set (sR := {| graph := graph s_then; var_map := var_map s1 |} : wst).
       rewrite (bind_red (put_state ctx sR) _ s_then _ _ (put_state_red sR s_then)).
@@ -3050,8 +3173,8 @@ Section SchedulerSimulation.
         - unfold sR; cbn [graph]. exact Habt.
         - unfold sR; cbn [graph]. exact Hempt. }
       pose proof (IHops2 sR PsR) as Helse.
-      destruct (dataflow_ops ctx op2 sR) as [ue s_else] eqn:Ee.
-      rewrite (bind_red (dataflow_ops ctx op2) _ sR _ _ Ee).
+      destruct (dataflow_ops ctx ((cond_id, false) :: en) op2 sR) as [ue s_else] eqn:Ee.
+      rewrite (bind_red (dataflow_ops ctx ((cond_id, false) :: en) op2) _ sR _ _ Ee).
       rewrite (bind_red (get_state ctx) _ s_else _ _ (get_state_red s_else)).
       assert (Hmt : forall k id, In (k, id) (var_map s_then) -> 1 <= id).
       { intros k id Hin. destruct Hthen as [_ [Hvmt _]]. exact (Hvmt k id Hin). }
@@ -3898,8 +4021,8 @@ Section SchedulerSimulation.
   Qed.
 
   Lemma dataflow_ops_spec :
-    forall ops s, vmg s ->
-      let (u, s') := dataflow_ops ctx ops s in ospecv s s'.
+    forall (ops: @tf_ops s_var i_var o_var p_var) (en: list (nid_t * bool)) s, vmg s ->
+      let (u, s') := dataflow_ops ctx en ops s in ospecv s s'.
   Proof.
     induction ops as [ op | op1 IH1 op2 IH2 | cond then_ops IHthen else_ops IHelse ];
       intros s Hv.
@@ -3944,9 +4067,9 @@ Section SchedulerSimulation.
     - (* tf_ops_cons *)
       cbn [dataflow_ops]. unfold bind.
       specialize (IH1 s Hv).
-      destruct (dataflow_ops ctx op1 s) as [u1 s1]. destruct IH1 as [g1 v1].
+      destruct (dataflow_ops ctx en op1 s) as [u1 s1]. destruct IH1 as [g1 v1].
       specialize (IH2 s1 v1).
-      destruct (dataflow_ops ctx op2 s1) as [u2 s2]. destruct IH2 as [g2 v2].
+      destruct (dataflow_ops ctx en op2 s1) as [u2 s2]. destruct IH2 as [g2 v2].
       split; [ eapply gmono_trans; eauto | exact v2 ].
     - (* tf_ops_if *)
       unfold ospecv. cbn [dataflow_ops]. unfold bind, get_state, put_state.
@@ -3988,7 +4111,7 @@ Section SchedulerSimulation.
   Qed.
 
   Lemma dataflow_ops_preserves_vmg :
-    forall ops s, vmg s -> vmg (snd (dataflow_ops ctx ops s)).
+    forall (ops: @tf_ops s_var i_var o_var p_var) (en: list (nid_t * bool)) s, vmg s -> vmg (snd (dataflow_ops ctx ops s)).
   Proof.
     intros ops s Hv. pose proof (dataflow_ops_spec ops s Hv) as H.
     destruct (dataflow_ops ctx ops s) as [u s']. cbn. apply (proj2 H).
@@ -7808,10 +7931,10 @@ Section SchedulerSimulation.
     Qed.
 
     Lemma dataflow_ops_sem :
-      forall ops (s: wst) sp,
+      forall (ops: @tf_ops s_var i_var o_var p_var) (s: wst) sp,
         0 < length (graph s) -> winv s -> wvsz s -> wfg s ->
         sem_inv s sp ->
-        let (u, s') := dataflow_ops ctx ops s in
+        let (u, s') := dataflow_ops ctx en ops s in
         wgmono s' F -> sem_inv s' (tf_ops_run s_sz i_sz o_sz ops sp input).
     Proof.
       induction ops as [op | op1 IHops1 op2 IHops2 | cond op1 IHops1 op2 IHops2];
@@ -7967,15 +8090,15 @@ Section SchedulerSimulation.
         cbn [dataflow_ops].
         pose proof (dataflow_ops_fg op1 s Hinv Hvsz Hfg) as Fa.
         pose proof (IHops1 s sp Hne Hinv Hvsz Hfg Hsem) as H1.
-        destruct (dataflow_ops ctx op1 s) as [u1 s1] eqn:E1.
+        destruct (dataflow_ops ctx en op1 s) as [u1 s1] eqn:E1.
         destruct Fa as [G1 [P1 [Q1 Ff1]]].
-        rewrite (bind_red (dataflow_ops ctx op1) _ s _ _ E1).
+        rewrite (bind_red (dataflow_ops ctx en op1) _ s _ _ E1).
         assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 G1 Hne).
         pose proof (dataflow_ops_fg op2 s1 P1 Q1 Ff1) as Fb.
         pose proof (fun Hs =>
                       IHops2 s1 (tf_ops_run s_sz i_sz o_sz op1 sp input)
                         Hne1 P1 Q1 Ff1 Hs) as H2.
-        destruct (dataflow_ops ctx op2 s1) as [u2 s2] eqn:E2.
+        destruct (dataflow_ops ctx en op2 s1) as [u2 s2] eqn:E2.
         destruct Fb as [G2 [P2 [Q2 Ff2]]].
         intro Hg'.
         assert (Hg1F : wgmono s1 F) by exact (wgmono_trans s1 s2 F G2 Hg').
@@ -7991,9 +8114,9 @@ Section SchedulerSimulation.
         assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Gc Hne).
         pose proof (dataflow_ops_fg op1 s1 Pc Qc Fc) as Ft.
         pose proof (fun Hs => IHops1 s1 sp Hne1 Pc Qc Fc Hs) as Ht.
-        destruct (dataflow_ops ctx op1 s1) as [ut s_then] eqn:Et.
+        destruct (dataflow_ops ctx ((cond_id, true) :: en) op1 s1) as [ut s_then] eqn:Et.
         destruct Ft as [Gthen [Pthen [Qthen Fthen]]].
-        rewrite (bind_red (dataflow_ops ctx op1) _ s1 _ _ Et).
+        rewrite (bind_red (dataflow_ops ctx ((cond_id, true) :: en) op1) _ s1 _ _ Et).
         rewrite (bind_red (get_state ctx) _ s_then _ _ (get_state_red s_then)).
         set (sR := {| graph := graph s_then; var_map := var_map s1 |} : wst).
         rewrite (bind_red (put_state ctx sR) _ s_then _ _ (put_state_red sR s_then)).
@@ -8019,9 +8142,9 @@ Section SchedulerSimulation.
         { unfold sR; simpl. exact (gne_gmono s1 s_then Gthen Hne1). }
         pose proof (dataflow_ops_fg op2 sR PsR QsR FsR) as Fe.
         pose proof (fun Hs => IHops2 sR sp HneR PsR QsR FsR Hs) as Hels.
-        destruct (dataflow_ops ctx op2 sR) as [ue s_else] eqn:Ee.
+        destruct (dataflow_ops ctx ((cond_id, false) :: en) op2 sR) as [ue s_else] eqn:Ee.
         destruct Fe as [Gelse [Pelse [Qelse Felse]]].
-        rewrite (bind_red (dataflow_ops ctx op2) _ sR _ _ Ee).
+        rewrite (bind_red (dataflow_ops ctx ((cond_id, false) :: en) op2) _ sR _ _ Ee).
         rewrite (bind_red (get_state ctx) _ s_else _ _ (get_state_red s_else)).
         assert (Gs1_selse : wgmono s1 s_else)
           by (eapply wgmono_trans;
