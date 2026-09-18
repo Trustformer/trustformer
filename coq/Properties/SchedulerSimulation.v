@@ -6663,6 +6663,24 @@ Section SchedulerSimulation.
   (* output nodes' validity bits.                                         *)
   (* ---- the buffer table as a lookup: keys are distinct, filters agree ---- *)
 
+  (* A filter that keeps every entry under key [x] is invisible to a lookup of
+     [x].  Generic in [K] so both lookups share one [EqDec]. *)
+  Lemma list_assoc_filter {K} `{EqDec K} {A} (q: K * A -> bool) (l: list (K * A)) (x: K) :
+    (forall e, In e l -> fst e = x -> q e = true) ->
+    BitsToLists.list_assoc (filter q l) x = BitsToLists.list_assoc l x.
+  Proof.
+    intro Hq. induction l as [| [k v] l IH]; cbn [filter]; [ reflexivity |].
+    assert (Hrest : forall e, In e l -> fst e = x -> q e = true)
+      by (intros e He Hfe; apply Hq; [ right; exact He | exact Hfe ]).
+    destruct (q (k, v)) eqn:Hqk; cbn [BitsToLists.list_assoc];
+      destruct (eq_dec x k) as [Hxk | Hxk].
+    - reflexivity.
+    - exact (IH Hrest).
+    - exfalso. rewrite (Hq (k, v) (or_introl eq_refl) (eq_sym Hxk)) in Hqk.
+      discriminate Hqk.
+    - exact (IH Hrest).
+  Qed.
+
   Lemma list_assoc_none_key {K} `{EqDec K} {A} (l: list (K * A)) k :
     BitsToLists.list_assoc l k = None -> ~ In k (map fst l).
   Proof.
@@ -6680,6 +6698,45 @@ Section SchedulerSimulation.
     destruct (eq_dec k k0) as [-> | Hne];
       [ exfalso; apply Hn; left; reflexivity |].
     apply IH. intro Hin. apply Hn. right. exact Hin.
+  Qed.
+
+  (* A sample.s GATE is exactly its stall.s validity bit: the stall is buffered
+     -- it IS the counter -- so the walk stops one node in. *)
+  Lemma sample_gate_is_stall_reg
+        (act: tfs_action sched) a_idx n_idx (p: p_var) (tok: nid_t) en m msz t_idx :
+    node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
+    tok <> vreg_nid a_idx n_idx ->
+    BitsToLists.list_assoc
+      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) tok = Some (m, msz) ->
+    index_of_nat (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m
+      = Some t_idx ->
+    1 < length (graph (build_dfg ctx act)) ->
+    buf_gate act a_idx n_idx = tf_svar (tf_dfg_v a_idx t_idx).
+  Proof.
+    intros Hop Hne Hassoc Hidx Hf.
+    assert (Hnone : BitsToLists.list_assoc
+                      (filter (fun '(b_nid, _) =>
+                                 negb (Nat.eqb b_nid (vreg_nid a_idx n_idx)))
+                         (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
+                      (vreg_nid a_idx n_idx) = None).
+    { apply list_assoc_key_none. intro Hin.
+      apply in_map_iff in Hin. destruct Hin as [[k v] [Hk Hmem]].
+      cbn [fst] in Hk. subst k.
+      apply filter_In in Hmem. destruct Hmem as [_ Hq].
+      rewrite Nat.eqb_refl in Hq. discriminate Hq. }
+    assert (Htok : BitsToLists.list_assoc
+                     (filter (fun '(b_nid, _) =>
+                                negb (Nat.eqb b_nid (vreg_nid a_idx n_idx)))
+                        (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
+                     tok = Some (m, msz)).
+    { rewrite list_assoc_filter; [ exact Hassoc |].
+      intros [k v] _ Hfe. cbn [fst] in Hfe. subst k.
+      apply negb_true_iff, Nat.eqb_neq. exact Hne. }
+    assert (HA : 0 < length (graph (build_dfg ctx act))) by lia.
+    assert (HB : 0 < pred (length (graph (build_dfg ctx act)))) by lia.
+    unfold node_op in Hop.
+    rewrite (compile_sample_valid _ _ _ a_idx _ p tok en _ [] _ Hop Hnone HA).
+    exact (compile_buffered_valid _ _ _ a_idx tok _ m msz t_idx _ [] Htok Hidx HB).
   Qed.
 
   Lemma list_assoc_nodup_in {K} `{EqDec K} {A} (l: list (K * A)) k v :
