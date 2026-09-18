@@ -561,38 +561,43 @@ Section SchedulerSimulation.
      [adv] holds and it has not yet reached [top], never past [top].  Once [adv]
      holds from cycle [r] on, it reads [top] from cycle [r + top] on.  This is
      the shape [compile_dfg_buffers] gives a stall's buffer. *)
-  Lemma counter_saturates (sz top r: nat) (b: nat -> bits_t sz) (adv: nat -> bool) :
+  Lemma counter_saturates (sz top r K: nat) (b: nat -> bits_t sz) (adv: nat -> bool) :
     top < pow2 sz ->
     Bits.to_nat (b 0) = 0 ->
-    (forall j, Bits.to_nat (b j) <= top ->
+    (forall j, j < K -> Bits.to_nat (b j) <= top ->
                Bits.to_nat (b (S j))
                = if andb (adv j) (negb (Nat.eqb (Bits.to_nat (b j)) top))
                  then S (Bits.to_nat (b j)) else Bits.to_nat (b j)) ->
-    (forall j, r <= j -> adv j = true) ->
-    forall k, r + top <= k -> Bits.to_nat (b k) = top.
+    (forall j, r <= j < K -> adv j = true) ->
+    forall k, r + top <= k <= K -> Bits.to_nat (b k) = top.
   Proof.
     intros Htop Hzero Hrec Hadv.
     (* it never passes [top] *)
-    assert (Hle : forall j, Bits.to_nat (b j) <= top).
-    { induction j as [| j IHj]; [ lia |].
-      rewrite (Hrec j IHj). destruct (andb _ _) eqn:Hc; [| exact IHj].
+    assert (Hle : forall j, j <= K -> Bits.to_nat (b j) <= top).
+    { intro j. induction j as [| j IHj]; intro Hj; [ lia |].
+      rewrite (Hrec j ltac:(lia) (IHj ltac:(lia))).
+      destruct (andb _ _) eqn:Hc; [| apply IHj; lia ].
       apply andb_prop in Hc. destruct Hc as [_ Hne].
-      apply negb_true_iff, Nat.eqb_neq in Hne. lia. }
+      apply negb_true_iff, Nat.eqb_neq in Hne.
+      pose proof (IHj ltac:(lia)). lia. }
     (* from [r] on it gains at least one per cycle until it saturates *)
-    assert (Hge : forall i, Nat.min i top <= Bits.to_nat (b (r + i))).
-    { induction i as [| i IHi]; [ lia |].
+    assert (Hge : forall i, r + i <= K -> Nat.min i top <= Bits.to_nat (b (r + i))).
+    { intro i. induction i as [| i IHi]; intro Hi; [ lia |].
       replace (r + S i) with (S (r + i)) by lia.
-      rewrite (Hrec (r + i) (Hle (r + i))), (Hadv (r + i) ltac:(lia)). cbn [andb].
+      rewrite (Hrec (r + i) ltac:(lia) (Hle (r + i) ltac:(lia))),
+              (Hadv (r + i) ltac:(lia)). cbn [andb].
       destruct (Nat.eqb (Bits.to_nat (b (r + i))) top) eqn:Heq.
       - apply Nat.eqb_eq in Heq. cbn [negb]. lia.
       - apply Nat.eqb_neq in Heq. cbn [negb].
-        pose proof (Hle (r + i)). lia. }
+        pose proof (Hle (r + i) ltac:(lia)). pose proof (IHi ltac:(lia)). lia. }
     intros k Hk.
-    pose proof (Hge top) as Hg. pose proof (Hle k) as Hl.
-    assert (Hmono : forall j j', j <= j' -> Bits.to_nat (b j) <= Bits.to_nat (b j')).
-    { intros j j' Hjj. induction Hjj as [| j' Hjj IHjj]; [ lia |].
-      rewrite (Hrec j' (Hle j')). destruct (andb _ _); lia. }
-    pose proof (Hmono (r + top) k ltac:(lia)). lia.
+    pose proof (Hge top ltac:(lia)) as Hg. pose proof (Hle k ltac:(lia)) as Hl.
+    assert (Hmono : forall j j2, j <= j2 -> j2 <= K ->
+                    Bits.to_nat (b j) <= Bits.to_nat (b j2)).
+    { intros j j2 Hjj. induction Hjj as [| j2 Hjj IHjj]; intro HK; [ lia |].
+      rewrite (Hrec j2 ltac:(lia) (Hle j2 ltac:(lia))).
+      pose proof (IHjj ltac:(lia)). destruct (andb _ _); lia. }
+    pose proof (Hmono (r + top) k ltac:(lia) ltac:(lia)). lia.
   Qed.
 
   Lemma valid_and_eval
@@ -826,6 +831,24 @@ Section SchedulerSimulation.
   Lemma node_rank_child act x n bound :
     x < n -> node_rank act n <= bound -> node_rank act x < bound.
   Proof. intros H1 H2. pose proof (node_rank_mono act x n H1). lia. Qed.
+
+  Lemma node_rank_mono_le act n n2 : n <= n2 -> node_rank act n <= node_rank act n2.
+  Proof.
+    intro H. destruct (Nat.eq_dec n n2) as [-> | Hne]; [ lia |].
+    pose proof (node_rank_mono act n n2 ltac:(lia)). lia.
+  Qed.
+
+  (* A stall ranks a full wait above its argument: that is the weight
+     [stall_weight] adds, and it is what lets the counter saturate before the
+     stall's own rank is reached. *)
+  Lemma node_rank_stall act n arg l :
+    stall_lat_of act n = Some l -> arg < n ->
+    S (node_rank act arg) + pred l <= node_rank act n.
+  Proof.
+    intros Hst Harg. destruct n as [| m]; [ lia |].
+    cbn [node_rank]. unfold stall_weight. rewrite Hst.
+    pose proof (node_rank_mono_le act arg m ltac:(lia)). lia.
+  Qed.
 
   (* nid of the DFG node cached by validity/value register (a_idx, n_idx). *)
   Definition vreg_nid
@@ -2109,7 +2132,9 @@ Section SchedulerSimulation.
        validity alone, its own value being [tf_ivar (inr p)]; and the ordering
        join has no value either.  None of the three relates two widths. *)
     | DFG_Drive _ a _ => wsz s a (sz node)
-    | DFG_Stall _ _ => True
+    (* A stall's own width is its COUNTER's: [stall_chain] emits it at
+       [counter_sz lat], and emits nothing at all at latency zero. *)
+    | DFG_Stall l _ => 1 <= l /\ sz node = counter_sz l
     | DFG_Sample _ _ _ => True
     | DFG_Join _ _ => True
     | _ => True
@@ -2123,7 +2148,7 @@ Section SchedulerSimulation.
   Proof.
     unfold node_args_sz. intros H Hg.
     destruct (op node) as [c|v|v|uop a|bop a1 a2|a|cd t e|sa|dov dn den|siv sn sen|ja jb|];
-      [ exact I | exact I | exact I | | | exact I | | exact I | | exact I | exact I | exact I ].
+      [ exact I | exact I | exact I | | | exact I | | exact H | | exact I | exact I | exact I ].
     - destruct uop; eapply wsz_gmono; eauto.
     - destruct bop; destruct H as [H1 H2]; split; eapply wsz_gmono; eauto.
     - destruct H as [H1 [H2 H3]]; repeat split; eapply wsz_gmono; eauto.
@@ -2989,7 +3014,8 @@ Section SchedulerSimulation.
                 assert (HA : A) by
                   (intros x Hx; cbn [get_args] in Hx;
                    destruct Hx as [<- | []]; exact Nh);
-                assert (HB : B) by (unfold node_args_sz; cbn [op]; exact I);
+                assert (HB : B) by
+                  (unfold node_args_sz; cbn [op sz]; split; [ lia | reflexivity ]);
                 specialize (Ht HA HB)
             end.
             destruct (emit ctx (DFG_Stall (S l) head_id) (counter_sz (S l)) sh) as [sid s1].
@@ -4671,6 +4697,32 @@ Section SchedulerSimulation.
     apply vreg_nid_in_require_buffer. exact Halign.
   Qed.
 
+  (* A stall's counter register is wide enough to reach [pred l]: [stall_chain]
+     emits the node at [counter_sz l], and [wfg] carries that width to the
+     register through [buffer_register_node_size]. *)
+  Lemma stall_counter_wide
+        (act: tfs_action sched) a_idx n_idx l :
+    act_idx_aligned act a_idx ->
+    stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
+    1 <= l /\ pred l < pow2 (ss_sz (tf_dfg_b a_idx n_idx)).
+  Proof.
+    intros Halign Hst.
+    destruct (vreg_nid_node_range act a_idx n_idx Halign) as [_ Hlen].
+    pose proof (wfg_build_dfg act
+      (nth (vreg_nid a_idx n_idx) (graph (build_dfg ctx act))
+         {| nid := 0; op := DFG_Empty; sz := 0 |})
+      (nth_In _ _ Hlen)) as Hfg.
+    unfold stall_lat_of, node_op in Hst.
+    unfold node_args_sz in Hfg.
+    destruct (op (nth (vreg_nid a_idx n_idx) (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hop;
+      try discriminate Hst.
+    injection Hst as <-. destruct Hfg as [Hl Hsz].
+    split; [ exact Hl |].
+    rewrite (buffer_register_node_size act a_idx n_idx Halign), Hsz.
+    apply pred_lt_counter_sz. exact Hl.
+  Qed.
+
   (* Hence every register nid has node_cycle >= 1, so its validity bit
      starts (correctly) at 0. *)  Lemma buffered_node_cycle_pos :
     forall (act: tfs_action sched) a_idx n_idx,
@@ -5301,6 +5353,28 @@ Section SchedulerSimulation.
     - cbv beta iota. rewrite Hop.
       destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx dfg arg bufs).
       reflexivity.
+  Qed.
+
+  (* A stall's compiled VALIDITY is its argument's, unchanged: the stall itself
+     contributes the wait, which [compile_dfg_buffers] counts in the register. *)
+  Lemma compile_stall_valid
+        (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var)
+                (outputs_var := o_var) (ips_var := p_var))
+        tainted dfacts a_idx (n: nid_t) lat arg
+        (bufs: list (nid_t * (nat * sz_t))) pi fuel :
+    op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Stall lat arg ->
+    BitsToLists.list_assoc bufs n = None ->
+    0 < fuel ->
+    snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx dfg n bufs)
+    = snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi (pred fuel) a_idx dfg arg bufs).
+  Proof.
+    intros Hop Hbuf Hf. destruct fuel as [| fuel]; [ lia |]. cbn [Init.Nat.pred].
+    cbn [compile_dfg_expr_aux].
+    destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:E;
+      [ exfalso; rewrite Hbuf in E; congruence |].
+    cbv beta iota. rewrite Hop.
+    destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx dfg arg bufs).
+    reflexivity.
   Qed.
 
   (* One step of [compile_dfg_expr_aux]'s VALUE at a node that is not a stall:
@@ -6244,38 +6318,179 @@ Section SchedulerSimulation.
              fuel n []).
   Qed.
 
-  (* SATURATION (validity).  After k pre-done cycles, every buffer caching a
-     node id below k reads all-ones. *)
+  (* The stall's compiled validity, as [buffer_after_cycle] hands it over: the
+     buffer table with the stall's own slot removed. *)
+  Local Notation stall_gate act a_idx n_idx :=
+    (snd (compile_dfg_expr ctx bneeds
+            (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act)
+            (vreg_nid a_idx n_idx)
+            (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (vreg_nid a_idx n_idx)))
+               (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))).
+
+  (* A stall's counter along a pre-done run: with its gate up from cycle [r],
+     the counter reads [pred l] from cycle [r + pred l] on.  This is A2 debt 3,
+     and it is what licenses the weight [node_rank] gives a stall. *)
+  Lemma stall_counter_run
+        (act: tfs_action sched) a_idx n_idx (input: input_t)
+        (ss0: sched_sys_state) l r K :
+    act_idx_aligned act a_idx ->
+    stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
+    (fst ss0).[tf_dfg_b a_idx n_idx] = Bits.zero ->
+    (forall i, 1 <= i <= K -> ~ done_set (run_n i act input ss0)) ->
+    (forall j, r <= j < K ->
+       eval1 (stall_gate act a_idx n_idx) (run_n j act input ss0)
+         (sched_input input (run_n j act input ss0)) = Bits.ones 1) ->
+    forall k, r + pred l <= k <= K ->
+      Bits.to_nat ((fst (run_n k act input ss0)).[tf_dfg_b a_idx n_idx]) = pred l.
+  Proof.
+    intros Halign Hst Hzero Hnd Hadv.
+    destruct (stall_counter_wide act a_idx n_idx l Halign Hst) as [Hl Hwide].
+    apply (counter_saturates (ss_sz (tf_dfg_b a_idx n_idx)) (pred l) r K
+             (fun j => (fst (run_n j act input ss0)).[tf_dfg_b a_idx n_idx])
+             (fun j => if beq_dec
+                            (eval1 (stall_gate act a_idx n_idx)
+                               (run_n j act input ss0)
+                               (sched_input input (run_n j act input ss0)))
+                            Bits.zero
+                       then false else true)).
+    - exact Hwide.
+    - cbn [run_n]. rewrite Hzero.
+      change (@Bits.zero (ss_sz (tf_dfg_b a_idx n_idx)))
+        with (Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) 0).
+      apply Bits.to_nat_of_nat. lia.
+    - intros j HjK Hinv. cbn beta in Hinv |- *.
+      change (run_n (S j) act input ss0)
+        with (sched_step act (run_n j act input ss0)
+                (sched_input input (run_n j act input ss0))).
+      pose proof (buffer_after_cycle act a_idx n_idx (run_n j act input ss0)
+                    (sched_input input (run_n j act input ss0)) Halign
+                    ltac:(apply (Hnd (S j)); lia)) as Hba.
+      cbv zeta in Hba. destruct Hba as [Hvalb _]. rewrite Hvalb.
+      apply (stall_counter_step act a_idx n_idx _ _ l _ _ Hst Hwide Hinv).
+    - intros j Hj. cbn beta. rewrite (Hadv j Hj).
+      destruct (beq_dec (Bits.ones 1) Bits.zero) eqn:E; [| reflexivity].
+      exfalso. apply ones1_neq_zero. exact (proj1 (beq_dec_iff _ _ _) E).
+  Qed.
+
+  (* SATURATION (validity).  After [k] pre-done cycles, every buffer whose node
+     ranks below [k] reads all-ones.  The rank is WEIGHTED: a stall's buffer
+     counts, and its validity rises [lat] cycles after its argument's, so the
+     induction needs every earlier cycle rather than the previous one. *)
   Lemma valids_ones_run :
-    forall (act: tfs_action sched) a_idx (input: sched_input_t)
-           (ss0: sched_sys_state) (k: nat),
+    forall (act: tfs_action sched) a_idx (input: input_t)
+           (ss0: sched_sys_state) (K: nat),
       act_idx_aligned act a_idx ->
-      (forall i, 1 <= i <= k -> ~ done_set (run_n i act input ss0)) ->
+      (forall x, zeroed_at_start x -> (fst ss0).[x] = Bits.zero) ->
+      (forall i, 1 <= i <= K -> ~ done_set (run_n i act input ss0)) ->
+      forall k, k <= K ->
       forall n_idx,
-        vreg_nid a_idx n_idx < k ->
+        node_rank act (vreg_nid a_idx n_idx) < k ->
         (fst (run_n k act input ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1.
   Proof.
-    intros act a_idx input ss0 k Halign.
-    induction k as [| k IH]; intros Hnd n_idx Hlt; [ lia | ].
-    assert (Hndk : forall i, 1 <= i <= k -> ~ done_set (run_n i act input ss0))
-      by (intros i Hi; apply Hnd; lia).
-    specialize (IH Hndk).
-    set (ssk := run_n k act input ss0) in *.
-    assert (Hstep : ~ done_set (sched_step act ssk input))
-      by (apply (Hnd (S k)); lia).
-    destruct (vreg_nid_node_range act a_idx n_idx Halign) as [Hn1 Hnlen].
-    pose proof (buffer_after_cycle act a_idx n_idx ssk input Halign Hstep) as Hba.
-    cbv zeta in Hba. destruct Hba as [_ Hval].
-    unfold vreg_nid in Hlt, Hn1, Hnlen.
-    change (run_n (S k) act input ss0) with (sched_step act ssk input).
-    rewrite Hval.
-    apply (compile_valid_ones act a_idx ssk input Halign k IH).
-    - intros e He. exact (proj1 (proj1 (filter_In _ e _) He)).
-    - exact Hn1.
-    - exact Hnlen.
-    - exact Hnlen.
-    - lia.
-    - left. apply list_assoc_filter_out.
+    intros act a_idx input ss0 K Halign Hzero Hnd.
+    assert (main : forall bnd j, j <= bnd -> j <= K -> forall n_idx,
+              node_rank act (vreg_nid a_idx n_idx) < j ->
+              (fst (run_n j act input ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1).
+    { intro bnd. induction bnd as [| m IH]; intros j Hjm HjK n_idx Hlt; [ lia |].
+      destruct (Nat.eq_dec j (S m)) as [-> | Hne]; [| apply (IH j); lia ].
+      destruct (vreg_nid_node_range act a_idx n_idx Halign) as [Hn1 Hnlen].
+      assert (Hstep : ~ done_set (sched_step act (run_n m act input ss0)
+                        (sched_input input (run_n m act input ss0))))
+        by (apply (Hnd (S m)); lia).
+      pose proof (buffer_after_cycle act a_idx n_idx (run_n m act input ss0)
+                    (sched_input input (run_n m act input ss0)) Halign Hstep) as Hba.
+      cbv zeta in Hba. destruct Hba as [_ Hval].
+      change (run_n (S m) act input ss0)
+        with (sched_step act (run_n m act input ss0)
+                (sched_input input (run_n m act input ss0))).
+      rewrite Hval.
+      (* the buffer lemmas hand the node id over UNFOLDED; fold it once, so the
+         rank hypotheses and the stall lemmas speak of the same term *)
+      change (fst (nth (index_to_nat n_idx)
+                     (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))
+        with (vreg_nid a_idx n_idx).
+      unfold buf_valid_expr.
+      (* the node id comes FROM the goal: [vreg_nid] is a definition and a
+         written-out copy of it matches nothing the buffer lemmas produced *)
+      match goal with
+      | |- context [ stall_lat_of act ?nn ] =>
+          destruct (stall_lat_of act nn) as [l |] eqn:Hst
+      end.
+      - (* a stall: its validity is the counter having reached [pred l] *)
+        assert (Hcnt : Bits.to_nat
+                  ((fst (run_n m act input ss0)).[tf_dfg_b a_idx n_idx]) = pred l).
+        { assert (Hnode : In (nth (vreg_nid a_idx n_idx) (graph (build_dfg ctx act))
+                                {| nid := 0; op := DFG_Empty; sz := 0 |})
+                             (graph (build_dfg ctx act)))
+            by (apply nth_In; exact Hnlen).
+          pose proof Hst as Hst0. unfold stall_lat_of, node_op in Hst0.
+          match type of Hst0 with
+          | match ?o with _ => _ end = _ =>
+              destruct o as [cn|iv|dv|uop ua|bop b1 b2|ra|pc pt pe|slat sarg
+                            |dp da den|sp stok sen|ja jb|] eqn:Hop
+          end; try discriminate Hst0.
+          injection Hst0 as Hslat. subst slat.
+          assert (Hargin : In sarg (get_args ctx
+                     (nth (vreg_nid a_idx n_idx) (graph (build_dfg ctx act))
+                        {| nid := 0; op := DFG_Empty; sz := 0 |})))
+            by (unfold get_args; rewrite Hop; left; reflexivity).
+          pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
+          pose proof (Hargpos _ Hnode sarg Hargin) as Hs1.
+          pose proof (args_lt_fwd act _ Hnode sarg Hargin) as Hslt.
+          rewrite (node_nid_at act _ Hnlen) in Hslt.
+          assert (Hslen : sarg < length (graph (build_dfg ctx act))) by lia.
+          apply (stall_counter_run act a_idx n_idx input ss0 l
+                   (S (node_rank act sarg)) m Halign Hst
+                   (Hzero (tf_dfg_b a_idx n_idx) I)
+                   ltac:(intros i Hi; apply Hnd; lia)).
+          - (* the gate is the argument's validity, which is up from its rank *)
+            intros j Hj.
+            rewrite (compile_stall_valid (build_dfg ctx act) _ _ a_idx _ _ sarg _ []
+                       (length (graph (build_dfg ctx act))) Hop
+                       (list_assoc_filter_out _ _) ltac:(lia)).
+            rewrite (compile_fuel_irrel act a_idx _ sarg Hs1 Hslen
+                       (pred (length (graph (build_dfg ctx act))))
+                       (length (graph (build_dfg ctx act))) ltac:(lia) Hslen).
+            apply (compile_valid_ones act a_idx (run_n j act input ss0)
+                     (sched_input input (run_n j act input ss0)) Halign j
+                     (IH j ltac:(lia) ltac:(lia))).
+            + intros e He. exact (proj1 (proj1 (filter_In _ e _) He)).
+            + exact Hs1.
+            + exact Hslen.
+            + exact Hslen.
+            + lia.
+            + right. lia.
+          - pose proof (node_rank_stall act (vreg_nid a_idx n_idx) sarg l Hst Hslt).
+            lia. }
+        destruct (stall_counter_wide act a_idx n_idx l Halign Hst) as [_ Hwide].
+        cbn [tf_eval_expr]. rewrite !convert_same.
+        (* [cbn] rebuilds the register read under a second type annotation;
+           put the statement's form back before rewriting with [Hcnt]. *)
+        match goal with
+        | |- context [ @beq_dec ?T ?E ?c ?d ] =>
+            replace c with
+              ((fst (run_n m act input ss0)).[tf_dfg_b a_idx n_idx]) by reflexivity
+        end.
+        (* the width comes from the goal too: [Bits.to_nat] carries it as an
+           implicit, and a second copy of it breaks the rewrite *)
+        match goal with
+        | |- context [ beq_dec _ ?d ] =>
+            assert (Hreg : (fst (run_n m act input ss0)).[tf_dfg_b a_idx n_idx] = d)
+        end.
+        { apply (bits_to_nat_inj (ss_sz (tf_dfg_b a_idx n_idx))).
+          rewrite Hcnt. symmetry. apply Bits.to_nat_of_nat. exact Hwide. }
+        rewrite Hreg, beq_dec_refl. vm_compute. reflexivity.
+      - (* every other node: the compiled validity of its own expression *)
+        apply (compile_valid_ones act a_idx (run_n m act input ss0)
+                 (sched_input input (run_n m act input ss0)) Halign m
+                 (IH m (Nat.le_refl m) ltac:(lia))).
+        + intros e He. exact (proj1 (proj1 (filter_In _ e _) He)).
+        + exact Hn1.
+        + exact Hnlen.
+        + exact Hnlen.
+        + lia.
+        + left. apply list_assoc_filter_out. }
+    intros k HkK n_idx Hlt. exact (main k k (Nat.le_refl k) HkK n_idx Hlt).
   Qed.
 
 
