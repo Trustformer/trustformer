@@ -6569,6 +6569,48 @@ Section SchedulerSimulation.
       cbn [fst]; try reflexivity; destruct Hns.
   Qed.
 
+  (* A buffered node.s VALIDITY is its own bit, stall or not. *)
+  Lemma compile_buffered_valid
+        (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var)
+                (outputs_var := o_var) (ips_var := p_var))
+        tainted dfacts a_idx n bufs m msz n_idx' fuel pi :
+    BitsToLists.list_assoc bufs n = Some (m, msz) ->
+    index_of_nat (Datatypes.length (nth (index_to_nat a_idx) bneeds [])) m
+      = Some n_idx' ->
+    0 < fuel ->
+    snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx dfg n bufs)
+    = tf_svar (tf_dfg_v a_idx n_idx').
+  Proof.
+    intros Hbuf Hidx Hf. destruct fuel as [| fuel]; [ lia |].
+    cbn [compile_dfg_expr_aux]. rewrite Hbuf. cbv beta iota.
+    rewrite Hidx. cbv beta iota.
+    destruct (op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}));
+      reflexivity.
+  Qed.
+
+  (* A chain gate that is BUFFERED speaks through its validity register, which
+     is what lifts [drive_pulse_zero_of_join] off the unbuffered case. *)
+  Lemma drive_pulse_zero_of_gate_reg
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+        (n g h m msz: nid_t)
+        (n_idx : Vect.index (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+        (ss: sched_sys_state) (input: sched_input_t) :
+    chain_gate ctx (build_dfg ctx act) n = Some (g, h) ->
+    BitsToLists.list_assoc
+      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) g = Some (m, msz) ->
+    index_of_nat (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m
+      = Some n_idx ->
+    0 < length (graph (build_dfg ctx act)) ->
+    (fst ss).[tf_dfg_v a_idx n_idx] = Bits.zero ->
+    eval1 (drive_pulse act a_idx n) ss input = Bits.zero.
+  Proof.
+    intros Hcg Hbuf Hidx Hf Hz.
+    apply (drive_pulse_zero_of_vgate act a_idx n g h ss input Hcg).
+    rewrite (compile_buffered_valid _ _ _ a_idx g _ m msz n_idx _ [] Hbuf Hidx Hf).
+    rewrite eval1_svar_v. exact Hz.
+  Qed.
+
   (* ==================================================================== *)
   (* Phase 3b: the VALID => SETTLED invariant.                            *)
   (*                                                                      *)
