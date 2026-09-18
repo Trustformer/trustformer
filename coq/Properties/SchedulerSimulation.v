@@ -2272,6 +2272,55 @@ Section SchedulerSimulation.
     apply negb_true_iff in Hp. exact Hp.
   Qed.
 
+  (* [find] scans left to right and the graph is nid-descending, so the match
+     it returns carries the LARGEST id among the matches. *)
+  Lemma find_ge_desc (P: @dfg_node_t s_var i_var o_var p_var -> bool) L x y :
+    ids_desc L -> find P L = Some x -> In y L -> P y = true -> nid y <= nid x.
+  Proof.
+    revert x y. induction L as [| a L IH]; intros x y Hd Hf Hin Hy; [ destruct Hin |].
+    cbn [find] in Hf. destruct (P a) eqn:Ha.
+    - injection Hf as <-.
+      destruct Hin as [<- | Hin]; [ lia |].
+      apply Nat.lt_le_incl. exact (Hd [] a L eq_refl y Hin).
+    - destruct Hin as [<- | Hin]; [ rewrite Ha in Hy; discriminate |].
+      apply (IH x y); [| exact Hf | exact Hin | exact Hy ].
+      intros pre b rest Hsplit M HM.
+      apply (Hd (a :: pre) b rest); [ rewrite Hsplit; reflexivity | exact HM ].
+  Qed.
+
+  (* So [last_sample] finds a match whenever one exists ... *)
+  Lemma last_sample_found (s: wst) (ip: p_var) en nd tok en' :
+    In nd (graph s) -> op nd = DFG_Sample ip tok en' ->
+    guards_disjoint en en' = false ->
+    exists prev, last_sample ctx s ip en = Some prev.
+  Proof.
+    intros Hin Hop Hdis. unfold last_sample.
+    destruct (find _ (graph s)) as [x |] eqn:Ef; [ exists (nid x); reflexivity |].
+    exfalso. pose proof (find_none _ _ Ef nd Hin) as Hn. cbv beta in Hn.
+    rewrite Hop in Hn.
+    destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) ip ip) as [_ | Hne];
+      [| apply Hne; reflexivity ].
+    rewrite Hdis in Hn. cbn [negb] in Hn. discriminate Hn.
+  Qed.
+
+  (* ... and the one it finds is the LAST, which is what sequences the calls. *)
+  Lemma last_sample_max (s: wst) (ip: p_var) en nd tok en' prev :
+    ids_desc (graph s) ->
+    In nd (graph s) -> op nd = DFG_Sample ip tok en' ->
+    guards_disjoint en en' = false ->
+    last_sample ctx s ip en = Some prev ->
+    nid nd <= prev.
+  Proof.
+    intros Hd Hin Hop Hdis Hls. unfold last_sample in Hls.
+    destruct (find _ (graph s)) as [x |] eqn:Ef; [| discriminate Hls ].
+    injection Hls as <-.
+    apply (find_ge_desc _ (graph s) x nd Hd Ef Hin).
+    cbv beta. rewrite Hop.
+    destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) ip ip) as [_ | Hne];
+      [| exfalso; apply Hne; reflexivity ].
+    rewrite Hdis. reflexivity.
+  Qed.
+
   (* Every ordering join sits between a drive and a SAMPLE on the same port
      whose guard it could share -- which is exactly what [last_sample] gave. *)
   Definition joins_sequence (L : list (@dfg_node_t s_var i_var o_var p_var)) : Prop :=
