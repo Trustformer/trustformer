@@ -12744,22 +12744,23 @@ Section SchedulerSimulation.
          = if b then tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E2 ss sinput
                 else tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E1 ss sinput) ->
       (forall kk, src_get spf kk = if b then src_get spe kk else src_get spt kk) ->
-      (forall vt, vt_opt = Some vt -> NV (dfg_var_size ctx k) vt = src_get spt k) ->
-      (forall ve, ve_opt = Some ve -> NV (dfg_var_size ctx k) ve = src_get spe k) ->
-      (vt_opt = None -> src_get spt k = src_get sp0 k) ->
-      (ve_opt = None -> src_get spe k = src_get sp0 k) ->
+      (* only the SELECTED arm: an untaken arm.s call latches the wire the
+         other arm drove, so its entries say nothing *)
+      (b = false -> forall vt, vt_opt = Some vt -> NV (dfg_var_size ctx k) vt = src_get spt k) ->
+      (b = true  -> forall ve, ve_opt = Some ve -> NV (dfg_var_size ctx k) ve = src_get spe k) ->
+      (b = false -> vt_opt = None -> src_get spt k = src_get sp0 k) ->
+      (b = true  -> ve_opt = None -> src_get spe k = src_get sp0 k) ->
       forall fid, res = Some fid -> NV (dfg_var_size ctx k) fid = src_get spf k.
     Proof.
       intros Hne Hrun Hg1 Hb Hsel Hvt Hve Hvtn Hven fid Hfid.
       unfold merge_key in Hrun.
       destruct vt_opt as [vt |]; destruct ve_opt as [ve |].
-      - (* both branches bind [k] *)
-        destruct (eq_dec vt ve) as [Heq | Hnee].
+      - destruct (eq_dec vt ve) as [Heq | Hnee].
         + unfold ret in Hrun. injection Hrun as Hr Hs. subst res. subst s1.
           injection Hfid as Hf. subst fid.
           rewrite Hsel. destruct b.
-          * rewrite Heq. exact (Hve ve eq_refl).
-          * exact (Hvt vt eq_refl).
+          * rewrite Heq. exact (Hve eq_refl ve eq_refl).
+          * exact (Hvt eq_refl vt eq_refl).
         + destruct (emit ctx (DFG_Phi cond_id vt ve) (dfg_var_size ctx k) s)
             as [phi s2] eqn:Ee.
           rewrite (bind_red (emit ctx (DFG_Phi cond_id vt ve) (dfg_var_size ctx k))
@@ -12770,10 +12771,9 @@ Section SchedulerSimulation.
                       (dfg_var_size ctx k) phi HF Hne Ee Hg1) as [R1 [R2 [Rop _]]].
           unfold nval. rewrite (nre_phi act a_idx phi cond_id vt ve R1 R2 Rop).
           rewrite Hb, Hsel. destruct b.
-          * exact (Hve ve eq_refl).
-          * exact (Hvt vt eq_refl).
-      - (* only the THEN branch binds [k]: the else value is the initial one *)
-        destruct (ensure_var ctx k s) as [ve0 sA] eqn:Ev.
+          * exact (Hve eq_refl ve eq_refl).
+          * exact (Hvt eq_refl vt eq_refl).
+      - destruct (ensure_var ctx k s) as [ve0 sA] eqn:Ev.
         rewrite (bind_red (ensure_var ctx k) _ s _ _ Ev) in Hrun.
         destruct (emit ctx (DFG_Phi cond_id vt ve0) (dfg_var_size ctx k) sA)
           as [phi s2] eqn:Ee.
@@ -12785,16 +12785,16 @@ Section SchedulerSimulation.
           by exact (wgmono_trans sA s2 F (emit_gmono _ _ _ _ _ Ee) Hg1).
         assert (HneA : 0 < length (graph sA))
           by exact (gne_gmono s sA (ensure_var_gmono k s ve0 sA Ev) Hne).
-        assert (Hve0 : NV (dfg_var_size ctx k) ve0 = src_get spe k).
-        { rewrite (nval_fresh s sA k ve0 Hne Ev HgA). symmetry. exact (Hven eq_refl). }
         destruct (emitted_node_at act F sA s2 (DFG_Phi cond_id vt ve0)
                     (dfg_var_size ctx k) phi HF HneA Ee Hg1) as [R1 [R2 [Rop _]]].
+        assert (Hve0 : b = true -> NV (dfg_var_size ctx k) ve0 = src_get spe k).
+        { intro Hbt. rewrite (nval_fresh s sA k ve0 Hne Ev HgA). symmetry.
+          exact (Hven Hbt eq_refl). }
         unfold nval. rewrite (nre_phi act a_idx phi cond_id vt ve0 R1 R2 Rop).
         rewrite Hb, Hsel. destruct b.
-        + exact Hve0.
-        + exact (Hvt vt eq_refl).
-      - (* only the ELSE branch binds [k] *)
-        destruct (ensure_var ctx k s) as [vt0 sA] eqn:Ev.
+        + exact (Hve0 eq_refl).
+        + exact (Hvt eq_refl vt eq_refl).
+      - destruct (ensure_var ctx k s) as [vt0 sA] eqn:Ev.
         rewrite (bind_red (ensure_var ctx k) _ s _ _ Ev) in Hrun.
         destruct (emit ctx (DFG_Phi cond_id vt0 ve) (dfg_var_size ctx k) sA)
           as [phi s2] eqn:Ee.
@@ -12806,16 +12806,16 @@ Section SchedulerSimulation.
           by exact (wgmono_trans sA s2 F (emit_gmono _ _ _ _ _ Ee) Hg1).
         assert (HneA : 0 < length (graph sA))
           by exact (gne_gmono s sA (ensure_var_gmono k s vt0 sA Ev) Hne).
-        assert (Hvt0 : NV (dfg_var_size ctx k) vt0 = src_get spt k).
-        { rewrite (nval_fresh s sA k vt0 Hne Ev HgA). symmetry. exact (Hvtn eq_refl). }
         destruct (emitted_node_at act F sA s2 (DFG_Phi cond_id vt0 ve)
                     (dfg_var_size ctx k) phi HF HneA Ee Hg1) as [R1 [R2 [Rop _]]].
+        assert (Hvt0 : b = false -> NV (dfg_var_size ctx k) vt0 = src_get spt k).
+        { intro Hbf. rewrite (nval_fresh s sA k vt0 Hne Ev HgA). symmetry.
+          exact (Hvtn Hbf eq_refl). }
         unfold nval. rewrite (nre_phi act a_idx phi cond_id vt0 ve R1 R2 Rop).
         rewrite Hb, Hsel. destruct b.
-        + exact (Hve ve eq_refl).
-        + exact Hvt0.
-      - (* neither branch binds [k]: no entry is produced *)
-        unfold ret in Hrun. injection Hrun as Hr Hs. subst res. discriminate Hfid.
+        + exact (Hve eq_refl ve eq_refl).
+        + exact (Hvt0 eq_refl).
+      - unfold ret in Hrun. injection Hrun as Hr Hs. subst res. discriminate Hfid.
     Qed.
 
     Lemma merge_loop_sem (cond_id: nid_t) mt me (b: bool) (spt spe spf: src_sys_state) :
@@ -12825,8 +12825,8 @@ Section SchedulerSimulation.
          = if b then tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E2 ss sinput
                 else tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E1 ss sinput) ->
       (forall kk, src_get spf kk = if b then src_get spe kk else src_get spt kk) ->
-      vm_sem mt spt -> vm_frame mt spt ->
-      vm_sem me spe -> vm_frame me spe ->
+      (b = false -> vm_sem mt spt) -> (b = false -> vm_frame mt spt) ->
+      (b = true  -> vm_sem me spe) -> (b = true  -> vm_frame me spe) ->
       forall keys acc (s: wst) fin s',
         0 < length (graph s) ->
         merge_loop ctx cond_id mt me keys acc s = (fin, s') ->
@@ -12856,11 +12856,11 @@ Section SchedulerSimulation.
             assert (Hval : NV (dfg_var_size ctx k0) final_id = src_get spf k0).
             { refine (merge_key_sem cond_id k0 _ _ s s1 (Some final_id) b spt spe spf
                         Hne Emk Hg1F Hb Hsel _ _ _ _ final_id eq_refl).
-              - intros vt Hv. apply wla_in in Hv. exact (Hmt k0 vt Hv).
-              - intros ve Hv. apply wla_in in Hv. exact (Hme k0 ve Hv).
-              - intro Hn. apply Hmtf. intros n Hin.
+              - intros Hbf vt Hv. apply wla_in in Hv. exact (Hmt Hbf k0 vt Hv).
+              - intros Hbt ve Hv. apply wla_in in Hv. exact (Hme Hbt k0 ve Hv).
+              - intros Hbf Hn. apply (Hmtf Hbf). intros n Hin.
                 exact (list_assoc_None_notin mt k0 Hn n Hin).
-              - intro Hn. apply Hmef. intros n Hin.
+              - intros Hbt Hn. apply (Hmef Hbt). intros n Hin.
                 exact (list_assoc_None_notin me k0 Hn n Hin). }
             apply (IH ((k0, final_id) :: acc) s1 fin s' Hne1 Hrun Hg').
             intros v n Hin. destruct Hin as [Heq | Hin].
@@ -12880,8 +12880,8 @@ Section SchedulerSimulation.
          = if b then tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E2 ss sinput
                 else tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E1 ss sinput) ->
       (forall kk, src_get spf kk = if b then src_get spe kk else src_get spt kk) ->
-      vm_sem mt spt -> vm_frame mt spt ->
-      vm_sem me spe -> vm_frame me spe ->
+      (b = false -> vm_sem mt spt) -> (b = false -> vm_frame mt spt) ->
+      (b = true  -> vm_sem me spe) -> (b = true  -> vm_frame me spe) ->
       0 < length (graph s) ->
       merge_maps ctx cond_id mo mt me s = (fin, s') ->
       wgmono s' F ->
@@ -12904,7 +12904,8 @@ Section SchedulerSimulation.
         { intros p Hin.
           destruct (Hcov p (in_or_app _ _ _ (or_intror Hin))) as [_ H2].
           exact (H2 p Hin). }
-        rewrite Hsel. destruct b; [ exact (Hmef v Hnme) | exact (Hmtf v Hnmt) ].
+        rewrite Hsel. destruct b;
+          [ exact (Hmef eq_refl v Hnme) | exact (Hmtf eq_refl v Hnmt) ].
     Qed.
 
     (* ================================================================= *)
@@ -13344,8 +13345,6 @@ Section SchedulerSimulation.
         unfold nval in Hvc.
         assert (HsemR : sem_inv sR sp).
         { apply (sem_inv_vm s1 sR); [ unfold sR; simpl; reflexivity | exact Hsem1 ]. }
-        destruct (Ht Hsem1 Hg_then) as [Hmt1 Hmtf1].
-        destruct (Hels HsemR Hg_else) as [Hme1 Hmef1].
         assert (HvmF : var_map sF = final_vars) by (unfold sF; reflexivity).
         unfold sem_inv. rewrite HvmF.
         unfold tf_ops_run. cbn [tf_ops_updates].
@@ -13359,14 +13358,22 @@ Section SchedulerSimulation.
               by (intros szB E1 E2; cbn [tf_eval_expr]; rewrite Hvc; reflexivity);
             destruct B
         end.
-        + refine (merge_maps_sem cond_id (var_map s1) (var_map s_then) (var_map s_else)
-                    true _ _ _ s_else final_vars s_final Hb _
-                    Hmt1 Hmtf1 Hme1 Hmef1 HneE Em Hg_final).
-          intro kk. reflexivity.
-        + refine (merge_maps_sem cond_id (var_map s1) (var_map s_then) (var_map s_else)
-                    false _ _ _ s_else final_vars s_final Hb _
-                    Hmt1 Hmtf1 Hme1 Hmef1 HneE Em Hg_final).
-          intro kk. reflexivity.
+        + (* the ELSE arm runs: the THEN arm.s entries say nothing *)
+          destruct (Hels HsemR Hg_else) as [Hme1 Hmef1].
+          refine (merge_maps_sem cond_id (var_map s1) (var_map s_then) (var_map s_else)
+                    true sp _ _ s_else final_vars s_final Hb _
+                    _ _ (fun _ => Hme1) (fun _ => Hmef1) HneE Em Hg_final).
+          * intro kk. reflexivity.
+          * intro Hc. discriminate Hc.
+          * intro Hc. discriminate Hc.
+        + (* and symmetrically *)
+          destruct (Ht Hsem1 Hg_then) as [Hmt1 Hmtf1].
+          refine (merge_maps_sem cond_id (var_map s1) (var_map s_then) (var_map s_else)
+                    false _ sp _ s_else final_vars s_final Hb _
+                    (fun _ => Hmt1) (fun _ => Hmtf1) _ _ HneE Em Hg_final).
+          * intro kk. reflexivity.
+          * intro Hc. discriminate Hc.
+          * intro Hc. discriminate Hc.
     Qed.
 
   End DFGSem.
