@@ -1406,6 +1406,81 @@ Section SchedulerSimulation.
       cbn [In snd]. right. left. reflexivity.
   Qed.
 
+  (* What [compile_dfg_drives] assigns port [p]'s request register: {strobe,
+     payload}, both halves selecting on the PULSE, with the register itself as
+     the base case -- so a request's payload is taken at its own cycle and HELD.
+     Replicates the map body of [compile_dfg_drives]. *)
+  Definition drive_value_expr
+      (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (p: p_var) : @tf_expr (tfs_states sched) si_var o_var :=
+    let dfg := build_dfg ctx act in
+    let buffers := nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [] in
+    let fuel := length (graph dfg) in
+    let sbufs := filter (fun '(n, _) =>
+                           match op (nth n (graph dfg)
+                                       {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+                           | DFG_Sample _ _ _ => true
+                           | _ => false
+                           end) buffers in
+    tf_op2 (tf_concat 1 (ip_req_sz (tfs_spec_ip ctx p)))
+      (fold_right
+         (fun n acc =>
+            let '(_, v) := compile_dfg_expr ctx bneeds fuel a_idx dfg n buffers in
+            let en_val :=
+              match op (nth n (graph dfg)
+                          {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+              | DFG_Drive _ _ en =>
+                  guard_expr ctx bneeds (get_tainted ctx dfg) (decl_facts ctx dfg)
+                    fuel a_idx dfg sbufs en
+              | _ => tf_const 1
+              end in
+            let '(vgate, vfirst) :=
+              match chain_gate ctx dfg n with
+              | Some (g, h) =>
+                  (snd (compile_dfg_expr ctx bneeds fuel a_idx dfg g buffers),
+                   stall_start ctx bneeds a_idx dfg buffers h)
+              | None => (v, tf_const 1)
+              end in
+            tf_expr_if (tf_op2 tf_and en_val (tf_op2 tf_and vgate vfirst))
+              (tf_const 1) acc)
+         (tf_const 0) (drive_nodes ctx dfg p))
+      (fold_right
+         (fun n acc =>
+            let '(e, v) := compile_dfg_expr ctx bneeds fuel a_idx dfg n buffers in
+            let en_val :=
+              match op (nth n (graph dfg)
+                          {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+              | DFG_Drive _ _ en =>
+                  guard_expr ctx bneeds (get_tainted ctx dfg) (decl_facts ctx dfg)
+                    fuel a_idx dfg sbufs en
+              | _ => tf_const 1
+              end in
+            let '(vgate, vfirst) :=
+              match chain_gate ctx dfg n with
+              | Some (g, h) =>
+                  (snd (compile_dfg_expr ctx bneeds fuel a_idx dfg g buffers),
+                   stall_start ctx bneeds a_idx dfg buffers h)
+              | None => (v, tf_const 1)
+              end in
+            tf_expr_if (tf_op2 tf_and en_val (tf_op2 tf_and vgate vfirst))
+              e acc)
+         (tf_svar (tf_dfg_ov p)) (drive_nodes ctx dfg p)).
+
+  (* The drive register's assignment is one of the always-ops. *)
+  Lemma compile_dfg_drives_entry
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) (p: p_var) :
+    In (tf_assign (tf_dfg_ov p) (drive_value_expr act a_idx p))
+       (compile_dfg_drives ctx bneeds (index_to_nat a_idx) (build_dfg ctx act)
+          (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
+  Proof.
+    unfold compile_dfg_drives. rewrite index_of_nat_to_nat.
+    apply in_map_iff. exists p. split; [ reflexivity |].
+    unfold driven_ports.
+    exact (nth_error_In _ _ (@finite_surjective p_var (tfs_spec_ips_fin ctx) p)).
+  Qed.
+
   (* The nid cached in a buffer register is a member of that action's
      require_buffer list. *)
   Lemma vreg_nid_in_require_buffer :
@@ -7024,6 +7099,34 @@ Section SchedulerSimulation.
       reflexivity.
     - rewrite (find_st_update_unique_assign _ _ _ _ _ Hnd_always Hvalid_ops).
       reflexivity.
+  Qed.
+
+  (* On a pre-done cycle, port [p]'s request register reads exactly what
+     [compile_dfg_drives] emits for it. *)
+  Lemma drive_after_cycle
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) (p: p_var)
+        (ss: sched_sys_state) (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
+    ~ done_set (sched_step act ss input) ->
+    (fst (sched_step act ss input)).[tf_dfg_ov p]
+    = eval_st (tf_dfg_ov p) (drive_value_expr act a_idx p) ss input.
+  Proof.
+    intros Halign Hnd.
+    destruct (buffer_ops_concrete act a_idx Halign) as [done_e Hops].
+    assert (Hnd_always : tfs_ops_no_duplicates
+              (fst (Contract.tfs_schedule sched act))).
+    { pose proof (tfs_schedule_no_duplicates sched act) as Hnd_all.
+      unfold tfs_ops_no_duplicates in *. rewrite flat_map_app in Hnd_all.
+      apply (NoDup_app_l _ _ Hnd_all). }
+    assert (Hin : In (tf_assign (tf_dfg_ov p) (drive_value_expr act a_idx p))
+                     (fst (Contract.tfs_schedule sched act))).
+    { rewrite Hops. right. apply in_or_app. right.
+      exact (compile_dfg_drives_entry act a_idx p). }
+    rewrite sched_step_getst, (cycle_updates_not_done act ss input Hnd).
+    unfold find_st_val.
+    rewrite (find_st_update_unique_assign _ _ _ _ _ Hnd_always Hin).
+    reflexivity.
   Qed.
 
   (* A sample's buffer holds once its validity bit reads ones: the latch arm is
