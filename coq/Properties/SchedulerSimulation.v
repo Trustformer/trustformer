@@ -9040,6 +9040,113 @@ Section SchedulerSimulation.
     rewrite Hnid in Hres. exact Hres.
   Qed.
 
+  (* Strictly decreasing, as [drive_nodes] produces it. *)
+  Inductive Desc : list nid_t -> Prop :=
+  | Desc_nil : Desc []
+  | Desc_cons : forall x l, Forall (fun y => y < x) l -> Desc l -> Desc (x :: l).
+
+  (* The fold conses in graph order and a node.s id is its index, so the drives
+     EMITTED LATER come first. *)
+  Lemma drive_nodes_desc (act: tfs_action sched) (p: p_var) :
+    Desc (drive_nodes ctx (build_dfg ctx act) p).
+  Proof.
+    unfold drive_nodes.
+    match goal with
+    | |- Desc (fold_left ?F _ _) =>
+        assert (Hgen : forall (g: list dfg_node_t) (base: nat) (acc: list nid_t),
+                  (forall i, i < length g ->
+                     nid (nth i g {| nid := 0; op := DFG_Empty; sz := 0 |}) = base + i) ->
+                  Desc acc ->
+                  (forall m, In m acc -> m < base) ->
+                  Desc (fold_left F g acc)
+                  /\ (forall m, In m (fold_left F g acc) -> m < base + length g))
+    end.
+    { intro g. induction g as [| nd g IH]; intros base acc Hidx Hd Hlt.
+      - cbn [fold_left length]. split; [ exact Hd |].
+        intros m Hm. rewrite Nat.add_0_r. exact (Hlt m Hm).
+      - assert (Hnd : nid nd = base).
+        { specialize (Hidx 0 ltac:(cbn; lia)). cbn in Hidx. lia. }
+        assert (Hidx' : forall i, i < length g ->
+                  nid (nth i g {| nid := 0; op := DFG_Empty; sz := 0 |}) = S base + i).
+        { intros i Hi. specialize (Hidx (S i) ltac:(cbn; lia)). cbn in Hidx. lia. }
+        cbn [fold_left].
+        match goal with
+        | |- Desc (fold_left _ g ?A) /\ _ =>
+            assert (HA : Desc A /\ (forall m, In m A -> m < S base))
+        end.
+        { destruct (op nd) eqn:Ho;
+            try (split; [ exact Hd | intros m Hm; specialize (Hlt m Hm); lia ]).
+          match goal with
+          | |- context [ if ?X then _ else _ ] => destruct X
+          end.
+          - split.
+            + constructor; [| exact Hd ]. apply Forall_forall. intros y Hy.
+              rewrite Hnd. exact (Hlt y Hy).
+            + intros m Hm. destruct Hm as [<- | Hm];
+                [ lia | specialize (Hlt m Hm); lia ].
+          - split; [ exact Hd | intros m Hm; specialize (Hlt m Hm); lia ]. }
+        destruct HA as [HA1 HA2].
+        destruct (IH (S base) _ Hidx' HA1 HA2) as [H1 H2].
+        split; [ exact H1 |].
+        intros m Hm. specialize (H2 m Hm). cbn [length]. lia. }
+    refine (proj1 (Hgen (graph (build_dfg ctx act)) 0 [] _ Desc_nil _)).
+    - intros i Hi. cbn [Nat.add]. exact (node_nid_at act i Hi).
+    - intros m Hm. destruct Hm.
+  Qed.
+
+  Lemma desc_split (l: list nid_t) :
+    Desc l -> forall pre n post, l = pre ++ n :: post -> forall m, In m pre -> n < m.
+  Proof.
+    intro Hd. induction Hd as [| x l Hall Hd IH]; intros pre n post Heq m Hm.
+    - destruct pre; discriminate Heq.
+    - destruct pre as [| a pre]; cbn [app] in Heq.
+      + destruct Hm.
+      + injection Heq as Hax Hl. subst x.
+        destruct Hm as [<- | Hm].
+        * rewrite Forall_forall in Hall. apply Hall. rewrite Hl.
+          apply in_or_app. right. left. reflexivity.
+        * exact (IH pre n post Hl m Hm).
+  Qed.
+
+  Lemma drive_nodes_split (act: tfs_action sched) (p: p_var) (n: nid_t) :
+    In n (drive_nodes ctx (build_dfg ctx act) p) ->
+    exists pre post,
+      drive_nodes ctx (build_dfg ctx act) p = pre ++ n :: post
+      /\ forall m, In m pre -> n < m.
+  Proof.
+    intro Hin. destruct (in_split _ _ Hin) as [pre [post Heq]].
+    exists pre, post. split; [ exact Heq |].
+    exact (desc_split _ (drive_nodes_desc act p) pre n post Heq).
+  Qed.
+
+  (* THE PORT CARRIES THIS CALL.S REQUEST.  [drive_nodes] is decreasing, so the
+     only drives that can take the wire from [n] are those emitted AFTER it --
+     which is exactly what the ordering join is there to hold back. *)
+  Lemma drive_payload_take_later
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) (p: p_var)
+        (n: nid_t) (ss: sched_sys_state) (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
+    ~ done_set (sched_step act ss input) ->
+    In n (drive_nodes ctx (build_dfg ctx act) p) ->
+    (forall m, In m (drive_nodes ctx (build_dfg ctx act) p) -> n < m ->
+       eval1 (drive_pulse act a_idx m) ss input = Bits.zero) ->
+    eval1 (drive_pulse act a_idx n) ss input <> Bits.zero ->
+    drive_payload (sched_step act ss input) p
+    = tf_eval_expr ss_sz si_sz oo_sz (szB := ip_req_sz (tfs_spec_ip ctx p))
+        (fst (compile_dfg_expr ctx bneeds (length (graph (build_dfg ctx act))) a_idx
+                (build_dfg ctx act) n
+                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))) ss input.
+  Proof.
+    intros Halign Hnd Hin Hlater Hn.
+    destruct (drive_nodes_split act p n Hin) as [pre [post [Heq Hgt]]].
+    apply (drive_payload_take act a_idx p pre post n ss input Halign Hnd Heq);
+      [| exact Hn ].
+    intros m Hm. apply (Hlater m).
+    - rewrite Heq. apply in_or_app. left. exact Hm.
+    - exact (Hgt m Hm).
+  Qed.
+
   (* Every arg of a real forward node is itself a real node with a strictly
      smaller id — the rank that every structural recursion below descends on. *)
   Lemma node_args_range (act: tfs_action sched) n :
