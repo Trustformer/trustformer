@@ -104,10 +104,12 @@ Section CallSpike.
   (* 2.  THE WAIT IS REAL.                                              *)
   (* ================================================================== *)
 
-  (* The wait is ONE [DFG_Stall clat] and so ONE buffer -- its counter. *)
+  (* The wait is ONE [DFG_Stall clat], and the round trip costs TWO registers
+     whatever [clat] is: the stall's counter, and the sample's latched answer.
+     The port holds its answer only until the next call on it. *)
   Definition cs_bufs := require_buffer cs_ctx cs_dfg cs_cycles.
 
-  Example wait_is_one_buffer : List.length cs_bufs = 1.
+  Example wait_is_two_buffers : List.length cs_bufs = 2.
   Proof. vm_compute. reflexivity. Qed.
 
   (* The drive and the sample are clat cycles apart.  Cycles count BACKWARD

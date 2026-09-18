@@ -175,9 +175,16 @@ Section RoundTrip.
   Example round_trip_separated : tcyc 20 2 - tcyc 20 4 = 20.
   Proof. vm_compute. reflexivity. Qed.
 
-  (* And the token is held across the wait for one register, not L. *)
-  Example round_trip_one_buffer : trip_bufs 20 = 1.
+  (* The wait costs two registers whatever L is: the stall's counter, and the
+     latched answer.  A sample is buffered wherever the schedule puts it, since
+     the port carries its answer only until the next call on that port. *)
+  Example round_trip_two_buffers : trip_bufs 20 = 2.
   Proof. vm_compute. reflexivity. Qed.
+
+  (* And the sample is one of the two, at the cycle it is sampled. *)
+  Example round_trip_sample_buffered :
+    List.In 4 (require_buffer sl_ctx (trip 20) (trip_cycles 20)).
+  Proof. vm_compute. tauto. Qed.
 
   (* ================================================================== *)
   (* A SAMPLE IS NOT A SOURCE OP                                        *)

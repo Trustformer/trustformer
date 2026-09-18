@@ -890,25 +890,6 @@ Section SchedulerSimulation.
       (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) : Prop :=
     index_to_nat a_idx = @finite_index _ (tfs_action_fin sched) act.
 
-  (* Reference only, and UNUSED: ranking buffer saturation by [node_cycle] is
-     unsound, since [require_buffer] also buffers same-cycle nodes.  The live
-     live rank is the WEIGHTED one -- see [node_rank] / [valids_ones_run]. *)
-  Definition buffer_inv
-      (act: tfs_action sched)
-      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
-      (ss: sched_sys_state) (input: sched_input_t) (k: nat) : Prop :=
-    forall n_idx,
-      let n := vreg_nid a_idx n_idx in
-      (* The validity bit is SET once the node's target cycle is reached.  ONE
-         DIRECTION only: a data-dependent validity can fire early, so the
-         converse fails, matching [done_by_max_cycle]'s weakening. *)
-      ( node_cycle act n <= k -> (fst ss).[tf_dfg_v a_idx n_idx] <> Bits.zero )
-      (* and when the target cycle has been reached, the value register holds
-         the settled reference value *)
-      /\ ( node_cycle act n <= k ->
-           (fst ss).[tf_dfg_b a_idx n_idx]
-             = eval_st (tf_dfg_b a_idx n_idx) (node_ref_expr act a_idx n) ss input ).
-
   (* map fst over get_sizes_and_idx recovers the input node list unchanged
      (the indices/sizes it attaches are dropped by fst). *)
   Lemma gsi_map_fst (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var) (outputs_var := o_var) (ips_var := p_var))
@@ -4607,47 +4588,6 @@ Section SchedulerSimulation.
     - congruence.
   Qed.
 
-  (* Every buffered nid has a strictly positive target cycle: require_buffer
-     takes args in a DIFFERENT cycle (backward cost is non-increasing along
-     edges, so such an arg sits strictly later) or var_map outputs above 0. *)
-  Lemma require_buffer_cycle_pos :
-    forall (act: tfs_action sched) n,
-      In n (require_buffer ctx (build_dfg ctx act)
-              (calc_target_cycle cost_limit
-                 (calc_backward_cost ctx cost_limit (build_dfg ctx act)))) ->
-      node_cycle act n <> 0.
-  Proof.
-    intros act n Hin.
-    unfold require_buffer in Hin.
-    apply nodup_In, in_app_iff in Hin.
-    set (cc := calc_target_cycle cost_limit
-                 (calc_backward_cost ctx cost_limit (build_dfg ctx act))) in *.
-    destruct Hin as [HA | HB].
-    - (* arg-part: n is a buffered argument of some node *)
-      apply fold_left_prepend_In in HA.
-      destruct HA as [node [Hnode Hn]].
-      apply filter_In in Hn. destruct Hn as [Hn Hpred].
-      destruct (is_source ctx (build_dfg ctx act) n) eqn:Hsrc; [ discriminate Hpred |].
-      unfold node_cycle. fold cc.
-      destruct (BitsToLists.list_assoc cc n) as [c|] eqn:Hc; [| discriminate Hpred].
-      pose proof (backward_cycle_monotone act node n Hnode Hn) as Hmono.
-      unfold node_cycle in Hmono. fold cc in Hmono. rewrite Hc in Hmono.
-      destruct (BitsToLists.list_assoc cc (nid node)) as [cn|] eqn:Hcn.
-      + (* Hpred: c <> cn; Hmono: cn <= c ⇒ c > cn ≥ 0 ⇒ c <> 0 *)
-        apply negb_true_iff, Nat.eqb_neq in Hpred.
-        intro Hc0. subst c. apply Nat.le_0_r in Hmono. apply Hpred. symmetry. exact Hmono.
-      + (* n_cycle defaults to 0; Hpred: c <> 0 directly *)
-        apply negb_true_iff, Nat.eqb_neq in Hpred. exact Hpred.
-    - (* out-part: n is a var_map output with nonzero target cycle *)
-      apply filter_In in HB. destruct HB as [Hmem Hpred].
-      destruct (is_source ctx (build_dfg ctx act) n) eqn:Hsrc; [ discriminate Hpred |].
-      pose proof (var_map_output_has_cost act n Hmem) as Hne. fold cc in Hne.
-      unfold node_cycle. fold cc.
-      destruct (BitsToLists.list_assoc cc n) as [c|] eqn:Hc;
-        [| exfalso; apply Hne; reflexivity ].
-      destruct c as [| c']; [ discriminate Hpred | ].
-      intro H; discriminate H.
-  Qed.
 
   (* Every buffered nid is a REAL node of the forward graph: the arg-part holds
      args of graph nodes, the out-part var_map values (positive by
@@ -4669,7 +4609,8 @@ Section SchedulerSimulation.
       rewrite Hnth in Hp_nid. rewrite Hp_nid. exact Hp. }
     unfold require_buffer in Hin.
     apply nodup_In, in_app_iff in Hin.
-    destruct Hin as [HA | HB].
+    destruct Hin as [HA | Hrest];
+      [| apply in_app_iff in Hrest; destruct Hrest as [HB | HC] ].
     - apply fold_left_prepend_In in HA.
       destruct HA as [node [Hnode Hn]].
       apply filter_In in Hn. destruct Hn as [Hn _].
@@ -4684,6 +4625,18 @@ Section SchedulerSimulation.
         pose proof (build_dfg_args_pos act) as [Hvm _]. exact (Hvm k n Hkin).
       + destruct (var_map_snd_is_graph_nid act n Hmem) as [node [Hnode Hnid]].
         rewrite <- Hnid. exact (Hnid_lt node Hnode).
+    - (* a sample, buffered wherever the schedule puts it *)
+      unfold sample_nodes in HC. apply in_map_iff in HC.
+      destruct HC as [node [Hnid Hnode]]. apply filter_In in Hnode.
+      destruct Hnode as [Hnode Hsam]. subst n.
+      split; [| exact (Hnid_lt node Hnode) ].
+      (* a sample reads its token, and an arg ranks below its node *)
+      destruct (op node) as [c|iv|dv|uop ua|bop b1 b2|ra|pc pt pe|slat sa
+                            |dp da den|sp tok sen|ja jb|] eqn:Hop;
+        try discriminate Hsam.
+      assert (Htok : In tok (get_args ctx node))
+        by (unfold get_args; rewrite Hop; left; reflexivity).
+      pose proof (args_lt_fwd act node Hnode tok Htok). lia.
   Qed.
 
   Lemma vreg_nid_node_range :
@@ -4721,39 +4674,6 @@ Section SchedulerSimulation.
     split; [ exact Hl |].
     rewrite (buffer_register_node_size act a_idx n_idx Halign), Hsz.
     apply pred_lt_counter_sz. exact Hl.
-  Qed.
-
-  (* Hence every register nid has node_cycle >= 1, so its validity bit
-     starts (correctly) at 0. *)  Lemma buffered_node_cycle_pos :
-    forall (act: tfs_action sched) a_idx n_idx,
-      act_idx_aligned act a_idx ->
-      node_cycle act (vreg_nid a_idx n_idx) <> 0.
-  Proof.
-    intros act a_idx n_idx Halign.
-    apply require_buffer_cycle_pos.
-    apply vreg_nid_in_require_buffer. exact Halign.
-  Qed.
-
-
-  (* I(0) for the cycle-ranked [buffer_inv], from start_rel: every validity bit
-     is zero at the start, so only target-cycle-0 nodes are immediately valid.
-     UNUSED -- see the note on [buffer_inv]. *)
-  Lemma buffer_inv_init :
-    forall (act: tfs_action sched) a_idx (sp0: src_sys_state)
-           (ss0: sched_sys_state) (input: sched_input_t),
-      act_idx_aligned act a_idx ->
-      start_rel sp0 ss0 ->
-      buffer_inv act a_idx ss0 input 0.
-  Proof.
-    intros act a_idx sp0 ss0 input Halign [_ [_ Hzero]] n_idx.
-    (* validity bit is zero at the start *)
-    assert (Hv : (fst ss0).[tf_dfg_v a_idx n_idx] = Bits.zero)
-      by (apply Hzero; exact I).
-    (* buffered nodes have a positive target cycle *)
-    pose proof (buffered_node_cycle_pos act a_idx n_idx Halign) as Hpos.
-    split.
-    - intros Hle. exfalso. apply Hpos. apply Nat.le_0_r. exact Hle.
-    - intros Hle. exfalso. apply Hpos. apply Nat.le_0_r. exact Hle.
   Qed.
 
   (* When a cycle does NOT fire the done flag, tfs_next_cycle takes the ALWAYS

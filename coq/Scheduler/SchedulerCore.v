@@ -485,6 +485,15 @@ Section SchedulerCore.
   Definition is_source (dfg : dfg_state) (n : nid_t) : bool :=
     source_op (op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0; |})).
 
+  (* A sample reads a LIVE wire and a later call on the same port moves it, so
+     its answer is latched whatever the schedule does with it.  Leaving that to
+     the cycle-crossing test reads the wire again in a later cycle. *)
+  Definition sample_nodes (dfg: dfg_state) : list nid_t :=
+    map nid (filter (fun nd => match op nd with
+                               | DFG_Sample _ _ _ => true
+                               | _ => false
+                               end) (graph dfg)).
+
   Definition require_buffer (dfg : dfg_state) (cycle_costs : list (nid_t * cycle_t)) : list (nid_t) :=
     let aux (cost_map: list (nid_t)) (node : dfg_node) : list (nid_t) :=
       let n_cycle := match BitsToLists.list_assoc cycle_costs (nid node) with
@@ -502,7 +511,8 @@ Section SchedulerCore.
                                           match BitsToLists.list_assoc cycle_costs x with
                                           | Some 0 => false
                                           | _ => true
-                                          end ) (map snd (var_map dfg))).
+                                          end ) (map snd (var_map dfg))
+                        ++ sample_nodes dfg).
 
   Definition get_sizes_and_idx (dfg : dfg_state) (nodes: list nid_t) : list (nid_t * (nat * sz_t)) :=
     rev (fst (
