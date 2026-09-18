@@ -6486,6 +6486,47 @@ Section SchedulerSimulation.
     reflexivity.
   Qed.
 
+  (* Same step at a sample: its VALIDITY is its token.s, which is where the
+     round trip decouples value from validity. *)
+  Lemma compile_sample_valid
+        (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var)
+                (outputs_var := o_var) (ips_var := p_var))
+        tainted dfacts a_idx (n: nid_t) p tok en
+        (bufs: list (nid_t * (nat * sz_t))) pi fuel :
+    op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Sample p tok en ->
+    BitsToLists.list_assoc bufs n = None ->
+    0 < fuel ->
+    snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx dfg n bufs)
+    = snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi (pred fuel) a_idx dfg tok bufs).
+  Proof.
+    intros Hop Hbuf Hf. destruct fuel as [| fuel]; [ lia |]. cbn [Init.Nat.pred].
+    cbn [compile_dfg_expr_aux].
+    destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:E;
+      [ exfalso; rewrite Hbuf in E; congruence |].
+    cbv beta iota. rewrite Hop.
+    destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx dfg tok bufs).
+    reflexivity.
+  Qed.
+
+  (* And at a drive: the request is as valid as the argument it carries. *)
+  Lemma compile_drive_valid
+        (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var)
+                (outputs_var := o_var) (ips_var := p_var))
+        tainted dfacts a_idx (n: nid_t) p arg en
+        (bufs: list (nid_t * (nat * sz_t))) pi fuel :
+    op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Drive p arg en ->
+    BitsToLists.list_assoc bufs n = None ->
+    0 < fuel ->
+    snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx dfg n bufs)
+    = snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi (pred fuel) a_idx dfg arg bufs).
+  Proof.
+    intros Hop Hbuf Hf. destruct fuel as [| fuel]; [ lia |]. cbn [Init.Nat.pred].
+    cbn [compile_dfg_expr_aux].
+    destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:E;
+      [ exfalso; rewrite Hbuf in E; congruence |].
+    cbv beta iota. rewrite Hop. reflexivity.
+  Qed.
+
   (* And the same step at a join: its validity is the AND the sequencing needs. *)
   Lemma compile_join_valid
         (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var)
@@ -7812,6 +7853,35 @@ Section SchedulerSimulation.
       [| exact Hv ].
     cbn [tf_eval_expr] in Hv.
     exact (proj1 (bits1_and_split _ _ Hv)).
+  Qed.
+
+  (* The downward twin, along the run: a validity bit that starts down and
+     whose gate never rises stays down. *)
+  Lemma valid_zero_run
+        (act: tfs_action sched) a_idx n_idx (input: input_t)
+        (ss0: sched_sys_state) (K: nat) :
+    act_idx_aligned act a_idx ->
+    (fst ss0).[tf_dfg_v a_idx n_idx] = Bits.zero ->
+    (forall i, 1 <= i <= K -> ~ done_set (run_n i act input ss0)) ->
+    (forall j, j < K ->
+       eval1 (buf_gate act a_idx n_idx) (run_n j act input ss0)
+         (sched_input input (run_n j act input ss0)) <> Bits.ones 1) ->
+    forall k, k <= K ->
+      (fst (run_n k act input ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero.
+  Proof.
+    intros Halign Hz Hnd Hgate k HkK.
+    destruct k as [| k]; [ cbn [run_n]; exact Hz |].
+    change (run_n (S k) act input ss0)
+      with (sched_step act (run_n k act input ss0)
+              (sched_input input (run_n k act input ss0))).
+    destruct (bits1_cases
+                ((fst (sched_step act (run_n k act input ss0)
+                         (sched_input input (run_n k act input ss0))))
+                   .[tf_dfg_v a_idx n_idx])) as [Hones | Hzero]; [| exact Hzero ].
+    exfalso. apply (Hgate k ltac:(lia)).
+    exact (buffer_valid_gate act a_idx n_idx (run_n k act input ss0)
+             (sched_input input (run_n k act input ss0)) Halign
+             ltac:(apply (Hnd (S k)); lia) Hones).
   Qed.
 
   (* A bit that is up stays up: the register takes exactly the expression
