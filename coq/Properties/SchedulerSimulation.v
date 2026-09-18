@@ -6499,7 +6499,7 @@ Section SchedulerSimulation.
      settled and validated by settle_bound and the combined validity fires. *)
   Lemma done_by_settle_bound :
     forall (act: tfs_action sched) (sp0: src_sys_state)
-           (ss0: sched_sys_state) (input: sched_input_t),
+           (ss0: sched_sys_state) (input: input_t),
       start_rel sp0 ss0 ->
       exists N, N <= S (settle_bound act) /\ done_set (run_n N act input ss0).
   Proof.
@@ -6535,12 +6535,14 @@ Section SchedulerSimulation.
         assert (Hinm : In (nid node) (map nid (graph (build_dfg ctx act))))
           by (apply in_map; exact Hin).
         rewrite Hseq in Hinm. rewrite in_seq in Hinm. rewrite Hnid in Hinm. lia. }
-      apply (compile_valid_ones act a_idx _ input Halign (settle_bound act)
+      apply (compile_valid_ones act a_idx _ _ Halign (settle_bound act)
                (valids_ones_run act a_idx input ss0 (settle_bound act) Halign
-                  (fun i Hi => Hno i (proj2 Hi)))
+                  (proj2 (proj2 Hstart)) (fun i Hi => Hno i (proj2 Hi))
+                  (settle_bound act) (Nat.le_refl _))
                _ (fun e He => He)
                (length (graph (build_dfg ctx act))) nd Hnd1 Hndlt Hndlt);
-        [ unfold settle_bound; lia | right; unfold settle_bound; lia ].
+        unfold settle_bound;
+        [ apply Nat.lt_le_incl | right ]; apply node_rank_mono; exact Hndlt.
   Qed.
 
   (* PHASE 2 (progress): a FIRST done cycle exists, the least N <= S
@@ -6548,7 +6550,7 @@ Section SchedulerSimulation.
      [done_set (run_n k ...)]), so "not done before N" holds by construction. *)
   Lemma scheduler_reaches_done :
     forall (act: tfs_action sched) (sp0: src_sys_state)
-           (ss0: sched_sys_state) (input: sched_input_t),
+           (ss0: sched_sys_state) (input: input_t),
       start_rel sp0 ss0 ->
       exists N,
         (forall k, k < N -> ~ done_set (run_n k act input ss0)) /\
@@ -6596,7 +6598,6 @@ Section SchedulerSimulation.
     - apply IH, Hnone.
     - destruct (eq_dec var x); [ reflexivity | apply IH, Hnone ].
     - apply IH, Hnone.
-    - destruct (eq_dec svar x); [ reflexivity | apply IH, Hnone ].
   Qed.
 
   Lemma find_out_update_app_None x (ups1 ups2: list (tf_update ss_sz oo_sz)) :
@@ -6609,7 +6610,6 @@ Section SchedulerSimulation.
     - apply IH, Hnone.
     - apply IH, Hnone.
     - destruct (eq_dec var x); [ discriminate | apply IH, Hnone ].
-    - destruct (eq_dec ovar x); [ discriminate | apply IH, Hnone ].
   Qed.
 
   Lemma find_out_update_app_r_None x (ups1 ups2: list (tf_update ss_sz oo_sz)) :
@@ -6622,23 +6622,16 @@ Section SchedulerSimulation.
     - apply IH, Hnone.
     - apply IH, Hnone.
     - destruct (eq_dec var x); [ reflexivity | apply IH, Hnone ].
-    - destruct (eq_dec ovar x); [ reflexivity | apply IH, Hnone ].
   Qed.
 
-  (* Two hypotheses now: a call update writes an output port too. *)
   Lemma find_out_update_not_in_raw x (ups: list (tf_update ss_sz oo_sz)) :
     (forall u, In u ups -> forall val, u <> tf_out_update ss_sz oo_sz x val) ->
-    (forall u, In u ups -> forall val sv svv,
-        u <> tf_call_update ss_sz oo_sz x val sv svv) ->
     find_out_update sched x ups = None.
   Proof.
-    induction ups as [| u ups IH]; intros Hnone Hnonec; [ reflexivity |].
+    induction ups as [| u ups IH]; intro Hnone; [ reflexivity |].
     rewrite find_out_update_skip_cons.
-    - apply IH.
-      + intros u' Hin. apply Hnone. now right.
-      + intros u' Hin. apply Hnonec. now right.
+    - apply IH. intros u' Hin. apply Hnone. now right.
     - intro val. eapply Hnone. now left.
-    - intros val sv svv. eapply Hnonec. now left.
   Qed.
 
   (* --- the reset updates touch neither base state vars nor outputs --- *)
@@ -6661,12 +6654,10 @@ Section SchedulerSimulation.
     assert (Hrs: tfs_reset_states sched = reset_states ctx bneeds) by reflexivity.
     rewrite Hrs. unfold tfs_reset_updates.
     apply find_st_update_not_in_raw.
-    - intros u Hin val. rewrite in_map_iff in Hin.
-      destruct Hin as [v [Hu Hv]]. subst u.
-      intro Hcontra. inversion Hcontra as [Heq].
-      apply (reset_states_not_svar s v Hv). exact Heq.
-    - intros u Hin ov ovv val. rewrite in_map_iff in Hin.
-      destruct Hin as [v [Hu _]]. subst u. discriminate.
+    intros u Hin val. rewrite in_map_iff in Hin.
+    destruct Hin as [v [Hu Hv]]. subst u.
+    intro Hcontra. inversion Hcontra as [Heq].
+    apply (reset_states_not_svar s v Hv). exact Heq.
   Qed.
 
   Lemma reset_updates_no_out (o: o_var) :
@@ -6674,10 +6665,8 @@ Section SchedulerSimulation.
       (tfs_reset_updates sched (tfs_reset_states sched)) = None.
   Proof.
     unfold tfs_reset_updates. apply find_out_update_not_in_raw.
-    - intros u Hin val. rewrite in_map_iff in Hin.
-      destruct Hin as [v [Hu _]]. subst u. discriminate.
-    - intros u Hin val sv svv. rewrite in_map_iff in Hin.
-      destruct Hin as [v [Hu _]]. subst u. discriminate.
+    intros u Hin val. rewrite in_map_iff in Hin.
+    destruct Hin as [v [Hu _]]. subst u. discriminate.
   Qed.
 
   (* --- uniqueness of the done-branch writes --- *)
@@ -6707,7 +6696,7 @@ Section SchedulerSimulation.
     cbn [flat_map] in Hnd.
     destruct Hin as [Heq | Hin].
     - subst op. apply find_out_update_output_head.
-    - destruct op as [| dst rhs | dst rhs | rq rv dst rhs szA szB fn].
+    - destruct op as [| dst rhs | dst rhs | ip dst rhs]; [ | | | destruct ip ].
       + apply IH; [ exact Hnd | exact Hin ].
       + apply IH; [ cbn [app] in Hnd; inversion Hnd; assumption | exact Hin ].
       + inversion Hnd as [| tag tags Hnot Htail]; subst tag tags.
@@ -6716,20 +6705,7 @@ Section SchedulerSimulation.
           exists (tf_output x e). split; [ exact Hin |]. cbn [In]. left. reflexivity.
         * rewrite find_out_update_skip_head.
           -- apply IH; [ exact Htail | exact Hin ].
-          -- intros [[rhs' Heq] | (rv' & d' & e' & szA' & szB' & fn' & Heq)];
-               inversion Heq; contradiction.
-      (* A call DOES write an output -- its request port -- and emits TWO tags,
-         so the NoDup is inverted twice. *)
-      + cbn [app] in Hnd.
-        inversion Hnd as [| tag0 tags0 Hnot0 Htail0]; subst tag0 tags0.
-        inversion Htail0 as [| tag1 tags1 Hnot1 Htail1]; subst tag1 tags1.
-        destruct (eq_dec rq x) as [Hdx | Hdx].
-        * subst rq. exfalso. apply Hnot0. right. apply in_flat_map.
-          exists (tf_output x e). split; [ exact Hin |]. cbn [In]. left. reflexivity.
-        * rewrite find_out_update_skip_head.
-          -- apply IH; [ exact Htail1 | exact Hin ].
-          -- intros [[rhs' Heq] | (rv' & d' & e' & szA' & szB' & fn' & Heq)];
-               inversion Heq; contradiction.
+          -- intros [rhs' Heq]; inversion Heq; contradiction.
   Qed.
 
   (* --- concrete shape of the done-branch op list --- *)
@@ -6984,31 +6960,36 @@ Section SchedulerSimulation.
      cycle a buffer whose validity bit is set holds its settled value.  A done
      cycle clears the bits, so no "not yet done" hypothesis is needed. *)
   Lemma valid_settled_run :
-    forall (act: tfs_action sched) a_idx (input: sched_input_t)
+    forall (act: tfs_action sched) a_idx (input: input_t)
            (ss0: sched_sys_state) (k: nat),
       act_idx_aligned act a_idx ->
       (forall n_idx, (fst ss0).[tf_dfg_v a_idx n_idx] = Bits.zero) ->
-      valid_settled act a_idx (run_n k act input ss0) input.
+      valid_settled act a_idx (run_n k act input ss0)
+        (sched_input input (run_n k act input ss0)).
   Proof.
     intros act a_idx input ss0 k Halign Hz0.
     induction k as [| k IH].
     - intros n_idx Hv. exfalso. cbn [run_n] in Hv.
       rewrite Hz0 in Hv. apply ones1_neq_zero. symmetry. exact Hv.
     - set (ssk := run_n k act input ss0) in *.
-      change (run_n (S k) act input ss0) with (sched_step act ssk input).
-      destruct (done_set_dec (sched_step act ssk input)) as [Hd | Hnd].
+      change (run_n (S k) act input ss0)
+        with (sched_step act ssk (sched_input input ssk)).
+      destruct (done_set_dec (sched_step act ssk (sched_input input ssk)))
+        as [Hd | Hnd].
       + intros n_idx Hv. exfalso.
-        rewrite (sched_step_done_v act a_idx n_idx ssk input Hd) in Hv.
+        rewrite (sched_step_done_v act a_idx n_idx ssk
+                   (sched_input input ssk) Hd) in Hv.
         apply ones1_neq_zero. symmetry. exact Hv.
       + intros n_idx Hv.
         destruct (vreg_nid_node_range act a_idx n_idx Halign) as [Hn1 Hnlen].
-        pose proof (buffer_after_cycle act a_idx n_idx ssk input Halign Hnd) as Hba.
+        pose proof (buffer_after_cycle act a_idx n_idx ssk
+                      (sched_input input ssk) Halign Hnd) as Hba.
         cbv zeta in Hba. destruct Hba as [Hvalue Hvalid].
         unfold vreg_nid in Hn1, Hnlen.
         rewrite Hvalid in Hv.
         unfold vreg_nid. rewrite Hvalue. unfold node_ref_expr.
-        rewrite (compile_nobuf_step_stable act a_idx ssk input Hnd).
-        apply (compile_subst_valid act a_idx ssk input Halign IH).
+        rewrite (compile_nobuf_step_stable act a_idx ssk (sched_input input ssk) Hnd).
+        apply (compile_subst_valid act a_idx ssk (sched_input input ssk) Halign IH).
         * intros e He. exact (proj1 (proj1 (filter_In _ e _) He)).
         * exact Hn1.
         * exact Hnlen.
@@ -7121,31 +7102,35 @@ Section SchedulerSimulation.
   Qed.
 
   (* A run of pre-done cycles disturbs neither the base state nor the outputs. *)
-  Lemma run_preserves_svar (act: tfs_action sched) (input: sched_input_t)
+  Lemma run_preserves_svar (act: tfs_action sched) (input: input_t)
         (ss0: sched_sys_state) (M: nat) :
     (forall i, 1 <= i <= M -> ~ done_set (run_n i act input ss0)) ->
     forall sv, (fst (run_n M act input ss0)).[tf_dfg_s sv] = (fst ss0).[tf_dfg_s sv].
   Proof.
     induction M as [| M IH]; intros Hnd sv; [ reflexivity |].
-    assert (Hstep : ~ done_set (sched_step act (run_n M act input ss0) input))
+    assert (Hstep : ~ done_set (sched_step act (run_n M act input ss0)
+                      (sched_input input (run_n M act input ss0))))
       by (apply (Hnd (S M)); lia).
     change (run_n (S M) act input ss0)
-      with (sched_step act (run_n M act input ss0) input).
-    rewrite (sched_step_preserves_svar act _ input sv Hstep).
+      with (sched_step act (run_n M act input ss0)
+              (sched_input input (run_n M act input ss0))).
+    rewrite (sched_step_preserves_svar act _ _ sv Hstep).
     apply IH. intros i Hi. apply Hnd. lia.
   Qed.
 
-  Lemma run_preserves_ovar (act: tfs_action sched) (input: sched_input_t)
+  Lemma run_preserves_ovar (act: tfs_action sched) (input: input_t)
         (ss0: sched_sys_state) (M: nat) :
     (forall i, 1 <= i <= M -> ~ done_set (run_n i act input ss0)) ->
     forall ov, (snd (run_n M act input ss0)).[ov] = (snd ss0).[ov].
   Proof.
     induction M as [| M IH]; intros Hnd ov; [ reflexivity |].
-    assert (Hstep : ~ done_set (sched_step act (run_n M act input ss0) input))
+    assert (Hstep : ~ done_set (sched_step act (run_n M act input ss0)
+                      (sched_input input (run_n M act input ss0))))
       by (apply (Hnd (S M)); lia).
     change (run_n (S M) act input ss0)
-      with (sched_step act (run_n M act input ss0) input).
-    rewrite (sched_step_preserves_ovar act _ input ov Hstep).
+      with (sched_step act (run_n M act input ss0)
+              (sched_input input (run_n M act input ss0))).
+    rewrite (sched_step_preserves_ovar act _ _ ov Hstep).
     apply IH. intros i Hi. apply Hnd. lia.
   Qed.
 
