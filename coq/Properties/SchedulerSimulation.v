@@ -8534,6 +8534,18 @@ Section SchedulerSimulation.
     reflexivity.
   Qed.
 
+  (* [sample_bufs] keeps exactly the samples, so anything else is absent. *)
+  Lemma not_sample_not_in_sample_bufs (act: tfs_action sched) a_idx n :
+    is_sample_of act n = false ->
+    BitsToLists.list_assoc (sample_bufs act a_idx) n = None.
+  Proof.
+    intro Hs. apply list_assoc_key_none. intro Hin.
+    apply in_map_iff in Hin. destruct Hin as [[x v] [Hx Hmem]].
+    cbn [fst] in Hx. subst x.
+    unfold sample_bufs in Hmem. apply filter_In in Hmem.
+    destruct Hmem as [_ H]. rewrite Hs in H. discriminate.
+  Qed.
+
   Lemma nre_unfold (act: tfs_action sched) a_idx n :
     1 <= n -> n < length (graph (build_dfg ctx act)) ->
     node_ref_expr act a_idx n
@@ -8550,17 +8562,23 @@ Section SchedulerSimulation.
     node_ref_expr act a_idx n = tf_const c.
   Proof.
     intros H1 H2 Hop. rewrite (nre_unfold act a_idx n H1 H2).
-    cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop. reflexivity.
+    cbn [compile_dfg_expr_aux].
+    rewrite (not_sample_not_in_sample_bufs act a_idx n
+              ltac:(unfold is_sample_of, node_op; rewrite Hop; reflexivity)).
+    cbv beta iota. rewrite Hop. reflexivity.
   Qed.
 
   Lemma nre_input (act: tfs_action sched) a_idx n v :
     1 <= n -> n < length (graph (build_dfg ctx act)) ->
     op (nth n (graph (build_dfg ctx act))
           {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Input v ->
-    node_ref_expr act a_idx n = tf_ivar v.
+    node_ref_expr act a_idx n = tf_ivar (inl v).
   Proof.
     intros H1 H2 Hop. rewrite (nre_unfold act a_idx n H1 H2).
-    cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop. reflexivity.
+    cbn [compile_dfg_expr_aux].
+    rewrite (not_sample_not_in_sample_bufs act a_idx n
+              ltac:(unfold is_sample_of, node_op; rewrite Hop; reflexivity)).
+    cbv beta iota. rewrite Hop. reflexivity.
   Qed.
 
   Lemma nre_svar (act: tfs_action sched) a_idx n sv :
@@ -8570,7 +8588,10 @@ Section SchedulerSimulation.
     node_ref_expr act a_idx n = tf_svar (tf_dfg_s sv).
   Proof.
     intros H1 H2 Hop. rewrite (nre_unfold act a_idx n H1 H2).
-    cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop. reflexivity.
+    cbn [compile_dfg_expr_aux].
+    rewrite (not_sample_not_in_sample_bufs act a_idx n
+              ltac:(unfold is_sample_of, node_op; rewrite Hop; reflexivity)).
+    cbv beta iota. rewrite Hop. reflexivity.
   Qed.
 
   Lemma nre_ovar (act: tfs_action sched) a_idx n ov :
@@ -8580,7 +8601,10 @@ Section SchedulerSimulation.
     node_ref_expr act a_idx n = tf_ovar ov.
   Proof.
     intros H1 H2 Hop. rewrite (nre_unfold act a_idx n H1 H2).
-    cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop. reflexivity.
+    cbn [compile_dfg_expr_aux].
+    rewrite (not_sample_not_in_sample_bufs act a_idx n
+              ltac:(unfold is_sample_of, node_op; rewrite Hop; reflexivity)).
+    cbv beta iota. rewrite Hop. reflexivity.
   Qed.
 
   Lemma nre_unary (act: tfs_action sched) a_idx n uop arg :
@@ -8596,42 +8620,41 @@ Section SchedulerSimulation.
     destruct (node_args_range act n H1 H2 arg Hain) as [Ha1 Ha3].
     assert (Ha2 : arg < length (graph (build_dfg ctx act))) by lia.
     rewrite (nre_unfold act a_idx n H1 H2).
-    cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
+    cbn [compile_dfg_expr_aux].
+    rewrite (not_sample_not_in_sample_bufs act a_idx n
+              ltac:(unfold is_sample_of, node_op; rewrite Hop; reflexivity)).
+    cbv beta iota. rewrite Hop.
     destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) arg (sample_bufs act a_idx))
       as [ae av] eqn:E.
     cbn [fst]. f_equal.
     rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3), E. reflexivity.
   Qed.
 
-  (* SPIKE (W-b feasibility): a stall's reference expression IS its argument's,
-     because the compiler emits no wrapper.  Same fuel-alignment argument as
-     [nre_unary]. *)
+  (* A stall carries NO value: the answer arrives at the sample, and the wait
+     is the counter [compile_dfg_buffers] keeps. *)
   Lemma nre_stall (act: tfs_action sched) a_idx n lat arg :
     1 <= n -> n < length (graph (build_dfg ctx act)) ->
     op (nth n (graph (build_dfg ctx act))
           {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Stall lat arg ->
-    node_ref_expr act a_idx n = node_ref_expr act a_idx arg.
+    node_ref_expr act a_idx n = tf_const 0.
   Proof.
     intros H1 H2 Hop.
-    assert (Hain : In arg (get_args ctx (nth n (graph (build_dfg ctx act))
-                                           {| nid := 0; op := DFG_Empty; sz := 0 |})))
-      by (unfold get_args; rewrite Hop; left; reflexivity).
-    destruct (node_args_range act n H1 H2 arg Hain) as [Ha1 Ha3].
-    assert (Ha2 : arg < length (graph (build_dfg ctx act))) by lia.
     rewrite (nre_unfold act a_idx n H1 H2).
-    cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
-    destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) arg (sample_bufs act a_idx))
-      as [ae av] eqn:E.
-    cbn [fst].
-    rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3), E. reflexivity.
+    cbn [compile_dfg_expr_aux].
+    rewrite (not_sample_not_in_sample_bufs act a_idx n
+              ltac:(unfold is_sample_of, node_op; rewrite Hop; reflexivity)).
+    cbv beta iota. rewrite Hop.
+    destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) arg
+                (sample_bufs act a_idx)).
+    reflexivity.
   Qed.
 
   (* SPIKE 2b.  A drive's reference expression is its argument's -- it is the
      message on its way to the port, so it adds no logic. *)
-  Lemma nre_drive (act: tfs_action sched) a_idx n ov arg :
+  Lemma nre_drive (act: tfs_action sched) a_idx n p arg en :
     1 <= n -> n < length (graph (build_dfg ctx act)) ->
     op (nth n (graph (build_dfg ctx act))
-          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Drive ov arg ->
+          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Drive p arg en ->
     node_ref_expr act a_idx n = node_ref_expr act a_idx arg.
   Proof.
     intros H1 H2 Hop.
@@ -8641,25 +8664,30 @@ Section SchedulerSimulation.
     destruct (node_args_range act n H1 H2 arg Hain) as [Ha1 Ha3].
     assert (Ha2 : arg < length (graph (build_dfg ctx act))) by lia.
     rewrite (nre_unfold act a_idx n H1 H2).
-    cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
+    cbn [compile_dfg_expr_aux].
+    rewrite (not_sample_not_in_sample_bufs act a_idx n
+              ltac:(unfold is_sample_of, node_op; rewrite Hop; reflexivity)).
+    cbv beta iota. rewrite Hop.
     destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) arg (sample_bufs act a_idx))
       as [ae av] eqn:E.
     cbn [fst].
     rewrite <- (nre_fuel act a_idx arg n Ha1 Ha2 Ha3), E. reflexivity.
   Qed.
 
-  (* SPIKE 2b.  A sample's reference expression is the PORT, not its token's --
-     this is the value/validity decoupling, and it is why a sample is an input
-     read for the attacker model and a token consumer for the scheduler. *)
-  Lemma nre_sample (act: tfs_action sched) a_idx n iv tok :
-    1 <= n -> n < length (graph (build_dfg ctx act)) ->
-    op (nth n (graph (build_dfg ctx act))
-          {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Sample iv tok ->
-    node_ref_expr act a_idx n = tf_ivar iv.
+  (* A sample's reference expression is its REGISTER, not the port: the table
+     keeps every sample, so the recursion stops at the slot.  The port carries
+     an answer only until the next call on it, which is why. *)
+  Lemma nre_sample (act: tfs_action sched) a_idx n_idx :
+    act_idx_aligned act a_idx ->
+    is_sample_of act (vreg_nid a_idx n_idx) = true ->
+    node_ref_expr act a_idx (vreg_nid a_idx n_idx)
+    = tf_svar (tf_dfg_b a_idx n_idx).
   Proof.
-    intros H1 H2 Hop. rewrite (nre_unfold act a_idx n H1 H2).
-    cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
-    destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) tok (sample_bufs act a_idx)).
+    intros Halign Hsam.
+    destruct (vreg_nid_node_range act a_idx n_idx Halign) as [_ Hnlen].
+    unfold node_ref_expr.
+    rewrite (sample_ref_is_register act a_idx n_idx Halign Hsam []
+               (length (graph (build_dfg ctx act))) Hnlen).
     reflexivity.
   Qed.
 
@@ -8679,7 +8707,10 @@ Section SchedulerSimulation.
     destruct (node_args_range act n H1 H2 arg Hain) as [Ha1 Ha3].
     assert (Ha2 : arg < length (graph (build_dfg ctx act))) by lia.
     rewrite (nre_unfold act a_idx n H1 H2).
-    cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
+    cbn [compile_dfg_expr_aux].
+    rewrite (not_sample_not_in_sample_bufs act a_idx n
+              ltac:(unfold is_sample_of, node_op; rewrite Hop; reflexivity)).
+    cbv beta iota. rewrite Hop.
     destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) arg (sample_bufs act a_idx))
       as [ae av] eqn:E.
     cbn [fst]. f_equal.
@@ -8705,7 +8736,10 @@ Section SchedulerSimulation.
     assert (Hb1 : a1 < length (graph (build_dfg ctx act))) by lia.
     assert (Hb2 : a2 < length (graph (build_dfg ctx act))) by lia.
     rewrite (nre_unfold act a_idx n H1 H2).
-    cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Hop.
+    cbn [compile_dfg_expr_aux].
+    rewrite (not_sample_not_in_sample_bufs act a_idx n
+              ltac:(unfold is_sample_of, node_op; rewrite Hop; reflexivity)).
+    cbv beta iota. rewrite Hop.
     destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) a1 (sample_bufs act a_idx))
       as [e1 v1] eqn:E1.
     destruct (compile_dfg_expr ctx bneeds n a_idx (build_dfg ctx act) a2 (sample_bufs act a_idx))
@@ -8741,7 +8775,9 @@ Section SchedulerSimulation.
     assert (Hbe : eid < length (graph (build_dfg ctx act))) by lia.
     rewrite (nre_unfold act a_idx n H1 H2).
     (* compile_fst_phi normalises the branches back to the empty path *)
-    rewrite (compile_fst_phi act a_idx (sample_bufs act a_idx) n n cnd tid eid ltac:(reflexivity) Hop).
+    rewrite (compile_fst_phi act a_idx (sample_bufs act a_idx) n n cnd tid eid
+               (not_sample_not_in_sample_bufs act a_idx n
+                  ltac:(unfold is_sample_of, node_op; rewrite Hop; reflexivity)) Hop).
     f_equal.
     - apply (nre_fuel act a_idx cnd n Hpc Hbc Hlc).
     - apply (nre_fuel act a_idx tid n Hpt Hbt Hlt).
