@@ -947,6 +947,88 @@ Section SchedulerSimulation.
     | _ => None
     end.
 
+  (* The DRIVE a sample.s request came from: [sample_req].s walk, stopped one
+     node earlier and checked to be on the sample.s own port. *)
+  Definition sample_drive_head (act: tfs_action sched) (p: p_var) (h: nid_t)
+    : option nid_t :=
+    match node_op act h with
+    | DFG_Drive p' _ _ => if (tfs_spec_ips_eq_dec ctx).(eq_dec) p' p then Some h else None
+    | DFG_Join d _ =>
+        match node_op act d with
+        | DFG_Drive p' _ _ => if (tfs_spec_ips_eq_dec ctx).(eq_dec) p' p then Some d else None
+        | _ => None
+        end
+    | _ => None
+    end.
+
+  Definition sample_drive (act: tfs_action sched) (n: nid_t) : option nid_t :=
+    match node_op act n with
+    | DFG_Sample p tok _ =>
+        match node_op act tok with
+        | DFG_Stall _ h => sample_drive_head act p h
+        | _ => sample_drive_head act p tok
+        end
+    | _ => None
+    end.
+
+  Lemma sample_drive_head_op (act: tfs_action sched) p h d :
+    sample_drive_head act p h = Some d ->
+    exists a en, node_op act d = DFG_Drive p a en.
+  Proof.
+    unfold sample_drive_head.
+    destruct (node_op act h) eqn:Hh; try discriminate.
+    - destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) p0 p) as [-> | Hne]; [| discriminate].
+      intro Heq. injection Heq as <-. exists arg, en. exact Hh.
+    - destruct (node_op act a) eqn:Ha; try discriminate.
+      destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) p0 p) as [-> | Hne]; [| discriminate].
+      intro Heq. injection Heq as <-. exists arg, en. exact Ha.
+  Qed.
+
+  (* The two walks agree: the drive [sample_drive] stops at is the one whose
+     argument [sample_req] returns. *)
+  Lemma sample_drive_req (act: tfs_action sched) n d p a en :
+    sample_drive act n = Some d ->
+    node_op act d = DFG_Drive p a en ->
+    sample_req act n = Some a.
+  Proof.
+    unfold sample_drive, sample_req.
+    destruct (node_op act n) eqn:Hn; try discriminate.
+    assert (Hh : forall h, sample_drive_head act p0 h = Some d ->
+              node_op act d = DFG_Drive p a en -> sample_req_head act h = Some a).
+    { intros h. unfold sample_drive_head, sample_req_head.
+      destruct (node_op act h) eqn:Hhh; try discriminate.
+      - destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) p1 p0); [| discriminate].
+        intros Heq Hd. injection Heq as <-. rewrite Hhh in Hd.
+        injection Hd as _ <- _. reflexivity.
+      - destruct (node_op act a0) eqn:Ha0; try discriminate.
+        destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) p1 p0); [| discriminate].
+        intros Heq Hd. injection Heq as <-. rewrite Ha0 in Hd.
+        injection Hd as _ <- _. reflexivity. }
+    destruct (node_op act tok) eqn:Ht; apply Hh.
+  Qed.
+
+  Lemma sample_drive_op (act: tfs_action sched) n d p tok en :
+    node_op act n = DFG_Sample p tok en ->
+    sample_drive act n = Some d ->
+    exists a en', node_op act d = DFG_Drive p a en'.
+  Proof.
+    intros Hn Hd. unfold sample_drive in Hd. rewrite Hn in Hd.
+    destruct (node_op act tok) eqn:Ht;
+      exact (sample_drive_head_op act p _ d Hd).
+  Qed.
+
+  (* A node that carries an op at all is inside the graph. *)
+  Lemma node_op_range (act: tfs_action sched) n :
+    node_op act n <> DFG_Empty -> n < length (graph (build_dfg ctx act)).
+  Proof.
+    unfold node_op. intro Hne.
+    destruct (Nat.ltb n (length (graph (build_dfg ctx act)))) eqn:Hlt;
+      [ apply Nat.ltb_lt; exact Hlt |].
+    exfalso. apply Nat.ltb_ge in Hlt.
+    rewrite nth_overflow in Hne by exact Hlt. cbn [op] in Hne.
+    apply Hne. reflexivity.
+  Qed.
+
   (* SATURATION RANK.  Ranking by node id alone is unsound in V4: a stall makes
      its consumer wait [lat] cycles, not one.  The rank is the id plus the extra
      cycles every stall UP TO AND INCLUDING it costs -- including its own, so a
@@ -9038,6 +9120,19 @@ Section SchedulerSimulation.
                   (nth_In _ _ Hlt)
                   ltac:(exists a, en; exact Hop)) as Hres.
     rewrite Hnid in Hres. exact Hres.
+  Qed.
+
+  (* A sample.s own drive is one of the port.s drives. *)
+  Lemma sample_drive_in_drive_nodes (act: tfs_action sched) n d p tok en :
+    node_op act n = DFG_Sample p tok en ->
+    sample_drive act n = Some d ->
+    In d (drive_nodes ctx (build_dfg ctx act) p).
+  Proof.
+    intros Hn Hd.
+    destruct (sample_drive_op act n d p tok en Hn Hd) as [a [en' Hop]].
+    apply (drive_nodes_complete act p d a en').
+    - apply node_op_range. rewrite Hop. discriminate.
+    - exact Hop.
   Qed.
 
   (* Strictly decreasing, as [drive_nodes] produces it. *)
