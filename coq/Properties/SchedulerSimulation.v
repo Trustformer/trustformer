@@ -681,6 +681,49 @@ Section SchedulerSimulation.
     - split; intro H'; [ exfalso; apply H'; reflexivity | discriminate H' ].
   Qed.
 
+  Lemma ones1_neq_zero : Bits.ones 1 <> Bits.zero.
+  Proof. apply (proj2 (bits1_nonzero_ones (Bits.ones 1))). reflexivity. Qed.
+
+  Lemma bits1_and_split (a b: bits_t 1) :
+    Bits.and a b = Bits.ones 1 -> a = Bits.ones 1 /\ b = Bits.ones 1.
+  Proof.
+    intro H.
+    destruct (bits1_cases a) as [Ha | Ha]; destruct (bits1_cases b) as [Hb | Hb];
+      subst; try (split; reflexivity); exfalso; vm_compute in H; discriminate.
+  Qed.
+
+  Lemma bits1_and_not_ones (a: bits_t 1) :
+    Bits.and a (Bits.neg (Bits.ones 1)) = Bits.zero.
+  Proof. destruct (bits1_cases a) as [-> | ->]; vm_compute; reflexivity. Qed.
+
+  (* Converse of valid_if_eval: a valid_expr_if that fires tells us the
+     SELECTED branch is valid (and if it collapsed to [tf_const 1], both
+     branches were literally [tf_const 1], hence valid). *)
+  Lemma valid_if_eval_inv
+    (cond t e: @tf_expr (tfs_states sched) si_var o_var) (ss: sched_sys_state) (input: sched_input_t) :
+    eval1 (valid_expr_if ctx bneeds cond t e) ss input = Bits.ones 1 ->
+    (eval1 cond ss input <> Bits.zero -> eval1 t ss input = Bits.ones 1) /\
+    (eval1 cond ss input = Bits.zero -> eval1 e ss input = Bits.ones 1).
+  Proof.
+    intro H.
+    assert (Hcase: (t = tf_const 1 /\ e = tf_const 1)
+                   \/ valid_expr_if ctx bneeds cond t e = tf_expr_if cond t e).
+    { unfold valid_expr_if.
+      destruct t as [vt| | | | | |]; try (right; reflexivity).
+      destruct vt as [|[|vt]]; try (right; reflexivity).
+      destruct e as [ve| | | | | |]; try (right; reflexivity).
+      destruct ve as [|[|ve]]; try (right; reflexivity).
+      left; split; reflexivity. }
+    destruct Hcase as [[Ht He] | Hc].
+    - subst t e. split; intros _; apply eval1_const1.
+    - rewrite Hc in H. cbn [tf_eval_expr] in H.
+      destruct (beq_dec (eval1 cond ss input) Bits.zero) eqn:Hb.
+      + apply beq_dec_iff in Hb.
+        split; intro Hcz; [ contradiction | exact H ].
+      + split; intro Hcz; [ exact H |].
+        exfalso. rewrite Hcz, beq_dec_refl in Hb. discriminate.
+  Qed.
+
   (* The size-1 AND-fold saturates to all-ones iff every element is all-ones. *)
   Lemma fold_and_ones (l: list (bits_t 1)) :
     fold_right Bits.and (Bits.ones 1) l = Bits.ones 1
@@ -4676,6 +4719,56 @@ Section SchedulerSimulation.
     apply pred_lt_counter_sz. exact Hl.
   Qed.
 
+  Lemma list_assoc_in_some {K} `{EqDec K} {A} (l: list (K * A)) k v :
+    In (k, v) l -> BitsToLists.list_assoc l k <> None.
+  Proof.
+    induction l as [| [k0 v0] l IH]; [ intros [] |].
+    cbn [In BitsToLists.list_assoc]. intros [Heq | Hin].
+    - injection Heq as Hk _. subst k0.
+      destruct (eq_dec k k); [ discriminate | congruence ].
+    - destruct (eq_dec k k0); [ discriminate | apply IH; exact Hin ].
+  Qed.
+
+  (* Every sample has a buffer, so a reference expression stops at a register
+     and never inlines to the port: [require_buffer] takes [sample_nodes]
+     outright, whatever the schedule does with the cycles. *)
+  (* A sample sits IN the graph: past the end [nth] gives the empty node. *)
+  Lemma sample_node_in_range (act: tfs_action sched) n :
+    is_sample_of act n = true -> n < length (graph (build_dfg ctx act)).
+  Proof.
+    unfold is_sample_of, node_op. intro Hs.
+    destruct (Nat.ltb n (length (graph (build_dfg ctx act)))) eqn:Hlt;
+      [ apply Nat.ltb_lt; exact Hlt |].
+    apply Nat.ltb_ge in Hlt. rewrite nth_overflow in Hs by exact Hlt.
+    cbn [op] in Hs. discriminate Hs.
+  Qed.
+
+  Lemma sample_is_buffered (act: tfs_action sched) a_idx n :
+    act_idx_aligned act a_idx ->
+    is_sample_of act n = true ->
+    BitsToLists.list_assoc (sample_bufs act a_idx) n <> None.
+  Proof.
+    intros Halign Hsam.
+    pose proof (sample_node_in_range act n Hsam) as Hlen.
+    assert (Hin : In n (require_buffer ctx (build_dfg ctx act)
+                          (calc_target_cycle cost_limit
+                             (calc_backward_cost ctx cost_limit (build_dfg ctx act))))).
+    { apply nodup_In, in_app_iff. right. apply in_app_iff. right.
+      unfold sample_nodes. apply in_map_iff.
+      exists (nth n (graph (build_dfg ctx act))
+                {| nid := 0; op := DFG_Empty; sz := 0 |}).
+      split; [ apply node_nid_at; exact Hlen |].
+      apply filter_In. split; [ apply nth_In; exact Hlen |].
+      unfold is_sample_of, node_op in Hsam. exact Hsam. }
+    assert (Hfst : In n (map fst (nth (index_to_nat a_idx)
+                                    (buffer_needs ctx cost_limit) []))).
+    { rewrite (buffer_slot_eq act a_idx Halign), gsi_map_fst. exact Hin. }
+    apply in_map_iff in Hfst. destruct Hfst as [[n' v] [Heq Hentry]].
+    cbn [fst] in Heq. subst n'.
+    apply (list_assoc_in_some _ n v).
+    unfold sample_bufs. apply filter_In. split; [ exact Hentry | exact Hsam ].
+  Qed.
+
   (* When a cycle does NOT fire the done flag, tfs_next_cycle takes the ALWAYS
      branch: cycle_updates reduces to just the always-updates (no reset/done
      prefix).  This is the entry point for pre-done buffer reasoning. *)
@@ -5004,77 +5097,92 @@ Section SchedulerSimulation.
     reflexivity.
   Qed.
 
+  (* STATE INDEPENDENCE, gated by VALIDITY.  A sample's buffer latches on
+     [valid && !v], so a validity bit that already reads ones says the register
+     will not move; the gate is what turns that into stability of the whole
+     reference.  An untainted Phi needs only the branch it selects. *)
   Lemma compile_nobuf_state_indep_gen
-        (act: tfs_action sched) a_idx (input: sched_input_t) (ss1 ss2: sched_sys_state)
+        (act: tfs_action sched) a_idx (input1 input2: sched_input_t)
+        (ss1 ss2: sched_sys_state)
         (tainted: list nid_t) (dfacts: list gfact) :
     act_idx_aligned act a_idx ->
     (forall s, (fst ss1).[tf_dfg_s s] = (fst ss2).[tf_dfg_s s]) ->
     (forall o, (snd ss1).[o] = (snd ss2).[o]) ->
-    (* the reference keeps the SAMPLE buffers, so it depends on them too *)
+    (forall v, input1 (inl v) = input2 (inl v)) ->
     (forall n_idx, is_sample_of act (vreg_nid a_idx n_idx) = true ->
+       (fst ss1).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
        (fst ss1).[tf_dfg_b a_idx n_idx] = (fst ss2).[tf_dfg_b a_idx n_idx]) ->
     forall fuel n szB (pi: list lit),
+      eval1 (snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
+                    (build_dfg ctx act) n (sample_bufs act a_idx))) ss1 input1
+        = Bits.ones 1 ->
       tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
         (fst (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
                 (build_dfg ctx act) n (sample_bufs act a_idx)))
-        ss1 input
+        ss1 input1
       = tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
         (fst (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
                 (build_dfg ctx act) n (sample_bufs act a_idx)))
-        ss2 input.
+        ss2 input2.
   Proof.
-    intros Halign Hs Ho Hb fuel.
-    induction fuel as [| fuel IH]; intros n szB pi; [ reflexivity | ].
-    cbn [compile_dfg_expr_aux].
+    intros Halign Hs Ho Hi Hb fuel.
+    induction fuel as [| fuel IH]; intros n szB pi Hval; [ reflexivity | ].
+    cbn [compile_dfg_expr_aux] in Hval |- *.
     destruct (BitsToLists.list_assoc (sample_bufs act a_idx) n) as [[m msz] |] eqn:Hla.
-    { (* a SAMPLE buffer: both sides read the same register, pinned by [Hb] *)
+    { (* a SAMPLE buffer: both sides read the register, pinned by its validity *)
       destruct (index_of_nat _ m) as [n_idx' |] eqn:Hn_idx'; [| reflexivity].
-      cbv beta iota.
+      cbv beta iota in Hval |- *.
       pose proof (wla_in _ _ _ Hla) as Hin.
       unfold sample_bufs in Hin. apply filter_In in Hin. destruct Hin as [Hin Hsam].
       assert (Hvn : vreg_nid a_idx n_idx' = n)
         by (apply (vreg_nid_of_entry act a_idx n m msz n_idx' Halign Hin Hn_idx')).
       assert (Hsam2 : is_sample_of act (vreg_nid a_idx n_idx') = true)
         by (rewrite Hvn; exact Hsam).
+      assert (Hv1 : (fst ss1).[tf_dfg_v a_idx n_idx'] = Bits.ones 1).
+      { destruct (op (nth n (graph (build_dfg ctx act))
+                        {| nid := 0; op := DFG_Empty; sz := 0 |}));
+          cbn [snd tf_eval_expr] in Hval; rewrite convert_same in Hval; exact Hval. }
       destruct (op (nth n (graph (build_dfg ctx act))
                       {| nid := 0; op := DFG_Empty; sz := 0 |}));
         cbn [fst tf_eval_expr];
-        try (f_equal; exact (Hb n_idx' Hsam2)); reflexivity. }
-    cbv beta iota.
+        try (f_equal; exact (Hb n_idx' Hsam2 Hv1)); reflexivity. }
+    cbv beta iota in Hval |- *.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn den | siv sn sen | ja jb | ].
+      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Hop.
     - reflexivity.
-    - reflexivity.
+    - cbn [fst tf_eval_expr]. rewrite Hi. reflexivity.
     - destruct v; cbn [fst tf_eval_expr]; [ rewrite Hs | rewrite Ho ]; reflexivity.
     - destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
                   (build_dfg ctx act) arg (sample_bufs act a_idx)) as [ae ve] eqn:E1.
-      cbn [fst]. destruct op1 as [| src];
+      cbn [fst snd] in Hval |- *. destruct op1 as [| src];
         cbn [tf_eval_expr];
         [ specialize (IH arg szB pi) | specialize (IH arg src pi) ];
-        rewrite E1 in IH; cbn [fst] in IH; rewrite IH; reflexivity.
+        rewrite E1 in IH; cbn [fst snd] in IH; rewrite (IH Hval); reflexivity.
     - destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
                   (build_dfg ctx act) arg1 (sample_bufs act a_idx)) as [a1e v1e] eqn:E1.
       destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
                   (build_dfg ctx act) arg2 (sample_bufs act a_idx)) as [a2e v2e] eqn:E2.
-      cbn [fst].
+      cbn [fst snd] in Hval |- *.
+      rewrite valid_and_eval in Hval.
+      apply bits1_and_split in Hval. destruct Hval as [Hv1 Hv2].
       pose proof (IH arg1 szB pi) as Hc1. pose proof (IH arg2 szB pi) as Hc2.
-      rewrite E1 in Hc1. rewrite E2 in Hc2. cbn [fst] in Hc1, Hc2.
+      rewrite E1 in Hc1. rewrite E2 in Hc2. cbn [fst snd] in Hc1, Hc2.
+      specialize (Hc1 Hv1). specialize (Hc2 Hv2).
       destruct op1 as [ | | | | | | szC cop | hz lz ];
         cbn [tf_eval_expr]; try (rewrite Hc1, Hc2; reflexivity).
       + pose proof (IH arg1 szC pi) as Hd1. pose proof (IH arg2 szC pi) as Hd2.
-        rewrite E1 in Hd1. rewrite E2 in Hd2. cbn [fst] in Hd1, Hd2.
-        rewrite Hd1, Hd2. destruct cop; reflexivity.
-      + (* tf_concat: operands at their own widths *)
-        pose proof (IH arg1 hz pi) as He1. pose proof (IH arg2 lz pi) as He2.
-        rewrite E1 in He1. rewrite E2 in He2. cbn [fst] in He1, He2.
-        rewrite He1, He2. reflexivity.
+        rewrite E1 in Hd1. rewrite E2 in Hd2. cbn [fst snd] in Hd1, Hd2.
+        rewrite (Hd1 Hv1), (Hd2 Hv2). destruct cop; reflexivity.
+      + pose proof (IH arg1 hz pi) as He1. pose proof (IH arg2 lz pi) as He2.
+        rewrite E1 in He1. rewrite E2 in He2. cbn [fst snd] in He1, He2.
+        rewrite (He1 Hv1), (He2 Hv2). reflexivity.
     - destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
                   (build_dfg ctx act) arg (sample_bufs act a_idx)) as [ae ve] eqn:E1.
-      cbn [fst tf_eval_expr].
+      cbn [fst snd tf_eval_expr] in Hval |- *.
       specialize (IH arg (sz (nth arg (graph (build_dfg ctx act))
                                 {| nid := 0; op := DFG_Empty; sz := 0 |})) pi).
-      rewrite E1 in IH. cbn [fst] in IH. rewrite IH. reflexivity.
+      rewrite E1 in IH. cbn [fst snd] in IH. rewrite (IH Hval). reflexivity.
     - destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
                   (build_dfg ctx act) cnd (sample_bufs act a_idx)) as [ce cv] eqn:Ec.
       destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts
@@ -5083,25 +5191,53 @@ Section SchedulerSimulation.
       destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts
                   (ppath tainted dfacts pi cnd false) fuel a_idx
                   (build_dfg ctx act) eid (sample_bufs act a_idx)) as [ee ev] eqn:Ee.
-      cbn [fst tf_eval_expr].
-      pose proof (IH cnd 1 pi) as Hcc.
+      cbn [fst snd] in Hval |- *.
+      pose proof (IH cnd 1 pi) as Hcc. rewrite Ec in Hcc. cbn [fst snd] in Hcc.
       pose proof (IH tid szB (ppath tainted dfacts pi cnd true)) as Hct.
+      rewrite Et in Hct. cbn [fst snd] in Hct.
       pose proof (IH eid szB (ppath tainted dfacts pi cnd false)) as Hce.
-      rewrite Ec in Hcc. rewrite Et in Hct. rewrite Ee in Hce.
-      cbn [fst] in Hcc, Hct, Hce.
-      rewrite Hcc, Hct, Hce. reflexivity.
+      rewrite Ee in Hce. cbn [fst snd] in Hce.
+      (* the condition is valid either way, so the two sides SELECT alike *)
+      assert (Hcv : eval1 cv ss1 input1 = Bits.ones 1
+                    /\ (eval1 ce ss1 input1 <> Bits.zero ->
+                        eval1 tv ss1 input1 = Bits.ones 1)
+                    /\ (eval1 ce ss1 input1 = Bits.zero ->
+                        eval1 ev ss1 input1 = Bits.ones 1)).
+      { destruct (phi_crit tainted dfacts cnd pi).
+        - rewrite valid_and_eval in Hval. apply bits1_and_split in Hval.
+          destruct Hval as [Hval Hc]. rewrite valid_and_eval in Hval.
+          apply bits1_and_split in Hval. destruct Hval as [Ht He].
+          split; [ exact Hc | split; intros _; assumption ].
+        - rewrite valid_and_eval in Hval. apply bits1_and_split in Hval.
+          destruct Hval as [Hc Hif]. split; [ exact Hc |].
+          exact (valid_if_eval_inv ce tv ev ss1 input1 Hif). }
+      destruct Hcv as [Hc [Ht He]].
+      assert (Hceq : eval1 ce ss1 input1 = eval1 ce ss2 input2) by exact (Hcc Hc).
+      cbn [tf_eval_expr].
+      (* both conditions come FROM the goal, then the equation lines them up *)
+      match goal with
+      | |- (if beq_dec ?c1 _ then _ else _) = _ =>
+          replace c1 with (eval1 ce ss1 input1) by reflexivity
+      end.
+      match goal with
+      | |- _ = (if beq_dec ?c2 _ then _ else _) =>
+          replace c2 with (eval1 ce ss2 input2) by reflexivity
+      end.
+      rewrite Hceq.
+      match goal with | |- (if ?g then _ else _) = _ => destruct g eqn:Hb0 end.
+      + apply Hce, He. rewrite Hceq. exact (proj1 (beq_dec_iff _ _ _) Hb0).
+      + apply Hct, Ht. rewrite Hceq. intro Hz.
+        rewrite Hz, beq_dec_refl in Hb0. discriminate.
     - (* DFG_Stall: no value, so both sides are [tf_const 0]. *)
       cbn [fst].
       destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
                   (build_dfg ctx act) sa (sample_bufs act a_idx)).
       reflexivity.
-    - (* DFG_Drive, pass-through. *) apply IH.
-    - (* DFG_Sample -- the value is [tf_ivar v], the same expression on both
-         sides, so the states cannot tell it apart. *)
-      cbn [fst].
-      destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) sn (sample_bufs act a_idx)).
-      reflexivity.
+    - (* DFG_Drive, pass-through. *)
+      cbn [fst snd] in Hval |- *. exact (IH dn szB pi Hval).
+    - (* DFG_Sample: every sample is buffered, so this arm is unreachable. *)
+      exfalso. apply (sample_is_buffered act a_idx n Halign);
+        [ unfold is_sample_of, node_op; rewrite Hop; reflexivity | exact Hla ].
     - (* DFG_Join: no value either. *)
       cbn [fst].
       destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
@@ -5113,49 +5249,28 @@ Section SchedulerSimulation.
   Qed.
 
   Lemma compile_nobuf_state_indep
-        (act: tfs_action sched) a_idx (input: sched_input_t) (ss1 ss2: sched_sys_state) :
+        (act: tfs_action sched) a_idx (input1 input2: sched_input_t)
+        (ss1 ss2: sched_sys_state) :
     act_idx_aligned act a_idx ->
     (forall s, (fst ss1).[tf_dfg_s s] = (fst ss2).[tf_dfg_s s]) ->
     (forall o, (snd ss1).[o] = (snd ss2).[o]) ->
+    (forall v, input1 (inl v) = input2 (inl v)) ->
     (forall n_idx, is_sample_of act (vreg_nid a_idx n_idx) = true ->
+       (fst ss1).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
        (fst ss1).[tf_dfg_b a_idx n_idx] = (fst ss2).[tf_dfg_b a_idx n_idx]) ->
     forall fuel n szB,
+      eval1 (snd (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act)
+                    n (sample_bufs act a_idx))) ss1 input1 = Bits.ones 1 ->
       tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
         (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
-        ss1 input
+        ss1 input1
       = tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
         (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
-        ss2 input.
+        ss2 input2.
   Proof.
-    intros Halign Hs Ho Hb fuel n szB.
-    exact (compile_nobuf_state_indep_gen act a_idx input ss1 ss2 _ _ Halign Hs Ho Hb
-             fuel n szB []).
-  Qed.
-
-  (* Specialisation: a buffer-free compiled expression is unchanged by a pre-done
-     cycle (which touches neither tf_dfg_s nor the outputs). *)
-  Lemma compile_nobuf_step_stable
-        (act: tfs_action sched) a_idx (ss: sched_sys_state) (input: sched_input_t) :
-    act_idx_aligned act a_idx ->
-    ~ done_set (sched_step act ss input) ->
-    (* the sample buffers must not latch during this step *)
-    (forall n_idx, is_sample_of act (vreg_nid a_idx n_idx) = true ->
-       (fst (sched_step act ss input)).[tf_dfg_b a_idx n_idx]
-       = (fst ss).[tf_dfg_b a_idx n_idx]) ->
-    forall fuel n szB,
-      tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
-        (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
-        (sched_step act ss input) input
-      = tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
-        (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
-        ss input.
-  Proof.
-    intros Halign Hnd Hb.
-    apply compile_nobuf_state_indep.
-    - exact Halign.
-    - intro s. exact (sched_step_preserves_svar act ss input s Hnd).
-    - intro o. exact (sched_step_preserves_ovar act ss input o Hnd).
-    - exact Hb.
+    intros Halign Hs Ho Hi Hb fuel n szB.
+    exact (compile_nobuf_state_indep_gen act a_idx input1 input2 ss1 ss2 _ _
+             Halign Hs Ho Hi Hb fuel n szB []).
   Qed.
 
   (* compile_dfg_expr is fuel-invariant above the structural bound: the recursion
@@ -5350,45 +5465,6 @@ Section SchedulerSimulation.
       (fst ss).[tf_dfg_b a_idx n_idx]
       = eval_st (tf_dfg_b a_idx n_idx)
           (node_ref_expr act a_idx (vreg_nid a_idx n_idx)) ss input.
-
-  Lemma ones1_neq_zero : Bits.ones 1 <> Bits.zero.
-  Proof. apply (proj2 (bits1_nonzero_ones (Bits.ones 1))). reflexivity. Qed.
-
-  Lemma bits1_and_split (a b: bits_t 1) :
-    Bits.and a b = Bits.ones 1 -> a = Bits.ones 1 /\ b = Bits.ones 1.
-  Proof.
-    intro H.
-    destruct (bits1_cases a) as [Ha | Ha]; destruct (bits1_cases b) as [Hb | Hb];
-      subst; try (split; reflexivity); exfalso; vm_compute in H; discriminate.
-  Qed.
-
-  (* Converse of valid_if_eval: a valid_expr_if that fires tells us the
-     SELECTED branch is valid (and if it collapsed to [tf_const 1], both
-     branches were literally [tf_const 1], hence valid). *)
-  Lemma valid_if_eval_inv
-    (cond t e: @tf_expr (tfs_states sched) si_var o_var) (ss: sched_sys_state) (input: sched_input_t) :
-    eval1 (valid_expr_if ctx bneeds cond t e) ss input = Bits.ones 1 ->
-    (eval1 cond ss input <> Bits.zero -> eval1 t ss input = Bits.ones 1) /\
-    (eval1 cond ss input = Bits.zero -> eval1 e ss input = Bits.ones 1).
-  Proof.
-    intro H.
-    assert (Hcase: (t = tf_const 1 /\ e = tf_const 1)
-                   \/ valid_expr_if ctx bneeds cond t e = tf_expr_if cond t e).
-    { unfold valid_expr_if.
-      destruct t as [vt| | | | | |]; try (right; reflexivity).
-      destruct vt as [|[|vt]]; try (right; reflexivity).
-      destruct e as [ve| | | | | |]; try (right; reflexivity).
-      destruct ve as [|[|ve]]; try (right; reflexivity).
-      left; split; reflexivity. }
-    destruct Hcase as [[Ht He] | Hc].
-    - subst t e. split; intros _; apply eval1_const1.
-    - rewrite Hc in H. cbn [tf_eval_expr] in H.
-      destruct (beq_dec (eval1 cond ss input) Bits.zero) eqn:Hb.
-      + apply beq_dec_iff in Hb.
-        split; intro Hcz; [ contradiction | exact H ].
-      + split; intro Hcz; [ exact H |].
-        exfalso. rewrite Hcz, beq_dec_refl in Hb. discriminate.
-  Qed.
 
   (* SUBSTITUTION, gated by VALIDITY: wherever a node's compiled validity fires,
      its value agrees with the buffer-free one.  An untainted Phi validates
@@ -6035,6 +6111,69 @@ Section SchedulerSimulation.
       reflexivity.
     - rewrite (find_st_update_unique_assign _ _ _ _ _ Hnd_always Hvalid_ops).
       reflexivity.
+  Qed.
+
+  (* A sample's buffer holds once its validity bit reads ones: the latch arm is
+     [if valid && !v then expr else b], and [!v] is zero. *)
+  Lemma sample_buffer_frozen
+        (act: tfs_action sched) a_idx n_idx (ss: sched_sys_state) (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
+    ~ done_set (sched_step act ss input) ->
+    is_sample_of act (vreg_nid a_idx n_idx) = true ->
+    (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
+    (fst ss).[tf_dfg_b a_idx n_idx]
+    = (fst (sched_step act ss input)).[tf_dfg_b a_idx n_idx].
+  Proof.
+    intros Halign Hnd Hsam Hv.
+    pose proof (buffer_after_cycle act a_idx n_idx ss input Halign Hnd) as Hba.
+    cbv zeta in Hba. destruct Hba as [Hvalue _]. rewrite Hvalue.
+    change (fst (nth (index_to_nat n_idx)
+                   (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))
+      with (vreg_nid a_idx n_idx).
+    unfold buf_value_expr.
+    destruct (stall_lat_of act (vreg_nid a_idx n_idx)) as [l |] eqn:Hst.
+    { exfalso. unfold stall_lat_of, is_sample_of in Hst, Hsam.
+      destruct (node_op act (vreg_nid a_idx n_idx)); discriminate. }
+    rewrite Hsam. cbn [tf_eval_expr]. rewrite !convert_same.
+    (* the validity bit comes FROM the goal, and then the guard reads zero *)
+    match goal with
+    | |- context [ Bits.neg ?x ] => replace x with (Bits.ones 1) by (symmetry; exact Hv)
+    end.
+    rewrite bits1_and_not_ones, beq_dec_refl. reflexivity.
+  Qed.
+
+  (* Specialisation to one pre-done cycle: the reference is stable wherever its
+     own validity fires, since the samples it reads have already latched. *)
+  Lemma compile_nobuf_step_stable
+        (act: tfs_action sched) a_idx (ss: sched_sys_state) (input: input_t) :
+    act_idx_aligned act a_idx ->
+    ~ done_set (sched_step act ss (sched_input input ss)) ->
+    forall fuel n szB,
+      eval1 (snd (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act)
+                    n (sample_bufs act a_idx))) ss (sched_input input ss)
+        = Bits.ones 1 ->
+      tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
+        (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
+        (sched_step act ss (sched_input input ss))
+        (sched_input input (sched_step act ss (sched_input input ss)))
+      = tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
+        (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
+        ss (sched_input input ss).
+  Proof.
+    intros Halign Hnd fuel n szB Hval. symmetry.
+    apply (compile_nobuf_state_indep act a_idx (sched_input input ss)
+             (sched_input input (sched_step act ss (sched_input input ss)))
+             ss (sched_step act ss (sched_input input ss))).
+    - exact Halign.
+    - intro s. symmetry.
+      exact (sched_step_preserves_svar act ss (sched_input input ss) s Hnd).
+    - intro o. symmetry.
+      exact (sched_step_preserves_ovar act ss (sched_input input ss) o Hnd).
+    - intro v. reflexivity.
+    - intros n_idx Hsam Hv.
+      exact (sample_buffer_frozen act a_idx n_idx ss (sched_input input ss)
+               Halign Hnd Hsam Hv).
+    - exact Hval.
   Qed.
 
   (* The ungated value saturation -- [buffers_settled], [compile_subst_gen],
