@@ -6163,6 +6163,29 @@ Section SchedulerSimulation.
     rewrite bits1_and_not_ones, beq_dec_refl. reflexivity.
   Qed.
 
+  (* A validity bit that RISES says its gate fired on the cycle before: the
+     stall arm ANDs the gate in, and every other arm IS the gate. *)
+  Lemma buffer_valid_gate
+        (act: tfs_action sched) a_idx n_idx (ss: sched_sys_state) (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
+    ~ done_set (sched_step act ss input) ->
+    (fst (sched_step act ss input)).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
+    eval1 (buf_gate act a_idx n_idx) ss input = Bits.ones 1.
+  Proof.
+    intros Halign Hnd Hv.
+    pose proof (buffer_after_cycle act a_idx n_idx ss input Halign Hnd) as Hba.
+    cbv zeta in Hba. destruct Hba as [_ Hvalid].
+    rewrite Hvalid in Hv.
+    change (fst (nth (index_to_nat n_idx)
+                   (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))
+      with (vreg_nid a_idx n_idx) in Hv.
+    unfold buf_valid_expr in Hv.
+    destruct (stall_lat_of act (vreg_nid a_idx n_idx)) as [l |] eqn:Hst;
+      [| exact Hv ].
+    cbn [tf_eval_expr] in Hv.
+    exact (proj1 (bits1_and_split _ _ Hv)).
+  Qed.
+
   (* Specialisation to one pre-done cycle: the reference is stable wherever its
      own validity fires, since the samples it reads have already latched. *)
   Lemma compile_nobuf_step_stable
