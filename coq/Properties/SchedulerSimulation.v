@@ -1665,6 +1665,22 @@ Section SchedulerSimulation.
     - exfalso. rewrite eval1_const1 in Hz. exact (ones1_neq_zero Hz).
   Qed.
 
+  (* The middle gate half: the validity of the node the stall waits on. *)
+  Lemma drive_pulse_zero_of_vgate
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) (n g h: nid_t)
+        (ss: sched_sys_state) (input: sched_input_t) :
+    chain_gate ctx (build_dfg ctx act) n = Some (g, h) ->
+    eval1 (snd (compile_dfg_expr ctx bneeds (length (graph (build_dfg ctx act))) a_idx
+                  (build_dfg ctx act) g
+                  (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))) ss input
+      = Bits.zero ->
+    eval1 (drive_pulse act a_idx n) ss input = Bits.zero.
+  Proof.
+    intros Hcg Hz. unfold drive_pulse. cbv zeta. rewrite Hcg.
+    cbn [tf_eval_expr]. rewrite Hz, bits1_and_zero_l, bits1_and_zero_r. reflexivity.
+  Qed.
+
   (* The sample buffers a guard keeps -- the only ones [compile_dfg_drives]
      substitutes, since every other source is stable across the action. *)
   Definition drive_sbufs (act: tfs_action sched)
@@ -6468,6 +6484,56 @@ Section SchedulerSimulation.
     cbv beta iota. rewrite Hop.
     destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx dfg arg bufs).
     reflexivity.
+  Qed.
+
+  (* And the same step at a join: its validity is the AND the sequencing needs. *)
+  Lemma compile_join_valid
+        (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var)
+                (outputs_var := o_var) (ips_var := p_var))
+        tainted dfacts a_idx (n: nid_t) a b
+        (bufs: list (nid_t * (nat * sz_t))) pi fuel :
+    op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Join a b ->
+    BitsToLists.list_assoc bufs n = None ->
+    0 < fuel ->
+    snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx dfg n bufs)
+    = valid_expr_and ctx bneeds
+        (snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi (pred fuel) a_idx dfg a bufs))
+        (snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi (pred fuel) a_idx dfg b bufs)).
+  Proof.
+    intros Hop Hbuf Hf. destruct fuel as [| fuel]; [ lia |]. cbn [Init.Nat.pred].
+    cbn [compile_dfg_expr_aux].
+    destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:E;
+      [ exfalso; rewrite Hbuf in E; congruence |].
+    cbv beta iota. rewrite Hop.
+    destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx dfg a bufs).
+    destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx dfg b bufs).
+    reflexivity.
+  Qed.
+
+  (* THE JOIN HOLDS THE PORT.  A drive whose chain gate is an unbuffered join
+     cannot pulse while the node that join waits on is invalid -- which is the
+     sequencing [dataflow_ops] emits it for. *)
+  Lemma drive_pulse_zero_of_join
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+        (n j h a b: nid_t) (ss: sched_sys_state) (input: sched_input_t) :
+    chain_gate ctx (build_dfg ctx act) n = Some (j, h) ->
+    node_op act j = DFG_Join a b ->
+    BitsToLists.list_assoc
+      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) j = None ->
+    0 < length (graph (build_dfg ctx act)) ->
+    eval1 (snd (compile_dfg_expr ctx bneeds
+                  (pred (length (graph (build_dfg ctx act)))) a_idx
+                  (build_dfg ctx act) b
+                  (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))) ss input
+      = Bits.zero ->
+    eval1 (drive_pulse act a_idx n) ss input = Bits.zero.
+  Proof.
+    intros Hcg Hj Hbuf Hf Hz.
+    apply (drive_pulse_zero_of_vgate act a_idx n j h ss input Hcg).
+    unfold node_op in Hj.
+    rewrite (compile_join_valid _ _ _ a_idx j a b _ [] _ Hj Hbuf Hf).
+    rewrite valid_and_eval, Hz. apply bits1_and_zero_r.
   Qed.
 
   (* One step of [compile_dfg_expr_aux]'s VALUE at a node that is not a stall:
