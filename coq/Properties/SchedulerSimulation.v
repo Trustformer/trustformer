@@ -718,6 +718,34 @@ Section SchedulerSimulation.
   Definition is_sample_of (act: tfs_action sched) (n: nid_t) : bool :=
     match node_op act n with DFG_Sample _ _ _ => true | _ => false end.
 
+  (* SATURATION RANK.  Ranking by node id alone is unsound in V4: a stall makes
+     its consumer wait [lat] cycles, not one.  The rank is the id plus the extra
+     cycles every stall UP TO AND INCLUDING it costs -- including its own, so a
+     stall's rank already covers its wait and everything above it sits past it. *)
+  Definition stall_weight (act: tfs_action sched) (n: nid_t) : nat :=
+    match stall_lat_of act n with Some l => pred l | None => 0 end.
+
+  Fixpoint node_rank (act: tfs_action sched) (n: nat) : nat :=
+    match n with
+    | 0 => stall_weight act 0
+    | S m => S (node_rank act m) + stall_weight act (S m)
+    end.
+
+  Lemma node_rank_le act n : n <= node_rank act n.
+  Proof. induction n as [| n IH]; cbn [node_rank]; lia. Qed.
+
+  Lemma node_rank_mono act n n2 : n < n2 -> node_rank act n < node_rank act n2.
+  Proof.
+    revert n. induction n2 as [| n2 IH]; intros n Hlt; [ lia |].
+    cbn [node_rank].
+    destruct (Nat.eq_dec n n2) as [-> | Hne]; [ lia |].
+    specialize (IH n ltac:(lia)). lia.
+  Qed.
+
+  Lemma node_rank_child act x n bound :
+    x < n -> node_rank act n <= bound -> node_rank act x < bound.
+  Proof. intros H1 H2. pose proof (node_rank_mono act x n H1). lia. Qed.
+
   (* nid of the DFG node cached by validity/value register (a_idx, n_idx). *)
   Definition vreg_nid
       (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
@@ -5169,7 +5197,7 @@ Section SchedulerSimulation.
       (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
       (ss: sched_sys_state) (input: sched_input_t) (bound: nat) : Prop :=
     forall n_idx,
-      vreg_nid a_idx n_idx < bound ->
+      node_rank act (vreg_nid a_idx n_idx) < bound ->
       is_sample_of act (vreg_nid a_idx n_idx) = false ->
       stall_lat_of act (vreg_nid a_idx n_idx) = None ->
       (fst ss).[tf_dfg_b a_idx n_idx]
@@ -5201,8 +5229,8 @@ Section SchedulerSimulation.
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
         n < fuel ->
-        n <= bound ->
-        (BitsToLists.list_assoc bufs n = None \/ n < bound) ->
+        node_rank act n <= bound ->
+        (BitsToLists.list_assoc bufs n = None \/ node_rank act n < bound) ->
         szB = sz (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}) ->
         tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
@@ -5217,8 +5245,8 @@ Section SchedulerSimulation.
       intros n szB pi Hn1 Hnlen Hnfuel Hnb Hself HszB; [ lia | ].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:Hla.
     - (* buffered leaf: the register already holds the inlined value *)
-      assert (Hnlt : n < bound)
-        by (destruct Hself as [Hnone | Hlt']; [ congruence | exact Hlt' ]).
+      assert (Hnlt : node_rank act n < bound)
+        by (destruct Hself as [Hnone | Hlt2]; [ congruence | exact Hlt2 ]).
       (* canonicalize the buffer-free side to node_ref_expr's fuel *)
       rewrite (compile_fuel_irrel_gen act a_idx (sample_bufs act a_idx) _ _ n Hn1 Hnlen (S fuel)
                  (length (graph (build_dfg ctx act))) pi Hnfuel Hnlen).
@@ -5306,7 +5334,10 @@ Section SchedulerSimulation.
         destruct (Harg x Hx) as [Hx1 Hx2].
         destruct (wsz_node_sz act x sx Hwsz) as [Hxlen Hxsz].
         apply (IH x sx p Hx1 Hxlen);
-          [ lia | lia | right; lia | symmetry; exact Hxsz ]. }
+          [ lia
+          | apply Nat.lt_le_incl; exact (node_rank_child act x n bound Hx2 Hnb)
+          | right; exact (node_rank_child act x n bound Hx2 Hnb)
+          | symmetry; exact Hxsz ]. }
       pose proof (wfg_build_dfg act node Hnode_in) as Hfg.
       destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn den | siv sn sen | ja jb | ]
         eqn:Hop.
@@ -5375,12 +5406,16 @@ Section SchedulerSimulation.
                     arg (sample_bufs act a_idx)) as [ae' ve'] eqn:E2.
         cbn [fst].
         destruct (Harg arg Hain) as [Hx1 Hx2].
-        assert (Hself' : BitsToLists.list_assoc bufs arg = None \/ arg < bound)
-          by (right; lia).
+        assert (Hself2 : BitsToLists.list_assoc bufs arg = None
+                         \/ node_rank act arg < bound)
+          by (right; exact (node_rank_child act arg n bound Hx2 Hnb)).
         pose proof (IH arg (sz (nth arg (graph (build_dfg ctx act))
                                   {| nid := 0; op := DFG_Empty; sz := 0 |})) pi
                       Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen)
-                      ltac:(lia) ltac:(lia) Hself' eq_refl) as Hc.
+                      ltac:(lia)
+                      ltac:(apply Nat.lt_le_incl;
+                            exact (node_rank_child act arg n bound Hx2 Hnb))
+                      Hself2 eq_refl) as Hc.
         rewrite E1, E2 in Hc. cbn [fst] in Hc.
         cbn [tf_eval_expr]. rewrite Hc. reflexivity.
       + (* Phi *)
@@ -5465,8 +5500,8 @@ Section SchedulerSimulation.
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
         n < fuel ->
-        n <= bound ->
-        (BitsToLists.list_assoc bufs n = None \/ n < bound) ->
+        node_rank act n <= bound ->
+        (BitsToLists.list_assoc bufs n = None \/ node_rank act n < bound) ->
         szB = sz (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}) ->
         tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
@@ -5905,7 +5940,7 @@ Section SchedulerSimulation.
      node [n] settles by cycle [n] and the run is bounded by the graph size.
      The target cycle is NOT a rank: two buffers can share one. *)
   Definition settle_bound (act: tfs_action sched) : nat :=
-    length (graph (build_dfg ctx act)).
+    node_rank act (length (graph (build_dfg ctx act))).
 
   (* ==================================================================== *)
   (* Phase 2/3 decomposition of the top-level theorem.                    *)
@@ -6257,8 +6292,8 @@ Section SchedulerSimulation.
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
         n < fuel ->
-        n <= bound ->
-        (BitsToLists.list_assoc bufs n = None \/ n < bound) ->
+        node_rank act n <= bound ->
+        (BitsToLists.list_assoc bufs n = None \/ node_rank act n < bound) ->
         eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                       n bufs)) ss input = Bits.ones 1.
   Proof.
@@ -6266,8 +6301,8 @@ Section SchedulerSimulation.
     induction fuel as [| fuel IH]; intros n pi Hn1 Hnlen Hnfuel Hnb Hself; [ lia | ].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:Hla.
     - (* buffered leaf: read the validity register, valid by hypothesis *)
-      assert (Hnlt : n < bound)
-        by (destruct Hself as [Hnone | Hlt']; [ congruence | exact Hlt' ]).
+      assert (Hnlt : node_rank act n < bound)
+        by (destruct Hself as [Hnone | Hlt2]; [ congruence | exact Hlt2 ]).
       cbn [compile_dfg_expr_aux]. rewrite Hla. cbv beta iota.
       assert (Hin_slot : In (n, (m, msz))
                 (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
@@ -6412,8 +6447,8 @@ Section SchedulerSimulation.
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
         n < fuel ->
-        n <= bound ->
-        (BitsToLists.list_assoc bufs n = None \/ n < bound) ->
+        node_rank act n <= bound ->
+        (BitsToLists.list_assoc bufs n = None \/ node_rank act n < bound) ->
         eval1 (snd (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act)
                       n bufs)) ss input = Bits.ones 1.
   Proof.
