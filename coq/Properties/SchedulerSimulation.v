@@ -768,6 +768,9 @@ Section SchedulerSimulation.
     Bits.and a (Bits.neg (Bits.ones 1)) = Bits.zero.
   Proof. destruct (bits1_cases a) as [-> | ->]; vm_compute; reflexivity. Qed.
 
+  Lemma bits1_and_zero_r (a: bits_t 1) : Bits.and a Bits.zero = Bits.zero.
+  Proof. destruct (bits1_cases a) as [-> | ->]; vm_compute; reflexivity. Qed.
+
   (* Converse of valid_if_eval: a valid_expr_if that fires tells us the
      SELECTED branch is valid (and if it collapsed to [tf_const 1], both
      branches were literally [tf_const 1], hence valid). *)
@@ -1540,6 +1543,33 @@ Section SchedulerSimulation.
       | None => (snd (compile_dfg_expr ctx bneeds fuel a_idx dfg n buffers), tf_const 1)
       end in
     tf_op2 tf_and en_val (tf_op2 tf_and vgate vfirst).
+
+  (* The last of the three gate halves on its own: the first cycle of the
+     stall.s wait, which is where 3b reasons about the port. *)
+  Definition drive_vfirst
+      (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (n: nid_t) : @tf_expr (tfs_states sched) si_var o_var :=
+    match chain_gate ctx (build_dfg ctx act) n with
+    | Some (_, h) =>
+        stall_start ctx bneeds a_idx (build_dfg ctx act)
+          (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) h
+    | None => tf_const 1
+    end.
+
+  (* The pulse is an AND, so a wait that has already started puts it down. *)
+  Lemma drive_pulse_zero_of_vfirst
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) (n: nid_t)
+        (ss: sched_sys_state) (input: sched_input_t) :
+    eval1 (drive_vfirst act a_idx n) ss input = Bits.zero ->
+    eval1 (drive_pulse act a_idx n) ss input = Bits.zero.
+  Proof.
+    unfold drive_pulse, drive_vfirst. cbv zeta.
+    destruct (chain_gate ctx (build_dfg ctx act) n) as [[g h] |]; intro Hz.
+    - cbn [tf_eval_expr]. rewrite Hz, bits1_and_zero_r, bits1_and_zero_r. reflexivity.
+    - exfalso. rewrite eval1_const1 in Hz. exact (ones1_neq_zero Hz).
+  Qed.
 
   (* The two halves of the drive register, each a fold over [drive_nodes]
      (LATEST FIRST, so the latest pulse wins) selecting on [drive_pulse]. *)
@@ -5647,6 +5677,74 @@ Section SchedulerSimulation.
     rewrite (gsi_entry_at _ _ n m msz
                ltac:(rewrite <- (buffer_slot_eq act a_idx Halign); exact Hin)).
     reflexivity.
+  Qed.
+
+  (* The width a buffer slot names is the width its table entry records. *)
+  Lemma buffer_slot_size (act: tfs_action sched) a_idx n m msz n_idx' :
+    act_idx_aligned act a_idx ->
+    In (n, (m, msz)) (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) ->
+    index_of_nat (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m
+      = Some n_idx' ->
+    ss_sz (tf_dfg_b a_idx n_idx') = msz.
+  Proof.
+    intros Halign Hin Hidx.
+    assert (Hmi : index_to_nat n_idx' = m) by (apply index_to_nat_of_nat; exact Hidx).
+    change (ss_sz (tf_dfg_b a_idx n_idx'))
+      with (snd (snd (nth (index_to_nat n_idx')
+                       (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))).
+    rewrite Hmi, (buffer_slot_eq act a_idx Halign).
+    rewrite (gsi_entry_at _ _ n m msz
+               ltac:(rewrite <- (buffer_slot_eq act a_idx Halign); exact Hin)).
+    reflexivity.
+  Qed.
+
+  (* [stall_start] reads the stall.s counter, so it is down once the wait has
+     moved off its first cycle. *)
+  Lemma eval_stall_start_zero
+        (act: tfs_action sched) a_idx h m msz n_idx
+        (ss: sched_sys_state) (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
+    BitsToLists.list_assoc
+      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) h = Some (m, msz) ->
+    index_of_nat (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m
+      = Some n_idx ->
+    (fst ss).[tf_dfg_b a_idx n_idx] <> Bits.zero ->
+    eval1 (stall_start ctx bneeds a_idx (build_dfg ctx act)
+             (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) h) ss input
+    = Bits.zero.
+  Proof.
+    intros Halign Hassoc Hidx Hnz.
+    pose proof (buffer_slot_size act a_idx h m msz n_idx Halign
+                  (wla_in _ _ _ Hassoc) Hidx) as Hsz.
+    subst msz.
+    unfold stall_start. rewrite Hassoc, Hidx.
+    cbn [tf_eval_expr]. rewrite convert_same.
+    match goal with
+    | |- context [ @beq_dec ?T ?E ?x ?z ] => destruct (@beq_dec T E x z) eqn:Hb
+    end.
+    - exfalso. exact (Hnz (proj1 (beq_dec_iff _ _ _) Hb)).
+    - rewrite convert_same. reflexivity.
+  Qed.
+
+  (* THE DRIVE PULSES ONCE: its request leaves the wire as soon as the stall it
+     gates on has counted a cycle. *)
+  Lemma drive_pulse_zero_of_counter
+        (act: tfs_action sched) a_idx n g h m msz n_idx
+        (ss: sched_sys_state) (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
+    chain_gate ctx (build_dfg ctx act) n = Some (g, h) ->
+    BitsToLists.list_assoc
+      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) h = Some (m, msz) ->
+    index_of_nat (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m
+      = Some n_idx ->
+    (fst ss).[tf_dfg_b a_idx n_idx] <> Bits.zero ->
+    eval1 (drive_pulse act a_idx n) ss input = Bits.zero.
+  Proof.
+    intros Halign Hcg Hassoc Hidx Hnz.
+    apply drive_pulse_zero_of_vfirst.
+    unfold drive_vfirst. rewrite Hcg.
+    exact (eval_stall_start_zero act a_idx h m msz n_idx ss input
+             Halign Hassoc Hidx Hnz).
   Qed.
 
   (* STATE INDEPENDENCE, gated by VALIDITY.  A sample's buffer latches on
