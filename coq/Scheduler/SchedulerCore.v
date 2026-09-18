@@ -1136,9 +1136,14 @@ Section SchedulerCore.
                          expr (tf_svar (tf_dfg_b a_idx' n_idx'))
                   else expr
                 end in
+              (* The gate is ANDed in, not implied by the count: at [lat = 1]
+                 the counter starts at [pred l] and would validate the token
+                 before the argument ever did. *)
               let vexpr :=
                 match stall_lat with
-                | Some l => tf_op2 (tf_cmp (snd x) tf_eq) cnt (tf_const (pred l))
+                | Some l =>
+                    tf_op2 tf_and valid
+                      (tf_op2 (tf_cmp (snd x) tf_eq) cnt (tf_const (pred l)))
                 | None => valid
                 end in
               [ tf_assign (tf_dfg_b a_idx' n_idx') bexpr; tf_assign (tf_dfg_v a_idx' n_idx') vexpr ]

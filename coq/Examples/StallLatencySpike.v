@@ -256,6 +256,20 @@ Section RoundTrip.
      whose response port was never declared silently gets this shape *)
   Example sep_lat_0 : psep 0 3 = 0. Proof. vm_compute. reflexivity. Qed.
 
+  (* ================================================================== *)
+  (* THE TOKEN WAITS FOR ITS ARGUMENT AT EVERY LATENCY.                 *)
+  (* ================================================================== *)
+
+  (* [counter_sz 1 = 1] and [pred 1 = 0], so a latency-1 counter starts at the
+     value it saturates at.  Its validity therefore has to AND the gate in:
+     reading the count alone would let the token validate at cycle 1 whatever
+     the argument did.  Latency 2 and up are gated by the count itself. *)
+  Example lat_1_starts_saturated : Init.Nat.pred 1 = 0 /\ counter_sz 1 = 1.
+  Proof. vm_compute. split; reflexivity. Qed.
+
+  Example lat_2_counts_one_step : Init.Nat.pred 2 = 1.
+  Proof. vm_compute. reflexivity. Qed.
+
   Example sample_is_not_a_source : is_source sl_ctx (trip 20) 4 = false.
   Proof. vm_compute. reflexivity. Qed.
 

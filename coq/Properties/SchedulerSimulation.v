@@ -1217,7 +1217,9 @@ Section SchedulerSimulation.
       : @tf_expr (tfs_states sched) si_var o_var :=
     match stall_lat_of act n with
     | Some l =>
-        tf_op2 (tf_cmp sz tf_eq) (tf_svar (tf_dfg_b a_idx n_idx)) (tf_const (pred l))
+        tf_op2 tf_and valid
+          (tf_op2 (tf_cmp sz tf_eq) (tf_svar (tf_dfg_b a_idx n_idx))
+             (tf_const (pred l)))
     | None => valid
     end.
 
@@ -6485,52 +6487,56 @@ Section SchedulerSimulation.
       | |- context [ stall_lat_of act ?nn ] =>
           destruct (stall_lat_of act nn) as [l |] eqn:Hst
       end.
-      - (* a stall: its validity is the counter having reached [pred l] *)
+      - (* a stall: the gate is up, and the counter has reached [pred l] *)
+        assert (Hnode : In (nth (vreg_nid a_idx n_idx) (graph (build_dfg ctx act))
+                              {| nid := 0; op := DFG_Empty; sz := 0 |})
+                           (graph (build_dfg ctx act)))
+          by (apply nth_In; exact Hnlen).
+        pose proof Hst as Hst0. unfold stall_lat_of, node_op in Hst0.
+        match type of Hst0 with
+        | match ?o with _ => _ end = _ =>
+            destruct o as [cn|iv|dv|uop ua|bop b1 b2|ra|pc pt pe|slat sarg
+                          |dp da den|sp stok sen|ja jb|] eqn:Hop
+        end; try discriminate Hst0.
+        injection Hst0 as Hslat. subst slat.
+        assert (Hargin : In sarg (get_args ctx
+                   (nth (vreg_nid a_idx n_idx) (graph (build_dfg ctx act))
+                      {| nid := 0; op := DFG_Empty; sz := 0 |})))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
+        pose proof (Hargpos _ Hnode sarg Hargin) as Hs1.
+        pose proof (args_lt_fwd act _ Hnode sarg Hargin) as Hslt.
+        rewrite (node_nid_at act _ Hnlen) in Hslt.
+        assert (Hslen : sarg < length (graph (build_dfg ctx act))) by lia.
+        pose proof (node_rank_stall act (vreg_nid a_idx n_idx) sarg l Hst Hslt) as Hrk.
+        (* the gate IS the argument's validity, up from the argument's rank on *)
+        assert (Hgate : forall j, S (node_rank act sarg) <= j <= m ->
+                  eval1 (buf_gate act a_idx n_idx) (run_n j act input ss0)
+                    (sched_input input (run_n j act input ss0)) = Bits.ones 1).
+        { intros j Hj.
+          rewrite (compile_stall_valid (build_dfg ctx act) _ _ a_idx _ _ sarg _ []
+                     (length (graph (build_dfg ctx act))) Hop
+                     (list_assoc_filter_out _ _) ltac:(lia)).
+          rewrite (compile_fuel_irrel act a_idx _ sarg Hs1 Hslen
+                     (pred (length (graph (build_dfg ctx act))))
+                     (length (graph (build_dfg ctx act))) ltac:(lia) Hslen).
+          apply (compile_valid_ones act a_idx (run_n j act input ss0)
+                   (sched_input input (run_n j act input ss0)) Halign j
+                   (IH j ltac:(lia) ltac:(lia))).
+          + intros e He. exact (proj1 (proj1 (filter_In _ e _) He)).
+          + exact Hs1.
+          + exact Hslen.
+          + exact Hslen.
+          + lia.
+          + right. lia. }
         assert (Hcnt : Bits.to_nat
                   ((fst (run_n m act input ss0)).[tf_dfg_b a_idx n_idx]) = pred l).
-        { assert (Hnode : In (nth (vreg_nid a_idx n_idx) (graph (build_dfg ctx act))
-                                {| nid := 0; op := DFG_Empty; sz := 0 |})
-                             (graph (build_dfg ctx act)))
-            by (apply nth_In; exact Hnlen).
-          pose proof Hst as Hst0. unfold stall_lat_of, node_op in Hst0.
-          match type of Hst0 with
-          | match ?o with _ => _ end = _ =>
-              destruct o as [cn|iv|dv|uop ua|bop b1 b2|ra|pc pt pe|slat sarg
-                            |dp da den|sp stok sen|ja jb|] eqn:Hop
-          end; try discriminate Hst0.
-          injection Hst0 as Hslat. subst slat.
-          assert (Hargin : In sarg (get_args ctx
-                     (nth (vreg_nid a_idx n_idx) (graph (build_dfg ctx act))
-                        {| nid := 0; op := DFG_Empty; sz := 0 |})))
-            by (unfold get_args; rewrite Hop; left; reflexivity).
-          pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
-          pose proof (Hargpos _ Hnode sarg Hargin) as Hs1.
-          pose proof (args_lt_fwd act _ Hnode sarg Hargin) as Hslt.
-          rewrite (node_nid_at act _ Hnlen) in Hslt.
-          assert (Hslen : sarg < length (graph (build_dfg ctx act))) by lia.
-          apply (stall_counter_run act a_idx n_idx input ss0 l
+        { apply (stall_counter_run act a_idx n_idx input ss0 l
                    (S (node_rank act sarg)) m Halign Hst
                    (Hzero (tf_dfg_b a_idx n_idx) I)
                    ltac:(intros i Hi; apply Hnd; lia)).
-          - (* the gate is the argument's validity, which is up from its rank *)
-            intros j Hj.
-            rewrite (compile_stall_valid (build_dfg ctx act) _ _ a_idx _ _ sarg _ []
-                       (length (graph (build_dfg ctx act))) Hop
-                       (list_assoc_filter_out _ _) ltac:(lia)).
-            rewrite (compile_fuel_irrel act a_idx _ sarg Hs1 Hslen
-                       (pred (length (graph (build_dfg ctx act))))
-                       (length (graph (build_dfg ctx act))) ltac:(lia) Hslen).
-            apply (compile_valid_ones act a_idx (run_n j act input ss0)
-                     (sched_input input (run_n j act input ss0)) Halign j
-                     (IH j ltac:(lia) ltac:(lia))).
-            + intros e He. exact (proj1 (proj1 (filter_In _ e _) He)).
-            + exact Hs1.
-            + exact Hslen.
-            + exact Hslen.
-            + lia.
-            + right. lia.
-          - pose proof (node_rank_stall act (vreg_nid a_idx n_idx) sarg l Hst Hslt).
-            lia. }
+          - intros j Hj. apply Hgate. lia.
+          - lia. }
         destruct (stall_counter_wide act a_idx n_idx l Halign Hst) as [_ Hwide].
         cbn [tf_eval_expr]. rewrite !convert_same.
         (* [cbn] rebuilds the register read under a second type annotation;
@@ -6548,7 +6554,14 @@ Section SchedulerSimulation.
         end.
         { apply (bits_to_nat_inj (ss_sz (tf_dfg_b a_idx n_idx))).
           rewrite Hcnt. symmetry. apply Bits.to_nat_of_nat. exact Hwide. }
-        rewrite Hreg, beq_dec_refl. vm_compute. reflexivity.
+        rewrite Hreg, beq_dec_refl.
+        (* and the gate, which the AND now needs as well *)
+        match goal with
+        | |- context [ Bits.and ?g _ ] =>
+            replace g with (Bits.ones 1)
+              by (symmetry; exact (Hgate m ltac:(lia)))
+        end.
+        vm_compute. reflexivity.
       - (* every other node: the compiled validity of its own expression *)
         apply (compile_valid_ones act a_idx (run_n m act input ss0)
                  (sched_input input (run_n m act input ss0)) Halign m
