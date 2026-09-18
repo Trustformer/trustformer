@@ -6011,6 +6011,40 @@ Section SchedulerSimulation.
       exact Heq.
   Qed.
 
+  (* A sample's reference IS its register: the table keeps it, so the recursion
+     stops at the slot rather than inlining to the port. *)
+  Lemma sample_ref_is_register (act: tfs_action sched) a_idx n_idx :
+    act_idx_aligned act a_idx ->
+    is_sample_of act (vreg_nid a_idx n_idx) = true ->
+    forall (pi: list lit) fuel, vreg_nid a_idx n_idx < fuel ->
+      compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+        (vreg_nid a_idx n_idx) (sample_bufs act a_idx)
+      = (tf_svar (tf_dfg_b a_idx n_idx), tf_svar (tf_dfg_v a_idx n_idx)).
+  Proof.
+    intros Halign Hsam pi fuel Hfuel.
+    destruct (BitsToLists.list_assoc (sample_bufs act a_idx)
+                (vreg_nid a_idx n_idx)) as [[q qsz] |] eqn:Hq;
+      [| exfalso; exact (sample_is_buffered act a_idx _ Halign Hsam Hq) ].
+    pose proof (wla_in _ _ _ Hq) as Hin.
+    unfold sample_bufs in Hin. apply filter_In in Hin. destruct Hin as [Hin _].
+    assert (Hlt : q < length
+              (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
+    { rewrite (buffer_slot_eq act a_idx Halign), gsi_length.
+      apply (gsi_idx_bound (build_dfg ctx act) _ (vreg_nid a_idx n_idx) q qsz).
+      rewrite <- (buffer_slot_eq act a_idx Halign). exact Hin. }
+    destruct (index_of_nat_bounded Hlt) as [q_idx Hq_idx].
+    assert (Hqv : vreg_nid a_idx q_idx = vreg_nid a_idx n_idx)
+      by (apply (vreg_nid_of_entry act a_idx _ q qsz q_idx Halign Hin Hq_idx)).
+    pose proof (vreg_nid_inj act a_idx q_idx n_idx Halign Hqv) as ->.
+    destruct fuel as [| f]; [ lia |].
+    cbn [compile_dfg_expr_aux]. rewrite Hq, Hq_idx. cbv beta iota.
+    unfold is_sample_of, node_op in Hsam.
+    destruct (op (nth (vreg_nid a_idx n_idx) (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}));
+      try discriminate Hsam.
+    reflexivity.
+  Qed.
+
   (* ==================================================================== *)
 
   Definition valid_settled
@@ -8063,43 +8097,252 @@ Section SchedulerSimulation.
   (* THE INVARIANT (Phase 3b): from a state with clear validity bits, at EVERY
      cycle a buffer whose validity bit is set holds its settled value.  A done
      cycle clears the bits, so no "not yet done" hypothesis is needed. *)
+  (* THE INVARIANT (Phase 3b), all three conjuncts at once.  They go together:
+     settledness crosses a cycle only if the reference's validity is up, that
+     validity substitutes onto the reference's table only if the VALUES agree,
+     and both lean on the gate still being up. *)
   Lemma valid_settled_run :
     forall (act: tfs_action sched) a_idx (input: input_t)
            (ss0: sched_sys_state) (k: nat),
       act_idx_aligned act a_idx ->
       (forall n_idx, (fst ss0).[tf_dfg_v a_idx n_idx] = Bits.zero) ->
-      valid_settled act a_idx (run_n k act input ss0)
-        (sched_input input (run_n k act input ss0)).
+      valid_gates act a_idx (run_n k act input ss0)
+        (sched_input input (run_n k act input ss0))
+      /\ valid_refs act a_idx (run_n k act input ss0)
+           (sched_input input (run_n k act input ss0))
+      /\ valid_settled act a_idx (run_n k act input ss0)
+           (sched_input input (run_n k act input ss0)).
   Proof.
     intros act a_idx input ss0 k Halign Hz0.
     induction k as [| k IH].
-    - intros n_idx Hv. exfalso. cbn [run_n] in Hv.
-      rewrite Hz0 in Hv. apply ones1_neq_zero. symmetry. exact Hv.
-    - set (ssk := run_n k act input ss0) in *.
+    - split; [| split ].
+      + intros m Hv. exfalso. cbn [run_n] in Hv.
+        rewrite Hz0 in Hv. apply ones1_neq_zero. symmetry. exact Hv.
+      + intros m pi Hv. exfalso. cbn [run_n] in Hv.
+        rewrite Hz0 in Hv. apply ones1_neq_zero. symmetry. exact Hv.
+      + intros m Hns Hv. exfalso. cbn [run_n] in Hv.
+        rewrite Hz0 in Hv. apply ones1_neq_zero. symmetry. exact Hv.
+    - destruct IH as [IHg [IHr IHs]].
+      set (ssk := run_n k act input ss0) in *.
       change (run_n (S k) act input ss0)
         with (sched_step act ssk (sched_input input ssk)).
       destruct (done_set_dec (sched_step act ssk (sched_input input ssk)))
         as [Hd | Hnd].
-      + intros n_idx Hv. exfalso.
-        rewrite (sched_step_done_v act a_idx n_idx ssk
-                   (sched_input input ssk) Hd) in Hv.
-        apply ones1_neq_zero. symmetry. exact Hv.
-      + intros n_idx Hv.
-        destruct (vreg_nid_node_range act a_idx n_idx Halign) as [Hn1 Hnlen].
-        pose proof (buffer_after_cycle act a_idx n_idx ssk
-                      (sched_input input ssk) Halign Hnd) as Hba.
-        cbv zeta in Hba. destruct Hba as [Hvalue Hvalid].
-        unfold vreg_nid in Hn1, Hnlen.
-        rewrite Hvalid in Hv.
-        unfold vreg_nid. rewrite Hvalue. unfold node_ref_expr.
-        rewrite (compile_nobuf_step_stable act a_idx ssk (sched_input input ssk) Hnd).
-        apply (compile_subst_valid act a_idx ssk (sched_input input ssk) Halign IH).
-        * intros e He. exact (proj1 (proj1 (filter_In _ e _) He)).
-        * exact Hn1.
-        * exact Hnlen.
-        * exact Hnlen.
-        * apply buffer_register_node_size. exact Halign.
-        * exact Hv.
+      + (* a done cycle clears every validity bit *)
+        split; [| split ].
+        * intros m Hv. exfalso.
+          rewrite (sched_step_done_v act a_idx m ssk
+                     (sched_input input ssk) Hd) in Hv.
+          apply ones1_neq_zero. symmetry. exact Hv.
+        * intros m pi Hv. exfalso.
+          rewrite (sched_step_done_v act a_idx m ssk
+                     (sched_input input ssk) Hd) in Hv.
+          apply ones1_neq_zero. symmetry. exact Hv.
+        * intros m Hns Hv. exfalso.
+          rewrite (sched_step_done_v act a_idx m ssk
+                     (sched_input input ssk) Hd) in Hv.
+          apply ones1_neq_zero. symmetry. exact Hv.
+      + (* a pre-done cycle *)
+        assert (Hmono : forall m,
+                  (fst ssk).[tf_dfg_v a_idx m] = Bits.ones 1 ->
+                  (fst (sched_step act ssk (sched_input input ssk))).[tf_dfg_v a_idx m]
+                  = Bits.ones 1)
+          by (intros m Hx; exact (validity_monotone_step act a_idx m ssk
+                (sched_input input ssk) Halign Hnd IHg Hx)).
+        assert (Hfroz : forall m,
+                  (fst ssk).[tf_dfg_v a_idx m] = Bits.ones 1 ->
+                  (fst ssk).[tf_dfg_b a_idx m]
+                  = (fst (sched_step act ssk (sched_input input ssk))).[tf_dfg_b a_idx m])
+          by (intros m Hx; exact (buffer_frozen_step act a_idx m ssk
+                (sched_input input ssk) Halign Hnd IHs IHg Hx)).
+        assert (Hgk : forall m,
+                  (fst (sched_step act ssk (sched_input input ssk))).[tf_dfg_v a_idx m]
+                    = Bits.ones 1 ->
+                  eval1 (buf_gate act a_idx m) ssk (sched_input input ssk)
+                  = Bits.ones 1)
+          by (intros m Hx; exact (buffer_valid_gate act a_idx m ssk
+                (sched_input input ssk) Halign Hnd Hx)).
+        assert (Hnk : forall m,
+                  (fst (sched_step act ssk (sched_input input ssk))).[tf_dfg_v a_idx m]
+                    = Bits.ones 1 ->
+                  eval_st (tf_dfg_v a_idx m) (buf_valid_next act a_idx m)
+                    ssk (sched_input input ssk) = Bits.ones 1).
+        { intros m Hx.
+          pose proof (buffer_after_cycle act a_idx m ssk (sched_input input ssk)
+                        Halign Hnd) as Hba.
+          cbv zeta in Hba. destruct Hba as [_ Hvalid].
+          rewrite Hvalid in Hx. exact Hx. }
+        (* a sample below a node is in the table with that node's slot removed *)
+        assert (Hrest : forall m x, x < vreg_nid a_idx m ->
+                  is_sample_of act x = true ->
+                  BitsToLists.list_assoc
+                    (filter (fun '(b_nid, _) =>
+                               negb (Nat.eqb b_nid (vreg_nid a_idx m)))
+                       (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
+                    x <> None).
+        { intros m x Hx Hsx.
+          destruct (BitsToLists.list_assoc (sample_bufs act a_idx) x) as [e |] eqn:He;
+            [| exfalso; exact (sample_is_buffered act a_idx x Halign Hsx He) ].
+          pose proof (wla_in _ _ _ He) as Hin.
+          unfold sample_bufs in Hin. apply filter_In in Hin. destruct Hin as [Hin _].
+          intro Hno. apply (list_assoc_none_key _ _ Hno), in_map_iff.
+          exists (x, e). split; [ reflexivity |].
+          apply filter_In. split; [ exact Hin |].
+          apply negb_true_iff, Nat.eqb_neq. lia. }
+        (* the reference's validity at [ssk], for every bit up after the step *)
+        assert (Hrk : forall m pi,
+                  is_sample_of act (vreg_nid a_idx m) = false ->
+                  (fst (sched_step act ssk (sched_input input ssk))).[tf_dfg_v a_idx m]
+                    = Bits.ones 1 ->
+                  eval1 (snd (compile_dfg_expr_at ctx bneeds pi
+                                (length (graph (build_dfg ctx act))) a_idx
+                                (build_dfg ctx act) (vreg_nid a_idx m)
+                                (sample_bufs act a_idx)))
+                    ssk (sched_input input ssk) = Bits.ones 1).
+        { intros m pi Hsam Hx.
+          destruct (vreg_nid_node_range act a_idx m Halign) as [Hn1 Hnlen].
+          apply (compile_valid_path_mono act a_idx ssk (sched_input input ssk)
+                   (sample_bufs act a_idx) _ _ [] pi ltac:(intros y [])).
+          - apply (compile_subst_ref_valid_gen act a_idx ssk (sched_input input ssk)
+                     Halign IHs IHr
+                     (filter (fun '(b_nid, _) =>
+                                negb (Nat.eqb b_nid (vreg_nid a_idx m)))
+                        (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))).
+            + intros e He. exact (proj1 (proj1 (filter_In _ e _) He)).
+            + intros x Hx2. apply list_assoc_key_none. intro Hin.
+              apply in_map_iff in Hin. destruct Hin as [[x' v'] [Hxx Hmem]].
+              cbn [fst] in Hxx. subst x'.
+              unfold sample_bufs in Hmem. apply filter_In in Hmem.
+              destruct Hmem as [Hmem Hsx].
+              destruct (Nat.eq_dec x (vreg_nid a_idx m)) as [-> | Hne];
+                [ rewrite Hsx in Hsam; discriminate |].
+              apply (list_assoc_none_key _ _ Hx2), in_map_iff.
+              exists (x, v'). split; [ reflexivity |].
+              apply filter_In. split; [ exact Hmem |].
+              apply negb_true_iff, Nat.eqb_neq. exact Hne.
+            + intros x q qsz Hx2 Hsx. apply list_assoc_nodup_in.
+              * unfold sample_bufs. apply nodup_map_fst_filter.
+                exact (slot_keys_nodup act a_idx Halign).
+              * unfold sample_bufs. apply filter_In. split; [| exact Hsx ].
+                exact (proj1 (proj1 (filter_In _ _ _) (wla_in _ _ _ Hx2))).
+            + exact Hn1.
+            + exact Hnlen.
+            + exact Hnlen.
+            + exact (Hgk m Hx). }
+        (* a validity that fires at [ssk] fires after the step *)
+        assert (Hstv : forall bufs,
+                  (forall e, In e bufs ->
+                     In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
+                  forall fuel n pi,
+                    n < length (graph (build_dfg ctx act)) ->
+                    (forall x, x < n -> is_sample_of act x = true ->
+                       BitsToLists.list_assoc bufs x <> None) ->
+                    eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                                  (build_dfg ctx act) n bufs))
+                      ssk (sched_input input ssk) = Bits.ones 1 ->
+                    eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                                  (build_dfg ctx act) n bufs))
+                      (sched_step act ssk (sched_input input ssk))
+                      (sched_input input (sched_step act ssk (sched_input input ssk)))
+                    = Bits.ones 1).
+        { intros bufs Hsub.
+          apply (compile_valid_state_indep_gen act a_idx (sched_input input ssk)
+                   (sched_input input (sched_step act ssk (sched_input input ssk)))
+                   ssk (sched_step act ssk (sched_input input ssk)) _ _ bufs Halign
+                   ltac:(intro s; symmetry;
+                         exact (sched_step_preserves_svar act ssk
+                                  (sched_input input ssk) s Hnd))
+                   ltac:(intro o; symmetry;
+                         exact (sched_step_preserves_ovar act ssk
+                                  (sched_input input ssk) o Hnd))
+                   ltac:(intro v; reflexivity)
+                   Hsub ltac:(intros m _ Hx; exact (Hfroz m Hx)) Hmono). }
+        split; [| split ].
+        * (* the gate is still up *)
+          intros m Hv.
+          destruct (vreg_nid_node_range act a_idx m Halign) as [Hn1 Hnlen].
+          assert (Hgate' : eval1 (buf_gate act a_idx m)
+                             (sched_step act ssk (sched_input input ssk))
+                             (sched_input input
+                                (sched_step act ssk (sched_input input ssk)))
+                           = Bits.ones 1).
+          { apply (Hstv (filter (fun '(b_nid, _) =>
+                     negb (Nat.eqb b_nid (vreg_nid a_idx m)))
+                     (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])));
+              [ intros e He; exact (proj1 (proj1 (filter_In _ e _) He))
+              | exact Hnlen | exact (Hrest m) | exact (Hgk m Hv) ]. }
+          destruct (stall_lat_of act (vreg_nid a_idx m)) as [l |] eqn:Hst.
+          -- destruct (stall_counter_wide act a_idx m l Halign Hst) as [_ Hwide].
+             destruct (stall_valid_next_inv act a_idx m ssk (sched_input input ssk)
+                         l _ Hst Hwide (Hnk m Hv)) as [_ Hreg].
+             exact (stall_valid_next_ones act a_idx m
+                      (sched_step act ssk (sched_input input ssk))
+                      (sched_input input
+                         (sched_step act ssk (sched_input input ssk)))
+                      l _ Hst Hgate'
+                      (stall_saturated_step act a_idx m ssk (sched_input input ssk)
+                         l Halign Hnd Hst Hreg)).
+          -- unfold buf_valid_expr. rewrite Hst. exact Hgate'.
+        * (* the reference's validity is still up *)
+          intros m pi Hv.
+          destruct (vreg_nid_node_range act a_idx m Halign) as [_ Hnlen].
+          destruct (is_sample_of act (vreg_nid a_idx m)) eqn:Hsam.
+          -- (* a sample IS its own reference, and its bit is up *)
+             rewrite (sample_ref_is_register act a_idx m Halign Hsam pi _ Hnlen).
+             cbn [snd]. rewrite eval1_svar_v. exact Hv.
+          -- apply (Hstv (sample_bufs act a_idx));
+               [ intros e He; exact (proj1 (proj1 (filter_In _ e _) He))
+               | exact Hnlen
+               | intros x _ Hx; exact (sample_is_buffered act a_idx x Halign Hx)
+               | exact (Hrk m pi Hsam Hv) ].
+        * (* and the register still holds the reference's value *)
+          intros m Hns Hv.
+          destruct (vreg_nid_node_range act a_idx m Halign) as [Hn1 Hnlen].
+          pose proof (buffer_after_cycle act a_idx m ssk (sched_input input ssk)
+                        Halign Hnd) as Hba.
+          cbv zeta in Hba. destruct Hba as [Hvalue _].
+          unfold node_ref_expr.
+          destruct (is_sample_of act (vreg_nid a_idx m)) eqn:Hsam.
+          -- (* a sample IS its own reference *)
+             rewrite (sample_ref_is_register act a_idx m Halign Hsam []
+                        (length (graph (build_dfg ctx act))) Hnlen).
+             cbn [fst]. rewrite eval_svar_same. reflexivity.
+          -- rewrite Hvalue.
+             change (fst (nth (index_to_nat m)
+                            (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))
+               with (vreg_nid a_idx m).
+             unfold buf_value_expr. rewrite Hns, Hsam.
+             rewrite (compile_nobuf_step_stable act a_idx ssk input Halign Hnd
+                        (length (graph (build_dfg ctx act))) (vreg_nid a_idx m)
+                        _ Hnlen (Hrk m [] Hsam Hv)).
+             apply (compile_subst_valid act a_idx ssk (sched_input input ssk)
+                      Halign IHs
+                      (filter (fun '(b_nid, _) =>
+                                 negb (Nat.eqb b_nid (vreg_nid a_idx m)))
+                         (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))).
+             ++ intros e He. exact (proj1 (proj1 (filter_In _ e _) He)).
+             ++ intros x Hx2. apply list_assoc_key_none. intro Hin.
+                apply in_map_iff in Hin. destruct Hin as [[x' v'] [Hxx Hmem]].
+                cbn [fst] in Hxx. subst x'.
+                unfold sample_bufs in Hmem. apply filter_In in Hmem.
+                destruct Hmem as [Hmem Hsx].
+                destruct (Nat.eq_dec x (vreg_nid a_idx m)) as [-> | Hne];
+                  [ rewrite Hsx in Hsam; discriminate |].
+                apply (list_assoc_none_key _ _ Hx2), in_map_iff.
+                exists (x, v'). split; [ reflexivity |].
+                apply filter_In. split; [ exact Hmem |].
+                apply negb_true_iff, Nat.eqb_neq. exact Hne.
+             ++ intros x q qsz Hx2 Hsx. apply list_assoc_nodup_in.
+                ** unfold sample_bufs. apply nodup_map_fst_filter.
+                   exact (slot_keys_nodup act a_idx Halign).
+                ** unfold sample_bufs. apply filter_In. split; [| exact Hsx ].
+                   exact (proj1 (proj1 (filter_In _ _ _) (wla_in _ _ _ Hx2))).
+             ++ exact Hn1.
+             ++ exact Hnlen.
+             ++ exact Hnlen.
+             ++ apply buffer_register_node_size. exact Halign.
+             ++ pose proof (Hnk m Hv) as Hx.
+                unfold buf_valid_expr in Hx. rewrite Hns in Hx. exact Hx.
   Qed.
 
   (* ==================================================================== *)
