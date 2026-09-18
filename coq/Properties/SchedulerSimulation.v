@@ -5724,6 +5724,65 @@ Section SchedulerSimulation.
   (* reachable state is that a buffer whose validity bit is set holds its  *)
   (* settled value -- and the done flag is exactly the conjunction of the  *)
   (* output nodes' validity bits.                                         *)
+  (* ---- the buffer table as a lookup: keys are distinct, filters agree ---- *)
+
+  Lemma list_assoc_none_key {K} `{EqDec K} {A} (l: list (K * A)) k :
+    BitsToLists.list_assoc l k = None -> ~ In k (map fst l).
+  Proof.
+    induction l as [| [k0 v0] l IH]; [ intros _ [] |].
+    cbn [BitsToLists.list_assoc map fst].
+    destruct (eq_dec k k0) as [-> | Hne]; [ discriminate |].
+    intros Hn [Heq | Hin]; [ apply Hne; symmetry; exact Heq | exact (IH Hn Hin) ].
+  Qed.
+
+  Lemma list_assoc_key_none {K} `{EqDec K} {A} (l: list (K * A)) k :
+    ~ In k (map fst l) -> BitsToLists.list_assoc l k = None.
+  Proof.
+    induction l as [| [k0 v0] l IH]; [ reflexivity |].
+    cbn [BitsToLists.list_assoc map fst]. intro Hn.
+    destruct (eq_dec k k0) as [-> | Hne];
+      [ exfalso; apply Hn; left; reflexivity |].
+    apply IH. intro Hin. apply Hn. right. exact Hin.
+  Qed.
+
+  Lemma list_assoc_nodup_in {K} `{EqDec K} {A} (l: list (K * A)) k v :
+    NoDup (map fst l) -> In (k, v) l -> BitsToLists.list_assoc l k = Some v.
+  Proof.
+    induction l as [| [k0 v0] l IH]; [ intros _ [] |].
+    cbn [map fst BitsToLists.list_assoc]. intros Hnd Hin.
+    inversion Hnd as [| x xs Hnotin Hnd2]; subst.
+    destruct (eq_dec k k0) as [-> | Hne].
+    - destruct Hin as [Heq | Hin]; [ injection Heq; intros; subst; reflexivity |].
+      exfalso. apply Hnotin, in_map_iff.
+      exists (k0, v). split; [ reflexivity | exact Hin ].
+    - destruct Hin as [Heq | Hin];
+        [ injection Heq as -> _; contradiction | exact (IH Hnd2 Hin) ].
+  Qed.
+
+  Lemma nodup_map_fst_filter {K A} (p: K * A -> bool) (l: list (K * A)) :
+    NoDup (map fst l) -> NoDup (map fst (filter p l)).
+  Proof.
+    induction l as [| [k v] l IH]; [ intro; constructor |].
+    cbn [filter map fst]. intro Hnd.
+    inversion Hnd as [| x xs Hnotin Hnd2]; subst.
+    destruct (p (k, v)); [| exact (IH Hnd2) ].
+    cbn [map fst]. constructor; [| exact (IH Hnd2) ].
+    intro Hin. apply Hnotin.
+    apply in_map_iff in Hin. destruct Hin as [[k' v'] [Hk Hmem]].
+    apply filter_In in Hmem. destruct Hmem as [Hmem _].
+    apply in_map_iff. exists (k', v'). split; [ exact Hk | exact Hmem ].
+  Qed.
+
+  (* [require_buffer] is a [nodup], and [get_sizes_and_idx] keeps its keys. *)
+  Lemma slot_keys_nodup (act: tfs_action sched) a_idx :
+    act_idx_aligned act a_idx ->
+    NoDup (map fst (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
+  Proof.
+    intro Halign.
+    rewrite (buffer_slot_eq act a_idx Halign), gsi_map_fst.
+    unfold require_buffer. apply NoDup_nodup.
+  Qed.
+
   (* ==================================================================== *)
 
   Definition valid_settled
