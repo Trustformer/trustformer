@@ -478,6 +478,49 @@ Section SchedulerSimulation.
     - exfalso. apply ne. reflexivity.
   Qed.
 
+  (* [Bits.app hi lo] puts [lo] at the low indices, so the low slice of a
+     concatenation gives it back.  The drive register is {strobe, payload}. *)
+  Lemma slice_app_lo {hs ls} (hi: bits_t hs) (lo: bits_t ls) :
+    Bits.slice 0 ls (Bits.app hi lo) = lo.
+  Proof.
+    apply (vect_to_list_inj bool ls).
+    rewrite (BitsToLists.slice (ls + hs) (Bits.app hi lo) 0 ls).
+    unfold BitsToLists.take_drop'. cbn [List.firstn List.skipn].
+    rewrite Nat.sub_0_r, Nat.min_l by lia.
+    rewrite Nat.sub_diag. cbn [repeat]. rewrite List.app_nil_r.
+    rewrite vect_to_list_app, List.firstn_app.
+    rewrite List.firstn_all2 by (rewrite vect_to_list_length; lia).
+    rewrite vect_to_list_length, Nat.sub_diag. cbn [List.firstn].
+    apply List.app_nil_r.
+  Qed.
+
+  (* A cast between propositionally equal widths survives a low slice. *)
+  Lemma slice_convert_eq {szA szB} (x: bits_t szA) (w: nat) :
+    szA = szB ->
+    Bits.slice 0 w (Semantics.convert (szB := szB) x) = Bits.slice 0 w x.
+  Proof.
+    intro e. subst szB. rewrite convert_same. reflexivity.
+  Qed.
+
+  (* The payload half, as a slice of the named register. *)
+  Lemma drive_payload_slice (p: p_var) (ss: sched_sys_state) :
+    drive_payload ss p
+    = Bits.slice 0 (ip_req_sz (tfs_spec_ip ctx p)) ((fst ss).[tf_dfg_ov p]).
+  Proof. reflexivity. Qed.
+
+  (* The payload half of a drive register is what [tf_svar] reads at the request
+     width: the cast down from [1 + req] is exactly that slice. *)
+  Lemma drive_payload_eval (p: p_var) (ss: sched_sys_state) (input: sched_input_t) :
+    drive_payload ss p
+    = tf_eval_expr ss_sz si_sz oo_sz (szB := ip_req_sz (tfs_spec_ip ctx p))
+        (tf_svar (tf_dfg_ov p)) ss input.
+  Proof.
+    cbn [tf_eval_expr]. unfold Semantics.convert, drive_payload.
+    destruct (eq_dec (ss_sz (tf_dfg_ov p)) (ip_req_sz (tfs_spec_ip ctx p))) as [e | ne].
+    - exfalso. cbn in e. lia.
+    - reflexivity.
+  Qed.
+
   (* Reading any state register through tf_svar at its OWN size is the register
      itself (convert is the identity when szB = ss_sz v). *)
   Lemma eval_svar_same (v: tfs_states sched) (ss: sched_sys_state) (input: sched_input_t) :
@@ -1466,6 +1509,136 @@ Section SchedulerSimulation.
             tf_expr_if (tf_op2 tf_and en_val (tf_op2 tf_and vgate vfirst))
               e acc)
          (tf_svar (tf_dfg_ov p)) (drive_nodes ctx dfg p)).
+
+  (* The gate a drive's request rides: its path condition, the validity of the
+     node the stall waits on, and the first cycle of that wait. *)
+  Definition drive_pulse
+      (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (n: nid_t) : @tf_expr (tfs_states sched) si_var o_var :=
+    let dfg := build_dfg ctx act in
+    let buffers := nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [] in
+    let fuel := length (graph dfg) in
+    let sbufs := filter (fun '(m, _) =>
+                           match op (nth m (graph dfg)
+                                       {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+                           | DFG_Sample _ _ _ => true
+                           | _ => false
+                           end) buffers in
+    let en_val :=
+      match op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+      | DFG_Drive _ _ en =>
+          guard_expr ctx bneeds (get_tainted ctx dfg) (decl_facts ctx dfg)
+            fuel a_idx dfg sbufs en
+      | _ => tf_const 1
+      end in
+    let '(vgate, vfirst) :=
+      match chain_gate ctx dfg n with
+      | Some (g, h) =>
+          (snd (compile_dfg_expr ctx bneeds fuel a_idx dfg g buffers),
+           stall_start ctx bneeds a_idx dfg buffers h)
+      | None => (snd (compile_dfg_expr ctx bneeds fuel a_idx dfg n buffers), tf_const 1)
+      end in
+    tf_op2 tf_and en_val (tf_op2 tf_and vgate vfirst).
+
+  (* The two halves of the drive register, each a fold over [drive_nodes]
+     (LATEST FIRST, so the latest pulse wins) selecting on [drive_pulse]. *)
+  Definition drive_strobe_expr
+      (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (p: p_var) : @tf_expr (tfs_states sched) si_var o_var :=
+    fold_right (fun n acc => tf_expr_if (drive_pulse act a_idx n) (tf_const 1) acc)
+      (tf_const 0) (drive_nodes ctx (build_dfg ctx act) p).
+
+  Definition drive_payload_expr
+      (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (p: p_var) : @tf_expr (tfs_states sched) si_var o_var :=
+    fold_right (fun n acc =>
+                  tf_expr_if (drive_pulse act a_idx n)
+                    (fst (compile_dfg_expr ctx bneeds
+                            (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n
+                            (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+                    acc)
+      (tf_svar (tf_dfg_ov p)) (drive_nodes ctx (build_dfg ctx act) p).
+
+  Lemma drive_value_expr_split
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) (p: p_var) :
+    drive_value_expr act a_idx p
+    = tf_op2 (tf_concat 1 (ip_req_sz (tfs_spec_ip ctx p)))
+        (drive_strobe_expr act a_idx p) (drive_payload_expr act a_idx p).
+  Proof.
+    unfold drive_value_expr, drive_strobe_expr, drive_payload_expr, drive_pulse.
+    cbv zeta. f_equal;
+      induction (drive_nodes ctx (build_dfg ctx act) p) as [| a l IH]; cbn [fold_right];
+      try reflexivity;
+      destruct (compile_dfg_expr ctx bneeds (length (graph (build_dfg ctx act))) a_idx
+                  (build_dfg ctx act) a
+                  (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) as [e v];
+      destruct (chain_gate ctx (build_dfg ctx act) a) as [[g h] | ];
+      rewrite IH; reflexivity.
+  Qed.
+
+  (* A pulse fold with every pulse down reads its base case. *)
+  Lemma eval_pulse_fold_hold
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+        (body: nid_t -> @tf_expr (tfs_states sched) si_var o_var)
+        (base: @tf_expr (tfs_states sched) si_var o_var)
+        (l: list nid_t) (szB: nat) (ss: sched_sys_state) (input: sched_input_t) :
+    (forall n, In n l -> eval1 (drive_pulse act a_idx n) ss input = Bits.zero) ->
+    tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
+      (fold_right (fun n acc => tf_expr_if (drive_pulse act a_idx n) (body n) acc) base l)
+      ss input
+    = tf_eval_expr ss_sz si_sz oo_sz (szB := szB) base ss input.
+  Proof.
+    intro Hdown. induction l as [| a l IH]; cbn [fold_right]; [ reflexivity |].
+    cbn [tf_eval_expr]. rewrite (Hdown a (or_introl eq_refl)), beq_dec_refl.
+    apply IH. intros n Hn. exact (Hdown n (or_intror Hn)).
+  Qed.
+
+  (* [drive_nodes] is latest first, so the fold takes the first pulse it meets. *)
+  Lemma eval_pulse_fold_take
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+        (body: nid_t -> @tf_expr (tfs_states sched) si_var o_var)
+        (base: @tf_expr (tfs_states sched) si_var o_var)
+        (pre post: list nid_t) (n: nid_t) (szB: nat)
+        (ss: sched_sys_state) (input: sched_input_t) :
+    (forall m, In m pre -> eval1 (drive_pulse act a_idx m) ss input = Bits.zero) ->
+    eval1 (drive_pulse act a_idx n) ss input <> Bits.zero ->
+    tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
+      (fold_right (fun m acc => tf_expr_if (drive_pulse act a_idx m) (body m) acc)
+         base (pre ++ n :: post))
+      ss input
+    = tf_eval_expr ss_sz si_sz oo_sz (szB := szB) (body n) ss input.
+  Proof.
+    intros Hpre Hn. induction pre as [| a pre IH]; cbn [app fold_right tf_eval_expr].
+    - match goal with
+      | |- context [ @beq_dec ?T ?E ?x ?z ] => destruct (@beq_dec T E x z) eqn:Hb
+      end.
+      + exfalso. apply Hn. exact (proj1 (beq_dec_iff _ _ _) Hb).
+      + reflexivity.
+    - rewrite (Hpre a (or_introl eq_refl)), beq_dec_refl.
+      apply IH. intros m Hm. exact (Hpre m (or_intror Hm)).
+  Qed.
+
+  (* With no drive pulsing, the payload half reads the payload already held. *)
+  Lemma drive_payload_expr_hold
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) (p: p_var)
+        (ss: sched_sys_state) (input: sched_input_t) :
+    (forall n, In n (drive_nodes ctx (build_dfg ctx act) p) ->
+       eval1 (drive_pulse act a_idx n) ss input = Bits.zero) ->
+    tf_eval_expr ss_sz si_sz oo_sz (szB := ip_req_sz (tfs_spec_ip ctx p))
+      (drive_payload_expr act a_idx p) ss input
+    = drive_payload ss p.
+  Proof.
+    intro Hdown. unfold drive_payload_expr.
+    rewrite (eval_pulse_fold_hold act a_idx _ _ _ _ ss input Hdown).
+    symmetry. apply drive_payload_eval.
+  Qed.
 
   (* The drive register's assignment is one of the always-ops. *)
   Lemma compile_dfg_drives_entry
@@ -7129,6 +7302,55 @@ Section SchedulerSimulation.
     reflexivity.
   Qed.
 
+  (* THE PORT HOLDS: on a pre-done cycle with no drive on [p] pulsing, the
+     request payload on the wire is the one it already carried. *)
+  Lemma drive_payload_hold
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) (p: p_var)
+        (ss: sched_sys_state) (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
+    ~ done_set (sched_step act ss input) ->
+    (forall n, In n (drive_nodes ctx (build_dfg ctx act) p) ->
+       eval1 (drive_pulse act a_idx n) ss input = Bits.zero) ->
+    drive_payload (sched_step act ss input) p = drive_payload ss p.
+  Proof.
+    intros Halign Hnd Hdown.
+    rewrite (drive_payload_slice p (sched_step act ss input)).
+    rewrite (drive_after_cycle act a_idx p ss input Halign Hnd).
+    rewrite drive_value_expr_split. cbn [tf_eval_expr].
+    rewrite slice_convert_eq by (cbn; lia).
+    rewrite slice_app_lo.
+    exact (drive_payload_expr_hold act a_idx p ss input Hdown).
+  Qed.
+
+  (* THE PORT TAKES: the latest pulsing drive on [p] puts its own argument on
+     the wire.  [drive_nodes] is latest first, so [pre] is what came after it. *)
+  Lemma drive_payload_take
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) (p: p_var)
+        (pre post: list nid_t) (n: nid_t)
+        (ss: sched_sys_state) (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
+    ~ done_set (sched_step act ss input) ->
+    drive_nodes ctx (build_dfg ctx act) p = pre ++ n :: post ->
+    (forall m, In m pre -> eval1 (drive_pulse act a_idx m) ss input = Bits.zero) ->
+    eval1 (drive_pulse act a_idx n) ss input <> Bits.zero ->
+    drive_payload (sched_step act ss input) p
+    = tf_eval_expr ss_sz si_sz oo_sz (szB := ip_req_sz (tfs_spec_ip ctx p))
+        (fst (compile_dfg_expr ctx bneeds (length (graph (build_dfg ctx act))) a_idx
+                (build_dfg ctx act) n
+                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))) ss input.
+  Proof.
+    intros Halign Hnd Hsplit Hpre Hn.
+    rewrite (drive_payload_slice p (sched_step act ss input)).
+    rewrite (drive_after_cycle act a_idx p ss input Halign Hnd).
+    rewrite drive_value_expr_split. cbn [tf_eval_expr].
+    rewrite slice_convert_eq by (cbn; lia).
+    rewrite slice_app_lo.
+    unfold drive_payload_expr. rewrite Hsplit.
+    exact (eval_pulse_fold_take act a_idx _ _ pre post n _ ss input Hpre Hn).
+  Qed.
+
   (* A sample's buffer holds once its validity bit reads ones: the latch arm is
      [if valid && !v then expr else b], and [!v] is zero. *)
   Lemma sample_buffer_frozen
@@ -10528,7 +10750,7 @@ Section SchedulerSimulation.
       - rewrite HszB. symmetry. exact (var_map_entry_size act v n Hin).
       - exact (sched_step_done_valid act a_idx ssM (sched_input input ssM) n Halign Hdone Hmem). }
     (* the one obligation left in this file: a sample.s register holds the IP.s
-       answer to the request its own drive sent.  See agents/v4-proofs/PLAN.md. *)
+       answer to the request its own drive sent. *)
     destruct (dfg_action_semantics act a_idx sp0 ssM input (sched_input input ssM)
                 Halign ltac:(intro v; reflexivity) Hrt_obligation Hs Ho)
       as [Hsem_s [Hsem_o [Hfix_s Hfix_o]]].
