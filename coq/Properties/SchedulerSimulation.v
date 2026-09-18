@@ -3162,6 +3162,159 @@ Section SchedulerSimulation.
       apply Hem; intros; discriminate.
   Qed.
 
+  (* Samples are only ever added by a call, so a step that adds none leaves
+     every sample of its result inside the graph it started from. *)
+  Definition samples_within (L0 L: list (@dfg_node_t s_var i_var o_var p_var)) : Prop :=
+    forall nd, In nd L -> forall p tok en, op nd = DFG_Sample p tok en -> In nd L0.
+
+  Lemma P_emit_expr_samples L0 : P_emit_expr (samples_within L0).
+  Proof.
+    intros L o z H1 H2 H3 H nd [<- | Hin] p tok en Hop; cbn [op] in Hop;
+      [ exfalso; exact (H2 p tok en Hop) | exact (H nd Hin p tok en Hop) ].
+  Qed.
+
+  Definition nids_bounded (L: list (@dfg_node_t s_var i_var o_var p_var)) : Prop :=
+    forall nd, In nd L -> nid nd < length L.
+
+  (* THE LAST BUILDER INVARIANT: a call that could see an earlier call.s answer
+     on the same port is sequenced behind it by a join. *)
+  Definition calls_main (L: list (@dfg_node_t s_var i_var o_var p_var)) : Prop :=
+    forall (p: p_var) m arg en s tok en',
+      (exists nm, In nm L /\ nid nm = m /\ op nm = DFG_Drive p arg en) ->
+      (exists ns, In ns L /\ nid ns = s /\ op ns = DFG_Sample p tok en') ->
+      s < m -> guards_disjoint en en' = false ->
+      exists j prev, In j L /\ op j = DFG_Join m prev /\ s <= prev.
+
+  Definition calls_sequenced (L: list (@dfg_node_t s_var i_var o_var p_var)) : Prop :=
+    nids_bounded L /\ ids_desc L /\ calls_main L.
+
+  Lemma nids_bounded_cons L o z :
+    nids_bounded L -> nids_bounded ({| nid := length L; op := o; sz := z |} :: L).
+  Proof.
+    intros H nd [<- | Hin]; cbn [nid length]; [ lia |].
+    pose proof (H nd Hin). cbn [length]. lia.
+  Qed.
+
+  Lemma ids_desc_cons L o z :
+    nids_bounded L -> ids_desc L ->
+    ids_desc ({| nid := length L; op := o; sz := z |} :: L).
+  Proof.
+    intros Hb Hd pre a rest Hsplit M HM.
+    destruct pre as [| b pre]; cbn [app] in Hsplit.
+    - injection Hsplit as <- <-. cbn [nid]. exact (Hb M HM).
+    - injection Hsplit as <- Hrest.
+      exact (Hd pre a rest Hrest M HM).
+  Qed.
+
+  (* A step that emits neither a drive nor a sample nor a join keeps it. *)
+  Lemma P_emit_expr_calls : P_emit_expr calls_sequenced.
+  Proof.
+    intros L o z H1 H2 H3 [Hb [Hd Hmain]].
+    split; [ exact (nids_bounded_cons L o z Hb) |].
+    split; [ exact (ids_desc_cons L o z Hb Hd) |].
+    intros p m arg en s tok en' Hdr Hsa Hlt Hdis.
+    destruct Hdr as [nm [Hnm [Hmid Hmop]]].
+    destruct Hsa as [ns [Hns [Hsid Hsop]]].
+    cbn [In] in Hnm, Hns.
+    destruct Hnm as [<- | Hnm]; [ cbn [op] in Hmop; exfalso; exact (H1 p arg en Hmop) |].
+    destruct Hns as [<- | Hns]; [ cbn [op] in Hsop; exfalso; exact (H2 p tok en' Hsop) |].
+    destruct (Hmain p m arg en s tok en'
+                (ex_intro _ nm (conj Hnm (conj Hmid Hmop)))
+                (ex_intro _ ns (conj Hns (conj Hsid Hsop))) Hlt Hdis)
+      as [j [prev [Hj [Hjop Hle]]]].
+    exists j, prev. split; [ right; exact Hj | split; [ exact Hjop | exact Hle ] ].
+  Qed.
+
+  (* Prepending the call.s own SAMPLE: its id is above every drive already
+     present, so it can only be the later end of a pair. *)
+  Lemma calls_sequenced_cons_sample L (p: p_var) tok en z :
+    calls_sequenced L ->
+    calls_sequenced ({| nid := length L; op := DFG_Sample p tok en; sz := z |} :: L).
+  Proof.
+    intros [Hb [Hd Hmain]].
+    split; [ apply nids_bounded_cons; exact Hb |].
+    split; [ apply ids_desc_cons; assumption |].
+    intros p2 m arg en2 s tok2 en' Hdr Hsa Hlt Hdis.
+    destruct Hdr as [nm [Hnm [Hmid Hmop]]].
+    destruct Hsa as [ns [Hns [Hsid Hsop]]].
+    cbn [In] in Hnm, Hns.
+    destruct Hnm as [<- | Hnm]; [ cbn [op] in Hmop; discriminate Hmop |].
+    destruct Hns as [<- | Hns].
+    - exfalso. cbn [nid] in Hsid. subst s.
+      pose proof (Hb nm Hnm) as Hlen. lia.
+    - destruct (Hmain p2 m arg en2 s tok2 en'
+                  (ex_intro _ nm (conj Hnm (conj Hmid Hmop)))
+                  (ex_intro _ ns (conj Hns (conj Hsid Hsop))) Hlt Hdis)
+        as [j [prev [Hj [Hjop Hle]]]].
+      exists j, prev. split; [ right; exact Hj | split; [ exact Hjop | exact Hle ] ].
+  Qed.
+
+  (* THE CALL.S OWN STEP: the drive and, when [last_sample] found one, the join.
+     This is the only place the obligation is ever discharged. *)
+  Lemma calls_sequenced_head
+        (s0 s2 s3: wst) (ip: p_var) arg_id en size drive_id :
+    calls_sequenced (graph s2) ->
+    ids_desc (graph s0) ->
+    samples_within (graph s0) (graph s2) ->
+    emit ctx (DFG_Drive ip arg_id en) size s2 = (drive_id, s3) ->
+    calls_sequenced
+      (graph (snd (match last_sample ctx s0 ip en with
+                   | Some prev => emit ctx (DFG_Join drive_id prev) 1
+                   | None => ret ctx drive_id
+                   end s3))).
+  Proof.
+    intros [Hb [Hd Hmain]] Hd0 Hsw Ed.
+    rewrite emit_red in Ed. injection Ed as Hdid Hs3.
+    assert (Hb3 : nids_bounded (graph s3)).
+    { rewrite <- Hs3. cbn [graph]. apply nids_bounded_cons. exact Hb. }
+    assert (Hd3 : ids_desc (graph s3)).
+    { rewrite <- Hs3. cbn [graph]. apply ids_desc_cons; assumption. }
+    destruct (last_sample ctx s0 ip en) as [prev |] eqn:Elast.
+    - rewrite emit_red. cbn [snd graph].
+      split; [ apply nids_bounded_cons; exact Hb3 |].
+      split; [ apply ids_desc_cons; assumption |].
+      intros p2 m arg en2 s tok2 en' Hdr Hsa Hlt Hdis.
+      destruct Hdr as [nm [Hnm [Hmid Hmop]]].
+      destruct Hsa as [ns [Hns [Hsid Hsop]]].
+      cbn [In] in Hnm, Hns.
+      destruct Hnm as [<- | Hnm]; [ cbn [op] in Hmop; discriminate Hmop |].
+      destruct Hns as [<- | Hns]; [ cbn [op] in Hsop; discriminate Hsop |].
+      rewrite <- Hs3 in Hnm, Hns. cbn [graph In] in Hnm, Hns.
+      destruct Hns as [<- | Hns]; [ cbn [op] in Hsop; discriminate Hsop |].
+      assert (Hns0 : In ns (graph s0)) by exact (Hsw ns Hns p2 tok2 en' Hsop).
+      destruct Hnm as [<- | Hnm].
+      + cbn [op nid] in Hmop, Hmid. injection Hmop as <- <- <-.
+        exists {| nid := length (graph s3); op := DFG_Join drive_id prev; sz := 1 |}, prev.
+        split; [ left; reflexivity |]. cbn [op]. rewrite <- Hmid, <- Hdid.
+        split; [ reflexivity |].
+        rewrite <- Hsid.
+        exact (last_sample_max s0 ip en ns tok2 en' prev Hd0 Hns0 Hsop Hdis Elast).
+      + destruct (Hmain p2 m arg en2 s tok2 en'
+                    (ex_intro _ nm (conj Hnm (conj Hmid Hmop)))
+                    (ex_intro _ ns (conj Hns (conj Hsid Hsop))) Hlt Hdis)
+          as [j [prev2 [Hj [Hjop Hle]]]].
+        exists j, prev2. split; [ right; rewrite <- Hs3; cbn [graph]; right; exact Hj |].
+        split; [ exact Hjop | exact Hle ].
+    - cbn [snd].
+      split; [ exact Hb3 |]. split; [ exact Hd3 |].
+      intros p2 m arg en2 s tok2 en' Hdr Hsa Hlt Hdis.
+      destruct Hdr as [nm [Hnm [Hmid Hmop]]].
+      destruct Hsa as [ns [Hns [Hsid Hsop]]].
+      rewrite <- Hs3 in Hnm, Hns. cbn [graph In] in Hnm, Hns.
+      destruct Hns as [<- | Hns]; [ cbn [op] in Hsop; discriminate Hsop |].
+      assert (Hns0 : In ns (graph s0)) by exact (Hsw ns Hns p2 tok2 en' Hsop).
+      destruct Hnm as [<- | Hnm].
+      + exfalso. cbn [op] in Hmop. injection Hmop as <- <- <-.
+        destruct (last_sample_found s0 ip en ns tok2 en' Hns0 Hsop Hdis) as [q Hq].
+        rewrite Elast in Hq. discriminate Hq.
+      + destruct (Hmain p2 m arg en2 s tok2 en'
+                    (ex_intro _ nm (conj Hnm (conj Hmid Hmop)))
+                    (ex_intro _ ns (conj Hns (conj Hsid Hsop))) Hlt Hdis)
+          as [j [prev2 [Hj [Hjop Hle]]]].
+        exists j, prev2. split; [ rewrite <- Hs3; cbn [graph]; right; exact Hj |].
+        split; [ exact Hjop | exact Hle ].
+  Qed.
+
   (* THE STRUCTURAL FACT, on the exported forward graph. *)
   Lemma joins_sequence_build_dfg (act: tfs_action sched) :
     joins_sequence (graph (build_dfg ctx act)).
