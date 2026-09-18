@@ -771,6 +771,18 @@ Section SchedulerSimulation.
   Lemma bits1_and_zero_r (a: bits_t 1) : Bits.and a Bits.zero = Bits.zero.
   Proof. destruct (bits1_cases a) as [-> | ->]; vm_compute; reflexivity. Qed.
 
+  Lemma bits1_and_zero_l (a: bits_t 1) : Bits.and Bits.zero a = Bits.zero.
+  Proof. destruct (bits1_cases a) as [-> | ->]; vm_compute; reflexivity. Qed.
+
+  Lemma bits1_neg_ones : Bits.neg (Bits.ones 1) = Bits.zero.
+  Proof. vm_compute. reflexivity. Qed.
+
+  Lemma bits1_neg_ones_inv (a: bits_t 1) : Bits.neg a = Bits.ones 1 -> a = Bits.zero.
+  Proof.
+    destruct (bits1_cases a) as [-> | ->];
+      [ intro H; vm_compute in H; discriminate | reflexivity ].
+  Qed.
+
   (* Converse of valid_if_eval: a valid_expr_if that fires tells us the
      SELECTED branch is valid (and if it collapsed to [tf_const 1], both
      branches were literally [tf_const 1], hence valid). *)
@@ -1651,6 +1663,117 @@ Section SchedulerSimulation.
     destruct (chain_gate ctx (build_dfg ctx act) n) as [[g h] |]; intro Hz.
     - cbn [tf_eval_expr]. rewrite Hz, bits1_and_zero_r, bits1_and_zero_r. reflexivity.
     - exfalso. rewrite eval1_const1 in Hz. exact (ones1_neq_zero Hz).
+  Qed.
+
+  (* The sample buffers a guard keeps -- the only ones [compile_dfg_drives]
+     substitutes, since every other source is stable across the action. *)
+  Definition drive_sbufs (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      : list (nid_t * (nat * sz_t)) :=
+    filter (fun '(m, _) =>
+              match op (nth m (graph (build_dfg ctx act))
+                          {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+              | DFG_Sample _ _ _ => true
+              | _ => false
+              end) (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []).
+
+  (* One literal of a path condition, as the expression the guard ANDs in. *)
+  Definition guard_lit (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (sbufs: list (nid_t * (nat * sz_t))) (l: nid_t * bool)
+      : @tf_expr (tfs_states sched) si_var o_var :=
+    let dfg := build_dfg ctx act in
+    let v := fst (compile_dfg_expr ctx bneeds (length (graph dfg)) a_idx dfg (fst l) sbufs) in
+    if snd l then v else tf_op1 tf_not v.
+
+  Local Notation gexpr act a_idx sbufs en :=
+    (guard_expr ctx bneeds (get_tainted ctx (build_dfg ctx act))
+       (decl_facts ctx (build_dfg ctx act)) (length (graph (build_dfg ctx act)))
+       a_idx (build_dfg ctx act) sbufs en).
+
+  Lemma guard_expr_fold (act: tfs_action sched) a_idx sbufs en :
+    gexpr act a_idx sbufs en
+    = fold_right (fun l acc => tf_op2 tf_and (guard_lit act a_idx sbufs l) acc)
+        (tf_const 1) en.
+  Proof. reflexivity. Qed.
+
+  (* A path condition with one literal down is down. *)
+  Lemma guard_expr_zero (act: tfs_action sched) a_idx sbufs en l
+        (ss: sched_sys_state) (input: sched_input_t) :
+    In l en ->
+    eval1 (guard_lit act a_idx sbufs l) ss input = Bits.zero ->
+    eval1 (gexpr act a_idx sbufs en) ss input = Bits.zero.
+  Proof.
+    rewrite guard_expr_fold. intros Hin Hz.
+    induction en as [| a en IH]; [ destruct Hin |].
+    cbn [fold_right tf_eval_expr].
+    destruct Hin as [-> | Hin].
+    - rewrite Hz. apply bits1_and_zero_l.
+    - rewrite (IH Hin). apply bits1_and_zero_r.
+  Qed.
+
+  (* Guards that disagree on a literal cannot both be up, which is how two
+     calls in mutually exclusive branches stay off one port. *)
+  Lemma guards_disjoint_excl (act: tfs_action sched) a_idx sbufs en1 en2
+        (ss: sched_sys_state) (input: sched_input_t) :
+    guards_disjoint en1 en2 = true ->
+    eval1 (gexpr act a_idx sbufs en1) ss input = Bits.zero
+    \/ eval1 (gexpr act a_idx sbufs en2) ss input = Bits.zero.
+  Proof.
+    unfold guards_disjoint. intro Hex.
+    apply existsb_exists in Hex. destruct Hex as [l1 [Hin1 Hex2]].
+    apply existsb_exists in Hex2. destruct Hex2 as [l2 [Hin2 Hb]].
+    apply andb_true_iff in Hb. destruct Hb as [Hfst Hsnd].
+    apply Nat.eqb_eq in Hfst. apply negb_true_iff in Hsnd.
+    apply Bool.eqb_false_iff in Hsnd.
+    destruct (bits1_cases (eval1 (guard_lit act a_idx sbufs l1) ss input)) as [Hv | Hv];
+      [| left; exact (guard_expr_zero act a_idx sbufs en1 l1 ss input Hin1 Hv) ].
+    right. apply (guard_expr_zero act a_idx sbufs en2 l2 ss input Hin2).
+    destruct l1 as [c1 b1]. destruct l2 as [c2 b2].
+    cbn [fst snd] in Hfst, Hsnd. subst c2.
+    unfold guard_lit in Hv |- *. cbv zeta in Hv |- *. cbn [fst snd] in Hv |- *.
+    destruct b1; destruct b2; try (exfalso; apply Hsnd; reflexivity);
+      cbn [tf_eval_expr] in Hv |- *.
+    - rewrite Hv. apply bits1_neg_ones.
+    - apply bits1_neg_ones_inv in Hv. exact Hv.
+  Qed.
+
+  (* The path condition is the first of the three gate halves. *)
+  Lemma drive_pulse_zero_of_en (act: tfs_action sched) a_idx n p arg en
+        (ss: sched_sys_state) (input: sched_input_t) :
+    node_op act n = DFG_Drive p arg en ->
+    eval1 (gexpr act a_idx (drive_sbufs act a_idx) en) ss input = Bits.zero ->
+    eval1 (drive_pulse act a_idx n) ss input = Bits.zero.
+  Proof.
+    intros Hop Hz. unfold node_op in Hop.
+    unfold drive_pulse. cbv zeta. rewrite Hop.
+    destruct (chain_gate ctx (build_dfg ctx act) n) as [[g h] |];
+      cbn [tf_eval_expr];
+      change (filter
+                (fun '(m, _) =>
+                   match op (nth m (graph (build_dfg ctx act))
+                               {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+                   | DFG_Sample _ _ _ => true
+                   | _ => false
+                   end) (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
+        with (drive_sbufs act a_idx);
+      rewrite Hz; apply bits1_and_zero_l.
+  Qed.
+
+  (* Two calls in mutually exclusive branches never hold one port at once. *)
+  Lemma drive_pulse_excl (act: tfs_action sched) a_idx n1 n2 p arg1 en1 arg2 en2
+        (ss: sched_sys_state) (input: sched_input_t) :
+    node_op act n1 = DFG_Drive p arg1 en1 ->
+    node_op act n2 = DFG_Drive p arg2 en2 ->
+    guards_disjoint en1 en2 = true ->
+    eval1 (drive_pulse act a_idx n1) ss input = Bits.zero
+    \/ eval1 (drive_pulse act a_idx n2) ss input = Bits.zero.
+  Proof.
+    intros H1 H2 Hd.
+    destruct (guards_disjoint_excl act a_idx (drive_sbufs act a_idx) en1 en2 ss input Hd)
+      as [Hz | Hz].
+    - left. exact (drive_pulse_zero_of_en act a_idx n1 p arg1 en1 ss input H1 Hz).
+    - right. exact (drive_pulse_zero_of_en act a_idx n2 p arg2 en2 ss input H2 Hz).
   Qed.
 
   (* The two halves of the drive register, each a fold over [drive_nodes]
