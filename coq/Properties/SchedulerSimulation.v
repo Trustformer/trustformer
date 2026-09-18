@@ -9042,7 +9042,7 @@ Section SchedulerSimulation.
     - left. injection Heq as Hk Hn. split; [ symmetry; exact Hk | symmetry; exact Hn ].
     - apply filter_In in Hin. destruct Hin as [Hin Hb]. cbv beta iota in Hb.
       right. split; [ exact Hin | ].
-      intro He. subst v2.
+      intro He. subst v'.
       match type of Hb with
       | (if ?X then _ else _) = true => destruct X as [Heq2 | Hne2]
       end.
@@ -9066,7 +9066,7 @@ Section SchedulerSimulation.
   Qed.
 
   (* Book-keeping about [emit] that the semantic induction needs at every node. *)
-  Lemma emit_vm (o: @dfg_op_t s_var i_var o_var) size (s: wst) id s' :
+  Lemma emit_vm (o: @dfg_op_t s_var i_var o_var p_var) size (s: wst) id s' :
     emit ctx o size s = (id, s') -> var_map s' = var_map s.
   Proof. rewrite emit_red. intro H. injection H as _ <-. reflexivity. Qed.
 
@@ -9080,7 +9080,7 @@ Section SchedulerSimulation.
     - exact (emit_vm _ _ s id s' Hem).
   Qed.
 
-  Lemma emit_gmono (o: @dfg_op_t s_var i_var o_var) size (s: wst) id s' :
+  Lemma emit_gmono (o: @dfg_op_t s_var i_var o_var p_var) size (s: wst) id s' :
     emit ctx o size s = (id, s') -> wgmono s s'.
   Proof.
     rewrite emit_red. intro H. injection H as _ <-.
