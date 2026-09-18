@@ -519,6 +519,31 @@ Section SchedulerSimulation.
   Qed.
 
 
+  (* ---- The stall counter's arithmetic ---- *)
+
+  (* One increment of a counter that has not yet saturated.  [counter_sz l] is
+     [S (log2 l)] bits, which holds 0 .. l-1 with room to spare, so no
+     wrap-around happens before the counter reaches [pred l]. *)
+  Lemma bits_plus_one_to_nat (sz: nat) (b: bits_t sz) :
+    S (Bits.to_nat b) < pow2 sz ->
+    Bits.to_nat (Bits.plus b (Bits.of_nat sz 1)) = S (Bits.to_nat b).
+  Proof.
+    intro Hlt.
+    assert (Hone : (1 < 2 ^ N.of_nat sz)%N).
+    { pose proof (Bits.nat_lt_pow2_N sz 1 ltac:(lia)) as H. cbn in H. exact H. }
+    assert (HbN : Bits.to_N b = N.of_nat (Bits.to_nat b))
+      by (unfold Bits.to_nat; rewrite N2Nat.id; reflexivity).
+    assert (Hsum : (Bits.to_N b + N.of_nat 1 < 2 ^ N.of_nat sz)%N).
+    { rewrite HbN.
+      replace (N.of_nat (Bits.to_nat b) + N.of_nat 1)%N
+        with (N.of_nat (S (Bits.to_nat b))) by lia.
+      exact (Bits.nat_lt_pow2_N sz _ Hlt). }
+    unfold Bits.plus, Bits.of_nat, Bits.to_nat.
+    rewrite (Bits.to_N_of_N (N.of_nat 1) sz ltac:(cbn; exact Hone)).
+    rewrite (Bits.to_N_of_N _ sz Hsum).
+    rewrite HbN, <- Nat2N.inj_add, Nat2N.id. lia.
+  Qed.
+
   Lemma valid_and_eval
     (e1 e2: @tf_expr (tfs_states sched) si_var o_var) (ss: sched_sys_state) (input: sched_input_t) :
     eval1 (valid_expr_and ctx bneeds e1 e2) ss input
