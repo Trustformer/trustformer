@@ -9214,13 +9214,15 @@ Section SchedulerSimulation.
   Section DFGSem.
     Context (act: tfs_action sched)
             (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
-            (ss: sched_sys_state) (input: sched_input_t)
+            (ss: sched_sys_state) (input: input_t) (sinput: sched_input_t)
             (sp0: src_sys_state) (F: wst).
     Hypothesis HF  : exports act F.
     Hypothesis Hss : forall sv, (fst ss).[tf_dfg_s sv] = (fst sp0).[sv].
     Hypothesis Hoo : forall ov, (snd ss).[ov] = (snd sp0).[ov].
+    (* the scheduled input carries the source's, plus the IP responses *)
+    Hypothesis Hsin : forall v, sinput (inl v) = input v.
 
-    Local Notation NV szB n := (nval act a_idx ss input szB n).
+    Local Notation NV szB n := (nval act a_idx ss sinput szB n).
 
     (* The source value of a DFG variable, at the variable's natural width. *)
     Definition src_get (sp: src_sys_state) (v: dvar) : bits_t (dfg_var_size ctx v) :=
@@ -9245,9 +9247,9 @@ Section SchedulerSimulation.
       NV (dfg_var_size ctx v) id = src_get sp0 v.
     Proof.
       intros Hne Hev Hg. destruct v as [sv | ov]; cbn [src_get dfg_var_size].
-      - rewrite (nval_fresh_svar act a_idx ss input F s s' sv id HF Hne Hev Hg).
+      - rewrite (nval_fresh_svar act a_idx ss sinput F s s' sv id HF Hne Hev Hg).
         exact (Hss sv).
-      - rewrite (nval_fresh_ovar act a_idx ss input F s s' ov id HF Hne Hev Hg).
+      - rewrite (nval_fresh_ovar act a_idx ss sinput F s s' ov id HF Hne Hev Hg).
         exact (Hoo ov).
     Qed.
 
@@ -9264,8 +9266,8 @@ Section SchedulerSimulation.
         - subst s'. exact (in_var_node_at act F s v id HF Hin Hpos Hg).
         - exact (emit_var_node_at act F s s' v id HF Hne Hem Hg). }
       destruct v as [sv | ov]; cbn [src_get dfg_var_size].
-      - rewrite (nval_var_svar act a_idx ss input sv id Hat). exact (Hss sv).
-      - rewrite (nval_var_ovar act a_idx ss input ov id Hat). exact (Hoo ov).
+      - rewrite (nval_var_svar act a_idx ss sinput sv id Hat). exact (Hss sv).
+      - rewrite (nval_var_ovar act a_idx ss sinput ov id Hat). exact (Hoo ov).
     Qed.
 
     (* [get_var] returns a node denoting the CURRENT source value: either the
@@ -9366,7 +9368,7 @@ Section SchedulerSimulation.
           split.
           * apply (sem_inv_vm s s1); [ exact (emit_vm _ _ _ _ _ Eem) | exact Hsem ].
           * unfold nval. rewrite (nre_input act a_idx src_id iv R1 R2 Rop).
-            cbn [tf_eval_expr]. reflexivity.
+            cbn [tf_eval_expr]. rewrite Hsin. reflexivity.
         + assert (Hg1F : wgmono s1 F)
             by exact (wgmono_trans s1 s' F (emit_gmono _ _ _ _ _ Hde) Hg').
           destruct (emitted_node_at act F s s1 (DFG_Input iv) szE src_id
@@ -9380,7 +9382,7 @@ Section SchedulerSimulation.
             rewrite (nre_resize act a_idx id src_id Q1 Q2 Qop), Rsz.
             cbn [tf_eval_expr].
             rewrite (nre_input act a_idx src_id iv R1 R2 Rop).
-            cbn [tf_eval_expr]. apply convert_same.
+            cbn [tf_eval_expr]. rewrite Hsin. apply convert_same.
       - (* tf_ovar *)
         cbn [dataflow_expr] in Hde. unfold bind in Hde.
         pose proof (get_var_sz (DFG_OVar ov) s Hinv Hvsz) as Hgv.
@@ -9570,9 +9572,9 @@ Section SchedulerSimulation.
       wgmono s1 F ->
       (forall szB E1 E2,
          tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
-           (tf_expr_if (node_ref_expr act a_idx cond_id) E1 E2) ss input
-         = if b then tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E2 ss input
-                else tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E1 ss input) ->
+           (tf_expr_if (node_ref_expr act a_idx cond_id) E1 E2) ss sinput
+         = if b then tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E2 ss sinput
+                else tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E1 ss sinput) ->
       (forall kk, src_get spf kk = if b then src_get spe kk else src_get spt kk) ->
       (forall vt, vt_opt = Some vt -> NV (dfg_var_size ctx k) vt = src_get spt k) ->
       (forall ve, ve_opt = Some ve -> NV (dfg_var_size ctx k) ve = src_get spe k) ->
@@ -9651,9 +9653,9 @@ Section SchedulerSimulation.
     Lemma merge_loop_sem (cond_id: nid_t) mt me (b: bool) (spt spe spf: src_sys_state) :
       (forall szB E1 E2,
          tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
-           (tf_expr_if (node_ref_expr act a_idx cond_id) E1 E2) ss input
-         = if b then tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E2 ss input
-                else tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E1 ss input) ->
+           (tf_expr_if (node_ref_expr act a_idx cond_id) E1 E2) ss sinput
+         = if b then tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E2 ss sinput
+                else tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E1 ss sinput) ->
       (forall kk, src_get spf kk = if b then src_get spe kk else src_get spt kk) ->
       vm_sem mt spt -> vm_frame mt spt ->
       vm_sem me spe -> vm_frame me spe ->
@@ -9706,9 +9708,9 @@ Section SchedulerSimulation.
           (spt spe spf: src_sys_state) (s: wst) fin s' :
       (forall szB E1 E2,
          tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
-           (tf_expr_if (node_ref_expr act a_idx cond_id) E1 E2) ss input
-         = if b then tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E2 ss input
-                else tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E1 ss input) ->
+           (tf_expr_if (node_ref_expr act a_idx cond_id) E1 E2) ss sinput
+         = if b then tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E2 ss sinput
+                else tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E1 ss sinput) ->
       (forall kk, src_get spf kk = if b then src_get spe kk else src_get spt kk) ->
       vm_sem mt spt -> vm_frame mt spt ->
       vm_sem me spe -> vm_frame me spe ->
@@ -9759,11 +9761,11 @@ Section SchedulerSimulation.
     Qed.
 
     Lemma ops_run_nop (sp: src_sys_state) :
-      tf_ops_run s_sz i_sz o_sz (tf_ops_base tf_nop) sp input = (fst sp, snd sp).
+      tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tf_ops_base tf_nop) sp input = (fst sp, snd sp).
     Proof. reflexivity. Qed.
 
     Lemma ops_run_assign (dst: s_var) e (sp: src_sys_state) :
-      tf_ops_run s_sz i_sz o_sz (tf_ops_base (tf_assign dst e)) sp input
+      tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tf_ops_base (tf_assign dst e)) sp input
       = (ContextEnv.(putenv) (fst sp) dst
            (tf_eval_expr s_sz i_sz o_sz (szB := s_sz dst) e sp input), snd sp).
     Proof. reflexivity. Qed.
@@ -9771,30 +9773,31 @@ Section SchedulerSimulation.
     (* THE DENOTATION at the spec level, in this file's R form: a call assigns its
        destination the value of its RESPONSE port, with the argument [e] absent
        from the right-hand side. *)
-    Lemma ops_run_call (rq: o_var) (rv: i_var) (dst: s_var) e
-        {szA szB} (fn: bits_t szA -> bits_t szB)
-        (sp: src_sys_state) :
-      tf_ops_run s_sz i_sz o_sz (tf_ops_base (tf_call rq rv dst e fn)) sp input
+    (* V4: a call is ONE source update, the IP applied to the request.  The
+       request port is the scheduler's own register and no declared output. *)
+    Lemma ops_run_call (ip: p_var) (dst: s_var) e (sp: src_sys_state) :
+      tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tf_ops_base (tf_call ip dst e)) sp input
       = (ContextEnv.(putenv) (fst sp) dst
-           (tf_eval_expr s_sz i_sz o_sz (szB := s_sz dst) (tf_ivar rv) sp input),
-         ContextEnv.(putenv) (snd sp) rq
-           (tf_eval_expr s_sz i_sz o_sz (szB := o_sz rq) e sp input)).
+           (convert (ip_fn (tfs_spec_ip ctx ip)
+              (tf_eval_expr s_sz i_sz o_sz
+                 (szB := ip_req_sz (tfs_spec_ip ctx ip)) e sp input))),
+         snd sp).
     Proof. reflexivity. Qed.
 
     Lemma ops_run_output (dst: o_var) e (sp: src_sys_state) :
-      tf_ops_run s_sz i_sz o_sz (tf_ops_base (tf_output dst e)) sp input
+      tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tf_ops_base (tf_output dst e)) sp input
       = (fst sp, ContextEnv.(putenv) (snd sp) dst
            (tf_eval_expr s_sz i_sz o_sz (szB := o_sz dst) e sp input)).
     Proof. reflexivity. Qed.
 
     Lemma ops_run_cons o1 o2 (sp: src_sys_state) :
-      tf_ops_run s_sz i_sz o_sz (tf_ops_cons o1 o2) sp input
-      = tf_ops_run s_sz i_sz o_sz o2 (tf_ops_run s_sz i_sz o_sz o1 sp input) input.
+      tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tf_ops_cons o1 o2) sp input
+      = tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) o2 (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) o1 sp input) input.
     Proof.
       unfold tf_ops_run. cbn [tf_ops_updates].
-      destruct (tf_ops_updates s_sz i_sz o_sz o1 sp input) as [u1 sp1].
+      destruct (tf_ops_updates s_sz i_sz o_sz (tfs_spec_ip ctx) o1 sp input) as [u1 sp1].
       cbn [snd].
-      destruct (tf_ops_updates s_sz i_sz o_sz o2 sp1 input) as [u2 sp2].
+      destruct (tf_ops_updates s_sz i_sz o_sz (tfs_spec_ip ctx) o2 sp1 input) as [u2 sp2].
       reflexivity.
     Qed.
 
@@ -9829,15 +9832,16 @@ Section SchedulerSimulation.
     Qed.
 
     Lemma dataflow_ops_sem :
-      forall (ops: @tf_ops s_var i_var o_var p_var) (s: wst) sp,
+      forall (ops: @tf_ops s_var i_var o_var p_var) (en: list (nid_t * bool))
+             (s: wst) sp,
         0 < length (graph s) -> winv s -> wvsz s -> wfg s ->
         sem_inv s sp ->
         let (u, s') := dataflow_ops ctx en ops s in
-        wgmono s' F -> sem_inv s' (tf_ops_run s_sz i_sz o_sz ops sp input).
+        wgmono s' F -> sem_inv s' (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) ops sp input).
     Proof.
       induction ops as [op | op1 IHops1 op2 IHops2 | cond op1 IHops1 op2 IHops2];
-        intros s sp Hne Hinv Hvsz Hfg Hsem.
-      - destruct op as [ | dst expr | dst expr | rq rv dst expr szA szB fn ].
+        intros en s sp Hne Hinv Hvsz Hfg Hsem.
+      - destruct op as [ | dst expr | dst expr | ip dst expr ].
         + (* nop *)
           cbn [dataflow_ops]. unfold ret. intro Hg'.
           rewrite ops_run_nop.
@@ -9994,7 +9998,7 @@ Section SchedulerSimulation.
         assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 G1 Hne).
         pose proof (dataflow_ops_fg op2 s1 P1 Q1 Ff1) as Fb.
         pose proof (fun Hs =>
-                      IHops2 s1 (tf_ops_run s_sz i_sz o_sz op1 sp input)
+                      IHops2 s1 (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) op1 sp input)
                         Hne1 P1 Q1 Ff1 Hs) as H2.
         destruct (dataflow_ops ctx en op2 s1) as [u2 s2] eqn:E2.
         destruct Fb as [G2 [P2 [Q2 Ff2]]].
@@ -10101,9 +10105,9 @@ Section SchedulerSimulation.
         | |- context [ if ?B then _ else _ ] =>
             assert (Hb : forall szB E1 E2,
                        tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
-                         (tf_expr_if (node_ref_expr act a_idx cond_id) E1 E2) ss input
-                       = if B then tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E2 ss input
-                              else tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E1 ss input)
+                         (tf_expr_if (node_ref_expr act a_idx cond_id) E1 E2) ss sinput
+                       = if B then tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E2 ss sinput
+                              else tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E1 ss sinput)
               by (intros szB E1 E2; cbn [tf_eval_expr]; rewrite Hvc; reflexivity);
             destruct B
         end.
@@ -10148,7 +10152,7 @@ Section SchedulerSimulation.
     act_idx_aligned act a_idx ->
     (forall sv, (fst ss).[tf_dfg_s sv] = (fst sp).[sv]) ->
     (forall ov, (snd ss).[ov] = (snd sp).[ov]) ->
-    let sp1 := tf_ops_run s_sz i_sz o_sz (tfs_spec_action_ops ctx act) sp input in
+    let sp1 := tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act) sp input in
     (forall sv n, In (DFG_SVar sv, n) (var_map (build_dfg ctx act)) ->
         eval_st (tf_dfg_s sv)
           (fst (compile_dfg_expr ctx bneeds
@@ -10210,7 +10214,7 @@ Section SchedulerSimulation.
       start_rel sp0 ss0 ->
       (forall k, k < N -> ~ done_set (run_n k act input ss0)) ->
       done_set (run_n N act input ss0) ->
-      let sp1 := tf_ops_run s_sz i_sz o_sz (tfs_spec_action_ops ctx act) sp0 input in
+      let sp1 := tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act) sp0 input in
       maps_from ctx bneeds (fst (run_n N act input ss0)) = fst sp1 /\
       snd (run_n N act input ss0) = snd sp1.
   Proof.
@@ -10290,7 +10294,7 @@ Section SchedulerSimulation.
       exists N,
         (forall k, k < N -> ~ done_set (run_n k act input ss0)) /\
         done_set (run_n N act input ss0) /\
-        let sp1 := tf_ops_run s_sz i_sz o_sz (tfs_spec_action_ops ctx act) sp0 input in
+        let sp1 := tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act) sp0 input in
         maps_from ctx bneeds (fst (run_n N act input ss0)) = fst sp1 /\
         snd (run_n N act input ss0) = snd sp1.
   Proof.
