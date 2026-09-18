@@ -3028,6 +3028,140 @@ Section SchedulerSimulation.
     apply all_nodes_rev. exact H.
   Qed.
 
+  (* The third and last builder invariant, and this one is generic in the
+     graph predicate: every step but a call.s own emits a node that is neither
+     a drive, a sample nor a join, and that is all these lemmas need. *)
+  Definition P_emit_expr (P: list (@dfg_node_t s_var i_var o_var p_var) -> Prop) : Prop :=
+    forall L o z,
+      (forall p arg en, o <> DFG_Drive p arg en) ->
+      (forall p tok en, o <> DFG_Sample p tok en) ->
+      (forall d prev, o <> DFG_Join d prev) ->
+      P L -> P ({| nid := length L; op := o; sz := z |} :: L).
+
+  Definition preserves_g (P: list (@dfg_node_t s_var i_var o_var p_var) -> Prop)
+      {A} (m: M ctx A) : Prop :=
+    forall s, P (graph s) -> P (graph (snd (m s))).
+
+  Lemma preserves_g_ret P {A} (x: A) : preserves_g P (ret ctx x).
+  Proof. intros s Hs. exact Hs. Qed.
+
+  Lemma preserves_g_bind P {A B} (m: M ctx A) (f: A -> M ctx B) :
+    preserves_g P m -> (forall x, preserves_g P (f x)) -> preserves_g P (bind ctx m f).
+  Proof.
+    intros Hm Hf s Hs. unfold bind.
+    specialize (Hm s Hs). destruct (m s) as [x s1]. cbn [snd] in Hm.
+    exact (Hf x s1 Hm).
+  Qed.
+
+  Lemma g_bind_at P {A B} (m: M ctx A) (f: A -> M ctx B) (s: wst) :
+    P (graph (snd (m s))) ->
+    (forall x s1, m s = (x, s1) -> P (graph s1) -> P (graph (snd (f x s1)))) ->
+    P (graph (snd (bind ctx m f s))).
+  Proof.
+    intros Hm Hf. unfold bind.
+    destruct (m s) as [x s1] eqn:E. cbn [snd] in Hm. exact (Hf x s1 eq_refl Hm).
+  Qed.
+
+  Lemma preserves_g_emit P o size :
+    P_emit_expr P ->
+    (forall p arg en, o <> DFG_Drive p arg en) ->
+    (forall p tok en, o <> DFG_Sample p tok en) ->
+    (forall d prev, o <> DFG_Join d prev) ->
+    preserves_g P (emit ctx o size).
+  Proof.
+    intros HP H1 H2 H3 s Hs. rewrite emit_red. cbn [snd graph].
+    exact (HP (graph s) o size H1 H2 H3 Hs).
+  Qed.
+
+  Lemma preserves_g_set_var P v id : preserves_g P (set_var ctx v id).
+  Proof.
+    intros s Hs. unfold set_var, bind, get_state, put_state. cbn [snd graph]. exact Hs.
+  Qed.
+
+  Lemma preserves_g_get_var P : P_emit_expr P -> forall v, preserves_g P (get_var ctx v).
+  Proof.
+    intros HP v s Hs. unfold get_var, bind, get_state.
+    destruct (BitsToLists.list_assoc (var_map s) v) as [id |]; [ exact Hs |].
+    destruct (read_var ctx v s) as [id s'] eqn:Er. cbn [snd].
+    destruct (read_var_cases v s id s' Er) as [[_ [_ ->]] | Hem]; [ exact Hs |].
+    apply (f_equal snd) in Hem. cbn [snd] in Hem. rewrite <- Hem.
+    assert (H : preserves_g P (emit ctx (DFG_Var v) (dfg_var_size ctx v)))
+      by (apply (preserves_g_emit P _ _ HP); intros; discriminate).
+    exact (H s Hs).
+  Qed.
+
+  Lemma preserves_g_ensure_var P : P_emit_expr P -> forall v, preserves_g P (ensure_var ctx v).
+  Proof.
+    intros HP v s Hs. unfold ensure_var, bind, get_state, put_state, ret.
+    destruct (emit ctx (DFG_Var v) (dfg_var_size ctx v) s) as [id s1] eqn:Ee.
+    cbn [snd graph].
+    assert (H : preserves_g P (emit ctx (DFG_Var v) (dfg_var_size ctx v)))
+      by (apply (preserves_g_emit P _ _ HP); intros; discriminate).
+    specialize (H s Hs). rewrite Ee in H. cbn [snd] in H. exact H.
+  Qed.
+
+  Lemma preserves_g_merge_key P : P_emit_expr P ->
+    forall c k vt ve, preserves_g P (merge_key ctx c k vt ve).
+  Proof.
+    intros HP c k vt ve. unfold merge_key.
+    assert (Hphi : forall a b, preserves_g P (emit ctx (DFG_Phi c a b) (dfg_var_size ctx k)))
+      by (intros a b; apply (preserves_g_emit P _ _ HP); intros; discriminate).
+    destruct vt as [x |]; destruct ve as [y |].
+    - destruct (eq_dec x y); [ apply preserves_g_ret |].
+      apply preserves_g_bind; [ apply Hphi | intro z; apply preserves_g_ret ].
+    - apply preserves_g_bind; [ apply preserves_g_ensure_var; exact HP | intro z ].
+      apply preserves_g_bind; [ apply Hphi | intro w; apply preserves_g_ret ].
+    - apply preserves_g_bind; [ apply preserves_g_ensure_var; exact HP | intro z ].
+      apply preserves_g_bind; [ apply Hphi | intro w; apply preserves_g_ret ].
+    - apply preserves_g_ret.
+  Qed.
+
+  Lemma preserves_g_merge_loop P : P_emit_expr P ->
+    forall c mt me keys acc, preserves_g P (merge_loop ctx c mt me keys acc).
+  Proof.
+    intros HP c mt me keys. induction keys as [| [k kid] keys IH]; intro acc;
+      cbn [merge_loop]; [ apply preserves_g_ret |].
+    destruct (BitsToLists.list_assoc acc k) as [x |]; [ apply IH |].
+    apply preserves_g_bind; [ apply preserves_g_merge_key; exact HP | intro r ].
+    destruct r as [fid |]; apply IH.
+  Qed.
+
+  Lemma dataflow_expr_g P : P_emit_expr P ->
+    forall e sz, preserves_g P (dataflow_expr ctx e sz).
+  Proof.
+    intros HP e. induction e as [ c | v | v | v | uop src IHsrc
+                                | bop s1 IH1 s2 IH2 | c IHc t IHt e IHe ];
+      intro sz;
+      assert (Hem : forall o size,
+                (forall p arg en, o <> DFG_Drive p arg en) ->
+                (forall p tok en, o <> DFG_Sample p tok en) ->
+                (forall d prev, o <> DFG_Join d prev) ->
+                preserves_g P (emit ctx o size))
+        by (intros; apply (preserves_g_emit P _ _ HP); assumption);
+      cbn [dataflow_expr].
+    - apply Hem; intros; discriminate.
+    - apply preserves_g_bind; [ apply preserves_g_get_var; exact HP | intro x ].
+      destruct (Nat.eqb _ sz);
+        [ apply preserves_g_ret | apply Hem; intros; discriminate ].
+    - apply preserves_g_bind; [ apply Hem; intros; discriminate | intro x ].
+      destruct (Nat.eqb _ sz);
+        [ apply preserves_g_ret | apply Hem; intros; discriminate ].
+    - apply preserves_g_bind; [ apply preserves_g_get_var; exact HP | intro x ].
+      destruct (Nat.eqb _ sz);
+        [ apply preserves_g_ret | apply Hem; intros; discriminate ].
+    - destruct uop;
+        (apply preserves_g_bind; [ apply IHsrc | intro x ];
+         apply Hem; intros; discriminate).
+    - destruct bop;
+        (apply preserves_g_bind; [ apply IH1 | intro x ];
+         apply preserves_g_bind; [ apply IH2 | intro y ];
+         apply Hem; intros; discriminate).
+    - apply preserves_g_bind; [ apply IHc | intro x ].
+      apply preserves_g_bind; [ apply IHt | intro y ].
+      apply preserves_g_bind; [ apply IHe | intro z ].
+      apply Hem; intros; discriminate.
+  Qed.
+
   (* THE STRUCTURAL FACT, on the exported forward graph. *)
   Lemma joins_sequence_build_dfg (act: tfs_action sched) :
     joins_sequence (graph (build_dfg ctx act)).
