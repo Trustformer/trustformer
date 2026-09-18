@@ -2460,6 +2460,69 @@ Section SchedulerSimulation.
     intros d prev Hc. discriminate Hc.
   Qed.
 
+  (* The graph only grows, with no [winv] side condition -- which is what the
+     [tf_call] case needs to carry [last_sample].s witness forward. *)
+  Definition grows {A} (m: M ctx A) : Prop :=
+    forall s, wgmono s (snd (m s)).
+
+  Lemma grows_ret {A} (x: A) : grows (ret ctx x).
+  Proof. intros s. apply wgmono_refl. Qed.
+
+  Lemma grows_bind {A B} (m: M ctx A) (f: A -> M ctx B) :
+    grows m -> (forall x, grows (f x)) -> grows (bind ctx m f).
+  Proof.
+    intros Hm Hf s. unfold bind. specialize (Hm s).
+    destruct (m s) as [x s1]. cbn [snd] in Hm.
+    exact (wgmono_trans s s1 _ Hm (Hf x s1)).
+  Qed.
+
+  Lemma grows_emit o size : grows (emit ctx o size).
+  Proof. intros s. rewrite emit_red. cbn [snd graph]. intros n Hn. right. exact Hn. Qed.
+
+  Lemma grows_get_var v : grows (get_var ctx v).
+  Proof.
+    intros s. unfold get_var, bind, get_state.
+    destruct (BitsToLists.list_assoc (var_map s) v) as [id |]; [ apply wgmono_refl |].
+    destruct (read_var ctx v s) as [id s'] eqn:Er. cbn [snd].
+    destruct (read_var_cases v s id s' Er) as [[_ [_ ->]] | Hem]; [ apply wgmono_refl |].
+    apply (f_equal snd) in Hem. cbn [snd] in Hem. rewrite <- Hem.
+    apply grows_emit.
+  Qed.
+
+  Lemma dataflow_expr_grows e sz : grows (dataflow_expr ctx e sz).
+  Proof.
+    revert sz.
+    induction e as [ c | v | v | v | uop src IHsrc | bop s1 IH1 s2 IH2 | c IHc t IHt e IHe ];
+      intro sz; cbn [dataflow_expr].
+    - apply grows_emit.
+    - apply grows_bind; [ apply grows_get_var | intro x ].
+      destruct (Nat.eqb _ sz); [ apply grows_ret | apply grows_emit ].
+    - apply grows_bind; [ apply grows_emit | intro x ].
+      destruct (Nat.eqb _ sz); [ apply grows_ret | apply grows_emit ].
+    - apply grows_bind; [ apply grows_get_var | intro x ].
+      destruct (Nat.eqb _ sz); [ apply grows_ret | apply grows_emit ].
+    - destruct uop; (apply grows_bind; [ apply IHsrc | intro x ]; apply grows_emit).
+    - destruct bop;
+        (apply grows_bind; [ apply IH1 | intro x ];
+         apply grows_bind; [ apply IH2 | intro y ]; apply grows_emit).
+    - apply grows_bind; [ apply IHc | intro x ].
+      apply grows_bind; [ apply IHt | intro y ].
+      apply grows_bind; [ apply IHe | intro z ]. apply grows_emit.
+  Qed.
+
+  (* A bind that keeps the link between the step and the state it lands in --
+     needed where a later step reads a state bound by an earlier [get_state]. *)
+  Lemma preserves_js_bind_st {A B} (m: M ctx A) (f: A -> M ctx B) :
+    preserves_js m ->
+    (forall s x s1, m s = (x, s1) -> joins_sequence (graph s1) ->
+       joins_sequence (graph (snd (f x s1)))) ->
+    preserves_js (bind ctx m f).
+  Proof.
+    intros Hm Hf s Hs. unfold bind.
+    specialize (Hm s Hs). destruct (m s) as [x s1] eqn:E. cbn [snd] in Hm.
+    exact (Hf s x s1 E Hm).
+  Qed.
+
   Lemma dataflow_expr_joins e sz : preserves_js (dataflow_expr ctx e sz).
   Proof.
     revert sz.
@@ -2491,6 +2554,57 @@ Section SchedulerSimulation.
       apply preserves_js_bind; [ apply IHe | intro z ].
       apply preserves_js_emit; intros d prev Hc; discriminate Hc.
   Qed.
+
+  Lemma preserves_js_set_var v id : preserves_js (set_var ctx v id).
+  Proof.
+    intros s Hs. unfold set_var, bind, get_state, put_state. cbn [snd graph]. exact Hs.
+  Qed.
+
+  Lemma preserves_js_ensure_var v : preserves_js (ensure_var ctx v).
+  Proof.
+    intros s Hs. unfold ensure_var, bind, get_state, put_state, ret.
+    destruct (emit ctx (DFG_Var v) (dfg_var_size ctx v) s) as [id s1] eqn:Ee.
+    cbn [snd graph].
+    assert (Hs1 : joins_sequence (graph s1)).
+    { pose proof (joins_sequence_emit_other s (DFG_Var v) (dfg_var_size ctx v) Hs
+                    ltac:(intros d prev Hc; discriminate Hc)) as H.
+      rewrite Ee in H. cbn [snd] in H. exact H. }
+    exact Hs1.
+  Qed.
+
+  Lemma preserves_js_merge_key c k vt ve : preserves_js (merge_key ctx c k vt ve).
+  Proof.
+    unfold merge_key.
+    destruct vt as [x |]; destruct ve as [y |].
+    - destruct (eq_dec x y); [ apply preserves_js_ret |].
+      apply preserves_js_bind;
+        [ apply preserves_js_emit; intros d prev Hc; discriminate Hc
+        | intro z; apply preserves_js_ret ].
+    - apply preserves_js_bind; [ apply preserves_js_ensure_var | intro z ].
+      apply preserves_js_bind;
+        [ apply preserves_js_emit; intros d prev Hc; discriminate Hc
+        | intro w; apply preserves_js_ret ].
+    - apply preserves_js_bind; [ apply preserves_js_ensure_var | intro z ].
+      apply preserves_js_bind;
+        [ apply preserves_js_emit; intros d prev Hc; discriminate Hc
+        | intro w; apply preserves_js_ret ].
+    - apply preserves_js_ret.
+  Qed.
+
+  Lemma preserves_js_merge_loop c mt me keys acc :
+    preserves_js (merge_loop ctx c mt me keys acc).
+  Proof.
+    revert acc. induction keys as [| [k kid] keys IH]; intro acc;
+      cbn [merge_loop]; [ apply preserves_js_ret |].
+    destruct (BitsToLists.list_assoc acc k) as [x |]; [ apply IH |].
+    apply preserves_js_bind; [ apply preserves_js_merge_key | intro r ].
+    destruct r as [fid |]; apply IH.
+  Qed.
+
+  Lemma preserves_js_merge_maps c mo mt me :
+    preserves_js (merge_maps ctx c mo mt me).
+  Proof. apply preserves_js_merge_loop. Qed.
+
 
 
   Lemma get_var_full v (s: wst) :
