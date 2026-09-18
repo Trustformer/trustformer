@@ -1,11 +1,8 @@
 
 default: all
 
-# Guarded: -j 1 under ulimit -v and a wall clock.  Stock `dune build` starts one
-# coqc per core against ONE 8 GiB cgroup, and a non-terminating tactic then
-# OOM-kills the session instead of failing -- see agents/build.sh.
 coq:
-	agents/build.sh coq/
+	dune build
 
 ML_FILES := $(wildcard build/*.ml)
 
