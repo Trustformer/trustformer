@@ -15,6 +15,9 @@ Record ip_decl := {
   ip_req_sz  : nat;         (* request width, driven mid-action *)
   ip_resp_sz : nat;         (* response width, sampled live *)
   ip_lat     : nat;         (* cycles from pulse to answer; not pipelined *)
+  (* A zero-latency call emits no stall, so its ordering join never reaches the
+     pulse gate and two calls on the port collide. *)
+  ip_lat_pos : 1 <= ip_lat;
   ip_fn      : bits_t ip_req_sz -> bits_t ip_resp_sz;
 }.
 

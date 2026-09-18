@@ -242,10 +242,12 @@ Section FunctionalSpecification.
       | ip_sha  => {| ip_req_sz  := len_sz + msg_sz;
                       ip_resp_sz := digest_sz;
                       ip_lat     := 140;
+                      ip_lat_pos := ltac:(lia);
                       ip_fn      := placeholder_digest |}
       | ip_hmac => {| ip_req_sz  := len_sz + digest_sz + hmac_msg_sz;
                       ip_resp_sz := digest_sz;
                       ip_lat     := 275;
+                      ip_lat_pos := ltac:(lia);
                       ip_fn      := placeholder_digest |}
       end.
 

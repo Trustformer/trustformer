@@ -33,7 +33,8 @@ Section Spike.
 
   Inductive sl_ips := sl_ip_crypto.
   Definition sl_ip (_: sl_ips) : ip_decl :=
-    {| ip_req_sz := w; ip_resp_sz := w; ip_lat := 0; ip_fn := fun v => v |}.
+    {| ip_req_sz := w; ip_resp_sz := w; ip_lat := 1;
+       ip_lat_pos := ltac:(lia); ip_fn := fun v => v |}.
 
   Definition sl_ctx : TFSchedContext := {|
       tfs_spec_states := sl_states;   tfs_spec_states_fin := _;

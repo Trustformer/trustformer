@@ -49,7 +49,8 @@ Section CallSpike.
 
   Inductive cs_ips := cs_crypto.
   Definition cs_ip (_: cs_ips) : ip_decl :=
-    {| ip_req_sz := cw; ip_resp_sz := cw; ip_lat := clat; ip_fn := cs_f |}.
+    {| ip_req_sz := cw; ip_resp_sz := cw; ip_lat := clat;
+       ip_lat_pos := ltac:(unfold clat; lia); ip_fn := cs_f |}.
 
   Definition cs_ctx : TFSchedContext := {|
       tfs_spec_states := cs_states;   tfs_spec_states_fin := _;
