@@ -10358,7 +10358,7 @@ Section SchedulerSimulation.
      final states and outputs match the one-shot source evaluation. *)
   Lemma scheduler_done_correct :
     forall (act: tfs_action sched) (sp0: src_sys_state)
-           (ss0: sched_sys_state) (input: sched_input_t) (N: nat),
+           (ss0: sched_sys_state) (input: input_t) (N: nat),
       start_rel sp0 ss0 ->
       (forall k, k < N -> ~ done_set (run_n k act input ss0)) ->
       done_set (run_n N act input ss0) ->
@@ -10372,7 +10372,8 @@ Section SchedulerSimulation.
     destruct N as [| M].
     { exfalso. apply Hdone. cbn [run_n]. apply (Hzero0 (tfs_done_signal sched) I). }
     set (ssM := run_n M act input ss0) in *.
-    change (run_n (S M) act input ss0) with (sched_step act ssM input) in *.
+    change (run_n (S M) act input ss0)
+      with (sched_step act ssM (sched_input input ssM)) in *.
     assert (Hpre : forall i, 1 <= i <= M -> ~ done_set (run_n i act input ss0))
       by (intros i Hi; apply Hbefore; lia).
     (* the pre-done prefix leaves the base state and the outputs at sp0 *)
@@ -10383,9 +10384,10 @@ Section SchedulerSimulation.
     { intro ov. unfold ssM. rewrite (run_preserves_ovar act input ss0 M Hpre ov).
       rewrite Hout0. reflexivity. }
     (* the invariant holds at ssM *)
-    assert (Hinv : valid_settled act a_idx ssM input).
-    { apply valid_settled_run; [ exact Halign |].
-      intro n_idx. apply (Hzero0 (tf_dfg_v a_idx n_idx) I). }
+    assert (Hinv : valid_settled act a_idx ssM (sched_input input ssM)).
+    { destruct (valid_settled_run act a_idx input ss0 M Halign
+                  ltac:(intro n_idx; apply (Hzero0 (tf_dfg_v a_idx n_idx) I)))
+        as [_ [_ Hinv]]. exact Hinv. }
     (* drop the buffers from any var_map node's compiled expression *)
     assert (Hdrop : forall v n szB,
               In (v, n) (var_map (build_dfg ctx act)) ->
@@ -10394,41 +10396,56 @@ Section SchedulerSimulation.
                 (fst (compile_dfg_expr ctx bneeds
                         (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n
                         (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
-                ssM input
+                ssM (sched_input input ssM)
               = tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
                 (fst (compile_dfg_expr ctx bneeds
                         (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
-                ssM input).
+                ssM (sched_input input ssM)).
     { intros v n szB Hin HszB.
       assert (Hmem : In n (map snd (var_map (build_dfg ctx act))))
         by (apply (in_map snd _ (v, n)); exact Hin).
       destruct (var_map_node_range act n Hmem) as [Hn1 Hnlen].
-      apply (compile_subst_valid act a_idx ssM input Halign Hinv).
+      apply (compile_subst_valid act a_idx ssM (sched_input input ssM)
+               Halign Hinv).
       - intros e He. exact He.
+      - intros x Hx. apply list_assoc_key_none. intro Hin2.
+        apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
+        cbn [fst] in Hxx. subst x2.
+        unfold sample_bufs in Hmem2. apply filter_In in Hmem2.
+        apply (list_assoc_none_key _ _ Hx), in_map_iff.
+        exists (x, v2). split; [ reflexivity | exact (proj1 Hmem2) ].
+      - intros x m msz Hx Hsx. apply list_assoc_nodup_in.
+        + unfold sample_bufs. apply nodup_map_fst_filter.
+          exact (slot_keys_nodup act a_idx Halign).
+        + unfold sample_bufs. apply filter_In.
+          split; [ exact (wla_in _ _ _ Hx) | exact Hsx ].
       - exact Hn1.
       - exact Hnlen.
       - exact Hnlen.
       - rewrite HszB. symmetry. exact (var_map_entry_size act v n Hin).
-      - exact (sched_step_done_valid act a_idx ssM input n Halign Hdone Hmem). }
-    destruct (dfg_action_semantics act a_idx sp0 ssM input Halign Hs Ho)
+      - exact (sched_step_done_valid act a_idx ssM (sched_input input ssM) n Halign Hdone Hmem). }
+    (* the one obligation left in this file: a sample.s register holds the IP.s
+       answer to the request its own drive sent.  See agents/v4-proofs/PLAN.md. *)
+    destruct (dfg_action_semantics act a_idx sp0 ssM input (sched_input input ssM)
+                Halign ltac:(intro v; reflexivity) Hrt_obligation Hs Ho)
       as [Hsem_s [Hsem_o [Hfix_s Hfix_o]]].
     split.
     - apply equiv_eq. unfold equiv. intro sv.
       rewrite getenv_maps_from.
       destruct (find_pair_dec eq_dec (var_map (build_dfg ctx act)) (DFG_SVar sv))
         as [[n Hn] | Hno].
-      + rewrite (sched_step_done_svar act a_idx ssM input sv n Halign Hdone Hn).
+      + rewrite (sched_step_done_svar act a_idx ssM (sched_input input ssM) sv n Halign Hdone Hn).
         rewrite (Hdrop (DFG_SVar sv) n (ss_sz (tf_dfg_s sv)) Hn eq_refl).
         exact (Hsem_s sv n Hn).
-      + rewrite (sched_step_done_svar_untouched act a_idx ssM input sv Halign Hdone Hno).
+      + rewrite (sched_step_done_svar_untouched act a_idx ssM (sched_input input ssM) sv Halign Hdone Hno).
         rewrite (Hfix_s sv Hno). exact (Hs sv).
     - apply equiv_eq. unfold equiv. intro ov.
       destruct (find_pair_dec eq_dec (var_map (build_dfg ctx act)) (DFG_OVar ov))
         as [[n Hn] | Hno].
-      + rewrite (sched_step_done_ovar act a_idx ssM input ov n Halign Hdone Hn).
+      + rewrite (sched_step_done_ovar act a_idx ssM (sched_input input ssM) ov n Halign Hdone Hn).
         rewrite (Hdrop (DFG_OVar ov) n (oo_sz ov) Hn eq_refl).
         exact (Hsem_o ov n Hn).
-      + rewrite (sched_step_done_ovar_untouched act a_idx ssM input ov Halign Hdone Hno).
+      + rewrite (sched_step_done_ovar_untouched act a_idx ssM (sched_input input ssM) ov Halign Hdone Hno).
         rewrite (Hfix_o ov Hno). exact (Ho ov).
   Qed.
 
@@ -10437,7 +10454,7 @@ Section SchedulerSimulation.
   (* ==================================================================== *)
   Theorem variable_scheduler_correct :
     forall (act: tfs_action sched) (sp0: src_sys_state)
-           (ss0: sched_sys_state) (input: sched_input_t),
+           (ss0: sched_sys_state) (input: input_t),
       start_rel sp0 ss0 ->
       exists N,
         (forall k, k < N -> ~ done_set (run_n k act input ss0)) /\
