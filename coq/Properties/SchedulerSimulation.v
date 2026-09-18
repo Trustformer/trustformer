@@ -544,6 +544,12 @@ Section SchedulerSimulation.
     rewrite HbN, <- Nat2N.inj_add, Nat2N.id. lia.
   Qed.
 
+  Lemma bits_to_nat_inj (sz: nat) (x y: bits_t sz) :
+    Bits.to_nat x = Bits.to_nat y -> x = y.
+  Proof.
+    unfold Bits.to_nat. intro H. apply Bits.to_N_inj. apply N2Nat.inj. exact H.
+  Qed.
+
   (* [counter_sz l] is wide enough for the counter to reach [pred l]. *)
   Lemma pred_lt_counter_sz (l: nat) : 1 <= l -> pred l < pow2 (counter_sz l).
   Proof.
@@ -558,7 +564,8 @@ Section SchedulerSimulation.
   Lemma counter_saturates (sz top r: nat) (b: nat -> bits_t sz) (adv: nat -> bool) :
     top < pow2 sz ->
     Bits.to_nat (b 0) = 0 ->
-    (forall j, Bits.to_nat (b (S j))
+    (forall j, Bits.to_nat (b j) <= top ->
+               Bits.to_nat (b (S j))
                = if andb (adv j) (negb (Nat.eqb (Bits.to_nat (b j)) top))
                  then S (Bits.to_nat (b j)) else Bits.to_nat (b j)) ->
     (forall j, r <= j -> adv j = true) ->
@@ -568,14 +575,14 @@ Section SchedulerSimulation.
     (* it never passes [top] *)
     assert (Hle : forall j, Bits.to_nat (b j) <= top).
     { induction j as [| j IHj]; [ lia |].
-      rewrite Hrec. destruct (andb _ _) eqn:Hc; [| exact IHj].
+      rewrite (Hrec j IHj). destruct (andb _ _) eqn:Hc; [| exact IHj].
       apply andb_prop in Hc. destruct Hc as [_ Hne].
       apply negb_true_iff, Nat.eqb_neq in Hne. lia. }
     (* from [r] on it gains at least one per cycle until it saturates *)
     assert (Hge : forall i, Nat.min i top <= Bits.to_nat (b (r + i))).
     { induction i as [| i IHi]; [ lia |].
       replace (r + S i) with (S (r + i)) by lia.
-      rewrite Hrec, (Hadv (r + i) ltac:(lia)). cbn [andb].
+      rewrite (Hrec (r + i) (Hle (r + i))), (Hadv (r + i) ltac:(lia)). cbn [andb].
       destruct (Nat.eqb (Bits.to_nat (b (r + i))) top) eqn:Heq.
       - apply Nat.eqb_eq in Heq. cbn [negb]. lia.
       - apply Nat.eqb_neq in Heq. cbn [negb].
@@ -584,7 +591,7 @@ Section SchedulerSimulation.
     pose proof (Hge top) as Hg. pose proof (Hle k) as Hl.
     assert (Hmono : forall j j', j <= j' -> Bits.to_nat (b j) <= Bits.to_nat (b j')).
     { intros j j' Hjj. induction Hjj as [| j' Hjj IHjj]; [ lia |].
-      rewrite Hrec. destruct (andb _ _); lia. }
+      rewrite (Hrec j' (Hle j')). destruct (andb _ _); lia. }
     pose proof (Hmono (r + top) k ltac:(lia)). lia.
   Qed.
 
@@ -1147,6 +1154,75 @@ Section SchedulerSimulation.
         tf_op2 (tf_cmp sz tf_eq) (tf_svar (tf_dfg_b a_idx n_idx)) (tf_const (pred l))
     | None => valid
     end.
+
+  (* ONE CYCLE of a stall's counter, read off what compile_dfg_buffers emits:
+     it advances exactly when the stall's argument is valid and it has not yet
+     reached [pred l], and holds otherwise.  The range hypothesis is what keeps
+     the increment from wrapping. *)
+  Lemma stall_counter_step
+        (act: tfs_action sched) a_idx n_idx
+        (ss: sched_sys_state) (input: sched_input_t) l expr valid :
+    stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
+    pred l < pow2 (ss_sz (tf_dfg_b a_idx n_idx)) ->
+    Bits.to_nat ((fst ss).[tf_dfg_b a_idx n_idx]) <= pred l ->
+    Bits.to_nat
+      (eval_st (tf_dfg_b a_idx n_idx)
+         (buf_value_expr act a_idx n_idx (ss_sz (tf_dfg_b a_idx n_idx))
+            expr valid (vreg_nid a_idx n_idx)) ss input)
+    = (if andb (if beq_dec (eval1 valid ss input) Bits.zero then false else true)
+               (negb (Nat.eqb (Bits.to_nat ((fst ss).[tf_dfg_b a_idx n_idx])) (pred l)))
+       then S (Bits.to_nat ((fst ss).[tf_dfg_b a_idx n_idx]))
+       else Bits.to_nat ((fst ss).[tf_dfg_b a_idx n_idx])).
+  Proof.
+    intros Hst Hwide Hinv.
+    unfold buf_value_expr. rewrite Hst. cbv beta iota.
+    cbn [tf_eval_expr]. rewrite !convert_same.
+    (* [cbn] rebuilds the register read under a second type annotation, so the
+       two sides of the goal hold two terms that print alike and match nothing
+       of each other's.  Put the statement's form back before the case split. *)
+    match goal with
+    | |- Bits.to_nat (if _ then ?r else _) = _ =>
+        replace r with ((fst ss).[tf_dfg_b a_idx n_idx]) by reflexivity
+    end.
+    assert (Hpl : Bits.to_nat (Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) (pred l))
+                  = pred l) by (apply Bits.to_nat_of_nat; exact Hwide).
+    destruct (bits1_cases (eval1 valid ss input)) as [Hv | Hv];
+      change (tf_eval_expr ss_sz si_sz oo_sz (szB := 1) valid ss input)
+        with (eval1 valid ss input); rewrite Hv.
+    - (* the argument IS valid *)
+      replace (beq_dec (Bits.ones 1) Bits.zero) with false
+        by (vm_compute; reflexivity).
+      cbn [andb].
+      (* Take the comparison FROM the goal: writing it out resolves a second
+         [EqDec] instance, and a [destruct] on that leaves the goal alone. *)
+      match goal with
+      | |- context [ if ?c then Bits.of_nat 1 1 else Bits.of_nat 1 0 ] =>
+          destruct c eqn:Hb
+      end.
+      + (* saturated: the guard reads zero and the counter holds *)
+        match goal with
+        | |- context [ @beq_dec ?T ?E ?c ?z ] =>
+            let H := fresh in
+            assert (H : @beq_dec T E c z = true) by (vm_compute; reflexivity);
+            rewrite H; clear H
+        end.
+        apply beq_dec_iff in Hb. rewrite Hb, Hpl, Nat.eqb_refl. reflexivity.
+      + (* below the top: the guard reads one and the counter advances *)
+        match goal with
+        | |- context [ @beq_dec ?T ?E ?c ?z ] =>
+            let H := fresh in
+            assert (H : @beq_dec T E c z = false) by (vm_compute; reflexivity);
+            rewrite H; clear H
+        end.
+        assert (Hne : Bits.to_nat ((fst ss).[tf_dfg_b a_idx n_idx]) <> pred l).
+        { intro Heq. apply (proj1 (beq_dec_false_iff _ _ _) Hb).
+          apply bits_to_nat_inj. rewrite Hpl. exact Heq. }
+        rewrite (proj2 (Nat.eqb_neq _ _) Hne). cbn [negb].
+        apply bits_plus_one_to_nat. lia.
+    - (* the argument reads zero: the guard is zero and the counter holds *)
+      rewrite !beq_dec_refl. cbn [andb].
+      reflexivity.
+  Qed.
 
   (* The selected entry emits its value/validity assignment pair. *)
   Lemma compile_dfg_buffers_entry
