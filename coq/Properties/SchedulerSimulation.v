@@ -544,6 +544,50 @@ Section SchedulerSimulation.
     rewrite HbN, <- Nat2N.inj_add, Nat2N.id. lia.
   Qed.
 
+  (* [counter_sz l] is wide enough for the counter to reach [pred l]. *)
+  Lemma pred_lt_counter_sz (l: nat) : 1 <= l -> pred l < pow2 (counter_sz l).
+  Proof.
+    intro Hl. unfold counter_sz. rewrite pow2_correct.
+    pose proof (Nat.log2_spec l ltac:(lia)) as [_ Hub]. lia.
+  Qed.
+
+  (* A SATURATING COUNTER, as arithmetic: zero at the start, advancing whenever
+     [adv] holds and it has not yet reached [top], never past [top].  Once [adv]
+     holds from cycle [r] on, it reads [top] from cycle [r + top] on.  This is
+     the shape [compile_dfg_buffers] gives a stall's buffer. *)
+  Lemma counter_saturates (sz top r: nat) (b: nat -> bits_t sz) (adv: nat -> bool) :
+    top < pow2 sz ->
+    Bits.to_nat (b 0) = 0 ->
+    (forall j, Bits.to_nat (b (S j))
+               = if andb (adv j) (negb (Nat.eqb (Bits.to_nat (b j)) top))
+                 then S (Bits.to_nat (b j)) else Bits.to_nat (b j)) ->
+    (forall j, r <= j -> adv j = true) ->
+    forall k, r + top <= k -> Bits.to_nat (b k) = top.
+  Proof.
+    intros Htop Hzero Hrec Hadv.
+    (* it never passes [top] *)
+    assert (Hle : forall j, Bits.to_nat (b j) <= top).
+    { induction j as [| j IHj]; [ lia |].
+      rewrite Hrec. destruct (andb _ _) eqn:Hc; [| exact IHj].
+      apply andb_prop in Hc. destruct Hc as [_ Hne].
+      apply negb_true_iff, Nat.eqb_neq in Hne. lia. }
+    (* from [r] on it gains at least one per cycle until it saturates *)
+    assert (Hge : forall i, Nat.min i top <= Bits.to_nat (b (r + i))).
+    { induction i as [| i IHi]; [ lia |].
+      replace (r + S i) with (S (r + i)) by lia.
+      rewrite Hrec, (Hadv (r + i) ltac:(lia)). cbn [andb].
+      destruct (Nat.eqb (Bits.to_nat (b (r + i))) top) eqn:Heq.
+      - apply Nat.eqb_eq in Heq. cbn [negb]. lia.
+      - apply Nat.eqb_neq in Heq. cbn [negb].
+        pose proof (Hle (r + i)). lia. }
+    intros k Hk.
+    pose proof (Hge top) as Hg. pose proof (Hle k) as Hl.
+    assert (Hmono : forall j j', j <= j' -> Bits.to_nat (b j) <= Bits.to_nat (b j')).
+    { intros j j' Hjj. induction Hjj as [| j' Hjj IHjj]; [ lia |].
+      rewrite Hrec. destruct (andb _ _); lia. }
+    pose proof (Hmono (r + top) k ltac:(lia)). lia.
+  Qed.
+
   Lemma valid_and_eval
     (e1 e2: @tf_expr (tfs_states sched) si_var o_var) (ss: sched_sys_state) (input: sched_input_t) :
     eval1 (valid_expr_and ctx bneeds e1 e2) ss input
@@ -681,8 +725,13 @@ Section SchedulerSimulation.
   (* Registers that must start zeroed: the done flag and every validity bit.
      (Buffer value registers tf_dfg_b may hold arbitrary data, since their
      validity bit is 0.) *)
+  (* A stall's buffer is a COUNTER, so its start value is observable: the
+     validity it publishes is "counter = lat-1".  The hardware resets it --
+     [reset_states] lists [tf_dfg_b] beside [tf_dfg_v] and [maps_to] zeroes it
+     -- so saying so here is reading the design, not strengthening it. *)
   Definition zeroed_at_start (x: tfs_states sched) : Prop :=
     match x with
+    | tf_dfg_b _ _ => True
     | tf_dfg_v _ _ => True
     | tf_dfg_done  => True
     | _            => False
