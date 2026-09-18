@@ -3315,6 +3315,120 @@ Section SchedulerSimulation.
         split; [ exact Hjop | exact Hle ].
   Qed.
 
+  Lemma preserves_g_merge_maps P : P_emit_expr P ->
+    forall c mo mt me, preserves_g P (merge_maps ctx c mo mt me).
+  Proof. intros HP c mo mt me. apply preserves_g_merge_loop. exact HP. Qed.
+
+  Lemma dataflow_ops_calls :
+    forall (ops: @tf_ops s_var i_var o_var p_var) en,
+      preserves_g calls_sequenced (dataflow_ops ctx en ops).
+  Proof.
+    induction ops as [op | op1 IHo1 op2 IHo2 | cond op1 IHo1 op2 IHo2]; intro en.
+    - destruct op as [ | dst e | dst e | ip dst e ]; cbn [dataflow_ops].
+      + apply preserves_g_ret.
+      + apply preserves_g_bind;
+          [ apply dataflow_expr_g; apply P_emit_expr_calls | intro x ].
+        apply preserves_g_set_var.
+      + apply preserves_g_bind;
+          [ apply dataflow_expr_g; apply P_emit_expr_calls | intro x ].
+        apply preserves_g_set_var.
+      + intros s Hs.
+        pose proof (proj1 (proj2 Hs)) as Hd0.
+        rewrite (bind_red (get_state ctx) _ s s s (get_state_red s)).
+        assert (Hsw0 : samples_within (graph s) (graph s))
+          by (intros nd Hin q tok en' _; exact Hin).
+        pose proof (dataflow_expr_g (samples_within (graph s))
+                      (P_emit_expr_samples (graph s)) e
+                      (ip_req_sz (tfs_spec_ip ctx ip)) s Hsw0) as Hsw.
+        pose proof (dataflow_expr_g calls_sequenced P_emit_expr_calls e
+                      (ip_req_sz (tfs_spec_ip ctx ip)) s Hs) as Hcs.
+        destruct (dataflow_expr ctx e (ip_req_sz (tfs_spec_ip ctx ip)) s)
+          as [arg_id s2] eqn:Ea.
+        cbn [snd] in Hsw, Hcs.
+        rewrite (bind_red _ _ s arg_id s2 Ea).
+        destruct (emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) s2)
+          as [drive_id s3] eqn:Ed.
+        rewrite (bind_red _ _ s2 drive_id s3 Ed).
+        pose proof (calls_sequenced_head s s2 s3 ip arg_id en
+                      (ip_req_sz (tfs_spec_ip ctx ip)) drive_id Hcs Hd0 Hsw Ed) as Hhead.
+        apply (g_bind_at calls_sequenced); [ exact Hhead | intros head_id s4 Eh H4 ].
+        apply (g_bind_at calls_sequenced).
+        * unfold stall_chain. destruct (ip_lat (tfs_spec_ip ctx ip)); [ exact H4 |].
+          rewrite emit_red. cbn [snd graph].
+          apply P_emit_expr_calls;
+            [ intros; discriminate | intros; discriminate | intros; discriminate
+            | exact H4 ].
+        * intros stall_id s5 Es H5.
+          apply (g_bind_at calls_sequenced).
+          -- rewrite emit_red. cbn [snd graph].
+             apply calls_sequenced_cons_sample. exact H5.
+          -- intros samp_id s6 Esa H6.
+             exact (preserves_g_set_var calls_sequenced (DFG_SVar dst) samp_id s6 H6).
+    - cbn [dataflow_ops]. apply preserves_g_bind; [ apply IHo1 | intro x ]. apply IHo2.
+    - intros s Hs. cbn [dataflow_ops].
+      apply (g_bind_at calls_sequenced);
+        [ apply dataflow_expr_g; [ apply P_emit_expr_calls | exact Hs ]
+        | intros cid s1 Ec H1 ].
+      rewrite (bind_red (get_state ctx) _ s1 s1 s1 (get_state_red s1)).
+      apply (g_bind_at calls_sequenced); [ apply IHo1; exact H1 | intros u2 s2 E2 H2 ].
+      rewrite (bind_red (get_state ctx) _ s2 s2 s2 (get_state_red s2)).
+      rewrite (bind_red (put_state ctx _) _ s2 tt _ (put_state_red _ s2)).
+      apply (g_bind_at calls_sequenced); [ apply IHo2; exact H2 | intros u3 s3 E3 H3 ].
+      rewrite (bind_red (get_state ctx) _ s3 s3 s3 (get_state_red s3)).
+      apply (g_bind_at calls_sequenced);
+        [ apply (preserves_g_merge_maps calls_sequenced);
+          [ apply P_emit_expr_calls | exact H3 ]
+        | intros fv s4 E4 H4 ].
+      rewrite (bind_red (get_state ctx) _ s4 s4 s4 (get_state_red s4)).
+      cbn [snd]. exact H4.
+  Qed.
+
+  (* The exported graph is the REVERSE, so [ids_desc] does not survive -- but
+     the clause that matters is [In]-based and does. *)
+  Lemma calls_main_rev L : calls_main L -> calls_main (rev L).
+  Proof.
+    intros H p m arg en s tok en' Hdr Hsa Hlt Hdis.
+    destruct Hdr as [nm [Hnm [Hmid Hmop]]].
+    destruct Hsa as [ns [Hns [Hsid Hsop]]].
+    apply (proj2 (in_rev L nm)) in Hnm.
+    apply (proj2 (in_rev L ns)) in Hns.
+    destruct (H p m arg en s tok en'
+                (ex_intro _ nm (conj Hnm (conj Hmid Hmop)))
+                (ex_intro _ ns (conj Hns (conj Hsid Hsop))) Hlt Hdis)
+      as [j [prev [Hj [Hjop Hle]]]].
+    exists j, prev.
+    split; [ apply (proj1 (in_rev L j)); exact Hj | split; [ exact Hjop | exact Hle ] ].
+  Qed.
+
+  Lemma calls_main_build_dfg (act: tfs_action sched) :
+    calls_main (graph (build_dfg ctx act)).
+  Proof.
+    unfold build_dfg.
+    pose proof (dataflow_ops_calls (tfs_spec_action_ops ctx act) []
+                  {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0 |} ];
+                     var_map := [] |}) as H.
+    cbn beta in H.
+    assert (Hbase : calls_sequenced
+              (graph {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0 |} ];
+                        var_map := [] |})).
+    { split; [| split ].
+      - intros nd Hin. cbn [graph In length] in *. destruct Hin as [<- | []].
+        cbn [nid]. lia.
+      - intros pre a rest Hsplit M HM. cbn [graph] in Hsplit.
+        destruct pre as [| b pre]; cbn [app] in Hsplit.
+        + injection Hsplit as <- <-. destruct HM.
+        + injection Hsplit as <- Hr. destruct pre; cbn [app] in Hr; discriminate Hr.
+      - intros p m arg en s tok en' [nm [Hnm [_ Hmop]]] _ _ _.
+        cbn [graph In] in Hnm. destruct Hnm as [<- | []].
+        cbn [op] in Hmop. discriminate Hmop. }
+    specialize (H Hbase).
+    destruct (dataflow_ops ctx [] (tfs_spec_action_ops ctx act)
+                {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0 |} ];
+                   var_map := [] |}) as [u final] eqn:Ed.
+    cbn [snd] in H. cbn [graph].
+    apply calls_main_rev. exact (proj2 (proj2 H)).
+  Qed.
+
   (* THE STRUCTURAL FACT, on the exported forward graph. *)
   Lemma joins_sequence_build_dfg (act: tfs_action sched) :
     joins_sequence (graph (build_dfg ctx act)).
@@ -10600,6 +10714,30 @@ Section SchedulerSimulation.
       apply Nat.eqb_eq in Hp2. subst ja.
       destruct (node_at_nid act j2 Hin2) as [_ Hnth2].
       exists jb. unfold node_op. rewrite <- Hg. rewrite Hnth2. exact Eo2.
+  Qed.
+
+  (* THE SEQUENCING FACT, as the port argument reads it: a call that could see
+     an earlier call.s answer on the same port is held behind it by a join. *)
+  Lemma call_sequenced_join (act: tfs_action sched) (p: p_var) m arg en s tok en' :
+    node_op act m = DFG_Drive p arg en ->
+    node_op act s = DFG_Sample p tok en' ->
+    s < m -> guards_disjoint en en' = false ->
+    exists j prev, node_op act j = DFG_Join m prev /\ s <= prev.
+  Proof.
+    intros Hm Hs Hlt Hdis.
+    assert (Hmlt : m < length (graph (build_dfg ctx act)))
+      by (apply node_op_range; rewrite Hm; discriminate).
+    assert (Hslt : s < length (graph (build_dfg ctx act)))
+      by (apply node_op_range; rewrite Hs; discriminate).
+    destruct (calls_main_build_dfg act p m arg en s tok en'
+                (ex_intro _ _ (conj (nth_In _ _ Hmlt)
+                                 (conj (node_nid_at act m Hmlt) Hm)))
+                (ex_intro _ _ (conj (nth_In _ _ Hslt)
+                                 (conj (node_nid_at act s Hslt) Hs))) Hlt Hdis)
+      as [j [prev [Hj [Hjop Hle]]]].
+    exists (nid j), prev.
+    destruct (node_at_nid act j Hj) as [_ Hnth].
+    split; [ unfold node_op; rewrite Hnth; exact Hjop | exact Hle ].
   Qed.
 
   (* Strictly decreasing, as [drive_nodes] produces it. *)
