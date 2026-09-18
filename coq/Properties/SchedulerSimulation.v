@@ -2716,6 +2716,269 @@ Section SchedulerSimulation.
     split; [ exact H6 | exact H7 ].
   Qed.
 
+  (* A second, pointwise invariant, generic in the node predicate: [emit]
+     prepends one node, so anything true of every node is preserved by any step
+     whose fresh node satisfies it. *)
+  Definition all_nodes (Q: @dfg_node_t s_var i_var o_var p_var -> Prop)
+      (L: list (@dfg_node_t s_var i_var o_var p_var)) : Prop :=
+    forall nd, In nd L -> Q nd.
+
+  Definition preserves_all (Q: @dfg_node_t s_var i_var o_var p_var -> Prop)
+      {A} (m: M ctx A) : Prop :=
+    forall s, all_nodes Q (graph s) -> all_nodes Q (graph (snd (m s))).
+
+  (* [Q] holds of every node the builder emits EXCEPT a join or a stall, which
+     are the two the call sequence places by hand. *)
+  Definition Q_plain (Q: @dfg_node_t s_var i_var o_var p_var -> Prop) : Prop :=
+    forall n z o, (forall d prev, o <> DFG_Join d prev) ->
+                  (forall l a, o <> DFG_Stall l a) ->
+      Q {| nid := n; op := o; sz := z |}.
+
+  Lemma preserves_all_ret Q {A} (x: A) : preserves_all Q (ret ctx x).
+  Proof. intros s Hs. exact Hs. Qed.
+
+  Lemma preserves_all_bind Q {A B} (m: M ctx A) (f: A -> M ctx B) :
+    preserves_all Q m -> (forall x, preserves_all Q (f x)) ->
+    preserves_all Q (bind ctx m f).
+  Proof.
+    intros Hm Hf s Hs. unfold bind.
+    specialize (Hm s Hs). destruct (m s) as [x s1]. cbn [snd] in Hm.
+    exact (Hf x s1 Hm).
+  Qed.
+
+  Lemma all_bind_at Q {A B} (m: M ctx A) (f: A -> M ctx B) (s: wst) :
+    all_nodes Q (graph (snd (m s))) ->
+    (forall x s1, m s = (x, s1) -> all_nodes Q (graph s1) ->
+       all_nodes Q (graph (snd (f x s1)))) ->
+    all_nodes Q (graph (snd (bind ctx m f s))).
+  Proof.
+    intros Hm Hf. unfold bind.
+    destruct (m s) as [x s1] eqn:E. cbn [snd] in Hm. exact (Hf x s1 eq_refl Hm).
+  Qed.
+
+  Lemma all_nodes_emit Q (s: wst) o size :
+    all_nodes Q (graph s) ->
+    Q {| nid := length (graph s); op := o; sz := size |} ->
+    all_nodes Q (graph (snd (emit ctx o size s))).
+  Proof.
+    intros Hs Hq. rewrite emit_red. cbn [snd graph].
+    intros nd [<- | Hin]; [ exact Hq | exact (Hs nd Hin) ].
+  Qed.
+
+  Lemma preserves_all_emit Q o size :
+    Q_plain Q ->
+    (forall d prev, o <> DFG_Join d prev) -> (forall l a, o <> DFG_Stall l a) ->
+    preserves_all Q (emit ctx o size).
+  Proof.
+    intros HQ H1 H2 s Hs. apply all_nodes_emit; [ exact Hs | apply HQ; assumption ].
+  Qed.
+
+  Lemma preserves_all_set_var Q v id : preserves_all Q (set_var ctx v id).
+  Proof.
+    intros s Hs. unfold set_var, bind, get_state, put_state. cbn [snd graph]. exact Hs.
+  Qed.
+
+  Lemma preserves_all_get_var Q : Q_plain Q -> forall v, preserves_all Q (get_var ctx v).
+  Proof.
+    intros HQ v s Hs. unfold get_var, bind, get_state.
+    destruct (BitsToLists.list_assoc (var_map s) v) as [id |]; [ exact Hs |].
+    destruct (read_var ctx v s) as [id s'] eqn:Er. cbn [snd].
+    destruct (read_var_cases v s id s' Er) as [[_ [_ ->]] | Hem]; [ exact Hs |].
+    apply (f_equal snd) in Hem. cbn [snd] in Hem. rewrite <- Hem.
+    apply all_nodes_emit; [ exact Hs |].
+    apply HQ; intros; discriminate.
+  Qed.
+
+  Lemma preserves_all_ensure_var Q : Q_plain Q -> forall v, preserves_all Q (ensure_var ctx v).
+  Proof.
+    intros HQ v s Hs. unfold ensure_var, bind, get_state, put_state, ret.
+    destruct (emit ctx (DFG_Var v) (dfg_var_size ctx v) s) as [id s1] eqn:Ee.
+    cbn [snd graph].
+    pose proof (all_nodes_emit Q s (DFG_Var v) (dfg_var_size ctx v) Hs
+                  ltac:(apply HQ; intros; discriminate)) as H.
+    rewrite Ee in H. cbn [snd] in H. exact H.
+  Qed.
+
+  Lemma preserves_all_merge_key Q : Q_plain Q ->
+    forall c k vt ve, preserves_all Q (merge_key ctx c k vt ve).
+  Proof.
+    intros HQ c k vt ve. unfold merge_key.
+    destruct vt as [x |]; destruct ve as [y |].
+    - destruct (eq_dec x y); [ apply preserves_all_ret |].
+      apply preserves_all_bind;
+        [ apply preserves_all_emit; [ exact HQ | intros; discriminate | intros; discriminate ]
+        | intro z; apply preserves_all_ret ].
+    - apply preserves_all_bind; [ apply preserves_all_ensure_var; exact HQ | intro z ].
+      apply preserves_all_bind;
+        [ apply preserves_all_emit; [ exact HQ | intros; discriminate | intros; discriminate ]
+        | intro w; apply preserves_all_ret ].
+    - apply preserves_all_bind; [ apply preserves_all_ensure_var; exact HQ | intro z ].
+      apply preserves_all_bind;
+        [ apply preserves_all_emit; [ exact HQ | intros; discriminate | intros; discriminate ]
+        | intro w; apply preserves_all_ret ].
+    - apply preserves_all_ret.
+  Qed.
+
+  Lemma preserves_all_merge_loop Q : Q_plain Q ->
+    forall c mt me keys acc, preserves_all Q (merge_loop ctx c mt me keys acc).
+  Proof.
+    intros HQ c mt me keys. induction keys as [| [k kid] keys IH]; intro acc;
+      cbn [merge_loop]; [ apply preserves_all_ret |].
+    destruct (BitsToLists.list_assoc acc k) as [x |]; [ apply IH |].
+    apply preserves_all_bind; [ apply preserves_all_merge_key; exact HQ | intro r ].
+    destruct r as [fid |]; apply IH.
+  Qed.
+
+  Lemma dataflow_expr_all Q : Q_plain Q ->
+    forall e sz, preserves_all Q (dataflow_expr ctx e sz).
+  Proof.
+    intros HQ e. induction e as [ c | v | v | v | uop src IHsrc
+                                | bop s1 IH1 s2 IH2 | c IHc t IHt e IHe ];
+      intro sz; cbn [dataflow_expr].
+    - apply preserves_all_emit; [ exact HQ | intros; discriminate | intros; discriminate ].
+    - apply preserves_all_bind; [ apply preserves_all_get_var; exact HQ | intro x ].
+      destruct (Nat.eqb _ sz);
+        [ apply preserves_all_ret
+        | apply preserves_all_emit; [ exact HQ | intros; discriminate | intros; discriminate ] ].
+    - apply preserves_all_bind;
+        [ apply preserves_all_emit; [ exact HQ | intros; discriminate | intros; discriminate ]
+        | intro x ].
+      destruct (Nat.eqb _ sz);
+        [ apply preserves_all_ret
+        | apply preserves_all_emit; [ exact HQ | intros; discriminate | intros; discriminate ] ].
+    - apply preserves_all_bind; [ apply preserves_all_get_var; exact HQ | intro x ].
+      destruct (Nat.eqb _ sz);
+        [ apply preserves_all_ret
+        | apply preserves_all_emit; [ exact HQ | intros; discriminate | intros; discriminate ] ].
+    - destruct uop;
+        (apply preserves_all_bind; [ apply IHsrc | intro x ];
+         apply preserves_all_emit; [ exact HQ | intros; discriminate | intros; discriminate ]).
+    - destruct bop;
+        (apply preserves_all_bind; [ apply IH1 | intro x ];
+         apply preserves_all_bind; [ apply IH2 | intro y ];
+         apply preserves_all_emit; [ exact HQ | intros; discriminate | intros; discriminate ]).
+    - apply preserves_all_bind; [ apply IHc | intro x ].
+      apply preserves_all_bind; [ apply IHt | intro y ].
+      apply preserves_all_bind; [ apply IHe | intro z ].
+      apply preserves_all_emit; [ exact HQ | intros; discriminate | intros; discriminate ].
+  Qed.
+
+  (* The two nodes a call places by hand sit immediately above what they wait
+     on: [emit] hands out consecutive ids and nothing intervenes. *)
+  Definition succ_arg_node (nd: @dfg_node_t s_var i_var o_var p_var) : Prop :=
+    (forall d prev, op nd = DFG_Join d prev -> nid nd = S d)
+    /\ (forall l a, op nd = DFG_Stall l a -> nid nd = S a).
+
+  Lemma Q_plain_succ : Q_plain succ_arg_node.
+  Proof.
+    intros n z o H1 H2. split.
+    - intros d prev Hop. cbn [op] in Hop. exfalso. exact (H1 d prev Hop).
+    - intros l a Hop. cbn [op] in Hop. exfalso. exact (H2 l a Hop).
+  Qed.
+
+  Lemma dataflow_ops_succ :
+    forall (ops: @tf_ops s_var i_var o_var p_var) en,
+      preserves_all succ_arg_node (dataflow_ops ctx en ops).
+  Proof.
+    induction ops as [op | op1 IHo1 op2 IHo2 | cond op1 IHo1 op2 IHo2]; intro en.
+    - destruct op as [ | dst e | dst e | ip dst e ]; cbn [dataflow_ops].
+      + apply preserves_all_ret.
+      + apply preserves_all_bind;
+          [ apply dataflow_expr_all; apply Q_plain_succ | intro x ].
+        apply preserves_all_set_var.
+      + apply preserves_all_bind;
+          [ apply dataflow_expr_all; apply Q_plain_succ | intro x ].
+        apply preserves_all_set_var.
+      + intros s Hs.
+        rewrite (bind_red (get_state ctx) _ s s s (get_state_red s)).
+        apply all_bind_at;
+          [ apply dataflow_expr_all; [ apply Q_plain_succ | exact Hs ]
+          | intros arg_id s2 Ea H2 ].
+        apply all_bind_at;
+          [ apply all_nodes_emit;
+            [ exact H2 | apply Q_plain_succ; intros; discriminate ]
+          | intros drive_id s3 Ed H3 ].
+        rewrite emit_red in Ed. injection Ed as Hdid Hs3.
+        assert (H3len : length (graph s3) = S drive_id).
+        { rewrite <- Hs3. cbn [graph length]. rewrite Hdid. reflexivity. }
+        destruct (last_sample ctx s ip en) as [prev |] eqn:Elast.
+        * apply all_bind_at.
+          -- apply all_nodes_emit; [ exact H3 |]. split.
+             ++ intros d0 prev0 Hop. cbn [op nid] in *. injection Hop as <- <-.
+                exact H3len.
+             ++ intros l a Hop. cbn [op] in Hop. discriminate Hop.
+          -- intros head_id s4 Eh H4.
+             rewrite emit_red in Eh. injection Eh as Hhid Hs4.
+             assert (H4len : length (graph s4) = S head_id).
+             { rewrite <- Hs4. cbn [graph length]. rewrite Hhid. reflexivity. }
+             apply all_bind_at.
+             ++ unfold stall_chain. destruct (ip_lat (tfs_spec_ip ctx ip));
+                  [ exact H4 |].
+                apply all_nodes_emit; [ exact H4 |]. split.
+                ** intros d0 prev0 Hop. cbn [op] in Hop. discriminate Hop.
+                ** intros l a Hop. cbn [op nid] in *. injection Hop as <- <-.
+                   exact H4len.
+             ++ intros stall_id s5 Es H5.
+                apply all_bind_at;
+                  [ apply all_nodes_emit;
+                    [ exact H5 | apply Q_plain_succ; intros; discriminate ]
+                  | intros samp_id s6 Esa H6 ].
+                exact (preserves_all_set_var succ_arg_node (DFG_SVar dst) samp_id s6 H6).
+        * rewrite (bind_red (ret ctx drive_id) _ s3 drive_id s3 eq_refl).
+          apply all_bind_at.
+          -- unfold stall_chain. destruct (ip_lat (tfs_spec_ip ctx ip));
+               [ exact H3 |].
+             apply all_nodes_emit; [ exact H3 |]. split.
+             ++ intros d0 prev0 Hop. cbn [op] in Hop. discriminate Hop.
+             ++ intros l a Hop. cbn [op nid] in *. injection Hop as <- <-.
+                exact H3len.
+          -- intros stall_id s5 Es H5.
+             apply all_bind_at;
+               [ apply all_nodes_emit;
+                 [ exact H5 | apply Q_plain_succ; intros; discriminate ]
+               | intros samp_id s6 Esa H6 ].
+             exact (preserves_all_set_var succ_arg_node (DFG_SVar dst) samp_id s6 H6).
+    - cbn [dataflow_ops]. apply preserves_all_bind; [ apply IHo1 | intro x ]. apply IHo2.
+    - intros s Hs. cbn [dataflow_ops].
+      apply all_bind_at;
+        [ apply dataflow_expr_all; [ apply Q_plain_succ | exact Hs ] | intros cid s1 Ec H1 ].
+      rewrite (bind_red (get_state ctx) _ s1 s1 s1 (get_state_red s1)).
+      apply all_bind_at; [ apply IHo1; exact H1 | intros u2 s2 E2 H2 ].
+      rewrite (bind_red (get_state ctx) _ s2 s2 s2 (get_state_red s2)).
+      rewrite (bind_red (put_state ctx _) _ s2 tt _ (put_state_red _ s2)).
+      apply all_bind_at; [ apply IHo2; exact H2 | intros u3 s3 E3 H3 ].
+      rewrite (bind_red (get_state ctx) _ s3 s3 s3 (get_state_red s3)).
+      apply all_bind_at;
+        [ apply preserves_all_merge_loop; [ apply Q_plain_succ | exact H3 ]
+        | intros fv s4 E4 H4 ].
+      rewrite (bind_red (get_state ctx) _ s4 s4 s4 (get_state_red s4)).
+      cbn [snd]. exact H4.
+  Qed.
+
+  Lemma all_nodes_rev Q L : all_nodes Q L -> all_nodes Q (rev L).
+  Proof. intros H nd Hin. apply H. apply (proj2 (in_rev L nd)). exact Hin. Qed.
+
+  Lemma succ_args_build_dfg (act: tfs_action sched) :
+    all_nodes succ_arg_node (graph (build_dfg ctx act)).
+  Proof.
+    unfold build_dfg.
+    pose proof (dataflow_ops_succ (tfs_spec_action_ops ctx act) []
+                  {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0 |} ];
+                     var_map := [] |}) as H.
+    cbn beta in H.
+    assert (Hbase : all_nodes succ_arg_node
+              (graph {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0 |} ];
+                        var_map := [] |})).
+    { intros nd Hin. cbn [graph In] in Hin. destruct Hin as [<- | []].
+      split; intros; cbn [op] in *; discriminate. }
+    specialize (H Hbase).
+    destruct (dataflow_ops ctx [] (tfs_spec_action_ops ctx act)
+                {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0 |} ];
+                   var_map := [] |}) as [u final] eqn:Ed.
+    cbn [snd] in H. cbn [graph].
+    apply all_nodes_rev. exact H.
+  Qed.
+
   (* THE STRUCTURAL FACT, on the exported forward graph. *)
   Lemma joins_sequence_build_dfg (act: tfs_action sched) :
     joins_sequence (graph (build_dfg ctx act)).
@@ -9922,6 +10185,45 @@ Section SchedulerSimulation.
     rewrite H2 in Hnth1. rewrite H5 in Hnth4.
     unfold node_op. rewrite Hnth1, Hnth4.
     split; [ exact H3 | split; [ exact H6 | exact H7 ] ].
+  Qed.
+
+  (* A join and a stall both sit at their argument.s successor, so a drive
+     that has an ordering join cannot also carry a stall of its own. *)
+  Lemma join_nid_succ (act: tfs_action sched) j d prev :
+    node_op act j = DFG_Join d prev -> j = S d.
+  Proof.
+    intro Hop.
+    assert (Hlt : j < length (graph (build_dfg ctx act)))
+      by (apply node_op_range; rewrite Hop; discriminate).
+    pose proof (succ_args_build_dfg act
+                  (nth j (graph (build_dfg ctx act))
+                     {| nid := 0; op := DFG_Empty; sz := 0 |})
+                  (nth_In _ _ Hlt)) as [Hj _].
+    rewrite (node_nid_at act j Hlt) in Hj.
+    exact (Hj d prev Hop).
+  Qed.
+
+  Lemma stall_nid_succ (act: tfs_action sched) t l a :
+    node_op act t = DFG_Stall l a -> t = S a.
+  Proof.
+    intro Hop.
+    assert (Hlt : t < length (graph (build_dfg ctx act)))
+      by (apply node_op_range; rewrite Hop; discriminate).
+    pose proof (succ_args_build_dfg act
+                  (nth t (graph (build_dfg ctx act))
+                     {| nid := 0; op := DFG_Empty; sz := 0 |})
+                  (nth_In _ _ Hlt)) as [_ Hs].
+    rewrite (node_nid_at act t Hlt) in Hs.
+    exact (Hs l a Hop).
+  Qed.
+
+  Lemma no_stall_on_joined (act: tfs_action sched) j d prev t l :
+    node_op act j = DFG_Join d prev -> node_op act t = DFG_Stall l d -> False.
+  Proof.
+    intros Hj Ht.
+    pose proof (join_nid_succ act j d prev Hj) as Hjn.
+    pose proof (stall_nid_succ act t l d Ht) as Htn.
+    subst j. subst t. rewrite Hj in Ht. discriminate Ht.
   Qed.
 
   (* Strictly decreasing, as [drive_nodes] produces it. *)
