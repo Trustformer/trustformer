@@ -8161,26 +8161,24 @@ Section SchedulerSimulation.
   Lemma join_gate_zero_of_prev
         (act: tfs_action sched)
         (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
-        (g m prev m0 msz: nid_t)
+        (g m prev m0 msz fuel: nid_t)
         (n_idx : Vect.index (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+        (bufs: list (nid_t * (nat * sz_t)))
         (ss: sched_sys_state) (input: sched_input_t) :
     node_op act g = DFG_Join m prev ->
-    BitsToLists.list_assoc
-      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) g = None ->
-    BitsToLists.list_assoc
-      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) prev = Some (m0, msz) ->
+    BitsToLists.list_assoc bufs g = None ->
+    BitsToLists.list_assoc bufs prev = Some (m0, msz) ->
     index_of_nat (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m0
       = Some n_idx ->
     (fst ss).[tf_dfg_v a_idx n_idx] = Bits.zero ->
-    1 < length (graph (build_dfg ctx act)) ->
-    eval1 (snd (compile_dfg_expr ctx bneeds (length (graph (build_dfg ctx act))) a_idx
-                  (build_dfg ctx act) g
-                  (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))) ss input
+    1 < fuel ->
+    eval1 (snd (compile_dfg_expr ctx bneeds fuel a_idx
+                  (build_dfg ctx act) g bufs)) ss input
     = Bits.zero.
   Proof.
     intros Hg Hgnb Hpb Hidx Hz Hf.
-    assert (HA : 0 < length (graph (build_dfg ctx act))) by lia.
-    assert (HB : 0 < pred (length (graph (build_dfg ctx act)))) by lia.
+    assert (HA : 0 < fuel) by lia.
+    assert (HB : 0 < pred fuel) by lia.
     unfold node_op in Hg.
     rewrite (compile_join_valid _ _ _ a_idx g m prev _ [] _ Hg Hgnb HA).
     rewrite valid_and_eval.
@@ -8273,6 +8271,99 @@ Section SchedulerSimulation.
     unfold node_op in Hop.
     rewrite (compile_sample_valid _ _ _ a_idx _ p tok en _ [] _ Hop Hnone HA).
     exact (compile_buffered_valid _ _ _ a_idx tok _ m msz t_idx _ [] Htok Hidx HB).
+  Qed.
+
+  (* A buffer entry names a slot INDEX, and that slot caches that node. *)
+  Lemma buffer_slot_of (act: tfs_action sched) a_idx n m msz :
+    act_idx_aligned act a_idx ->
+    BitsToLists.list_assoc
+      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) n = Some (m, msz) ->
+    exists n_idx,
+      index_of_nat (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m
+        = Some n_idx /\ vreg_nid a_idx n_idx = n.
+  Proof.
+    intros Halign Hassoc.
+    pose proof (wla_in _ _ _ Hassoc) as Hin.
+    assert (Hlt : m < length
+              (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
+    { rewrite (buffer_slot_eq act a_idx Halign), gsi_length.
+      apply (gsi_idx_bound (build_dfg ctx act) _ n m msz).
+      rewrite <- (buffer_slot_eq act a_idx Halign). exact Hin. }
+    destruct (index_of_nat_bounded Hlt) as [n_idx Hidx].
+    exists n_idx. split; [ exact Hidx |].
+    exact (vreg_nid_of_entry act a_idx n m msz n_idx Halign Hin Hidx).
+  Qed.
+
+  Lemma list_assoc_filter_none {K} `{EqDec K} {A} (q: K * A -> bool) (l: list (K * A)) x :
+    BitsToLists.list_assoc l x = None ->
+    BitsToLists.list_assoc (filter q l) x = None.
+  Proof.
+    intro Hn. apply list_assoc_key_none. intro Hin.
+    apply (list_assoc_none_key _ _ Hn).
+    apply in_map_iff in Hin. destruct Hin as [[k v] [Hk Hmem]].
+    apply filter_In in Hmem. destruct Hmem as [Hmem _].
+    apply in_map_iff. exists (k, v). split; [ exact Hk | exact Hmem ].
+  Qed.
+
+  (* A sample.s gate, in both cases: the stall is buffered and the gate is its
+     counter.s validity bit, or it is not and the gate walks straight through to
+     the node the stall waits on. *)
+  Lemma sample_gate_cases (act: tfs_action sched) a_idx n_idx (p: p_var) tok en l a :
+    act_idx_aligned act a_idx ->
+    node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
+    node_op act tok = DFG_Stall l a ->
+    tok <> vreg_nid a_idx n_idx ->
+    1 < length (graph (build_dfg ctx act)) ->
+    (exists m msz t_idx,
+        BitsToLists.list_assoc
+          (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) tok = Some (m, msz)
+        /\ index_of_nat (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m
+           = Some t_idx
+        /\ vreg_nid a_idx t_idx = tok
+        /\ buf_gate act a_idx n_idx = tf_svar (tf_dfg_v a_idx t_idx))
+    \/ (BitsToLists.list_assoc
+          (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) tok = None
+        /\ buf_gate act a_idx n_idx
+           = snd (compile_dfg_expr ctx bneeds
+                    (pred (pred (length (graph (build_dfg ctx act))))) a_idx
+                    (build_dfg ctx act) a
+                    (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (vreg_nid a_idx n_idx)))
+                       (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))).
+  Proof.
+    intros Halign Hs Ht Hne Hf.
+    assert (HA : 0 < length (graph (build_dfg ctx act))) by lia.
+    assert (HB : 0 < pred (length (graph (build_dfg ctx act)))) by lia.
+    assert (Hnone : BitsToLists.list_assoc
+                      (filter (fun '(b_nid, _) =>
+                                 negb (Nat.eqb b_nid (vreg_nid a_idx n_idx)))
+                         (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
+                      (vreg_nid a_idx n_idx) = None).
+    { apply list_assoc_key_none. intro Hin.
+      apply in_map_iff in Hin. destruct Hin as [[k v] [Hk Hmem]].
+      cbn [fst] in Hk. subst k.
+      apply filter_In in Hmem. destruct Hmem as [_ Hq].
+      rewrite Nat.eqb_refl in Hq. discriminate Hq. }
+    unfold node_op in Hs.
+    rewrite (compile_sample_valid _ _ _ a_idx _ p tok en _ [] _ Hs Hnone HA).
+    destruct (BitsToLists.list_assoc
+                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) tok)
+      as [[m msz] |] eqn:Etok.
+    - left.
+      destruct (buffer_slot_of act a_idx tok m msz Halign Etok) as [t_idx [Hidx Hvr]].
+      assert (Htf : BitsToLists.list_assoc
+                      (filter (fun '(b_nid, _) =>
+                                 negb (Nat.eqb b_nid (vreg_nid a_idx n_idx)))
+                         (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
+                      tok = Some (m, msz)).
+      { rewrite list_assoc_filter; [ exact Etok |].
+        intros [k v] _ Hfe. cbn [fst] in Hfe. subst k.
+        apply negb_true_iff, Nat.eqb_neq. exact Hne. }
+      exists m, msz, t_idx. split; [ reflexivity | split; [ exact Hidx | split; [ exact Hvr |]]].
+      exact (compile_buffered_valid _ _ _ a_idx tok _ m msz t_idx _ [] Htf Hidx HB).
+    - right. split; [ reflexivity |].
+      unfold node_op in Ht.
+      exact (compile_stall_valid _ _ _ a_idx tok l a _ [] _ Ht
+               (list_assoc_filter_none _ _ _ Etok) HB).
   Qed.
 
   (* And a stall.s GATE is the validity of the node it waits on -- the drive,
