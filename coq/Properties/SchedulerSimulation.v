@@ -2605,6 +2605,139 @@ Section SchedulerSimulation.
     preserves_js (merge_maps ctx c mo mt me).
   Proof. apply preserves_js_merge_loop. Qed.
 
+  Lemma preserves_js_get_state : preserves_js (get_state ctx).
+  Proof. intros s Hs. exact Hs. Qed.
+
+  (* The same bind, applied at ONE state, so a later step can use the state an
+     earlier [get_state] bound. *)
+  Lemma js_bind_at {A B} (m: M ctx A) (f: A -> M ctx B) (s: wst) :
+    joins_sequence (graph (snd (m s))) ->
+    (forall x s1, m s = (x, s1) -> joins_sequence (graph s1) ->
+       joins_sequence (graph (snd (f x s1)))) ->
+    joins_sequence (graph (snd (bind ctx m f s))).
+  Proof.
+    intros Hm Hf. unfold bind.
+    destruct (m s) as [x s1] eqn:E. cbn [snd] in Hm. exact (Hf x s1 eq_refl Hm).
+  Qed.
+
+  (* The one emit in the builder that IS a join: a call.s ordering node, which
+     [last_sample] has just named a sample on the same port for. *)
+  Lemma js_call_head (s0 s2 s3: wst) (ip: p_var) arg_id en drive_id size :
+    joins_sequence (graph s3) ->
+    wgmono s0 s2 ->
+    emit ctx (DFG_Drive ip arg_id en) size s2 = (drive_id, s3) ->
+    joins_sequence
+      (graph (snd (match last_sample ctx s0 ip en with
+                   | Some prev => emit ctx (DFG_Join drive_id prev) 1
+                   | None => ret ctx drive_id
+                   end s3))).
+  Proof.
+    intros H3 Hg02 Ed.
+    destruct (last_sample ctx s0 ip en) as [prev |] eqn:Elast; [| exact H3 ].
+    destruct (last_sample_spec s0 ip en prev Elast)
+      as [nd [tok [en' [Hnd [Hnid [Hop Hdis]]]]]].
+    rewrite emit_red in Ed. injection Ed as Hdid Hs3.
+    apply (joins_sequence_emit_join s3 drive_id prev ip arg_id en tok en' H3).
+    - exists {| nid := length (graph s2);
+                op := DFG_Drive ip arg_id en; sz := size |}.
+      rewrite <- Hs3. cbn [graph nid op].
+      split; [ left; reflexivity | split; [ exact Hdid | reflexivity ] ].
+    - exists nd. rewrite <- Hs3. cbn [graph].
+      split; [ right; exact (Hg02 nd Hnd) | split; [ exact Hnid | exact Hop ] ].
+    - exact Hdis.
+  Qed.
+
+  (* [joins_sequence] reads only the graph. *)
+  Lemma joins_sequence_graph_eq (s1 s2: wst) :
+    graph s1 = graph s2 -> joins_sequence (graph s1) -> joins_sequence (graph s2).
+  Proof. intro Hg. rewrite Hg. intro H. exact H. Qed.
+
+  Lemma dataflow_ops_joins :
+    forall (ops: @tf_ops s_var i_var o_var p_var) en,
+      preserves_js (dataflow_ops ctx en ops).
+  Proof.
+    induction ops as [op | op1 IHo1 op2 IHo2 | cond op1 IHo1 op2 IHo2]; intro en.
+    - destruct op as [ | dst e | dst e | ip dst e ]; cbn [dataflow_ops].
+      + apply preserves_js_ret.
+      + apply preserves_js_bind; [ apply dataflow_expr_joins | intro x ].
+        apply preserves_js_set_var.
+      + apply preserves_js_bind; [ apply dataflow_expr_joins | intro x ].
+        apply preserves_js_set_var.
+      + intros s Hs.
+        rewrite (bind_red (get_state ctx) _ s s s (get_state_red s)).
+        assert (Hg : forall a2 s2, dataflow_expr ctx e (ip_req_sz (tfs_spec_ip ctx ip)) s
+                                   = (a2, s2) -> wgmono s s2).
+        { intros a2 s2 Ea.
+          pose proof (dataflow_expr_grows e (ip_req_sz (tfs_spec_ip ctx ip)) s) as H0.
+          rewrite Ea in H0. cbn [snd] in H0. exact H0. }
+        apply js_bind_at; [ apply dataflow_expr_joins; exact Hs | intros arg_id s2 Ea H2 ].
+        apply js_bind_at;
+          [ apply joins_sequence_emit_other;
+            [ exact H2 | intros d prev Hc; discriminate Hc ]
+          | intros drive_id s3 Ed H3 ].
+        apply js_bind_at;
+          [ exact (js_call_head s s2 s3 ip arg_id en drive_id _ H3 (Hg _ _ Ea) Ed)
+          | intros head_id s4 Eh H4 ].
+        apply js_bind_at.
+        * unfold stall_chain. destruct (ip_lat (tfs_spec_ip ctx ip));
+            [ exact H4
+            | apply joins_sequence_emit_other;
+              [ exact H4 | intros d prev Hc; discriminate Hc ] ].
+        * intros stall_id s5 Es H5.
+          apply js_bind_at;
+            [ apply joins_sequence_emit_other;
+              [ exact H5 | intros d prev Hc; discriminate Hc ]
+            | intros samp_id s6 Esa H6 ].
+          exact (preserves_js_set_var (DFG_SVar dst) samp_id s6 H6).
+    - cbn [dataflow_ops]. apply preserves_js_bind; [ apply IHo1 | intro x ]. apply IHo2.
+    - intros s Hs. cbn [dataflow_ops].
+      apply js_bind_at; [ apply dataflow_expr_joins; exact Hs | intros cid s1 Ec H1 ].
+      rewrite (bind_red (get_state ctx) _ s1 s1 s1 (get_state_red s1)).
+      apply js_bind_at; [ apply IHo1; exact H1 | intros u2 s2 E2 H2 ].
+      rewrite (bind_red (get_state ctx) _ s2 s2 s2 (get_state_red s2)).
+      rewrite (bind_red (put_state ctx _) _ s2 tt _ (put_state_red _ s2)).
+      apply js_bind_at; [ apply IHo2; exact H2 | intros u3 s3 E3 H3 ].
+      rewrite (bind_red (get_state ctx) _ s3 s3 s3 (get_state_red s3)).
+      apply js_bind_at; [ apply preserves_js_merge_maps; exact H3 | intros fv s4 E4 H4 ].
+      rewrite (bind_red (get_state ctx) _ s4 s4 s4 (get_state_red s4)).
+      cbn [snd]. exact H4.
+  Qed.
+
+  Lemma joins_sequence_rev L : joins_sequence L -> joins_sequence (rev L).
+  Proof.
+    intros H j d prev Hin Hop.
+    apply (proj2 (in_rev L j)) in Hin.
+    destruct (H j d prev Hin Hop)
+      as [p [arg [en [tok [en' [nd [ns [H1 [H2 [H3 [H4 [H5 [H6 H7]]]]]]]]]]]]].
+    exists p, arg, en, tok, en', nd, ns.
+    split; [ apply (proj1 (in_rev L nd)); exact H1 |]. split; [ exact H2 |].
+    split; [ exact H3 |].
+    split; [ apply (proj1 (in_rev L ns)); exact H4 |]. split; [ exact H5 |].
+    split; [ exact H6 | exact H7 ].
+  Qed.
+
+  (* THE STRUCTURAL FACT, on the exported forward graph. *)
+  Lemma joins_sequence_build_dfg (act: tfs_action sched) :
+    joins_sequence (graph (build_dfg ctx act)).
+  Proof.
+    unfold build_dfg.
+    pose proof (dataflow_ops_joins (tfs_spec_action_ops ctx act) []
+                  {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0 |} ];
+                     var_map := [] |}) as H.
+    cbn beta in H.
+    assert (Hbase : joins_sequence
+              (graph {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0 |} ];
+                        var_map := [] |})).
+    { intros j d prev Hin Hop. cbn [graph In] in Hin.
+      destruct Hin as [<- | []]. cbn [op] in Hop. discriminate Hop. }
+    specialize (H Hbase).
+    destruct (dataflow_ops ctx [] (tfs_spec_action_ops ctx act)
+                {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0 |} ];
+                   var_map := [] |}) as [u final] eqn:Ed.
+    cbn [snd] in H. cbn [graph].
+    apply joins_sequence_rev. exact H.
+  Qed.
+
 
 
   Lemma get_var_full v (s: wst) :
@@ -9764,6 +9897,31 @@ Section SchedulerSimulation.
     apply (drive_nodes_complete act p d a en').
     - apply node_op_range. rewrite Hop. discriminate.
     - exact Hop.
+  Qed.
+
+  (* THE JOIN, as the port argument reads it: it waits on a SAMPLE of the
+     drive.s own port, under a guard the drive could share. *)
+  Lemma join_waits_on_sample (act: tfs_action sched) (j d prev: nid_t) :
+    node_op act j = DFG_Join d prev ->
+    exists (p: p_var) arg en tok en',
+      node_op act d = DFG_Drive p arg en
+      /\ node_op act prev = DFG_Sample p tok en'
+      /\ guards_disjoint en en' = false.
+  Proof.
+    intro Hop.
+    assert (Hlt : j < length (graph (build_dfg ctx act)))
+      by (apply node_op_range; rewrite Hop; discriminate).
+    destruct (joins_sequence_build_dfg act
+                (nth j (graph (build_dfg ctx act))
+                   {| nid := 0; op := DFG_Empty; sz := 0 |}) d prev
+                (nth_In _ _ Hlt) Hop)
+      as [p [arg [en [tok [en' [nd [ns [H1 [H2 [H3 [H4 [H5 [H6 H7]]]]]]]]]]]]].
+    exists p, arg, en, tok, en'.
+    destruct (node_at_nid act nd H1) as [_ Hnth1].
+    destruct (node_at_nid act ns H4) as [_ Hnth4].
+    rewrite H2 in Hnth1. rewrite H5 in Hnth4.
+    unfold node_op. rewrite Hnth1, Hnth4.
+    split; [ exact H3 | split; [ exact H6 | exact H7 ] ].
   Qed.
 
   (* Strictly decreasing, as [drive_nodes] produces it. *)
