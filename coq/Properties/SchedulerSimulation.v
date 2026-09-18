@@ -925,6 +925,25 @@ Section SchedulerSimulation.
            (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n
            (sample_bufs act a_idx)).
 
+  (* The validity that goes with [node_ref_expr]: ones exactly when every sample
+     buffer the reference reads has already latched. *)
+  Definition node_ref_valid
+      (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (n: nat) : @tf_expr (tfs_states sched) si_var o_var :=
+    snd (compile_dfg_expr ctx bneeds
+           (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n
+           (sample_bufs act a_idx)).
+
+  (* The GATE a buffer's validity register is assigned from: its own slot is
+     removed from the table, since the register is what that slot feeds. *)
+  Local Notation buf_gate act a_idx n_idx :=
+    (snd (compile_dfg_expr ctx bneeds
+            (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act)
+            (vreg_nid a_idx n_idx)
+            (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (vreg_nid a_idx n_idx)))
+               (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))).
+
   (* [a_idx] indexes the SAME action as [act]: buffer_needs is built by mapping
      over spec_all_actions, so length (buffer_needs …) = length spec_all_actions
      and act's slot is finite_index act. *)
@@ -6377,15 +6396,6 @@ Section SchedulerSimulation.
              fuel n []).
   Qed.
 
-  (* The stall's compiled validity, as [buffer_after_cycle] hands it over: the
-     buffer table with the stall's own slot removed. *)
-  Local Notation stall_gate act a_idx n_idx :=
-    (snd (compile_dfg_expr ctx bneeds
-            (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act)
-            (vreg_nid a_idx n_idx)
-            (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (vreg_nid a_idx n_idx)))
-               (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))).
-
   (* A stall's counter along a pre-done run: with its gate up from cycle [r],
      the counter reads [pred l] from cycle [r + pred l] on.  This is A2 debt 3,
      and it is what licenses the weight [node_rank] gives a stall. *)
@@ -6397,7 +6407,7 @@ Section SchedulerSimulation.
     (fst ss0).[tf_dfg_b a_idx n_idx] = Bits.zero ->
     (forall i, 1 <= i <= K -> ~ done_set (run_n i act input ss0)) ->
     (forall j, r <= j < K ->
-       eval1 (stall_gate act a_idx n_idx) (run_n j act input ss0)
+       eval1 (buf_gate act a_idx n_idx) (run_n j act input ss0)
          (sched_input input (run_n j act input ss0)) = Bits.ones 1) ->
     forall k, r + pred l <= k <= K ->
       Bits.to_nat ((fst (run_n k act input ss0)).[tf_dfg_b a_idx n_idx]) = pred l.
@@ -6407,7 +6417,7 @@ Section SchedulerSimulation.
     apply (counter_saturates (ss_sz (tf_dfg_b a_idx n_idx)) (pred l) r K
              (fun j => (fst (run_n j act input ss0)).[tf_dfg_b a_idx n_idx])
              (fun j => if beq_dec
-                            (eval1 (stall_gate act a_idx n_idx)
+                            (eval1 (buf_gate act a_idx n_idx)
                                (run_n j act input ss0)
                                (sched_input input (run_n j act input ss0)))
                             Bits.zero
