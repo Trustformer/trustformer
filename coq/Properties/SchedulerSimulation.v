@@ -2251,6 +2251,74 @@ Section SchedulerSimulation.
     exists nd. split; [ exact Hin | reflexivity ].
   Qed.
 
+  (* What it returns: a SAMPLE on that port whose guard it could share. *)
+  Lemma last_sample_spec (s: wst) (ip: p_var) en prev :
+    last_sample ctx s ip en = Some prev ->
+    exists nd tok en',
+      In nd (graph s) /\ nid nd = prev
+      /\ op nd = DFG_Sample ip tok en'
+      /\ guards_disjoint en en' = false.
+  Proof.
+    unfold last_sample.
+    destruct (find _ (graph s)) as [nd |] eqn:Ef; [| discriminate].
+    intro H. injection H as <-.
+    apply find_some in Ef. destruct Ef as [Hin Hp]. cbv beta in Hp.
+    destruct (op nd) as [ c | iv | v2 | uop a | bop a1 a2 | a | cd t e
+                        | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo;
+      try discriminate Hp.
+    destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) siv ip) as [-> | Hne];
+      [| discriminate Hp].
+    exists nd, sn, sen. repeat split; [ exact Hin | exact Eo |].
+    apply negb_true_iff in Hp. exact Hp.
+  Qed.
+
+  (* Every ordering join sits between a drive and a SAMPLE on the same port
+     whose guard it could share -- which is exactly what [last_sample] gave. *)
+  Definition joins_sequence (L : list (@dfg_node_t s_var i_var o_var p_var)) : Prop :=
+    forall j d prev, In j L -> op j = DFG_Join d prev ->
+      exists (p: p_var) arg en tok en' nd ns,
+        In nd L /\ nid nd = d /\ op nd = DFG_Drive p arg en
+        /\ In ns L /\ nid ns = prev /\ op ns = DFG_Sample p tok en'
+        /\ guards_disjoint en en' = false.
+
+  Lemma joins_sequence_emit_other (s: wst) o size :
+    joins_sequence (graph s) ->
+    (forall d prev, o <> DFG_Join d prev) ->
+    joins_sequence (graph (snd (emit ctx o size s))).
+  Proof.
+    intros Hjs Hno. rewrite emit_red. cbn [snd graph].
+    intros j d prev Hin Hop. cbn [In] in Hin.
+    destruct Hin as [<- | Hin]; [ cbn [op] in Hop; exfalso; exact (Hno d prev Hop) |].
+    destruct (Hjs j d prev Hin Hop)
+      as [p [arg [en [tok [en' [nd [ns [H1 [H2 [H3 [H4 [H5 [H6 H7]]]]]]]]]]]]].
+    exists p, arg, en, tok, en', nd, ns.
+    split; [ right; exact H1 |]. split; [ exact H2 |]. split; [ exact H3 |].
+    split; [ right; exact H4 |]. split; [ exact H5 |]. split; [ exact H6 | exact H7 ].
+  Qed.
+
+  Lemma joins_sequence_emit_join (s: wst) d prev (p: p_var) arg en tok en' :
+    joins_sequence (graph s) ->
+    (exists nd, In nd (graph s) /\ nid nd = d /\ op nd = DFG_Drive p arg en) ->
+    (exists ns, In ns (graph s) /\ nid ns = prev /\ op ns = DFG_Sample p tok en') ->
+    guards_disjoint en en' = false ->
+    joins_sequence (graph (snd (emit ctx (DFG_Join d prev) 1 s))).
+  Proof.
+    intros Hjs [nd [Hnd [Hnid Hdop]]] [ns [Hns [Hpid Hsop]]] Hdis.
+    rewrite emit_red. cbn [snd graph].
+    intros j d0 prev0 Hin Hop. cbn [In] in Hin.
+    destruct Hin as [<- | Hin].
+    - cbn [op] in Hop. injection Hop as <- <-.
+      exists p, arg, en, tok, en', nd, ns.
+      split; [ right; exact Hnd |]. split; [ exact Hnid |]. split; [ exact Hdop |].
+      split; [ right; exact Hns |]. split; [ exact Hpid |].
+      split; [ exact Hsop | exact Hdis ].
+    - destruct (Hjs j d0 prev0 Hin Hop)
+        as [p2 [arg2 [en2 [tok2 [en2' [nd2 [ns2 [H1 [H2 [H3 [H4 [H5 [H6 H7]]]]]]]]]]]]].
+      exists p2, arg2, en2, tok2, en2', nd2, ns2.
+      split; [ right; exact H1 |]. split; [ exact H2 |]. split; [ exact H3 |].
+      split; [ right; exact H4 |]. split; [ exact H5 |]. split; [ exact H6 | exact H7 ].
+  Qed.
+
 
   Lemma emit_full op sz (s: wst) :
     winv s ->
@@ -2361,6 +2429,69 @@ Section SchedulerSimulation.
       rewrite Hnd in Hin. split; [ exact Hin | split; [ rewrite <- Hid; exact Hpos | reflexivity ] ].
     - right. exact H.
   Qed.
+
+  (* Threading it through the builder: a monadic step that emits no join. *)
+  Definition preserves_js {A} (m: M ctx A) : Prop :=
+    forall s, joins_sequence (graph s) -> joins_sequence (graph (snd (m s))).
+
+  Lemma preserves_js_ret {A} (x: A) : preserves_js (ret ctx x).
+  Proof. intros s Hs. exact Hs. Qed.
+
+  Lemma preserves_js_bind {A B} (m: M ctx A) (f: A -> M ctx B) :
+    preserves_js m -> (forall x, preserves_js (f x)) -> preserves_js (bind ctx m f).
+  Proof.
+    intros Hm Hf s Hs. unfold bind.
+    specialize (Hm s Hs). destruct (m s) as [x s1]. cbn [snd] in Hm.
+    exact (Hf x s1 Hm).
+  Qed.
+
+  Lemma preserves_js_emit o size :
+    (forall d prev, o <> DFG_Join d prev) -> preserves_js (emit ctx o size).
+  Proof. intros Hno s Hs. exact (joins_sequence_emit_other s o size Hs Hno). Qed.
+
+  Lemma preserves_js_get_var v : preserves_js (get_var ctx v).
+  Proof.
+    intros s Hs. unfold get_var, bind, get_state.
+    destruct (BitsToLists.list_assoc (var_map s) v) as [id |]; [ exact Hs |].
+    destruct (read_var ctx v s) as [id s'] eqn:Er. cbn [snd].
+    destruct (read_var_cases v s id s' Er) as [[_ [_ ->]] | Hem]; [ exact Hs |].
+    apply (f_equal snd) in Hem. cbn [snd] in Hem. rewrite <- Hem.
+    apply joins_sequence_emit_other; [ exact Hs |].
+    intros d prev Hc. discriminate Hc.
+  Qed.
+
+  Lemma dataflow_expr_joins e sz : preserves_js (dataflow_expr ctx e sz).
+  Proof.
+    revert sz.
+    induction e as [ c | v | v | v | uop src IHsrc | bop s1 IH1 s2 IH2 | c IHc t IHt e IHe ];
+      intro sz; cbn [dataflow_expr].
+    - apply preserves_js_emit. intros d prev Hc. discriminate Hc.
+    - apply preserves_js_bind; [ apply preserves_js_get_var | intro x ].
+      destruct (Nat.eqb _ sz);
+        [ apply preserves_js_ret
+        | apply preserves_js_emit; intros d prev Hc; discriminate Hc ].
+    - apply preserves_js_bind;
+        [ apply preserves_js_emit; intros d prev Hc; discriminate Hc | intro x ].
+      destruct (Nat.eqb _ sz);
+        [ apply preserves_js_ret
+        | apply preserves_js_emit; intros d prev Hc; discriminate Hc ].
+    - apply preserves_js_bind; [ apply preserves_js_get_var | intro x ].
+      destruct (Nat.eqb _ sz);
+        [ apply preserves_js_ret
+        | apply preserves_js_emit; intros d prev Hc; discriminate Hc ].
+    - destruct uop;
+        (apply preserves_js_bind; [ apply IHsrc | intro x ];
+         apply preserves_js_emit; intros d prev Hc; discriminate Hc).
+    - destruct bop;
+        (apply preserves_js_bind; [ apply IH1 | intro x ];
+         apply preserves_js_bind; [ apply IH2 | intro y ];
+         apply preserves_js_emit; intros d prev Hc; discriminate Hc).
+    - apply preserves_js_bind; [ apply IHc | intro x ].
+      apply preserves_js_bind; [ apply IHt | intro y ].
+      apply preserves_js_bind; [ apply IHe | intro z ].
+      apply preserves_js_emit; intros d prev Hc; discriminate Hc.
+  Qed.
+
 
   Lemma get_var_full v (s: wst) :
     winv s ->
