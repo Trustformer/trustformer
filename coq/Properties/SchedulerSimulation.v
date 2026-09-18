@@ -8973,6 +8973,73 @@ Section SchedulerSimulation.
     rewrite Hnid. split; [ exact Hp | exact Hnth ].
   Qed.
 
+  (* Every member of [drive_nodes] is a drive on that port. *)
+  Lemma drive_nodes_spec (act: tfs_action sched) (p: p_var) (n: nid_t) :
+    In n (drive_nodes ctx (build_dfg ctx act) p) ->
+    n < length (graph (build_dfg ctx act))
+    /\ exists a en, node_op act n = DFG_Drive p a en.
+  Proof.
+    unfold drive_nodes.
+    match goal with
+    | |- In n (fold_left ?F _ _) -> _ =>
+        assert (Hgen : forall g (acc: list nid_t),
+                  In n (fold_left F g acc) ->
+                  In n acc \/
+                  exists nd, In nd g /\ nid nd = n /\
+                             exists a en, op nd = DFG_Drive p a en)
+    end.
+    { intro g. induction g as [| nd g IH]; intros acc Hin; cbn [fold_left] in Hin.
+      - left. exact Hin.
+      - destruct (IH _ Hin) as [Hacc | [nd' [Hnd' [Hid Hop]]]].
+        + destruct (op nd) eqn:Ho; try (left; exact Hacc).
+          destruct (eq_dec p0 p) as [Heq | Hne]; [| left; exact Hacc].
+          destruct Hacc as [Heqn | Hacc]; [| left; exact Hacc].
+          right. exists nd. split; [ left; reflexivity |].
+          split; [ exact Heqn |]. subst p0. eauto.
+        + right. exists nd'. split; [ right; exact Hnd' |].
+          split; [ exact Hid | exact Hop ]. }
+    intro Hin.
+    destruct (Hgen _ [] Hin) as [H0 | [nd [Hnd [Hid Hop]]]]; [ destruct H0 |].
+    destruct (node_at_nid act nd Hnd) as [Hlt Hnth].
+    rewrite Hid in Hlt, Hnth.
+    split; [ exact Hlt |]. unfold node_op. rewrite Hnth. exact Hop.
+  Qed.
+
+  (* And every drive on the port is in it. *)
+  Lemma drive_nodes_complete (act: tfs_action sched) (p: p_var) (n a: nid_t) en :
+    n < length (graph (build_dfg ctx act)) ->
+    node_op act n = DFG_Drive p a en ->
+    In n (drive_nodes ctx (build_dfg ctx act) p).
+  Proof.
+    intros Hlt Hop. unfold drive_nodes.
+    match goal with
+    | |- In n (fold_left ?F _ _) =>
+        assert (Hmono : forall g (acc: list nid_t) x, In x acc -> In x (fold_left F g acc));
+        [ | assert (Hgen : forall g (acc: list nid_t) nd,
+                      In nd g -> (exists b e, op nd = DFG_Drive p b e) ->
+                      In (nid nd) (fold_left F g acc)) ]
+    end.
+    { intro g. induction g as [| nd g IH]; intros acc x Hx; cbn [fold_left]; [ exact Hx |].
+      apply IH. destruct (op nd); try exact Hx.
+      match goal with
+      | |- context [ if ?X then _ else _ ] => destruct X
+      end; [ right; exact Hx | exact Hx ]. }
+    { intro g. induction g as [| nd0 g IH]; intros acc nd Hin Hop';
+        cbn [fold_left]; [ destruct Hin |].
+      destruct Hin as [-> | Hin]; [| apply IH; assumption ].
+      apply Hmono. destruct Hop' as [b [e Ho]]. rewrite Ho.
+      match goal with
+      | |- context [ if ?X then _ else _ ] => destruct X as [_ | Hne]
+      end; [ left; reflexivity | exfalso; apply Hne; reflexivity ]. }
+    pose proof (node_nid_at act n Hlt) as Hnid.
+    pose proof (Hgen (graph (build_dfg ctx act)) []
+                  (nth n (graph (build_dfg ctx act))
+                     {| nid := 0; op := DFG_Empty; sz := 0 |})
+                  (nth_In _ _ Hlt)
+                  ltac:(exists a, en; exact Hop)) as Hres.
+    rewrite Hnid in Hres. exact Hres.
+  Qed.
+
   (* Every arg of a real forward node is itself a real node with a strictly
      smaller id — the rank that every structural recursion below descends on. *)
   Lemma node_args_range (act: tfs_action sched) n :
