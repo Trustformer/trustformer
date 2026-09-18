@@ -10942,6 +10942,37 @@ Section SchedulerSimulation.
     split; [ unfold node_op; rewrite Hnth; exact Hjop | exact Hle ].
   Qed.
 
+  (* ASSEMBLY: the chain gate of a drive emitted after this call.s sample is
+     the ordering join, and that join waits on a sample at or after it. *)
+  Lemma later_drive_gate
+        (act: tfs_action sched) (p: p_var) samp tok en_s d m arg_m en_m g h :
+    node_op act samp = DFG_Sample p tok en_s ->
+    sample_drive act samp = Some d ->
+    node_op act m = DFG_Drive p arg_m en_m ->
+    d < m -> guards_disjoint en_m en_s = false ->
+    chain_gate ctx (build_dfg ctx act) m = Some (g, h) ->
+    exists prev,
+      node_op act g = DFG_Join m prev
+      /\ samp <= prev
+      /\ exists q tok' en'', node_op act prev = DFG_Sample q tok' en''.
+  Proof.
+    intros Hsamp Hsd Hm Hlt Hdis Hcg.
+    pose proof (drive_after_sample act p samp tok en_s d m p arg_m en_m
+                  Hsamp Hsd Hm Hlt) as Hsm.
+    destruct (call_sequenced_join act p m arg_m en_m samp tok en_s Hm Hsamp Hsm Hdis)
+      as [j [prev [Hj Hle]]].
+    destruct (chain_gate_is_join act m j prev g h Hj Hcg) as [prev' Hg].
+    pose proof (join_nid_succ act j m prev Hj) as Hjn.
+    pose proof (join_nid_succ act g m prev' Hg) as Hgn.
+    assert (Hgj : g = j) by lia.
+    assert (Hpp : prev' = prev) by congruence.
+    subst prev'.
+    exists prev. split; [ exact Hg | split; [ exact Hle |]].
+    destruct (join_waits_on_sample act g m prev Hg)
+      as [q [arg2 [en2 [tok2 [en3 [_ [Hps _]]]]]]].
+    exists q, tok2, en3. exact Hps.
+  Qed.
+
   (* Strictly decreasing, as [drive_nodes] produces it. *)
   Inductive Desc : list nid_t -> Prop :=
   | Desc_nil : Desc []
