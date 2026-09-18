@@ -5075,6 +5075,226 @@ Section SchedulerSimulation.
       reflexivity.
   Qed.
 
+  Lemma guard_incl_mono (g pi pi': list lit) :
+    (forall x, In x pi -> In x pi') ->
+    guard_incl g pi = true -> guard_incl g pi' = true.
+  Proof.
+    intros Hsub H. apply forallb_forall. intros a Ha.
+    pose proof (proj1 (forallb_forall _ _) H a Ha) as Hex.
+    apply existsb_exists in Hex. destruct Hex as [b [Hb Heq]].
+    apply existsb_exists. exists b. split; [ apply Hsub; exact Hb | exact Heq ].
+  Qed.
+
+  (* A longer path declassifies more, so it can only make a phi SELECTING. *)
+  Lemma phi_crit_mono (tainted: list nid_t) (dfacts: list gfact)
+        (c: nid_t) (pi pi': list lit) :
+    (forall x, In x pi -> In x pi') ->
+    phi_crit tainted dfacts c pi' = true -> phi_crit tainted dfacts c pi = true.
+  Proof.
+    intros Hsub H. unfold phi_crit in *.
+    apply andb_true_iff in H. destruct H as [Hm Hd].
+    apply andb_true_iff. split; [ exact Hm |].
+    apply negb_true_iff in Hd. apply negb_true_iff.
+    destruct (declassified_at dfacts c pi) eqn:E; [| reflexivity ].
+    exfalso. unfold declassified_at in *.
+    apply existsb_exists in E. destruct E as [g [Hg Hincl]].
+    assert (Hex : existsb (fun g0 => guard_incl g0 pi') (gfacts_of dfacts c) = true).
+    { apply existsb_exists. exists g.
+      split; [ exact Hg | exact (guard_incl_mono g pi pi' Hsub Hincl) ]. }
+    rewrite Hex in Hd. discriminate.
+  Qed.
+
+  (* Compiling under a LONGER path condition only WEAKENS the validity: the
+     path enters only through [declassified_at], so a phi that was critical --
+     both branches -- becomes selecting, which the first implies. *)
+  Lemma compile_valid_path_mono
+        (act: tfs_action sched) a_idx (ss: sched_sys_state) (input: sched_input_t)
+        (bufs: list (nid_t * (nat * sz_t))) :
+    forall fuel n (pi pi': list lit),
+      (forall x, In x pi -> In x pi') ->
+      eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                    (build_dfg ctx act) n bufs)) ss input = Bits.ones 1 ->
+      eval1 (snd (compile_dfg_expr_at ctx bneeds pi' fuel a_idx
+                    (build_dfg ctx act) n bufs)) ss input = Bits.ones 1.
+  Proof.
+    intro fuel. induction fuel as [| fuel IH]; intros n pi pi' Hsub Hval;
+      [ exact Hval |].
+    cbn [compile_dfg_expr_aux] in Hval |- *.
+    destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:Hla;
+      [ exact Hval |].
+    cbv beta iota in Hval |- *.
+    destruct (op (nth n (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Hop.
+    - exact Hval.
+    - exact Hval.
+    - destruct v; exact Hval.
+    - (* Unary *)
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                  arg bufs) as [ae ve] eqn:E1.
+      destruct (compile_dfg_expr_at ctx bneeds pi' fuel a_idx (build_dfg ctx act)
+                  arg bufs) as [ae' ve'] eqn:E2.
+      cbn [snd] in Hval |- *.
+      pose proof (IH arg pi pi' Hsub ltac:(rewrite E1; cbn [snd]; exact Hval)) as Hc.
+      rewrite E2 in Hc. cbn [snd] in Hc. exact Hc.
+    - (* Binary *)
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                  arg1 bufs) as [a1e v1e] eqn:E1.
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                  arg2 bufs) as [a2e v2e] eqn:E2.
+      destruct (compile_dfg_expr_at ctx bneeds pi' fuel a_idx (build_dfg ctx act)
+                  arg1 bufs) as [a1e' v1e'] eqn:E3.
+      destruct (compile_dfg_expr_at ctx bneeds pi' fuel a_idx (build_dfg ctx act)
+                  arg2 bufs) as [a2e' v2e'] eqn:E4.
+      cbn [snd] in Hval |- *.
+      rewrite valid_and_eval in Hval.
+      destruct (bits1_and_split _ _ Hval) as [Hv1 Hv2].
+      pose proof (IH arg1 pi pi' Hsub ltac:(rewrite E1; cbn [snd]; exact Hv1)) as Hc1.
+      pose proof (IH arg2 pi pi' Hsub ltac:(rewrite E2; cbn [snd]; exact Hv2)) as Hc2.
+      rewrite E3 in Hc1. rewrite E4 in Hc2. cbn [snd] in Hc1, Hc2.
+      rewrite valid_and_eval, Hc1, Hc2. vm_compute. reflexivity.
+    - (* Resize *)
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                  arg bufs) as [ae ve] eqn:E1.
+      destruct (compile_dfg_expr_at ctx bneeds pi' fuel a_idx (build_dfg ctx act)
+                  arg bufs) as [ae' ve'] eqn:E2.
+      cbn [snd] in Hval |- *.
+      pose proof (IH arg pi pi' Hsub ltac:(rewrite E1; cbn [snd]; exact Hval)) as Hc.
+      rewrite E2 in Hc. cbn [snd] in Hc. exact Hc.
+    - (* Phi: the only place the path is read *)
+      pose proof (compile_fst_pi_irrel (get_tainted ctx (build_dfg ctx act))
+                    (decl_facts ctx (build_dfg ctx act)) a_idx (build_dfg ctx act)
+                    bufs fuel cnd pi pi') as Hce.
+      destruct (phi_crit (get_tainted ctx (build_dfg ctx act))
+                  (decl_facts ctx (build_dfg ctx act)) cnd pi) eqn:Hcp;
+        destruct (phi_crit (get_tainted ctx (build_dfg ctx act))
+                    (decl_facts ctx (build_dfg ctx act)) cnd pi') eqn:Hcp';
+        cbn [phi_path] in Hval |- *.
+      + (* critical both sides *)
+        destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                    cnd bufs) as [ce cv] eqn:Ec.
+        destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                    tid bufs) as [te tv] eqn:Et.
+        destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                    eid bufs) as [ee ev] eqn:Ee.
+        destruct (compile_dfg_expr_at ctx bneeds pi' fuel a_idx (build_dfg ctx act)
+                    cnd bufs) as [ce' cv'] eqn:Ec'.
+        destruct (compile_dfg_expr_at ctx bneeds pi' fuel a_idx (build_dfg ctx act)
+                    tid bufs) as [te' tv'] eqn:Et'.
+        destruct (compile_dfg_expr_at ctx bneeds pi' fuel a_idx (build_dfg ctx act)
+                    eid bufs) as [ee' ev'] eqn:Ee'.
+        cbn [snd] in Hval |- *.
+        rewrite valid_and_eval, valid_and_eval in Hval.
+        destruct (bits1_and_split _ _ Hval) as [Hte Hcv].
+        destruct (bits1_and_split _ _ Hte) as [Htv Hev].
+        pose proof (IH cnd pi pi' Hsub ltac:(rewrite Ec; cbn [snd]; exact Hcv)) as Hac.
+        pose proof (IH tid pi pi' Hsub ltac:(rewrite Et; cbn [snd]; exact Htv)) as Hat.
+        pose proof (IH eid pi pi' Hsub ltac:(rewrite Ee; cbn [snd]; exact Hev)) as Hae.
+        rewrite Ec' in Hac. rewrite Et' in Hat. rewrite Ee' in Hae.
+        cbn [snd] in Hac, Hat, Hae.
+        rewrite valid_and_eval, valid_and_eval, Hac, Hat, Hae.
+        vm_compute. reflexivity.
+      + (* critical at [pi], selecting at [pi']: both branches give the one *)
+        destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                    cnd bufs) as [ce cv] eqn:Ec.
+        destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                    tid bufs) as [te tv] eqn:Et.
+        destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                    eid bufs) as [ee ev] eqn:Ee.
+        destruct (compile_dfg_expr_at ctx bneeds pi' fuel a_idx (build_dfg ctx act)
+                    cnd bufs) as [ce' cv'] eqn:Ec'.
+        destruct (compile_dfg_expr_at ctx bneeds ((cnd, true) :: pi') fuel a_idx
+                    (build_dfg ctx act) tid bufs) as [te' tv'] eqn:Et'.
+        destruct (compile_dfg_expr_at ctx bneeds ((cnd, false) :: pi') fuel a_idx
+                    (build_dfg ctx act) eid bufs) as [ee' ev'] eqn:Ee'.
+        cbn [snd] in Hval |- *.
+        rewrite valid_and_eval, valid_and_eval in Hval.
+        destruct (bits1_and_split _ _ Hval) as [Hte Hcv].
+        destruct (bits1_and_split _ _ Hte) as [Htv Hev].
+        assert (Hsubt : forall x, In x pi -> In x ((cnd, true) :: pi'))
+          by (intros x Hx; right; apply Hsub; exact Hx).
+        assert (Hsube : forall x, In x pi -> In x ((cnd, false) :: pi'))
+          by (intros x Hx; right; apply Hsub; exact Hx).
+        pose proof (IH cnd pi pi' Hsub ltac:(rewrite Ec; cbn [snd]; exact Hcv)) as Hac.
+        pose proof (IH tid pi _ Hsubt ltac:(rewrite Et; cbn [snd]; exact Htv)) as Hat.
+        pose proof (IH eid pi _ Hsube ltac:(rewrite Ee; cbn [snd]; exact Hev)) as Hae.
+        rewrite Ec' in Hac. rewrite Et' in Hat. rewrite Ee' in Hae.
+        cbn [snd] in Hac, Hat, Hae.
+        rewrite valid_and_eval, Hac, (valid_if_eval ce' tv' ev' ss input Hat Hae).
+        vm_compute. reflexivity.
+      + (* selecting at [pi], critical at [pi']: impossible *)
+        exfalso. rewrite (phi_crit_mono _ _ cnd pi pi' Hsub Hcp') in Hcp.
+        discriminate.
+      + (* selecting both sides *)
+        destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                    cnd bufs) as [ce cv] eqn:Ec.
+        destruct (compile_dfg_expr_at ctx bneeds ((cnd, true) :: pi) fuel a_idx
+                    (build_dfg ctx act) tid bufs) as [te tv] eqn:Et.
+        destruct (compile_dfg_expr_at ctx bneeds ((cnd, false) :: pi) fuel a_idx
+                    (build_dfg ctx act) eid bufs) as [ee ev] eqn:Ee.
+        destruct (compile_dfg_expr_at ctx bneeds pi' fuel a_idx (build_dfg ctx act)
+                    cnd bufs) as [ce' cv'] eqn:Ec'.
+        destruct (compile_dfg_expr_at ctx bneeds ((cnd, true) :: pi') fuel a_idx
+                    (build_dfg ctx act) tid bufs) as [te' tv'] eqn:Et'.
+        destruct (compile_dfg_expr_at ctx bneeds ((cnd, false) :: pi') fuel a_idx
+                    (build_dfg ctx act) eid bufs) as [ee' ev'] eqn:Ee'.
+        cbn [snd] in Hval |- *. cbn [fst] in Hce.
+        rewrite valid_and_eval in Hval.
+        destruct (bits1_and_split _ _ Hval) as [Hcv Hif].
+        destruct (valid_if_eval_inv ce tv ev ss input Hif) as [Hthen Helse].
+        pose proof (IH cnd pi pi' Hsub ltac:(rewrite Ec; cbn [snd]; exact Hcv)) as Hac.
+        rewrite Ec' in Hac. cbn [snd] in Hac.
+        assert (Hsubt : forall x, In x ((cnd, true) :: pi) -> In x ((cnd, true) :: pi'))
+          by (intros x [Hx | Hx]; [ left; exact Hx | right; apply Hsub; exact Hx ]).
+        assert (Hsube : forall x, In x ((cnd, false) :: pi) -> In x ((cnd, false) :: pi'))
+          by (intros x [Hx | Hx]; [ left; exact Hx | right; apply Hsub; exact Hx ]).
+        rewrite valid_and_eval, Hac.
+        rewrite (valid_if_eval_sel ce' tv' ev' ss input).
+        * vm_compute. reflexivity.
+        * intro Hnz.
+          pose proof (IH tid _ _ Hsubt
+            ltac:(rewrite Et; cbn [snd]; apply Hthen; rewrite Hce; exact Hnz)) as Hat.
+          rewrite Et' in Hat. cbn [snd] in Hat. exact Hat.
+        * intro Hz.
+          pose proof (IH eid _ _ Hsube
+            ltac:(rewrite Ee; cbn [snd]; apply Helse; rewrite Hce; exact Hz)) as Hae.
+          rewrite Ee' in Hae. cbn [snd] in Hae. exact Hae.
+    - (* Stall *)
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                  sa bufs) as [ae ve] eqn:E1.
+      destruct (compile_dfg_expr_at ctx bneeds pi' fuel a_idx (build_dfg ctx act)
+                  sa bufs) as [ae' ve'] eqn:E2.
+      cbn [snd] in Hval |- *.
+      pose proof (IH sa pi pi' Hsub ltac:(rewrite E1; cbn [snd]; exact Hval)) as Hc.
+      rewrite E2 in Hc. cbn [snd] in Hc. exact Hc.
+    - (* Drive *) exact (IH dn pi pi' Hsub Hval).
+    - (* Sample *)
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                  sn bufs) as [ae ve] eqn:E1.
+      destruct (compile_dfg_expr_at ctx bneeds pi' fuel a_idx (build_dfg ctx act)
+                  sn bufs) as [ae' ve'] eqn:E2.
+      cbn [snd] in Hval |- *.
+      pose proof (IH sn pi pi' Hsub ltac:(rewrite E1; cbn [snd]; exact Hval)) as Hc.
+      rewrite E2 in Hc. cbn [snd] in Hc. exact Hc.
+    - (* Join *)
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                  ja bufs) as [a1e v1e] eqn:E1.
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                  jb bufs) as [a2e v2e] eqn:E2.
+      destruct (compile_dfg_expr_at ctx bneeds pi' fuel a_idx (build_dfg ctx act)
+                  ja bufs) as [a1e' v1e'] eqn:E3.
+      destruct (compile_dfg_expr_at ctx bneeds pi' fuel a_idx (build_dfg ctx act)
+                  jb bufs) as [a2e' v2e'] eqn:E4.
+      cbn [snd] in Hval |- *.
+      rewrite valid_and_eval in Hval.
+      destruct (bits1_and_split _ _ Hval) as [Hv1 Hv2].
+      pose proof (IH ja pi pi' Hsub ltac:(rewrite E1; cbn [snd]; exact Hv1)) as Hc1.
+      pose proof (IH jb pi pi' Hsub ltac:(rewrite E2; cbn [snd]; exact Hv2)) as Hc2.
+      rewrite E3 in Hc1. rewrite E4 in Hc2. cbn [snd] in Hc1, Hc2.
+      rewrite valid_and_eval, Hc1, Hc2. vm_compute. reflexivity.
+    - exact Hval.
+  Qed.
+
   (* Packages the phi step of the VALUE component in one equation, so proofs
      never destructure the three branch compiles.  Stated over variables --
      concrete analysis arguments make the destructs miss. *)
