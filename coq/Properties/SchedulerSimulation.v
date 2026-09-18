@@ -10226,6 +10226,46 @@ Section SchedulerSimulation.
     subst j. subst t. rewrite Hj in Ht. discriminate Ht.
   Qed.
 
+  (* So a drive that HAS an ordering join has that join as its chain gate:
+     [chain_gate] only looks for a stall on the drive first, and there is none. *)
+  Lemma chain_gate_is_join (act: tfs_action sched) (d j prev g h: nid_t) :
+    node_op act j = DFG_Join d prev ->
+    chain_gate ctx (build_dfg ctx act) d = Some (g, h) ->
+    exists prev', node_op act g = DFG_Join d prev'.
+  Proof.
+    intros Hj Hcg. unfold chain_gate in Hcg. cbv zeta in Hcg.
+    destruct (find (fun nd => match op nd with
+                              | DFG_Stall _ a => Nat.eqb a d
+                              | _ => false
+                              end) (graph (build_dfg ctx act))) as [nd |] eqn:Ef1.
+    - exfalso. apply find_some in Ef1. destruct Ef1 as [Hin Hp]. cbv beta in Hp.
+      destruct (op nd) as [ c | iv | v2 | uop a | bop a1 a2 | a | cd t e
+                          | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo;
+        try discriminate Hp.
+      apply Nat.eqb_eq in Hp. subst sa.
+      destruct (node_at_nid act nd Hin) as [_ Hnth].
+      apply (no_stall_on_joined act j d prev (nid nd) slat Hj).
+      unfold node_op. rewrite Hnth. exact Eo.
+    - destruct (find (fun nd => match op nd with
+                                | DFG_Join a _ => Nat.eqb a d
+                                | _ => false
+                                end) (graph (build_dfg ctx act))) as [j2 |] eqn:Ef2;
+        [| discriminate Hcg ].
+      destruct (find (fun nd => match op nd with
+                                | DFG_Stall _ a => Nat.eqb a (nid j2)
+                                | _ => false
+                                end) (graph (build_dfg ctx act))) as [nd2 |] eqn:Ef3;
+        [| discriminate Hcg ].
+      injection Hcg as Hg Hh.
+      apply find_some in Ef2. destruct Ef2 as [Hin2 Hp2]. cbv beta in Hp2.
+      destruct (op j2) as [ c | iv | v2 | uop a | bop a1 a2 | a | cd t e
+                          | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo2;
+        try discriminate Hp2.
+      apply Nat.eqb_eq in Hp2. subst ja.
+      destruct (node_at_nid act j2 Hin2) as [_ Hnth2].
+      exists jb. unfold node_op. rewrite <- Hg. rewrite Hnth2. exact Eo2.
+  Qed.
+
   (* Strictly decreasing, as [drive_nodes] produces it. *)
   Inductive Desc : list nid_t -> Prop :=
   | Desc_nil : Desc []
