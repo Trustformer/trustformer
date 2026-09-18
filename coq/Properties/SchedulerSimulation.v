@@ -6739,6 +6739,34 @@ Section SchedulerSimulation.
     exact (compile_buffered_valid _ _ _ a_idx tok _ m msz t_idx _ [] Htok Hidx HB).
   Qed.
 
+  (* And a stall.s GATE is the validity of the node it waits on -- the drive,
+     or the ordering join when the call was sequenced. *)
+  Lemma stall_gate_walks
+        (act: tfs_action sched) a_idx t_idx (l hd: nid_t) :
+    node_op act (vreg_nid a_idx t_idx) = DFG_Stall l hd ->
+    hd <> vreg_nid a_idx t_idx ->
+    0 < length (graph (build_dfg ctx act)) ->
+    buf_gate act a_idx t_idx
+    = snd (compile_dfg_expr ctx bneeds (pred (length (graph (build_dfg ctx act)))) a_idx
+             (build_dfg ctx act) hd
+             (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (vreg_nid a_idx t_idx)))
+                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))).
+  Proof.
+    intros Hop Hne Hf.
+    assert (Hnone : BitsToLists.list_assoc
+                      (filter (fun '(b_nid, _) =>
+                                 negb (Nat.eqb b_nid (vreg_nid a_idx t_idx)))
+                         (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
+                      (vreg_nid a_idx t_idx) = None).
+    { apply list_assoc_key_none. intro Hin.
+      apply in_map_iff in Hin. destruct Hin as [[k v] [Hk Hmem]].
+      cbn [fst] in Hk. subst k.
+      apply filter_In in Hmem. destruct Hmem as [_ Hq].
+      rewrite Nat.eqb_refl in Hq. discriminate Hq. }
+    unfold node_op in Hop.
+    exact (compile_stall_valid _ _ _ a_idx _ l hd _ [] _ Hop Hnone Hf).
+  Qed.
+
   Lemma list_assoc_nodup_in {K} `{EqDec K} {A} (l: list (K * A)) k v :
     NoDup (map fst l) -> In (k, v) l -> BitsToLists.list_assoc l k = Some v.
   Proof.
