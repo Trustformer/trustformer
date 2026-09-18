@@ -8012,6 +8012,38 @@ Section SchedulerSimulation.
     rewrite eval1_svar_v. exact Hz.
   Qed.
 
+  (* The join.s own validity from the SAMPLE it waits on: a sample is always
+     buffered, so what the join ANDs in is that sample.s validity register. *)
+  Lemma join_gate_zero_of_prev
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+        (g m prev m0 msz: nid_t)
+        (n_idx : Vect.index (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+        (ss: sched_sys_state) (input: sched_input_t) :
+    node_op act g = DFG_Join m prev ->
+    BitsToLists.list_assoc
+      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) g = None ->
+    BitsToLists.list_assoc
+      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) prev = Some (m0, msz) ->
+    index_of_nat (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m0
+      = Some n_idx ->
+    (fst ss).[tf_dfg_v a_idx n_idx] = Bits.zero ->
+    1 < length (graph (build_dfg ctx act)) ->
+    eval1 (snd (compile_dfg_expr ctx bneeds (length (graph (build_dfg ctx act))) a_idx
+                  (build_dfg ctx act) g
+                  (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))) ss input
+    = Bits.zero.
+  Proof.
+    intros Hg Hgnb Hpb Hidx Hz Hf.
+    assert (HA : 0 < length (graph (build_dfg ctx act))) by lia.
+    assert (HB : 0 < pred (length (graph (build_dfg ctx act)))) by lia.
+    unfold node_op in Hg.
+    rewrite (compile_join_valid _ _ _ a_idx g m prev _ [] _ Hg Hgnb HA).
+    rewrite valid_and_eval.
+    rewrite (compile_buffered_valid _ _ _ a_idx prev _ m0 msz n_idx _ [] Hpb Hidx HB).
+    rewrite eval1_svar_v, Hz. apply bits1_and_zero_r.
+  Qed.
+
   (* ==================================================================== *)
   (* Phase 3b: the VALID => SETTLED invariant.                            *)
   (*                                                                      *)
