@@ -11117,6 +11117,53 @@ Section SchedulerSimulation.
       intro H. injection H as <-. right. exists jb. reflexivity.
   Qed.
 
+  (* What sits strictly between a call.s drive and its sample: its ordering
+     join and its stall, and nothing else. *)
+  Lemma sample_chain_between (act: tfs_action sched) samp (p: p_var) tok en d i :
+    node_op act samp = DFG_Sample p tok en ->
+    sample_drive act samp = Some d ->
+    d < i -> i < samp ->
+    (exists l a, node_op act i = DFG_Stall l a)
+    \/ (exists a b, node_op act i = DFG_Join a b).
+  Proof.
+    intros Hsamp Hsd Hdi His.
+    pose proof (sample_nid_succ act samp p tok en Hsamp) as Hsm.
+    unfold sample_drive in Hsd. rewrite Hsamp in Hsd.
+    destruct (node_op act tok) as [ c | iv | v2 | uop a1 | bop a1 a2 | a1 | cd t1 e1
+                                 | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Etok;
+      try (destruct (sample_drive_head_shape act p tok d Hsd)
+             as [[Hdh [ar [e2 Hh]]] | [prev Hh]];
+           [ lia
+           | pose proof (join_nid_succ act tok d prev Hh) as Ht;
+             assert (i = tok) as -> by lia; right; exists d, prev; exact Hh ]).
+    pose proof (stall_nid_succ act tok slat sa Etok) as Ht.
+    destruct (sample_drive_head_shape act p sa d Hsd)
+      as [[Hdh [ar [e2 Hh]]] | [prev Hh]].
+    - assert (i = tok) as -> by lia. left. exists slat, sa. exact Etok.
+    - pose proof (join_nid_succ act sa d prev Hh) as Hsa.
+      assert (i = sa \/ i = tok) as [-> | ->] by lia;
+        [ right; exists d, prev; exact Hh | left; exists slat, sa; exact Etok ].
+  Qed.
+
+  Lemma sample_drive_lt (act: tfs_action sched) samp (p: p_var) tok en d :
+    node_op act samp = DFG_Sample p tok en ->
+    sample_drive act samp = Some d -> d < samp.
+  Proof.
+    intros Hsamp Hsd.
+    pose proof (sample_nid_succ act samp p tok en Hsamp) as Hsm.
+    unfold sample_drive in Hsd. rewrite Hsamp in Hsd.
+    destruct (node_op act tok) as [ c | iv | v2 | uop a1 | bop a1 a2 | a1 | cd t1 e1
+                                 | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Etok;
+      try (destruct (sample_drive_head_shape act p tok d Hsd)
+             as [[Hdh [ar [e2 Hh]]] | [prev Hh]];
+           [ lia
+           | pose proof (join_nid_succ act tok d prev Hh) as Ht; lia ]).
+    pose proof (stall_nid_succ act tok slat sa Etok) as Ht.
+    destruct (sample_drive_head_shape act p sa d Hsd)
+      as [[Hdh [ar [e2 Hh]]] | [prev Hh]]; [ lia |].
+    pose proof (join_nid_succ act sa d prev Hh) as Hsa. lia.
+  Qed.
+
   (* Nothing strictly between a call.s drive and its sample is a drive: the
      indices in between are its join and its stall. *)
   Lemma sample_chain_no_drive (act: tfs_action sched) samp (p: p_var) tok en d i :
@@ -11126,22 +11173,38 @@ Section SchedulerSimulation.
     forall q a e, node_op act i <> DFG_Drive q a e.
   Proof.
     intros Hsamp Hsd Hdi His q a e Hi.
-    pose proof (sample_nid_succ act samp p tok en Hsamp) as Hsm.
-    unfold sample_drive in Hsd. rewrite Hsamp in Hsd.
-    destruct (node_op act tok) as [ c | iv | v2 | uop a1 | bop a1 a2 | a1 | cd t1 e1
-                                 | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Etok;
-      try (destruct (sample_drive_head_shape act p tok d Hsd)
-             as [[Hdh [ar [e2 Hh]]] | [prev Hh]];
-           [ lia
-           | pose proof (join_nid_succ act tok d prev Hh) as Ht;
-             assert (i = tok) as -> by lia; rewrite Hh in Hi; discriminate Hi ]).
-    pose proof (stall_nid_succ act tok slat sa Etok) as Ht.
-    destruct (sample_drive_head_shape act p sa d Hsd)
-      as [[Hdh [ar [e2 Hh]]] | [prev Hh]].
-    - assert (i = tok) as -> by lia. rewrite Etok in Hi. discriminate Hi.
-    - pose proof (join_nid_succ act sa d prev Hh) as Hsa.
-      assert (i = sa \/ i = tok) as [-> | ->] by lia;
-        [ rewrite Hh in Hi | rewrite Etok in Hi ]; discriminate Hi.
+    destruct (sample_chain_between act samp p tok en d i Hsamp Hsd Hdi His)
+      as [[l [b Hb]] | [b1 [b2 Hb]]]; rewrite Hi in Hb; discriminate Hb.
+  Qed.
+
+  Lemma sample_chain_no_sample (act: tfs_action sched) samp (p: p_var) tok en d i :
+    node_op act samp = DFG_Sample p tok en ->
+    sample_drive act samp = Some d ->
+    d < i -> i < samp ->
+    forall q t2 e2, node_op act i <> DFG_Sample q t2 e2.
+  Proof.
+    intros Hsamp Hsd Hdi His q t2 e2 Hi.
+    destruct (sample_chain_between act samp p tok en d i Hsamp Hsd Hdi His)
+      as [[l [b Hb]] | [b1 [b2 Hb]]]; rewrite Hi in Hb; discriminate Hb.
+  Qed.
+
+  (* Two samples in program order: the later one.s call starts after the
+     earlier sample, since nothing between a drive and its sample is one. *)
+  Lemma sample_before_drive (act: tfs_action sched) (p q: p_var)
+        samp tok en prev tok2 en2 d2 :
+    node_op act samp = DFG_Sample p tok en ->
+    node_op act prev = DFG_Sample q tok2 en2 ->
+    sample_drive act prev = Some d2 ->
+    samp < prev -> samp < d2.
+  Proof.
+    intros Hsamp Hprev Hsd2 Hlt.
+    destruct (Nat.lt_ge_cases samp d2) as [Hok | Hge]; [ exact Hok |].
+    exfalso.
+    destruct (Nat.eq_dec samp d2) as [Heq | Hne].
+    - destruct (sample_drive_op act prev d2 q tok2 en2 Hprev Hsd2) as [ar [e2 Hd2op]].
+      rewrite Heq in Hsamp. congruence.
+    - exact (sample_chain_no_sample act prev q tok2 en2 d2 samp Hprev Hsd2
+               ltac:(lia) Hlt p tok en Hsamp).
   Qed.
 
   (* So a drive emitted after the call.s drive is emitted after its SAMPLE. *)
