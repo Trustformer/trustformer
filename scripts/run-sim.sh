@@ -16,9 +16,10 @@ declare -A DESIGN=(
   [tb_mars.sv]=Example_Mars
   [tb_guard.sv]=Example_GuardCallSpike
   [tb_xport.sv]=Example_XPortGuardSpike
+  [tb_arms.sv]=Example_ArmsSeqSpike
 )
 
-tbs=("$@"); [ $# -eq 0 ] && tbs=(tb_call.sv tb_two.sv tb_chain.sv tb_branch.sv tb_guard.sv tb_mars.sv)
+tbs=("$@"); [ $# -eq 0 ] && tbs=(tb_call.sv tb_two.sv tb_chain.sv tb_branch.sv tb_guard.sv tb_arms.sv tb_mars.sv)
 status=0
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 

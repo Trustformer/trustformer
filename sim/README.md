@@ -34,6 +34,7 @@ the design uses the latched value.
 | `tb_chain.sv` | `Example_ChainedCallSpike` | two calls where the second's argument is the first's result |
 | `tb_branch.sv` | `Example_BranchCallSpike` | a call under an `if` on an INPUT: both arms drive, mutually exclusive in time |
 | `tb_guard.sv` | `Example_GuardCallSpike` | a branch on a CALL RESULT: the right arm is taken, and the guard reads the sample's latch |
+| `tb_arms.sv` | `Example_ArmsSeqSpike` | a call AFTER an `if` whose arms both call one IP: it waits for whichever arm ran, not just the last one written |
 | `tb_xport.sv` | `Example_XPortGuardSpike` | the same branch with the arms' calls on a DIFFERENT port from the one the condition reads -- **currently FAILS**, and is meant to |
 | `tb_mars.sv` | `Example_Mars` | the one-action MARS, 77 checks -- see below |
 

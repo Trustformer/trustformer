@@ -93,6 +93,8 @@ Section VariableScheduler.
   Local Notation get_state := (SchedulerCore.get_state ctx).
   Local Notation get_var := (SchedulerCore.get_var ctx).
   Local Notation last_sample := (SchedulerCore.last_sample ctx).
+  Local Notation pending_samples := (SchedulerCore.pending_samples ctx).
+  Local Notation join_pendings := (SchedulerCore.join_pendings ctx).
   Local Notation merge_key := (SchedulerCore.merge_key ctx).
   Local Notation merge_loop := (SchedulerCore.merge_loop ctx).
   Local Notation merge_maps := (SchedulerCore.merge_maps ctx).
@@ -278,6 +280,15 @@ Section VariableScheduler.
     - apply emit_vm.
   Qed.
 
+  (* Conjoining the pending calls is [emit]s too. *)
+  Lemma join_pendings_vm : forall l, preserves vm_nd (join_pendings l).
+  Proof.
+    induction l as [| q l IH]; cbn [join_pendings]; [ apply preserves_ret |].
+    apply preserves_bind; [ exact IH |]. intro r. destruct r as [h |].
+    - apply preserves_bind; [ apply emit_vm |]. intro j. apply preserves_ret.
+    - apply preserves_ret.
+  Qed.
+
   Lemma dataflow_ops_vm: forall ops en, preserves vm_nd (dataflow_ops en ops).
   Proof.
     induction ops as [bop | o1 IHops1 o2 IHops2 | oc ot IHops1 oe IHops2]; intro en;
@@ -290,9 +301,10 @@ Section VariableScheduler.
            LAST touches var_map; [get_state], [emit] and [ret] record nothing. *)
         apply preserves_bind; [intros s Hs; exact Hs|]. intro s0.
         apply preserves_bind; [apply dataflow_expr_vm|]. intro x.
+        apply preserves_bind; [apply join_pendings_vm|]. intro po.
         apply preserves_bind; [apply emit_vm|]. intro y.
         apply preserves_bind;
-          [destruct (last_sample s0 pip en); [apply emit_vm | apply preserves_ret]|]. intro h.
+          [destruct po; [apply emit_vm | apply preserves_ret]|]. intro h.
         apply preserves_bind; [apply stall_chain_vm|]. intro z.
         apply preserves_bind; [apply emit_vm|]. intro w.
         apply set_var_vm.

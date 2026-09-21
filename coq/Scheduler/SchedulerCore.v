@@ -133,6 +133,38 @@ Section SchedulerCore.
     | None => None
     end.
 
+  (* Every call on [p] this one must wait for: the most recent non-disjoint
+     sample, plus one per arm mutually exclusive with it.  Waiting on only the
+     most recent lets an untaken arm wave this call through (sim/tb_arms.sv). *)
+  Definition pending_samples (dfg: dfg_state) (p: ips_var)
+    (en: list (nid_t * bool)) : list nid_t :=
+    map fst
+      (fold_left (fun acc nd =>
+         match op nd with
+         | DFG_Sample p' _ en' =>
+             if ips_var_eq_dec.(eq_dec) p' p then
+               if guards_disjoint en en' then acc
+               else if forallb (fun q => guards_disjoint (snd q) en') acc
+                    then acc ++ [(nid nd, en')]
+                    else acc
+             else acc
+         | _ => acc
+         end) (graph dfg) []).
+
+  (* DEFERRED: where the branch condition is not critical this could select the
+     TAKEN arm, as a non-critical phi does, instead of conjoining both.  Sound
+     either way; worth nothing in any design here, so it is not done. *)
+  Fixpoint join_pendings (prevs: list nid_t) : M (option nid_t) :=
+    match prevs with
+    | [] => ret None
+    | q :: rest =>
+        let! r := join_pendings rest in
+        match r with
+        | None => ret (Some q)
+        | Some h => let! j := emit (DFG_Join q h) 1 in ret (Some j)
+        end
+    end.
+
   (* wide enough to count 0 .. n-1 *)
   Definition counter_sz (n: nat) : nat := S (Nat.log2 n).
 
@@ -319,11 +351,12 @@ Section SchedulerCore.
       | tf_call ip dst arg =>
         let! s0 := get_state in
         let! arg_id := dataflow_expr arg (ip_req_sz (ip_of ip)) in
+        (* SEQUENCING: the pending calls on this IP are conjoined FIRST, so the
+           drive still has its ordering join at [S drive_id], and that join
+           waits for every response that could still be outstanding. *)
+        let! prev_opt := join_pendings (pending_samples s0 ip en) in
         let! drive_id := emit (DFG_Drive ip arg_id en) (ip_req_sz (ip_of ip)) in
-        (* SEQUENCING: an earlier call on this IP puts a JOIN of this drive and
-           that call's sample under the stall.  A [DFG_Binary]'s validity is the
-           AND of its arguments, so the join waits for the previous response. *)
-        let! head := match last_sample s0 ip en with
+        let! head := match prev_opt with
                      | None => ret drive_id
                      | Some prev => emit (DFG_Join drive_id prev) 1
                      end in
