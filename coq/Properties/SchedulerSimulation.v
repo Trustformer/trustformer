@@ -13928,6 +13928,14 @@ Section SchedulerSimulation.
               eval1 (drive_pulse act a_idx mm) (run_n w act input ss0)
                 (sched_input input (run_n w act input ss0)) = Bits.zero).
 
+  (* The four together, at the last cycle before the action reports done. *)
+  Definition call_discipline (act: tfs_action sched) a_idx (input: input_t)
+      (ss0: sched_sys_state) (N: nat) : Prop :=
+    samples_settled act a_idx input ss0 (pred N)
+    /\ samples_ordered act a_idx input ss0
+    /\ guards_settled act a_idx input ss0 (pred N)
+    /\ requests_sent act a_idx input ss0 (pred N).
+
   (* THE PORT AT THE LATCH.  When a call's answer is latched, the port still
      carries that call's own request: its drive put it there, phase 3b keeps
      every later call off the wire, and [requests_sent] keeps the earlier
@@ -14137,19 +14145,139 @@ Section SchedulerSimulation.
     pose proof (nre_drive act a_idx d p av en' Hd1 Hdlen Hdop) as Hnre.
     unfold node_ref_expr in Hnre. rewrite Hnre. reflexivity.
   Qed.
+
+  (* THE ROUND TRIP, discharged.  The sample latches on the cycle its validity
+     rises, reading a port that still carries its own request, and holds that
+     answer to the end of the run. *)
+  Lemma round_trip
+        (act: tfs_action sched) a_idx (input: input_t) (ss0: sched_sys_state) M
+        n_idx (p: p_var) tok en d av en' :
+    act_idx_aligned act a_idx ->
+    1 < length (graph (build_dfg ctx act)) ->
+    (forall x, zeroed_at_start x -> (fst ss0).[x] = Bits.zero) ->
+    (forall i, 1 <= i <= M -> ~ done_set (run_n i act input ss0)) ->
+    samples_settled act a_idx input ss0 M ->
+    samples_ordered act a_idx input ss0 ->
+    guards_settled act a_idx input ss0 M ->
+    requests_sent act a_idx input ss0 M ->
+    node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
+    sample_drive act (vreg_nid a_idx n_idx) = Some d ->
+    node_op act d = DFG_Drive p av en' ->
+    sz (nth d (graph (build_dfg ctx act))
+         {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p) ->
+    guard_holds act a_idx (run_n M act input ss0)
+      (sched_input input (run_n M act input ss0)) en ->
+    (fst (run_n M act input ss0)).[tf_dfg_b a_idx n_idx]
+    = convert (ip_fn (tfs_spec_ip ctx p)
+        (tf_eval_expr ss_sz si_sz oo_sz (szB := ip_req_sz (tfs_spec_ip ctx p))
+           (node_ref_expr act a_idx av) (run_n M act input ss0)
+           (sched_input input (run_n M act input ss0)))).
+  Proof.
+    intros Halign Hlen Hz0 Hpre Hset Hord Hgs Hrs Hsamp Hsd Hdop Hdsz Hgd.
+    assert (Hlen0 : 0 < length (graph (build_dfg ctx act))) by lia.
+    assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
+      by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
+    assert (Hsamv : is_sample_of act (vreg_nid a_idx n_idx) = true)
+      by (unfold is_sample_of; rewrite Hsamp; reflexivity).
+    pose proof (Hset n_idx Hsamv) as HvM.
+    (* the cycle the answer is latched on *)
+    assert (dec : forall k,
+              {(fst (run_n k act input ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1}
+              + {~ (fst (run_n k act input ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1}).
+    { intro k.
+      destruct (beq_dec ((fst (run_n k act input ss0)).[tf_dfg_v a_idx n_idx])
+                  (Bits.ones 1)) eqn:Hb.
+      - left. exact (proj1 (beq_dec_iff _ _ _) Hb).
+      - right. intro Hc. rewrite Hc, beq_dec_refl in Hb. discriminate Hb. }
+    destruct (least_witness _ dec M (ex_intro _ M (conj (Nat.le_refl M) HvM)))
+      as [N [HPN Hmin]].
+    assert (HN0 : N <> 0).
+    { intro He. subst N. cbn [run_n] in HPN. rewrite Hzv in HPN.
+      exact (ones1_neq_zero (eq_sym HPN)). }
+    assert (HNM : N <= M).
+    { destruct (Nat.le_gt_cases N M) as [H | H]; [ exact H |].
+      exfalso. exact (Hmin M H HvM). }
+    destruct N as [| j]; [ exfalso; exact (HN0 eq_refl) |].
+    assert (Hjm : j < M) by lia.
+    assert (Hvj : (fst (run_n j act input ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero).
+    { destruct (bits1_cases ((fst (run_n j act input ss0)).[tf_dfg_v a_idx n_idx]))
+        as [H | H]; [ exfalso; exact (Hmin j (Nat.lt_succ_diag_r j) H) | exact H ]. }
+    (* the answer is held from that cycle to the end of the run *)
+    assert (Hfe : S j + (M - S j) = M) by lia.
+    assert (Hpf : forall i, 1 <= i <= S j + (M - S j) ->
+              ~ done_set (run_n i act input ss0))
+      by (intros i Hi; apply Hpre; lia).
+    destruct (sample_buffer_frozen_run act a_idx n_idx input ss0 (S j) (M - S j)
+                Halign Hzv Hpf Hsamv HPN) as [Hfrz _].
+    rewrite Hfe in Hfrz. rewrite Hfrz.
+    (* the latch itself *)
+    assert (Hnd : ~ done_set (sched_step act (run_n j act input ss0)
+                    (sched_input input (run_n j act input ss0))))
+      by (exact (Hpre (S j) ltac:(lia))).
+    assert (HvSj : (fst (sched_step act (run_n j act input ss0)
+                      (sched_input input (run_n j act input ss0)))).[tf_dfg_v a_idx n_idx]
+                   = Bits.ones 1) by exact HPN.
+    pose proof (buffer_valid_gate act a_idx n_idx (run_n j act input ss0)
+                  (sched_input input (run_n j act input ss0)) Halign Hnd HvSj) as Hgate.
+    pose proof (buffer_after_cycle act a_idx n_idx (run_n j act input ss0)
+                  (sched_input input (run_n j act input ss0)) Halign Hnd) as Hba.
+    cbv zeta in Hba. destruct Hba as [Hvalue _].
+    change (fst (run_n (S j) act input ss0)) with
+      (fst (sched_step act (run_n j act input ss0)
+              (sched_input input (run_n j act input ss0)))).
+    rewrite Hvalue.
+    change (fst (nth (index_to_nat n_idx)
+                   (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))
+      with (vreg_nid a_idx n_idx).
+    unfold buf_value_expr.
+    destruct (stall_lat_of act (vreg_nid a_idx n_idx)) as [l |] eqn:Hst.
+    { exfalso. unfold stall_lat_of, is_sample_of in Hst, Hsamv.
+      destruct (node_op act (vreg_nid a_idx n_idx)); discriminate. }
+    rewrite Hsamv.
+    assert (Hnone : BitsToLists.list_assoc
+              (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (vreg_nid a_idx n_idx)))
+                 (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
+              (vreg_nid a_idx n_idx) = None).
+    { apply list_assoc_key_none. intro Hin2.
+      apply in_map_iff in Hin2. destruct Hin2 as [[k v] [Hk Hmem]].
+      cbn [fst] in Hk. subst k. apply filter_In in Hmem.
+      destruct Hmem as [_ Hq2]. rewrite Nat.eqb_refl in Hq2. discriminate Hq2. }
+    rewrite (compile_sample_value _ _ _ a_idx _ p tok en _ [] _ Hsamp Hnone Hlen0).
+    cbn [tf_eval_expr]. rewrite !convert_same.
+    (* the bit is down and the gate is up, so the register takes the wire *)
+    match goal with
+    | |- context [ Bits.neg ?x ] =>
+        replace x with (@Bits.zero 1) by (symmetry; exact Hvj)
+    end.
+    rewrite Hgate.
+    match goal with
+    | |- context [ @beq_dec ?T ?E ?x ?z ] =>
+        replace (@beq_dec T E x z) with false by (vm_compute; reflexivity)
+    end.
+    cbn beta iota. cbn [sched_input].
+    rewrite (port_holds_request act a_idx input ss0 M n_idx p tok en d av en' j
+               Halign Hlen Hz0 Hpre Hord Hgs Hrs Hsamp Hsd Hdop Hdsz
+               (guard_holds_gexpr act a_idx (run_n M act input ss0)
+                  (sched_input input (run_n M act input ss0)) en Hgd)
+               Hjm Hvj HPN).
+    reflexivity.
+  Qed.
   (* PHASE 3 (correctness at done): once the done flag is set, the mapped
      final states and outputs match the one-shot source evaluation. *)
   Lemma scheduler_done_correct :
     forall (act: tfs_action sched) (sp0: src_sys_state)
            (ss0: sched_sys_state) (input: input_t) (N: nat),
       start_rel sp0 ss0 ->
+      (forall a_idx, act_idx_aligned act a_idx ->
+         call_discipline act a_idx input ss0 N) ->
       (forall k, k < N -> ~ done_set (run_n k act input ss0)) ->
       done_set (run_n N act input ss0) ->
       let sp1 := tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act) sp0 input in
       maps_from ctx bneeds (fst (run_n N act input ss0)) = fst sp1 /\
       snd (run_n N act input ss0) = snd sp1.
   Proof.
-    intros act sp0 ss0 input N [Hout0 [Hst0 Hzero0]] Hbefore Hdone.
+    intros act sp0 ss0 input N [Hout0 [Hst0 Hzero0]] Hdisc Hbefore Hdone.
+    unfold call_discipline in Hdisc.
     destruct (exists_act_idx act) as [a_idx Halign].
     (* N = 0 is impossible: start_rel clears the done flag *)
     destruct N as [| M].
@@ -14207,8 +14335,28 @@ Section SchedulerSimulation.
       - exact Hnlen.
       - rewrite HszB. symmetry. exact (var_map_entry_size act v n Hin).
       - exact (sched_step_done_valid act a_idx ssM (sched_input input ssM) n Halign Hdone Hmem). }
-    (* the one obligation left in this file: a sample.s register holds the IP.s
-       answer to the request its own drive sent. *)
+    (* THE ROUND TRIP, at the state the action finishes from. *)
+    assert (Hrt_obligation : forall n_idx p tok en d av en',
+              node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
+              sample_drive act (vreg_nid a_idx n_idx) = Some d ->
+              node_op act d = DFG_Drive p av en' ->
+              sz (nth d (graph (build_dfg ctx act))
+                   {| nid := 0; op := DFG_Empty; sz := 0 |})
+                = ip_req_sz (tfs_spec_ip ctx p) ->
+              guard_holds act a_idx ssM (sched_input input ssM) en ->
+              (fst ssM).[tf_dfg_b a_idx n_idx]
+              = convert (ip_fn (tfs_spec_ip ctx p)
+                  (tf_eval_expr ss_sz si_sz oo_sz
+                     (szB := ip_req_sz (tfs_spec_ip ctx p))
+                     (node_ref_expr act a_idx av) ssM (sched_input input ssM)))).
+    { intros n_idx p tok en d av en' Hsamp Hsd Hdop Hdsz Hgd.
+      destruct (Hdisc a_idx Halign) as [Hset [Hord [Hgs Hrs]]].
+      destruct (node_op_pos act (vreg_nid a_idx n_idx)
+                  ltac:(rewrite Hsamp; discriminate)) as [Hs1 Hslen].
+      assert (Hlen2 : 1 < length (graph (build_dfg ctx act))) by lia.
+      exact (round_trip act a_idx input ss0 M n_idx p tok en d av en'
+               Halign Hlen2 Hzero0 Hpre Hset Hord Hgs Hrs
+               Hsamp Hsd Hdop Hdsz Hgd). }
     destruct (dfg_action_semantics act a_idx sp0 ssM input (sched_input input ssM)
                 Halign ltac:(intro v; reflexivity) Hrt_obligation Hs Ho)
       as [Hsem_s [Hsem_o [Hfix_s Hfix_o]]].
@@ -14239,6 +14387,8 @@ Section SchedulerSimulation.
     forall (act: tfs_action sched) (sp0: src_sys_state)
            (ss0: sched_sys_state) (input: input_t),
       start_rel sp0 ss0 ->
+      (forall a_idx N, act_idx_aligned act a_idx ->
+         call_discipline act a_idx input ss0 N) ->
       exists N,
         (forall k, k < N -> ~ done_set (run_n k act input ss0)) /\
         done_set (run_n N act input ss0) /\
@@ -14246,10 +14396,11 @@ Section SchedulerSimulation.
         maps_from ctx bneeds (fst (run_n N act input ss0)) = fst sp1 /\
         snd (run_n N act input ss0) = snd sp1.
   Proof.
-    intros act sp0 ss0 input Hstart.
+    intros act sp0 ss0 input Hstart Hdisc.
     destruct (scheduler_reaches_done act sp0 ss0 input Hstart) as [N [Hbefore Hdone]].
     exists N. split; [ exact Hbefore |]. split; [ exact Hdone |].
-    apply (scheduler_done_correct act sp0 ss0 input N Hstart Hbefore Hdone).
+    apply (scheduler_done_correct act sp0 ss0 input N Hstart
+             (fun a_idx Ha => Hdisc a_idx N Ha) Hbefore Hdone).
   Qed.
 
 End SchedulerSimulation.
