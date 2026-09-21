@@ -1068,9 +1068,21 @@ Section SchedulerCore.
               (tf_const 0, v)
           (* A drive passes its value through: it is the message on its way to
              the port.  A sample's VALUE is the port and its VALIDITY the
-             token's, which is where the round trip decouples the two. *)
-          | DFG_Drive _ arg1 _ =>
-              compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers
+             token's, which is where the round trip decouples the two.
+             Its validity ALSO waits on the guard, which [get_args] already
+             counts as a dependency: a drive fires on the one cycle its stall
+             starts, and a path condition read before its sources have settled
+             sends the wrong arm's request -- or none.  Regression:
+             sim/tb_xport.sv. *)
+          | DFG_Drive _ arg1 en =>
+              let '(e, v) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers in
+              (e, fold_right
+                    (fun l acc =>
+                       valid_expr_and
+                         (snd (compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg
+                                 (fst l) buffers))
+                         acc)
+                    v en)
           | DFG_Sample p tok _ =>
               let '(_, tok_val) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg tok buffers in
               (tf_ivar (inr p), tok_val)
