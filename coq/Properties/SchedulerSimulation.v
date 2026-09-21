@@ -783,6 +783,44 @@ Section SchedulerSimulation.
       [ intro H; vm_compute in H; discriminate | reflexivity ].
   Qed.
 
+  (* The guard conjunction a drive's validity carries: it fires exactly when
+     the argument's validity does and every literal's source has settled. *)
+  Lemma fold_valid_and_ones
+        (f: nid_t -> @tf_expr (tfs_states sched) si_var o_var)
+        (v: @tf_expr (tfs_states sched) si_var o_var)
+        (ss: sched_sys_state) (input: sched_input_t) :
+    forall (l: list (nid_t * bool)),
+      eval1 (fold_right (fun x acc => valid_expr_and ctx bneeds (f (fst x)) acc) v l)
+        ss input = Bits.ones 1
+      <-> (eval1 v ss input = Bits.ones 1
+           /\ forall x, In x l -> eval1 (f (fst x)) ss input = Bits.ones 1).
+  Proof.
+    induction l as [| a l IH]; cbn [fold_right].
+    - split; [ intro H; split; [ exact H | intros x [] ] | intros [H _]; exact H ].
+    - rewrite valid_and_eval. split.
+      + intro H. destruct (bits1_and_split _ _ H) as [Ha Hrest].
+        destruct (proj1 IH Hrest) as [Hv Hall].
+        split; [ exact Hv |].
+        intros x [-> | Hin]; [ exact Ha | exact (Hall x Hin) ].
+      + intros [Hv Hall].
+        rewrite (Hall a (or_introl eq_refl)).
+        rewrite (proj2 IH (conj Hv (fun x Hin => Hall x (or_intror Hin)))).
+        reflexivity.
+  Qed.
+
+  (* ... and it depends on its literals only through their compiled sources. *)
+  Lemma fold_valid_and_ext
+        (f g: nid_t -> @tf_expr (tfs_states sched) si_var o_var)
+        (v: @tf_expr (tfs_states sched) si_var o_var) (l: list (nid_t * bool)) :
+    (forall x, In x l -> f (fst x) = g (fst x)) ->
+    fold_right (fun x acc => valid_expr_and ctx bneeds (f (fst x)) acc) v l
+    = fold_right (fun x acc => valid_expr_and ctx bneeds (g (fst x)) acc) v l.
+  Proof.
+    induction l as [| a l IH]; intro H; cbn [fold_right]; [ reflexivity |].
+    rewrite (H a (or_introl eq_refl)).
+    rewrite (IH (fun x Hx => H x (or_intror Hx))). reflexivity.
+  Qed.
+
   (* Converse of valid_if_eval: a valid_expr_if that fires tells us the
      SELECTED branch is valid (and if it collapsed to [tf_const 1], both
      branches were literally [tf_const 1], hence valid). *)
@@ -7095,8 +7133,14 @@ Section SchedulerSimulation.
       destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx dfg sa bufs).
       destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi' fuel a_idx dfg sa bufs).
       reflexivity.
-    - (* DFG_Drive: its value IS its argument's, so the IH is the whole proof. *)
-      apply IH.
+    - (* DFG_Drive: its value is still its argument's -- the guard reached only
+         the validity half -- but the pair must be destructed to see it. *)
+      destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
+                  dfg dn bufs) as [de ve] eqn:ED.
+      destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi' fuel a_idx
+                  dfg dn bufs) as [de' ve'] eqn:ED'.
+      pose proof (IH dn pi pi') as Ha. rewrite ED, ED' in Ha. cbn [fst] in Ha.
+      cbn [fst]. rewrite Ha. reflexivity.
     - (* DFG_Sample: the VALUE half is [tf_ivar v], which does not mention the
          path at all. *)
       cbn [fst].
@@ -7304,7 +7348,24 @@ Section SchedulerSimulation.
       cbn [snd] in Hval |- *.
       pose proof (IH sa pi pi' Hsub ltac:(rewrite E1; cbn [snd]; exact Hval)) as Hc.
       rewrite E2 in Hc. cbn [snd] in Hc. exact Hc.
-    - (* Drive *) exact (IH dn pi pi' Hsub Hval).
+    - (* Drive: the argument's validity AND every literal's source, and the IH
+         carries each across the path change. *)
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                  dn bufs) as [de ve] eqn:E1.
+      destruct (compile_dfg_expr_at ctx bneeds pi' fuel a_idx (build_dfg ctx act)
+                  dn bufs) as [de' ve'] eqn:E2.
+      cbn [snd] in Hval |- *.
+      pose proof (fold_valid_and_ones
+        (fun m => snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                         (build_dfg ctx act) m bufs)) ve ss input den) as Hfa.
+      pose proof (fold_valid_and_ones
+        (fun m => snd (compile_dfg_expr_at ctx bneeds pi' fuel a_idx
+                         (build_dfg ctx act) m bufs)) ve' ss input den) as Hfa'.
+      destruct (proj1 Hfa Hval) as [Hv Hall].
+      apply (proj2 Hfa'). split.
+      + pose proof (IH dn pi pi' Hsub ltac:(rewrite E1; cbn [snd]; exact Hv)) as Hc.
+        rewrite E2 in Hc. cbn [snd] in Hc. exact Hc.
+      + intros x Hin. exact (IH (fst x) pi pi' Hsub (Hall x Hin)).
     - (* Sample *)
       destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                   sn bufs) as [ae ve] eqn:E1.
@@ -7636,8 +7697,18 @@ Section SchedulerSimulation.
       destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
                   (build_dfg ctx act) sa bufs).
       reflexivity.
-    - (* DFG_Drive, pass-through. *)
-      cbn [fst snd] in Hval |- *. exact (IHb dn ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) szB pi Hval).
+    - (* DFG_Drive: its value still passes through; the guard reached only the
+         validity, and the argument's half of that is what the IH wants. *)
+      destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
+                  (build_dfg ctx act) dn bufs) as [de ve] eqn:ED.
+      cbn [fst snd] in Hval |- *.
+      pose proof (fold_valid_and_ones
+        (fun m => snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
+                         (build_dfg ctx act) m bufs)) ve ss1 input1 den) as Hfa.
+      destruct (proj1 Hfa Hval) as [Hv _].
+      pose proof (IHb dn ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto)
+                    szB pi ltac:(rewrite ED; cbn [snd]; exact Hv)) as Hc.
+      rewrite ED in Hc. cbn [fst] in Hc. exact Hc.
     - (* DFG_Sample: every sample is buffered, so this arm is unreachable. *)
       exfalso. apply (Hsamples n ltac:(lia));
         [ unfold is_sample_of, node_op; rewrite Hop; reflexivity | exact Hla ].
@@ -7829,7 +7900,27 @@ Section SchedulerSimulation.
       cbn [snd] in Hval |- *.
       pose proof (IHb sa ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) pi ltac:(rewrite E1; cbn [snd]; exact Hval)) as Hc.
       rewrite E1 in Hc. cbn [snd] in Hc. exact Hc.
-    - (* Drive *) exact (IHb dn ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) pi Hval).
+    - (* Drive: the argument's validity and every literal's source, each
+         transferred by the IH. *)
+      destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
+                  (build_dfg ctx act) dn bufs) as [de ve] eqn:ED.
+      cbn [snd] in Hval |- *.
+      pose proof (fold_valid_and_ones
+        (fun m => snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
+                         (build_dfg ctx act) m bufs)) ve ss1 input1 den) as Hfa1.
+      pose proof (fold_valid_and_ones
+        (fun m => snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
+                         (build_dfg ctx act) m bufs)) ve ss2 input2 den) as Hfa2.
+      destruct (proj1 Hfa1 Hval) as [Hv Hall].
+      apply (proj2 Hfa2). split.
+      + pose proof (IHb dn ltac:(apply Harg; unfold get_args; rewrite Hop;
+                                 cbn [In]; tauto)
+                      pi ltac:(rewrite ED; cbn [snd]; exact Hv)) as Hc.
+        rewrite ED in Hc. cbn [snd] in Hc. exact Hc.
+      + intros x Hin.
+        exact (IHb (fst x) ltac:(apply Harg; unfold get_args; rewrite Hop;
+                                 cbn [In]; right; exact (in_map fst den x Hin))
+                 pi (Hall x Hin)).
     - (* Sample *)
       destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
                   (build_dfg ctx act) sn bufs) as [ae ve] eqn:E1.
@@ -7915,10 +8006,23 @@ Section SchedulerSimulation.
         assert (Hain : In sa (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
         rewrite (Hrec sa pi Hain). reflexivity.
-      + (* SPIKE 2b: DFG_Drive, same shape again. *)
+      + (* SPIKE 2b: DFG_Drive, same shape -- plus its guard's sources, which
+           [get_args] counts as arguments too. *)
         assert (Hain : In dn (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
-        rewrite (Hrec dn pi Hain). reflexivity.
+        rewrite (Hrec dn pi Hain).
+        destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi f2' a_idx
+                    dfg dn buffers) as [de ve] eqn:ED.
+        cbv beta iota zeta. f_equal.
+        apply (fold_valid_and_ext
+                 (fun m => snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi f1'
+                                  a_idx dfg m buffers))
+                 (fun m => snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi f2'
+                                  a_idx dfg m buffers)) ve den).
+        intros x Hin.
+        rewrite (Hrec (fst x) pi
+          ltac:(unfold get_args; rewrite Hop; right; exact (in_map fst den x Hin))).
+        reflexivity.
       + (* DFG_Sample -- the fuel only reaches the token, and the value half
            does not mention it. *)
         assert (Hain : In sn (get_args ctx node))
@@ -8012,7 +8116,10 @@ Section SchedulerSimulation.
     reflexivity.
   Qed.
 
-  (* And at a drive: the request is as valid as the argument it carries. *)
+  (* And at a drive: the request is as valid as the argument it carries AND as
+     the sources of its path condition.  A drive fires on the one cycle its
+     stall starts, so a guard read before its sources have settled sends the
+     wrong arm's request, or none.  Regression: sim/tb_xport.sv. *)
   Lemma compile_drive_valid
         (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var)
                 (outputs_var := o_var) (ips_var := p_var))
@@ -8022,13 +8129,21 @@ Section SchedulerSimulation.
     BitsToLists.list_assoc bufs n = None ->
     0 < fuel ->
     snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx dfg n bufs)
-    = snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi (pred fuel) a_idx dfg arg bufs).
+    = fold_right
+        (fun l acc =>
+           valid_expr_and ctx bneeds
+             (snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi (pred fuel)
+                     a_idx dfg (fst l) bufs)) acc)
+        (snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi (pred fuel)
+                a_idx dfg arg bufs)) en.
   Proof.
     intros Hop Hbuf Hf. destruct fuel as [| fuel]; [ lia |]. cbn [Init.Nat.pred].
     cbn [compile_dfg_expr_aux].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:E;
       [ exfalso; rewrite Hbuf in E; congruence |].
-    cbv beta iota. rewrite Hop. reflexivity.
+    cbv beta iota. rewrite Hop.
+    destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx dfg arg bufs).
+    reflexivity.
   Qed.
 
   (* And the same step at a join: its validity is the AND the sequencing needs. *)
@@ -8813,11 +8928,24 @@ Section SchedulerSimulation.
             destruct (compile_dfg_expr_aux a b c d e f g h i j)
         end.
         reflexivity.
-      + (* DFG_Drive: value and validity both pass through. *)
+      + (* DFG_Drive: the value still passes through; the guard reached only
+           the validity, and the argument's half of it is what the IH wants. *)
         assert (Hain : In dn (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
         unfold node_args_sz in Hfg. rewrite Hop in Hfg.
-        exact (Hchild dn (sz node) pi Hain Hfg Hval).
+        destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                    (build_dfg ctx act) dn bufs) as [de ve] eqn:ED.
+        destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                    (build_dfg ctx act) dn (sample_bufs act a_idx))
+          as [de' ve'] eqn:ED'.
+        cbn [fst snd] in Hval |- *.
+        pose proof (fold_valid_and_ones
+          (fun m => snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                           (build_dfg ctx act) m bufs)) ve ss input den) as Hfa.
+        destruct (proj1 Hfa Hval) as [Hv _].
+        pose proof (Hchild dn (sz node) pi Hain Hfg
+                      ltac:(rewrite ED; cbn [snd]; exact Hv)) as Hc.
+        rewrite ED, ED' in Hc. cbn [fst] in Hc. exact Hc.
       + (* DFG_Sample: only the validity passes through, the value [tf_ivar v]
            being the same with and without buffers.  The round trip's
            value/validity decoupling, discharged here. *)
@@ -9096,10 +9224,32 @@ Section SchedulerSimulation.
         cbn [snd] in Hval |- *.
         pose proof (Hchild sa pi Hain ltac:(rewrite E1; cbn [snd]; exact Hval)) as Hc.
         rewrite E2 in Hc. cbn [snd] in Hc. exact Hc.
-      + (* DFG_Drive: value and validity both pass through *)
+      + (* DFG_Drive: the argument's validity and every literal's source, each
+           carried across the table by the IH. *)
         assert (Hain : In dn (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
-        exact (Hchild dn pi Hain Hval).
+        destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                    (build_dfg ctx act) dn bufs) as [de ve] eqn:ED.
+        destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                    (build_dfg ctx act) dn (sample_bufs act a_idx))
+          as [de' ve'] eqn:ED'.
+        cbn [snd] in Hval |- *.
+        pose proof (fold_valid_and_ones
+          (fun m => snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                           (build_dfg ctx act) m bufs)) ve ss input den) as Hfa.
+        pose proof (fold_valid_and_ones
+          (fun m => snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                           (build_dfg ctx act) m (sample_bufs act a_idx)))
+          ve' ss input den) as Hfa'.
+        destruct (proj1 Hfa Hval) as [Hv Hall].
+        apply (proj2 Hfa'). split.
+        * pose proof (Hchild dn pi Hain ltac:(rewrite ED; cbn [snd]; exact Hv)) as Hc.
+          rewrite ED' in Hc. cbn [snd] in Hc. exact Hc.
+        * intros x Hin.
+          exact (Hchild (fst x) pi
+                   ltac:(unfold get_args; rewrite Hop; right;
+                         exact (in_map fst den x Hin))
+                   (Hall x Hin)).
       + (* DFG_Sample: the validity is the token's *)
         assert (Hain : In sn (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
@@ -9961,13 +10111,22 @@ Section SchedulerSimulation.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                     sa bufs) as [ae ve] eqn:E1.
         cbn [snd] in Ha |- *. exact Ha.
-      + (* SPIKE 2b: DFG_Drive, validity passes through. *)
+      + (* SPIKE 2b: DFG_Drive -- the argument's validity and every literal's
+           source, all of them arguments, so [Hchild] covers each. *)
         assert (Hain : In dn (get_args ctx node))
           by (unfold get_args; rewrite Hop; left; reflexivity).
         pose proof (Hchild dn pi Hain) as Ha.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                     dn bufs) as [ae ve] eqn:E1.
-        cbn [snd] in Ha |- *. exact Ha.
+        cbn [snd] in Ha |- *.
+        apply (proj2 (fold_valid_and_ones
+          (fun m => snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                           (build_dfg ctx act) m bufs)) ve ss input den)).
+        split; [ exact Ha |].
+        intros x Hin.
+        exact (Hchild (fst x) pi
+                 ltac:(unfold get_args; rewrite Hop; right;
+                       exact (in_map fst den x Hin))).
       + (* SPIKE 2b: DFG_Sample -- its validity IS the token's, by construction
            in compile_dfg_expr_aux, so this passes through too. *)
         assert (Hain : In sn (get_args ctx node))
