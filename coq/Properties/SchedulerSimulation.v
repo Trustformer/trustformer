@@ -13889,6 +13889,334 @@ Section SchedulerSimulation.
      call on that port cannot take the wire: an exclusive path condition puts
      the pulse down directly, and every other one is held by the ordering join
      that waits on a sample no earlier than this one. *)
+
+
+  (* Only the sentinel at position 0 is empty, so any node that carries an op
+     sits strictly above it. *)
+  Lemma build_dfg_nid_pos (act: tfs_action sched) :
+    forall node, In node (graph (build_dfg ctx act)) ->
+      op node <> DFG_Empty -> 1 <= nid node.
+  Proof.
+    assert (Hempty : gpos {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |}).
+    { split; [ | split; [ | split; [ | split ] ] ].
+      - cbn. lia.
+      - intros k id Hin. destruct Hin.
+      - intros node Hin x Hx. cbn in Hin. destruct Hin as [<-|[]]. cbn in Hx. destruct Hx.
+      - intros node Hin He. cbn in Hin. destruct Hin as [<-|[]]. cbn. reflexivity.
+      - intros node Hin He. cbn in Hin. destruct Hin as [<-|[]]. cbn in He.
+        exfalso. apply He. reflexivity. }
+    unfold build_dfg.
+    pose proof (dataflow_ops_pos (tfs_spec_action_ops ctx act) []
+                  {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |} Hempty
+                  (fun x Hx => match Hx with end)) as Hop.
+    destruct (dataflow_ops ctx [] (tfs_spec_action_ops ctx act)
+                {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |})
+      as [u final] eqn:Ed.
+    destruct Hop as [_ [_ [_ [_ Hnz]]]].
+    cbn [graph]. intros node Hin He. apply in_rev in Hin. exact (Hnz node Hin He).
+  Qed.
+
+  (* A node that carries an op is a real node of the graph. *)
+  Lemma node_op_pos (act: tfs_action sched) n :
+    node_op act n <> DFG_Empty ->
+    1 <= n /\ n < length (graph (build_dfg ctx act)).
+  Proof.
+    intro Hne. pose proof (node_op_range act n Hne) as Hlt.
+    split; [| exact Hlt ].
+    pose proof (node_nid_at act n Hlt) as Hnid.
+    rewrite <- Hnid. apply (build_dfg_nid_pos act); [ apply nth_In; exact Hlt | exact Hne ].
+  Qed.
+  (* A drive's compiled validity carries its guard's: wherever the drive is
+     valid, the sources of every literal in its path condition have settled.
+     This is what makes [guards_settled] a lemma rather than a hypothesis. *)
+  Lemma compile_guard_sources_valid
+        (act: tfs_action sched) a_idx n p arg en bufs pi fuel
+        (ss: sched_sys_state) (input: sched_input_t) :
+    node_op act n = DFG_Drive p arg en ->
+    BitsToLists.list_assoc bufs n = None ->
+    0 < fuel ->
+    eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                  (build_dfg ctx act) n bufs)) ss input = Bits.ones 1 ->
+    forall l, In l en ->
+      eval1 (snd (compile_dfg_expr_at ctx bneeds pi (pred fuel) a_idx
+                    (build_dfg ctx act) (fst l) bufs)) ss input = Bits.ones 1.
+  Proof.
+    intros Hop Hbuf Hf Hval l Hin.
+    unfold node_op in Hop.
+    rewrite (compile_drive_valid (build_dfg ctx act) _ _ a_idx n p arg en bufs pi fuel
+               Hop Hbuf Hf) in Hval.
+    refine (proj2 (proj1 (fold_valid_and_ones
+              (fun m => snd (compile_dfg_expr_at ctx bneeds pi (pred fuel) a_idx
+                               (build_dfg ctx act) m bufs)) _ ss input en) Hval) l Hin).
+  Qed.
+
+  (* A reference whose samples have all latched reads the same at every later
+     cycle of the run: the state it reads is frozen from there on. *)
+  Lemma node_ref_stable_run
+        (act: tfs_action sched) a_idx (input: input_t) (ss0: sched_sys_state)
+        (c: nid_t) w u szB :
+    act_idx_aligned act a_idx ->
+    (forall m, (fst ss0).[tf_dfg_v a_idx m] = Bits.zero) ->
+    (forall i, 1 <= i <= u -> ~ done_set (run_n i act input ss0)) ->
+    w <= u ->
+    c < length (graph (build_dfg ctx act)) ->
+    eval1 (node_ref_valid act a_idx c) (run_n w act input ss0)
+      (sched_input input (run_n w act input ss0)) = Bits.ones 1 ->
+    tf_eval_expr ss_sz si_sz oo_sz (szB := szB) (node_ref_expr act a_idx c)
+      (run_n w act input ss0) (sched_input input (run_n w act input ss0))
+    = tf_eval_expr ss_sz si_sz oo_sz (szB := szB) (node_ref_expr act a_idx c)
+      (run_n u act input ss0) (sched_input input (run_n u act input ss0)).
+  Proof.
+    intros Halign Hz0 Hpre Hle Hclen Hval.
+    assert (Hpw : forall i, 1 <= i <= w -> ~ done_set (run_n i act input ss0))
+      by (intros i Hi; apply Hpre; lia).
+    assert (Hsvar : forall s, (fst (run_n w act input ss0)).[tf_dfg_s s]
+                      = (fst (run_n u act input ss0)).[tf_dfg_s s]).
+    { intro s. rewrite (run_preserves_svar act input ss0 w Hpw s).
+      rewrite (run_preserves_svar act input ss0 u Hpre s). reflexivity. }
+    assert (Hovar : forall o, (snd (run_n w act input ss0)).[o]
+                      = (snd (run_n u act input ss0)).[o]).
+    { intro o. rewrite (run_preserves_ovar act input ss0 w Hpw o).
+      rewrite (run_preserves_ovar act input ss0 u Hpre o). reflexivity. }
+    assert (Hbfroz : forall q_idx, is_sample_of act (vreg_nid a_idx q_idx) = true ->
+              (fst (run_n w act input ss0)).[tf_dfg_v a_idx q_idx] = Bits.ones 1 ->
+              (fst (run_n w act input ss0)).[tf_dfg_b a_idx q_idx]
+              = (fst (run_n u act input ss0)).[tf_dfg_b a_idx q_idx]).
+    { intros q_idx Hsq Hvq.
+      assert (He : w + (u - w) = u) by lia.
+      assert (Hpt : forall i, 1 <= i <= w + (u - w) ->
+                ~ done_set (run_n i act input ss0))
+        by (intros i Hi; apply Hpre; lia).
+      destruct (sample_buffer_frozen_run act a_idx q_idx input ss0 w (u - w)
+                  Halign Hz0 Hpt Hsq Hvq) as [Hb _].
+      rewrite He in Hb. exact (eq_sym Hb). }
+    exact (compile_nobuf_state_indep act a_idx
+             (sched_input input (run_n w act input ss0))
+             (sched_input input (run_n u act input ss0))
+             (run_n w act input ss0) (run_n u act input ss0)
+             Halign Hsvar Hovar ltac:(intro v; reflexivity) Hbfroz
+             (length (graph (build_dfg ctx act))) c szB Hclen Hval).
+  Qed.
+
+  (* The node whose validity gates a drive's pulse is the drive itself, or the
+     ordering join in front of it. *)
+  Lemma chain_gate_cases (act: tfs_action sched) n g h :
+    chain_gate ctx (build_dfg ctx act) n = Some (g, h) ->
+    g = n \/ exists prev, node_op act g = DFG_Join n prev.
+  Proof.
+    unfold chain_gate. cbv zeta.
+    destruct (find (fun nd => match op nd with
+                              | DFG_Stall _ a => Nat.eqb a n
+                              | _ => false
+                              end) (graph (build_dfg ctx act))) as [nds |].
+    - intro H. injection H as <- _. left. reflexivity.
+    - destruct (find (fun nd => match op nd with
+                                | DFG_Join a _ => Nat.eqb a n
+                                | _ => false
+                                end) (graph (build_dfg ctx act))) as [j |] eqn:Ej;
+        [| discriminate ].
+      destruct (find (fun nd => match op nd with
+                                | DFG_Stall _ a => Nat.eqb a (nid j)
+                                | _ => false
+                                end) (graph (build_dfg ctx act))) as [nd2 |];
+        [| discriminate ].
+      intro H. injection H as <- _. right.
+      apply find_some in Ej. destruct Ej as [Hin Hpred].
+      destruct (op j) as [ c | v | v | uop a1 | bop a1 a2 | a1 | cd t1 e1
+                         | sl sa | dov dn den | siv sn sen | ja jb | ] eqn:Ejop;
+        try discriminate.
+      apply Nat.eqb_eq in Hpred. subst ja.
+      exists jb. destruct (node_at_nid act j Hin) as [_ Hnth].
+      unfold node_op. rewrite Hnth, Ejop. reflexivity.
+  Qed.
+
+  (* [nre_fuel]'s twin for the validity half. *)
+  Lemma nrv_fuel (act: tfs_action sched) a_idx x f :
+    1 <= x -> x < length (graph (build_dfg ctx act)) -> x < f ->
+    snd (compile_dfg_expr ctx bneeds f a_idx (build_dfg ctx act) x (sample_bufs act a_idx))
+    = node_ref_valid act a_idx x.
+  Proof.
+    intros H1 H2 H3. unfold node_ref_valid.
+    rewrite (compile_fuel_irrel act a_idx (sample_bufs act a_idx) x H1 H2 f
+               (length (graph (build_dfg ctx act))) H3 H2).
+    reflexivity.
+  Qed.
+
+  (* WHY [guards_settled] IS NOT A HYPOTHESIS.  A drive fires on the one cycle
+     its stall starts, and its validity -- hence the gate that lets it fire --
+     now carries its guard's.  So wherever a guarded call pulses, every source
+     its path condition reads has already settled. *)
+  Lemma drive_pulse_guard_valid
+        (act: tfs_action sched) a_idx n p arg en
+        (ss: sched_sys_state) (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
+    1 < length (graph (build_dfg ctx act)) ->
+    valid_settled act a_idx ss input ->
+    valid_refs act a_idx ss input ->
+    node_op act n = DFG_Drive p arg en ->
+    eval1 (drive_pulse act a_idx n) ss input <> Bits.zero ->
+    forall l, In l en ->
+      eval1 (node_ref_valid act a_idx (fst l)) ss input = Bits.ones 1.
+  Proof.
+    intros Halign Hlen Hinv Hrefs Hop Hpulse l Hin.
+    destruct (node_op_pos act n ltac:(rewrite Hop; discriminate)) as [Hn1 Hnlen].
+    assert (Hopb : op (nth n (graph (build_dfg ctx act))
+                         {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Drive p arg en)
+      by exact Hop.
+    assert (Hsub : forall e,
+              In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) ->
+              In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
+      by (intros e He; exact He).
+    assert (Hsam_sub : forall x,
+              BitsToLists.list_assoc
+                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) x = None ->
+              BitsToLists.list_assoc (sample_bufs act a_idx) x = None).
+    { intros x Hx. apply list_assoc_key_none. intro Hin2.
+      apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
+      cbn [fst] in Hxx. subst x2.
+      unfold sample_bufs in Hmem2. apply filter_In in Hmem2.
+      apply (list_assoc_none_key _ _ Hx), in_map_iff.
+      exists (x, v2). split; [ reflexivity | exact (proj1 Hmem2) ]. }
+    assert (Hsam_same : forall x m msz,
+              BitsToLists.list_assoc
+                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) x
+                = Some (m, msz) ->
+              is_sample_of act x = true ->
+              BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)).
+    { intros x m msz Hx Hsx. apply list_assoc_nodup_in.
+      - unfold sample_bufs. apply nodup_map_fst_filter.
+        exact (slot_keys_nodup act a_idx Halign).
+      - unfold sample_bufs. apply filter_In.
+        split; [ exact (wla_in _ _ _ Hx) | exact Hsx ]. }
+    (* the node whose validity gates the pulse, and that validity *)
+    assert (Hgate : exists m, (m = n \/ exists prev, node_op act m = DFG_Join n prev)
+              /\ eval1 (snd (compile_dfg_expr ctx bneeds
+                               (length (graph (build_dfg ctx act))) a_idx
+                               (build_dfg ctx act) m
+                               (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+                   ss input = Bits.ones 1).
+    { unfold drive_pulse in Hpulse. cbv zeta in Hpulse.
+      destruct (chain_gate ctx (build_dfg ctx act) n) as [[g h] |] eqn:Hcg.
+      - exists g. split; [ exact (chain_gate_cases act n g h Hcg) |].
+        cbn [tf_eval_expr] in Hpulse.
+        apply (proj1 (bits1_nonzero_ones _)) in Hpulse.
+        destruct (bits1_and_split _ _ Hpulse) as [_ H2].
+        exact (proj1 (bits1_and_split _ _ H2)).
+      - exists n. split; [ left; reflexivity |].
+        cbn [tf_eval_expr] in Hpulse.
+        apply (proj1 (bits1_nonzero_ones _)) in Hpulse.
+        destruct (bits1_and_split _ _ Hpulse) as [_ H2].
+        exact (proj1 (bits1_and_split _ _ H2)). }
+    destruct Hgate as [m [Hmshape Hmval]].
+    assert (Hmpos : 1 <= m /\ m < length (graph (build_dfg ctx act))).
+    { destruct Hmshape as [-> | [prev Hj]]; [ split; assumption |].
+      exact (node_op_pos act m ltac:(rewrite Hj; discriminate)). }
+    destruct Hmpos as [Hm1 Hmlen].
+    assert (Hmref : eval1 (node_ref_valid act a_idx m) ss input = Bits.ones 1).
+    { rewrite <- (nrv_fuel act a_idx m (length (graph (build_dfg ctx act)))
+                    Hm1 Hmlen Hmlen).
+      exact (compile_subst_ref_valid_gen act a_idx ss input Halign Hinv Hrefs
+               (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
+               Hsub Hsam_sub Hsam_same (length (graph (build_dfg ctx act))) m []
+               Hm1 Hmlen Hmlen Hmval). }
+    (* down through the ordering join, if there is one, to the drive *)
+    assert (Hnref : eval1 (node_ref_valid act a_idx n) ss input = Bits.ones 1).
+    { destruct Hmshape as [-> | [prev Hj]]; [ exact Hmref |].
+      pose proof (join_nid_succ act m n prev Hj) as Hms.
+      unfold node_ref_valid in Hmref.
+      rewrite (compile_join_valid (build_dfg ctx act) _ _ a_idx m n prev
+                 (sample_bufs act a_idx) [] (length (graph (build_dfg ctx act)))
+                 Hj
+                 (not_sample_not_in_sample_bufs act a_idx m
+                    ltac:(unfold is_sample_of; rewrite Hj; reflexivity))
+                 ltac:(lia)) in Hmref.
+      rewrite valid_and_eval in Hmref.
+      destruct (bits1_and_split _ _ Hmref) as [Hnv _].
+      rewrite (nrv_fuel act a_idx n (pred (length (graph (build_dfg ctx act))))
+                 Hn1 Hnlen ltac:(lia)) in Hnv.
+      exact Hnv. }
+    (* and on to the literal's own source *)
+    unfold node_ref_valid in Hnref.
+    pose proof (compile_guard_sources_valid act a_idx n p arg en
+                  (sample_bufs act a_idx) [] (length (graph (build_dfg ctx act)))
+                  ss input Hop
+                  (not_sample_not_in_sample_bufs act a_idx n
+                     ltac:(unfold is_sample_of; rewrite Hop; reflexivity))
+                  ltac:(lia) Hnref l Hin) as Hl.
+    assert (Hlin : In (fst l) (get_args ctx (nth n (graph (build_dfg ctx act))
+                                 {| nid := 0; op := DFG_Empty; sz := 0 |})))
+      by (unfold get_args; rewrite Hopb; right; exact (in_map fst en l Hin)).
+    destruct (node_args_range act n Hn1 Hnlen (fst l) Hlin) as [Hl1 Hl2].
+    rewrite (nrv_fuel act a_idx (fst l) (pred (length (graph (build_dfg ctx act))))
+               Hl1 ltac:(lia) ltac:(lia)) in Hl.
+    exact Hl.
+  Qed.
+
+  (* Two calls in mutually exclusive branches never hold one port at once --
+     now at the level of the RUN, with no assumption about when guards settle.
+     A drive that pulses has had its guard's sources settle, and a settled
+     source reads the same at the end of the run, where [guard_holds] pins it. *)
+  Lemma excl_drive_pulse_zero
+        (act: tfs_action sched) a_idx (p: p_var) en_s mm arg_m en_m
+        (input: input_t) (ss0: sched_sys_state) u M :
+    act_idx_aligned act a_idx ->
+    1 < length (graph (build_dfg ctx act)) ->
+    (forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero) ->
+    (forall i, 1 <= i <= M -> ~ done_set (run_n i act input ss0)) ->
+    u <= M ->
+    node_op act mm = DFG_Drive p arg_m en_m ->
+    guards_disjoint en_m en_s = true ->
+    guard_holds act a_idx (run_n M act input ss0)
+      (sched_input input (run_n M act input ss0)) en_s ->
+    eval1 (drive_pulse act a_idx mm) (run_n u act input ss0)
+      (sched_input input (run_n u act input ss0)) = Bits.zero.
+  Proof.
+    intros Halign Hlen Hzv Hpre Hu Hm Hdis Hgd.
+    destruct (bits1_cases (eval1 (drive_pulse act a_idx mm) (run_n u act input ss0)
+                             (sched_input input (run_n u act input ss0))))
+      as [Hone | Hz]; [ exfalso | exact Hz ].
+    assert (Hnz : eval1 (drive_pulse act a_idx mm) (run_n u act input ss0)
+                    (sched_input input (run_n u act input ss0)) <> Bits.zero)
+      by (rewrite Hone; exact ones1_neq_zero).
+    destruct (valid_settled_run act a_idx input ss0 u Halign Hzv) as [_ [Hrefs Hinv]].
+    (* the literal the two guards disagree on *)
+    unfold guards_disjoint in Hdis.
+    apply existsb_exists in Hdis. destruct Hdis as [l1 [Hin1 Hex2]].
+    apply existsb_exists in Hex2. destruct Hex2 as [l2 [Hin2 Hb]].
+    apply andb_true_iff in Hb. destruct Hb as [Hfst Hsnd].
+    apply Nat.eqb_eq in Hfst. apply negb_true_iff in Hsnd.
+    apply Bool.eqb_false_iff in Hsnd.
+    destruct l1 as [c1 b1]; destruct l2 as [c2 b2].
+    cbn [fst snd] in Hfst, Hsnd. subst c2.
+    (* its source has settled wherever this drive pulses ... *)
+    pose proof (drive_pulse_guard_valid act a_idx mm p arg_m en_m
+                  (run_n u act input ss0) (sched_input input (run_n u act input ss0))
+                  Halign Hlen Hinv Hrefs Hm Hnz (c1, b1) Hin1) as Hcv.
+    cbn [fst] in Hcv.
+    destruct (node_op_pos act mm ltac:(rewrite Hm; discriminate)) as [Hm1 Hmlen].
+    assert (Hlin : In c1 (get_args ctx (nth mm (graph (build_dfg ctx act))
+                            {| nid := 0; op := DFG_Empty; sz := 0 |})))
+      by (unfold get_args; unfold node_op in Hm; rewrite Hm; right;
+          exact (in_map fst en_m (c1, b1) Hin1)).
+    destruct (node_args_range act mm Hm1 Hmlen c1 Hlin) as [Hc1 Hc2].
+    (* ... so it reads the same at the end of the run, where [guard_holds] pins it *)
+    pose proof (node_ref_stable_run act a_idx input ss0 c1 u M 1
+                  Halign Hzv Hpre Hu ltac:(lia) Hcv) as Hst.
+    destruct (Hgd c1 b2 Hin2) as [Ht Hf].
+    assert (Hz2 : eval1 (drive_pulse act a_idx mm) (run_n u act input ss0)
+                    (sched_input input (run_n u act input ss0)) = Bits.zero).
+    { apply (drive_pulse_zero_of_en act a_idx mm p arg_m en_m _ _ Hm).
+      rewrite drive_sbufs_eq.
+      apply (guard_expr_zero act a_idx (sample_bufs act a_idx) en_m (c1, b1) _ _ Hin1).
+      unfold guard_lit. cbv zeta. cbn [fst snd].
+      unfold node_ref_expr in Hst, Ht, Hf.
+      destruct b1; destruct b2; try (exfalso; apply Hsnd; reflexivity).
+      - rewrite Hst. exact (Hf eq_refl).
+      - cbn [tf_eval_expr]. rewrite Hst.
+        rewrite (proj1 (bits1_nonzero_ones _) (Ht eq_refl)).
+        exact bits1_neg_ones. }
+    rewrite Hz2 in Hone. exact (ones1_neq_zero (eq_sym Hone)).
+  Qed.
   Lemma no_later_drive
         (act: tfs_action sched) a_idx (p: p_var) samp tok en_s d m
         (input: input_t) (ss0: sched_sys_state) (u: nat) :
@@ -13902,9 +14230,8 @@ Section SchedulerSimulation.
     d < m ->
     (forall arg_m en_m, node_op act m = DFG_Drive p arg_m en_m ->
        guards_disjoint en_m en_s = true ->
-       eval1 (gexpr act a_idx (drive_sbufs act a_idx) en_m)
-         (run_n u act input ss0) (sched_input input (run_n u act input ss0))
-       = Bits.zero) ->
+       eval1 (drive_pulse act a_idx m) (run_n u act input ss0)
+         (sched_input input (run_n u act input ss0)) = Bits.zero) ->
     (forall q_idx tok2 en3, samp <= vreg_nid a_idx q_idx ->
        node_op act (vreg_nid a_idx q_idx) = DFG_Sample p tok2 en3 ->
        (fst (run_n u act input ss0)).[tf_dfg_v a_idx q_idx] = Bits.zero) ->
@@ -13918,8 +14245,7 @@ Section SchedulerSimulation.
     assert (Hlenp : 0 < pred (length (graph (build_dfg ctx act)))) by lia.
     destruct (drive_nodes_spec act p m Hin) as [Hmlen [arg_m [en_m Hm]]].
     destruct (guards_disjoint en_m en_s) eqn:Hdis.
-    - exact (drive_pulse_zero_of_en act a_idx m p arg_m en_m _ _ Hm
-               (Hgm arg_m en_m Hm Hdis)).
+    - exact (Hgm arg_m en_m Hm Hdis).
     - destruct (later_drive_gate_full act p samp tok en_s d m arg_m en_m
                   Hsamp Hsd Hm Hlt Hdis)
         as [g [h [prev [Hcg [Hg [Hle _]]]]]].
@@ -13986,42 +14312,6 @@ Section SchedulerSimulation.
   Qed.
 
 
-  (* Only the sentinel at position 0 is empty, so any node that carries an op
-     sits strictly above it. *)
-  Lemma build_dfg_nid_pos (act: tfs_action sched) :
-    forall node, In node (graph (build_dfg ctx act)) ->
-      op node <> DFG_Empty -> 1 <= nid node.
-  Proof.
-    assert (Hempty : gpos {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |}).
-    { split; [ | split; [ | split; [ | split ] ] ].
-      - cbn. lia.
-      - intros k id Hin. destruct Hin.
-      - intros node Hin x Hx. cbn in Hin. destruct Hin as [<-|[]]. cbn in Hx. destruct Hx.
-      - intros node Hin He. cbn in Hin. destruct Hin as [<-|[]]. cbn. reflexivity.
-      - intros node Hin He. cbn in Hin. destruct Hin as [<-|[]]. cbn in He.
-        exfalso. apply He. reflexivity. }
-    unfold build_dfg.
-    pose proof (dataflow_ops_pos (tfs_spec_action_ops ctx act) []
-                  {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |} Hempty
-                  (fun x Hx => match Hx with end)) as Hop.
-    destruct (dataflow_ops ctx [] (tfs_spec_action_ops ctx act)
-                {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |})
-      as [u final] eqn:Ed.
-    destruct Hop as [_ [_ [_ [_ Hnz]]]].
-    cbn [graph]. intros node Hin He. apply in_rev in Hin. exact (Hnz node Hin He).
-  Qed.
-
-  (* A node that carries an op is a real node of the graph. *)
-  Lemma node_op_pos (act: tfs_action sched) n :
-    node_op act n <> DFG_Empty ->
-    1 <= n /\ n < length (graph (build_dfg ctx act)).
-  Proof.
-    intro Hne. pose proof (node_op_range act n Hne) as Hlt.
-    split; [| exact Hlt ].
-    pose proof (node_nid_at act n Hlt) as Hnid.
-    rewrite <- Hnid. apply (build_dfg_nid_pos act); [ apply nth_In; exact Hlt | exact Hne ].
-  Qed.
-
   (* ---- The timing facts the round trip needs ---------------------------- *)
   (* Each is a property of the SCHEDULE that this file's structural analysis  *)
   (* does not reach: the cost model certifies them for a constant-time        *)
@@ -14045,20 +14335,6 @@ Section SchedulerSimulation.
       vreg_nid a_idx s1 <= vreg_nid a_idx s2 ->
       (fst (run_n k act input ss0)).[tf_dfg_v a_idx s2] = Bits.ones 1 ->
       (fst (run_n k act input ss0)).[tf_dfg_v a_idx s1] = Bits.ones 1.
-
-  (* No call's path condition holds before the action settles unless it holds
-     at the end: a buffer reads zero until it latches, so a guard over an
-     unsettled sample would otherwise fire an arm the run never takes. *)
-  Definition guards_settled (act: tfs_action sched) a_idx (input: input_t)
-      (ss0: sched_sys_state) (M: nat) : Prop :=
-    forall n (p: p_var) arg en k,
-      node_op act n = DFG_Drive p arg en -> k <= M ->
-      eval1 (gexpr act a_idx (drive_sbufs act a_idx) en)
-        (run_n k act input ss0) (sched_input input (run_n k act input ss0))
-        <> Bits.zero ->
-      eval1 (gexpr act a_idx (drive_sbufs act a_idx) en)
-        (run_n M act input ss0) (sched_input input (run_n M act input ss0))
-        <> Bits.zero.
 
   (* A call's request reaches the port before its answer is latched, carrying
      a settled argument, and no call emitted at or before it moves the port
@@ -14087,12 +14363,13 @@ Section SchedulerSimulation.
               eval1 (drive_pulse act a_idx mm) (run_n w act input ss0)
                 (sched_input input (run_n w act input ss0)) = Bits.zero).
 
-  (* The four together, at the last cycle before the action reports done. *)
+  (* The three together, at the last cycle before the action reports done.
+     [guards_settled] was a fourth: a drive.s validity now carries its guard.s,
+     so [excl_drive_pulse_zero] proves what it assumed. *)
   Definition call_discipline (act: tfs_action sched) a_idx (input: input_t)
       (ss0: sched_sys_state) (N: nat) : Prop :=
     samples_settled act a_idx input ss0 (pred N)
     /\ samples_ordered act a_idx input ss0
-    /\ guards_settled act a_idx input ss0 (pred N)
     /\ requests_sent act a_idx input ss0 (pred N).
 
   (* THE PORT AT THE LATCH.  When a call's answer is latched, the port still
@@ -14107,16 +14384,14 @@ Section SchedulerSimulation.
     (forall x, zeroed_at_start x -> (fst ss0).[x] = Bits.zero) ->
     (forall i, 1 <= i <= M -> ~ done_set (run_n i act input ss0)) ->
     samples_ordered act a_idx input ss0 ->
-    guards_settled act a_idx input ss0 M ->
     requests_sent act a_idx input ss0 M ->
     node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
     sample_drive act (vreg_nid a_idx n_idx) = Some d ->
     node_op act d = DFG_Drive p av en' ->
     sz (nth d (graph (build_dfg ctx act))
          {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p) ->
-    eval1 (gexpr act a_idx (drive_sbufs act a_idx) en)
-      (run_n M act input ss0) (sched_input input (run_n M act input ss0))
-      <> Bits.zero ->
+    guard_holds act a_idx (run_n M act input ss0)
+      (sched_input input (run_n M act input ss0)) en ->
     j < M ->
     (fst (run_n j act input ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero ->
     (fst (run_n (S j) act input ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
@@ -14125,7 +14400,7 @@ Section SchedulerSimulation.
         (node_ref_expr act a_idx av)
         (run_n M act input ss0) (sched_input input (run_n M act input ss0)).
   Proof.
-    intros Halign Hlen Hz0 Hpre Hord Hgs Hrs Hsamp Hsd Hdop Hdsz HenM Hjm Hvj HvSj.
+    intros Halign Hlen Hz0 Hpre Hord Hrs Hsamp Hsd Hdop Hdsz Hgd Hjm Hvj HvSj.
     assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
       by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
     destruct (node_op_pos act d ltac:(rewrite Hdop; discriminate)) as [Hd1 Hdlen].
@@ -14143,28 +14418,16 @@ Section SchedulerSimulation.
       rewrite (validity_zero_earlier act a_idx n_idx input ss0 u j Halign Hzv
                  Hpu Hu Hvj) in Hsone.
       exact (ones1_neq_zero (eq_sym Hsone)). }
-    (* exclusive path conditions are down at every cycle of the run *)
+    (* a call in an exclusive branch never takes the port -- a LEMMA now, not
+       an assumption about when guards settle *)
     assert (Hgm : forall u, u <= M -> forall mm arg_m en_m,
               node_op act mm = DFG_Drive p arg_m en_m ->
               guards_disjoint en_m en = true ->
-              eval1 (gexpr act a_idx (drive_sbufs act a_idx) en_m)
-                (run_n u act input ss0) (sched_input input (run_n u act input ss0))
-              = Bits.zero).
+              eval1 (drive_pulse act a_idx mm) (run_n u act input ss0)
+                (sched_input input (run_n u act input ss0)) = Bits.zero).
     { intros u Hu mm arg_m en_m Hmm Hdis.
-      destruct (bits1_cases (eval1 (gexpr act a_idx (drive_sbufs act a_idx) en_m)
-                               (run_n u act input ss0)
-                               (sched_input input (run_n u act input ss0))))
-        as [Hone | Hz]; [ exfalso | exact Hz ].
-      assert (Hne : eval1 (gexpr act a_idx (drive_sbufs act a_idx) en_m)
-                      (run_n u act input ss0)
-                      (sched_input input (run_n u act input ss0)) <> Bits.zero)
-        by (rewrite Hone; exact ones1_neq_zero).
-      pose proof (Hgs mm p arg_m en_m u Hmm Hu Hne) as HM.
-      destruct (guards_disjoint_excl act a_idx (drive_sbufs act a_idx) en_m en
-                  (run_n M act input ss0)
-                  (sched_input input (run_n M act input ss0)) Hdis) as [Hz1 | Hz2].
-      - exact (HM Hz1).
-      - exact (HenM Hz2). }
+      exact (excl_drive_pulse_zero act a_idx p en mm arg_m en_m input ss0 u M
+               Halign Hlen Hzv Hpre Hu Hmm Hdis Hgd). }
     (* so no LATER call takes the port while the answer is outstanding *)
     assert (Hlater : forall u, u <= j -> forall mm,
               In mm (drive_nodes ctx (build_dfg ctx act) p) -> d < mm ->
@@ -14175,8 +14438,7 @@ Section SchedulerSimulation.
         by (intros i Hi; apply Hpre; lia).
       assert (Hgu : forall arg_m en_m, node_op act mm = DFG_Drive p arg_m en_m ->
                 guards_disjoint en_m en = true ->
-                eval1 (gexpr act a_idx (drive_sbufs act a_idx) en_m)
-                  (run_n u act input ss0)
+                eval1 (drive_pulse act a_idx mm) (run_n u act input ss0)
                   (sched_input input (run_n u act input ss0)) = Bits.zero)
         by (intros arg_m en_m Hm2 Hdis; apply (Hgm u ltac:(lia) mm arg_m en_m Hm2 Hdis)).
       exact (no_later_drive act a_idx p (vreg_nid a_idx n_idx) tok en d mm input ss0 u
@@ -14317,7 +14579,6 @@ Section SchedulerSimulation.
     (forall i, 1 <= i <= M -> ~ done_set (run_n i act input ss0)) ->
     samples_settled act a_idx input ss0 M ->
     samples_ordered act a_idx input ss0 ->
-    guards_settled act a_idx input ss0 M ->
     requests_sent act a_idx input ss0 M ->
     node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
     sample_drive act (vreg_nid a_idx n_idx) = Some d ->
@@ -14332,7 +14593,7 @@ Section SchedulerSimulation.
            (node_ref_expr act a_idx av) (run_n M act input ss0)
            (sched_input input (run_n M act input ss0)))).
   Proof.
-    intros Halign Hlen Hz0 Hpre Hset Hord Hgs Hrs Hsamp Hsd Hdop Hdsz Hgd.
+    intros Halign Hlen Hz0 Hpre Hset Hord Hrs Hsamp Hsd Hdop Hdsz Hgd.
     assert (Hlen0 : 0 < length (graph (build_dfg ctx act))) by lia.
     assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
       by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
@@ -14415,9 +14676,7 @@ Section SchedulerSimulation.
     end.
     cbn beta iota. cbn [sched_input].
     rewrite (port_holds_request act a_idx input ss0 M n_idx p tok en d av en' j
-               Halign Hlen Hz0 Hpre Hord Hgs Hrs Hsamp Hsd Hdop Hdsz
-               (guard_holds_gexpr act a_idx (run_n M act input ss0)
-                  (sched_input input (run_n M act input ss0)) en Hgd)
+               Halign Hlen Hz0 Hpre Hord Hrs Hsamp Hsd Hdop Hdsz Hgd
                Hjm Hvj HPN).
     reflexivity.
   Qed.
