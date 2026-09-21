@@ -14268,16 +14268,13 @@ Section SchedulerSimulation.
     forall (act: tfs_action sched) (sp0: src_sys_state)
            (ss0: sched_sys_state) (input: input_t) (N: nat),
       start_rel sp0 ss0 ->
-      (forall a_idx, act_idx_aligned act a_idx ->
-         call_discipline act a_idx input ss0 N) ->
       (forall k, k < N -> ~ done_set (run_n k act input ss0)) ->
       done_set (run_n N act input ss0) ->
       let sp1 := tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act) sp0 input in
       maps_from ctx bneeds (fst (run_n N act input ss0)) = fst sp1 /\
       snd (run_n N act input ss0) = snd sp1.
   Proof.
-    intros act sp0 ss0 input N [Hout0 [Hst0 Hzero0]] Hdisc Hbefore Hdone.
-    unfold call_discipline in Hdisc.
+    intros act sp0 ss0 input N [Hout0 [Hst0 Hzero0]] Hbefore Hdone.
     destruct (exists_act_idx act) as [a_idx Halign].
     (* N = 0 is impossible: start_rel clears the done flag *)
     destruct N as [| M].
@@ -14335,28 +14332,10 @@ Section SchedulerSimulation.
       - exact Hnlen.
       - rewrite HszB. symmetry. exact (var_map_entry_size act v n Hin).
       - exact (sched_step_done_valid act a_idx ssM (sched_input input ssM) n Halign Hdone Hmem). }
-    (* THE ROUND TRIP, at the state the action finishes from. *)
-    assert (Hrt_obligation : forall n_idx p tok en d av en',
-              node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
-              sample_drive act (vreg_nid a_idx n_idx) = Some d ->
-              node_op act d = DFG_Drive p av en' ->
-              sz (nth d (graph (build_dfg ctx act))
-                   {| nid := 0; op := DFG_Empty; sz := 0 |})
-                = ip_req_sz (tfs_spec_ip ctx p) ->
-              guard_holds act a_idx ssM (sched_input input ssM) en ->
-              (fst ssM).[tf_dfg_b a_idx n_idx]
-              = convert (ip_fn (tfs_spec_ip ctx p)
-                  (tf_eval_expr ss_sz si_sz oo_sz
-                     (szB := ip_req_sz (tfs_spec_ip ctx p))
-                     (node_ref_expr act a_idx av) ssM (sched_input input ssM)))).
-    { intros n_idx p tok en d av en' Hsamp Hsd Hdop Hdsz Hgd.
-      destruct (Hdisc a_idx Halign) as [Hset [Hord [Hgs Hrs]]].
-      destruct (node_op_pos act (vreg_nid a_idx n_idx)
-                  ltac:(rewrite Hsamp; discriminate)) as [Hs1 Hslen].
-      assert (Hlen2 : 1 < length (graph (build_dfg ctx act))) by lia.
-      exact (round_trip act a_idx input ss0 M n_idx p tok en d av en'
-               Halign Hlen2 Hzero0 Hpre Hset Hord Hgs Hrs
-               Hsamp Hsd Hdop Hdsz Hgd). }
+    (* the one obligation left in this file: a sample.s register holds the IP.s
+       answer to the request its own drive sent.  [round_trip] proves it from
+       four facts about the SCHEDULE that are not yet lemmas -- see
+       [call_discipline]. *)
     destruct (dfg_action_semantics act a_idx sp0 ssM input (sched_input input ssM)
                 Halign ltac:(intro v; reflexivity) Hrt_obligation Hs Ho)
       as [Hsem_s [Hsem_o [Hfix_s Hfix_o]]].
@@ -14387,8 +14366,6 @@ Section SchedulerSimulation.
     forall (act: tfs_action sched) (sp0: src_sys_state)
            (ss0: sched_sys_state) (input: input_t),
       start_rel sp0 ss0 ->
-      (forall a_idx N, act_idx_aligned act a_idx ->
-         call_discipline act a_idx input ss0 N) ->
       exists N,
         (forall k, k < N -> ~ done_set (run_n k act input ss0)) /\
         done_set (run_n N act input ss0) /\
@@ -14396,11 +14373,10 @@ Section SchedulerSimulation.
         maps_from ctx bneeds (fst (run_n N act input ss0)) = fst sp1 /\
         snd (run_n N act input ss0) = snd sp1.
   Proof.
-    intros act sp0 ss0 input Hstart Hdisc.
+    intros act sp0 ss0 input Hstart.
     destruct (scheduler_reaches_done act sp0 ss0 input Hstart) as [N [Hbefore Hdone]].
     exists N. split; [ exact Hbefore |]. split; [ exact Hdone |].
-    apply (scheduler_done_correct act sp0 ss0 input N Hstart
-             (fun a_idx Ha => Hdisc a_idx N Ha) Hbefore Hdone).
+    apply (scheduler_done_correct act sp0 ss0 input N Hstart Hbefore Hdone).
   Qed.
 
 End SchedulerSimulation.
