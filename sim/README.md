@@ -34,6 +34,7 @@ the design uses the latched value.
 | `tb_chain.sv` | `Example_ChainedCallSpike` | two calls where the second's argument is the first's result |
 | `tb_branch.sv` | `Example_BranchCallSpike` | a call under an `if` on an INPUT: both arms drive, mutually exclusive in time |
 | `tb_guard.sv` | `Example_GuardCallSpike` | a branch on a CALL RESULT: the right arm is taken, and the guard reads the sample's latch |
+| `tb_xport.sv` | `Example_XPortGuardSpike` | the same branch with the arms' calls on a DIFFERENT port from the one the condition reads -- **currently FAILS**, and is meant to |
 | `tb_mars.sv` | `Example_Mars` | the one-action MARS, 77 checks -- see below |
 
 ## Running them
@@ -75,3 +76,28 @@ These check the module against a model of the IP. The campaign's acceptance test
 checks it against the REAL SHA-256 and the TCG reference emulator:
 `agents/mars/oracle/run-stage3-v4.sh` (agents/ is gitignored). Both should be
 green before the interface is reviewed.
+
+## tb_xport.sv: a branch whose condition reads another port
+
+`tb_guard.sv` passes because every call in it is on one port: `last_sample`
+finds the first call's sample -- its guard is not disjoint from either arm's --
+so both arms' drives are sequenced behind it by an ordering join and cannot
+fire until the answer is latched.
+
+Move the condition's call to a second port and that join is gone: `last_sample`
+searches the *arm's* port, where nothing precedes. A drive's compiled validity
+is its ARGUMENT's, not its guard's, so the arm's stall starts counting
+immediately and the arm's drive gets its one pulse window while the condition's
+answer is still in flight and its latch still reads zero. The design then takes
+the arm the zeroed latch selects:
+
+    st_c = 0   (then arm): arm asks for 7, st_r = 7   -- right, by luck
+    st_c != 0  (else arm): arm asks for 7, st_r = 7   -- WRONG, should be 9
+
+`st_c` itself is correct (`f5`) by the time the action finishes; the branch was
+simply decided before it arrived. This is the same family as the `ip_lat = 0`
+collision: a call that is emitted but can never fire.
+
+It is excluded from the default run because it fails. Run it by name:
+
+    scripts/run-sim.sh tb_xport.sv
