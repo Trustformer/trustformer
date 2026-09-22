@@ -15241,6 +15241,7 @@ Section SchedulerSimulation.
          (sched_input input (run_n u act input ss0)) = Bits.zero) ->
     (forall q_idx tok2 en3, samp <= vreg_nid a_idx q_idx ->
        node_op act (vreg_nid a_idx q_idx) = DFG_Sample p tok2 en3 ->
+       (vreg_nid a_idx q_idx = samp \/ guards_disjoint en_s en3 = false) ->
        (fst (run_n u act input ss0)).[tf_dfg_v a_idx q_idx] = Bits.zero) ->
     eval1 (drive_pulse act a_idx m) (run_n u act input ss0)
       (sched_input input (run_n u act input ss0)) = Bits.zero.
@@ -15264,17 +15265,21 @@ Section SchedulerSimulation.
         - destruct (node_at_nid act nd Hnd) as [_ Hat].
           unfold is_sample_of, node_op. rewrite Hnid in Hat. rewrite Hat, Hop.
           reflexivity. }
-      assert (Hs'op : exists tok2 en3, node_op act s' = DFG_Sample p tok2 en3).
-      { destruct Hd as [Hq | [nd [tk [en'' [Hnd [Hnid [Hop _]]]]]]].
-        - subst s'. exists tok, en_s. exact Hsamp.
+      assert (Hs'op : exists tok2 en3, node_op act s' = DFG_Sample p tok2 en3
+                        /\ (s' = samp \/ guards_disjoint en_s en3 = false)).
+      { destruct Hd as [Hq | [nd [tk [en'' [Hnd [Hnid [Hop Hdisj]]]]]]].
+        - subst s'. exists tok, en_s. split; [ exact Hsamp | left; reflexivity ].
         - destruct (node_at_nid act nd Hnd) as [_ Hat].
-          exists tk, en''. unfold node_op. rewrite Hnid in Hat. rewrite Hat.
-          exact Hop. }
-      destruct Hs'op as [tok2 [en3 Hs'sop]].
+          exists tk, en''. rewrite Hnid in Hat.
+          split; [ unfold node_op; rewrite Hat; exact Hop | right; exact Hdisj ]. }
+      destruct Hs'op as [tok2 [en3 [Hs'sop Hdj]]].
       destruct (sample_slot act a_idx s' Halign Hs'sam)
         as [q0 [qsz [s_idx [Hassoc [Hidx Hvn]]]]].
-      assert (Hpz : (fst (run_n u act input ss0)).[tf_dfg_v a_idx s_idx] = Bits.zero)
-        by (apply (Hnl s_idx tok2 en3); rewrite Hvn; [ exact Hle | exact Hs'sop ]).
+      assert (Hpz : (fst (run_n u act input ss0)).[tf_dfg_v a_idx s_idx] = Bits.zero).
+      { apply (Hnl s_idx tok2 en3).
+        - rewrite Hvn. exact Hle.
+        - rewrite Hvn. exact Hs'sop.
+        - rewrite Hvn. exact Hdj. }
       (* [prev] is the join's second argument, so it sits one fuel step inside *)
       assert (Hglt : g < length (graph (build_dfg ctx act)))
         by (apply node_op_pos; rewrite Hg; discriminate).
@@ -15395,16 +15400,17 @@ Section SchedulerSimulation.
     forall n_idx, is_sample_of act (vreg_nid a_idx n_idx) = true ->
       (fst (run_n M act input ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1.
 
-  (* On one port the answers come back in the order the calls were emitted.
-     This is where branch arms being cycle aligned is used: an untaken arm's
-     call still counts its stall out, and only alignment keeps it from
-     releasing the ordering join ahead of the arm that runs. *)
+  (* On one port the answers come back in the order the calls were emitted,
+     for calls whose guards can hold together.  [pending_samples] filters by
+     [negb (guards_disjoint ...)], so exclusive arms are sequenced by nothing
+     and are excluded here; [covers] hands the same disjunction back. *)
   Definition samples_ordered (act: tfs_action sched) a_idx (input: input_t)
       (ss0: sched_sys_state) : Prop :=
     forall (p: p_var) s1 s2 tok1 en1 tok2 en2 k,
       node_op act (vreg_nid a_idx s1) = DFG_Sample p tok1 en1 ->
       node_op act (vreg_nid a_idx s2) = DFG_Sample p tok2 en2 ->
       vreg_nid a_idx s1 <= vreg_nid a_idx s2 ->
+      (vreg_nid a_idx s2 = vreg_nid a_idx s1 \/ guards_disjoint en1 en2 = false) ->
       (fst (run_n k act input ss0)).[tf_dfg_v a_idx s2] = Bits.ones 1 ->
       (fst (run_n k act input ss0)).[tf_dfg_v a_idx s1] = Bits.ones 1.
 
@@ -15480,11 +15486,13 @@ Section SchedulerSimulation.
     assert (Hnl : forall u, u <= j -> forall q_idx tok2 en3,
               vreg_nid a_idx n_idx <= vreg_nid a_idx q_idx ->
               node_op act (vreg_nid a_idx q_idx) = DFG_Sample p tok2 en3 ->
+              (vreg_nid a_idx q_idx = vreg_nid a_idx n_idx
+               \/ guards_disjoint en en3 = false) ->
               (fst (run_n u act input ss0)).[tf_dfg_v a_idx q_idx] = Bits.zero).
-    { intros u Hu q_idx tok2 en3 Hge Hq.
+    { intros u Hu q_idx tok2 en3 Hge Hq Hdj.
       destruct (bits1_cases ((fst (run_n u act input ss0)).[tf_dfg_v a_idx q_idx]))
         as [Hone | Hz]; [ exfalso | exact Hz ].
-      pose proof (Hord p n_idx q_idx tok en tok2 en3 u Hsamp Hq Hge Hone) as Hsone.
+      pose proof (Hord p n_idx q_idx tok en tok2 en3 u Hsamp Hq Hge Hdj Hone) as Hsone.
       assert (Hpu : forall i, 1 <= i <= j -> ~ done_set (run_n i act input ss0))
         by (intros i Hi; apply Hpre; lia).
       rewrite (validity_zero_earlier act a_idx n_idx input ss0 u j Halign Hzv
