@@ -15481,6 +15481,48 @@ Section SchedulerSimulation.
         assert (Hfb : b < pred fuel) by lia.
         exact (IH s_idx bufs (pred fuel) q qsz Hsam Hbs Hqidx Hsub Hfb Hb).
   Qed.
+
+  (* A sample is a LEAF of the reference, so its reference validity is just
+     its own register: the one place where "has this latched" is visible. *)
+  Lemma nrv_sample (act: tfs_action sched) a_idx n_idx :
+    act_idx_aligned act a_idx ->
+    is_sample_of act (vreg_nid a_idx n_idx) = true ->
+    node_ref_valid act a_idx (vreg_nid a_idx n_idx)
+    = tf_svar (tf_dfg_v a_idx n_idx).
+  Proof.
+    intros Halign Hsam.
+    destruct (vreg_nid_node_range act a_idx n_idx Halign) as [_ Hnlen].
+    unfold node_ref_valid.
+    rewrite (sample_ref_is_register act a_idx n_idx Halign Hsam []
+               (length (graph (build_dfg ctx act))) Hnlen).
+    reflexivity.
+  Qed.
+
+  (* The twin of [compile_guard_sources_valid] on the fold's BASE: a drive
+     that reads as valid has a settled ARGUMENT, not just a settled guard. *)
+  Lemma compile_drive_arg_valid
+        (act: tfs_action sched) a_idx n p arg en bufs pi fuel
+        (ss: sched_sys_state) (input: sched_input_t) :
+    node_op act n = DFG_Drive p arg en ->
+    BitsToLists.list_assoc bufs n = None ->
+    0 < fuel ->
+    eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                  (build_dfg ctx act) n bufs)) ss input = Bits.ones 1 ->
+    eval1 (snd (compile_dfg_expr_at ctx bneeds pi (pred fuel) a_idx
+                  (build_dfg ctx act) arg bufs)) ss input = Bits.ones 1.
+  Proof.
+    intros Hop Hbuf Hf Hval.
+    unfold node_op in Hop.
+    rewrite (compile_drive_valid (build_dfg ctx act) _ _ a_idx n p arg en bufs pi fuel
+               Hop Hbuf Hf) in Hval.
+    exact (proj1 (proj1 (fold_valid_and_ones
+                           (fun z => snd (compile_dfg_expr_at ctx bneeds pi (pred fuel)
+                                            a_idx (build_dfg ctx act) z bufs))
+                           (snd (compile_dfg_expr_at ctx bneeds pi (pred fuel)
+                                   a_idx (build_dfg ctx act) arg bufs))
+                           ss input en) Hval)).
+  Qed.
+
   Lemma no_later_drive
         (act: tfs_action sched) a_idx (p: p_var) samp tok en_s d m
         (input: input_t) (ss0: sched_sys_state) (u: nat) :
