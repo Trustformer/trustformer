@@ -4509,6 +4509,223 @@ Section SchedulerSimulation.
     apply samples_stalled_rev. exact H.
   Qed.
 
+
+
+  (* A SAMPLE HAS A CALL.  The stall a sample reads is fed by that call's own
+     drive, or by the ordering join in front of it.  [samples_stalled] stops at
+     the stall; this carries on to the drive. *)
+  Definition drive_at (L: list (@dfg_node_t s_var i_var o_var p_var))
+      (p: p_var) (n: nid_t) : Prop :=
+    exists nd arg en, In nd L /\ nid nd = n /\ op nd = DFG_Drive p arg en.
+
+  Definition head_drives (L: list (@dfg_node_t s_var i_var o_var p_var))
+      (p: p_var) (h: nid_t) : Prop :=
+    drive_at L p h
+    \/ (exists nj d prev, In nj L /\ nid nj = h /\ op nj = DFG_Join d prev
+          /\ drive_at L p d).
+
+  Definition samples_driven (L: list (@dfg_node_t s_var i_var o_var p_var)) : Prop :=
+    forall s (p: p_var) tok en, In s L -> op s = DFG_Sample p tok en ->
+      exists t l a, In t L /\ nid t = tok /\ op t = DFG_Stall l a
+        /\ head_drives L p a.
+
+  Lemma drive_at_mono L L' p n :
+    (forall x, In x L -> In x L') -> drive_at L p n -> drive_at L' p n.
+  Proof.
+    intros Hsub [nd [arg [en [Hin [Hid Hop]]]]].
+    exists nd, arg, en.
+    split; [ exact (Hsub nd Hin) | split; [ exact Hid | exact Hop ]].
+  Qed.
+
+  Lemma head_drives_mono L L' p h :
+    (forall x, In x L -> In x L') -> head_drives L p h -> head_drives L' p h.
+  Proof.
+    intros Hsub [Hd | [nj [d [prev [Hin [Hid [Hop Hd]]]]]]].
+    - left. exact (drive_at_mono L L' p h Hsub Hd).
+    - right. exists nj, d, prev.
+      split; [ exact (Hsub nj Hin) | split; [ exact Hid | split; [ exact Hop |]]].
+      exact (drive_at_mono L L' p d Hsub Hd).
+  Qed.
+
+  Lemma head_drives_cons (x: @dfg_node_t s_var i_var o_var p_var) L p h :
+    head_drives L p h -> head_drives (x :: L) p h.
+  Proof. apply head_drives_mono. intros y Hy. right. exact Hy. Qed.
+
+  Lemma samples_driven_cons_nonsample L o z :
+    (forall (p: p_var) tok en, o <> DFG_Sample p tok en) ->
+    samples_driven L ->
+    samples_driven ({| nid := length L; op := o; sz := z |} :: L).
+  Proof.
+    intros Hno H s2 p tok en Hin Hop. cbn [In] in Hin.
+    destruct Hin as [<- | Hin]; [ cbn [op] in Hop; exfalso; exact (Hno p tok en Hop) |].
+    destruct (H s2 p tok en Hin Hop) as [t [l [a [Ht [Htid [Htop Hhd]]]]]].
+    exists t, l, a.
+    split; [ right; exact Ht | split; [ exact Htid | split; [ exact Htop |]]].
+    apply head_drives_cons. exact Hhd.
+  Qed.
+
+  Lemma P_emit_expr_sdr : P_emit_expr samples_driven.
+  Proof. intros L o z _ H2 _ H. exact (samples_driven_cons_nonsample L o z H2 H). Qed.
+
+  Lemma samples_driven_cons2 L (a: nid_t) (l: nat) (p: p_var) en z1 z2 :
+    head_drives L p a ->
+    samples_driven L ->
+    samples_driven
+      ({| nid := S (length L); op := DFG_Sample p (length L) en; sz := z2 |}
+       :: {| nid := length L; op := DFG_Stall l a; sz := z1 |} :: L).
+  Proof.
+    intros Hhd H s2 p2 tok en2 Hin Hop. cbn [In] in Hin.
+    destruct Hin as [<- | [<- | Hin]].
+    - cbn [op] in Hop. injection Hop as <- <- <-.
+      exists {| nid := length L; op := DFG_Stall l a; sz := z1 |}, l, a.
+      split; [ right; left; reflexivity |].
+      split; [ cbn [nid]; reflexivity |].
+      split; [ cbn [op]; reflexivity |].
+      apply head_drives_cons, head_drives_cons. exact Hhd.
+    - cbn [op] in Hop. discriminate Hop.
+    - destruct (H s2 p2 tok en2 Hin Hop) as [t [l2 [a2 [Ht [Htid [Htop Hhd2]]]]]].
+      exists t, l2, a2.
+      split; [ right; right; exact Ht | split; [ exact Htid | split; [ exact Htop |]]].
+      apply head_drives_cons, head_drives_cons. exact Hhd2.
+  Qed.
+
+  Lemma samples_driven_rev L : samples_driven L -> samples_driven (rev L).
+  Proof.
+    intros H s2 p tok en Hin Hop.
+    apply (proj2 (in_rev L s2)) in Hin.
+    destruct (H s2 p tok en Hin Hop) as [t [l [a [Ht [Htid [Htop Hhd]]]]]].
+    exists t, l, a.
+    split; [ apply (proj1 (in_rev L t)); exact Ht |].
+    split; [ exact Htid | split; [ exact Htop |]].
+    apply (head_drives_mono L (rev L) p a);
+      [ intros x Hx; apply (proj1 (in_rev L x)); exact Hx | exact Hhd ].
+  Qed.
+
+  (* The head the stall chain hangs off, as the two emits leave it. *)
+  Lemma head_drives_emit
+        (s3 s4 sh: wst) (ip: p_var) arg_id en size drive_id prev_opt head_id :
+    emit ctx (DFG_Drive ip arg_id en) size s3 = (drive_id, s4) ->
+    (match prev_opt with
+     | Some prev => emit ctx (DFG_Join drive_id prev) 1
+     | None => ret ctx drive_id
+     end s4) = (head_id, sh) ->
+    head_drives (graph sh) ip head_id.
+  Proof.
+    intros Ed Eh.
+    rewrite emit_red in Ed. injection Ed as Hdid Hs4.
+    assert (Hdr4 : drive_at (graph s4) ip drive_id).
+    { exists {| nid := length (graph s3); op := DFG_Drive ip arg_id en; sz := size |},
+             arg_id, en.
+      rewrite <- Hs4. cbn [graph].
+      split; [ left; reflexivity |].
+      split; [ cbn [nid]; exact Hdid | cbn [op]; reflexivity ]. }
+    destruct prev_opt as [prev |].
+    - rewrite emit_red in Eh. injection Eh as Hhid Hsh.
+      rewrite <- Hsh. cbn [graph]. right.
+      exists {| nid := length (graph s4); op := DFG_Join drive_id prev; sz := 1 |},
+             drive_id, prev.
+      split; [ left; reflexivity |].
+      split; [ cbn [nid]; exact Hhid |].
+      split; [ cbn [op]; reflexivity |].
+      apply (drive_at_mono (graph s4) _ ip drive_id);
+        [ intros x Hx; right; exact Hx | exact Hdr4 ].
+    - unfold ret in Eh. injection Eh as Hhid Hsh.
+      rewrite <- Hsh, <- Hhid. left. exact Hdr4.
+  Qed.
+
+  Lemma dataflow_ops_sdr :
+    forall (ops: @tf_ops s_var i_var o_var p_var) en,
+      preserves_g samples_driven (dataflow_ops ctx en ops).
+  Proof.
+    induction ops as [op | op1 IHo1 op2 IHo2 | cond op1 IHo1 op2 IHo2]; intro en.
+    - destruct op as [ | dst e | dst e | ip dst e ]; cbn [dataflow_ops].
+      + apply preserves_g_ret.
+      + apply preserves_g_bind;
+          [ apply dataflow_expr_g; apply P_emit_expr_sdr | intro x ].
+        apply preserves_g_set_var.
+      + apply preserves_g_bind;
+          [ apply dataflow_expr_g; apply P_emit_expr_sdr | intro x ].
+        apply preserves_g_set_var.
+      + intros s Hs.
+        assert (Hlat : 1 <= ip_lat (tfs_spec_ip ctx ip)) by (apply ip_lat_pos).
+        rewrite (bind_red (get_state ctx) _ s s s (get_state_red s)).
+        apply (g_bind_at samples_driven);
+          [ apply dataflow_expr_g; [ apply P_emit_expr_sdr | exact Hs ]
+          | intros arg_id s2 Ea H2 ].
+        apply (g_bind_at samples_driven);
+          [ apply join_pendings_g;
+            [ intros L d prev z HL;
+              apply samples_driven_cons_nonsample;
+              [ intros q tok en2 Hc; discriminate Hc | exact HL ]
+            | exact H2 ]
+          | intros prev_opt s3 Ejp H3 ].
+        apply (g_bind_at samples_driven);
+          [ rewrite emit_red; cbn [snd graph];
+            apply samples_driven_cons_nonsample;
+            [ intros q tok en2 Hc; discriminate Hc | exact H3 ]
+          | intros drive_id s4 Ed H4 ].
+        apply (g_bind_at samples_driven).
+        * destruct prev_opt as [root |]; [| exact H4 ].
+          rewrite emit_red. cbn [snd graph].
+          apply samples_driven_cons_nonsample;
+            [ intros q tok en2 Hc; discriminate Hc | exact H4 ].
+        * intros head_id sh Eh Hh.
+          pose proof (head_drives_emit s3 s4 sh ip arg_id en
+                        (ip_req_sz (tfs_spec_ip ctx ip)) drive_id prev_opt head_id
+                        Ed Eh) as Hhd.
+          unfold stall_chain.
+          destruct (ip_lat (tfs_spec_ip ctx ip)) as [| lk] eqn:Elat;
+            [ exfalso; try rewrite Elat in Hlat; lia |].
+          destruct (emit ctx (DFG_Stall (S lk) head_id) (counter_sz (S lk)) sh)
+            as [stall_id st] eqn:Es.
+          rewrite (bind_red _ _ sh stall_id st Es).
+          apply (g_bind_at samples_driven).
+          -- rewrite emit_red. cbn [snd graph].
+             rewrite emit_red in Es. injection Es as Hsid Hst.
+             rewrite <- Hst. cbn [graph length]. rewrite <- Hsid.
+             apply samples_driven_cons2; [ exact Hhd | exact Hh ].
+          -- intros samp_id s6 Esa H6.
+             exact (preserves_g_set_var samples_driven (DFG_SVar dst) samp_id s6 H6).
+    - cbn [dataflow_ops]. apply preserves_g_bind; [ apply IHo1 | intro x ]. apply IHo2.
+    - intros s Hs. cbn [dataflow_ops].
+      apply (g_bind_at samples_driven);
+        [ apply dataflow_expr_g; [ apply P_emit_expr_sdr | exact Hs ]
+        | intros cid s1 Ec H1 ].
+      rewrite (bind_red (get_state ctx) _ s1 s1 s1 (get_state_red s1)).
+      apply (g_bind_at samples_driven); [ apply IHo1; exact H1 | intros u2 s2 E2 H2 ].
+      rewrite (bind_red (get_state ctx) _ s2 s2 s2 (get_state_red s2)).
+      rewrite (bind_red (put_state ctx _) _ s2 tt _ (put_state_red _ s2)).
+      apply (g_bind_at samples_driven); [ apply IHo2; exact H2 | intros u3 s3 E3 H3 ].
+      rewrite (bind_red (get_state ctx) _ s3 s3 s3 (get_state_red s3)).
+      apply (g_bind_at samples_driven);
+        [ apply (preserves_g_merge_maps samples_driven);
+          [ apply P_emit_expr_sdr | exact H3 ]
+        | intros fv s4 E4 H4 ].
+      rewrite (bind_red (get_state ctx) _ s4 s4 s4 (get_state_red s4)).
+      cbn [snd]. exact H4.
+  Qed.
+
+  Lemma samples_driven_build_dfg (act: tfs_action sched) :
+    samples_driven (graph (build_dfg ctx act)).
+  Proof.
+    unfold build_dfg.
+    pose proof (dataflow_ops_sdr (tfs_spec_action_ops ctx act) []
+                  {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0 |} ];
+                     var_map := [] |}) as H.
+    cbn beta in H.
+    assert (Hbase : samples_driven
+              (graph {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0 |} ];
+                        var_map := [] |})).
+    { intros s2 p tok en Hin Hop. cbn [graph In] in Hin.
+      destruct Hin as [<- | []]. cbn [op] in Hop. discriminate Hop. }
+    specialize (H Hbase).
+    destruct (dataflow_ops ctx [] (tfs_spec_action_ops ctx act)
+                {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0 |} ];
+                   var_map := [] |}) as [u final] eqn:Ed.
+    cbn [snd] in H. cbn [graph].
+    apply samples_driven_rev. exact H.
+  Qed.
+
   (* THE STRUCTURAL FACT, on the exported forward graph. *)
   Lemma joins_sequence_build_dfg (act: tfs_action sched) :
     joins_sequence (graph (build_dfg ctx act)).
@@ -12456,6 +12673,43 @@ Section SchedulerSimulation.
       rewrite Heq in Hsamp. congruence.
     - exact (sample_chain_no_sample act prev q tok2 en2 d2 samp Hprev Hsd2
                ltac:(lia) Hlt p tok en Hsamp).
+  Qed.
+
+  (* THE CONSEQUENCE: every sample names a call. *)
+  Lemma sample_has_drive (act: tfs_action sched) s (p: p_var) tok en :
+    node_op act s = DFG_Sample p tok en ->
+    exists d, sample_drive act s = Some d.
+  Proof.
+    intro Hs.
+    assert (Hslen : s < length (graph (build_dfg ctx act)))
+      by (apply node_op_range; rewrite Hs; discriminate).
+    pose proof (samples_driven_build_dfg act
+                  (nth s (graph (build_dfg ctx act))
+                     {| nid := 0; op := DFG_Empty; sz := 0 |})
+                  p tok en (nth_In _ _ Hslen) Hs)
+      as [t [l [a [Ht [Htid [Htop Hhd]]]]]].
+    destruct (node_at_nid act t Ht) as [_ Hnth].
+    assert (Htokop : node_op act tok = DFG_Stall l a)
+      by (unfold node_op; rewrite <- Htid, Hnth; exact Htop).
+    unfold sample_drive. rewrite Hs, Htokop.
+    unfold sample_drive_head.
+    destruct Hhd as [[nd [arg [en' [Hin [Hid Hop]]]]]
+                    | [nj [d [prev [Hjin [Hjid [Hjop [ndr [arg [en' [Hrin [Hrid Hrop]]]]]]]]]]]].
+    - destruct (node_at_nid act nd Hin) as [_ Hnd].
+      assert (Haop : node_op act a = DFG_Drive p arg en')
+        by (unfold node_op; rewrite <- Hid, Hnd; exact Hop).
+      rewrite Haop.
+      destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) p p) as [_ | Hne];
+        [ exists a; reflexivity | exfalso; exact (Hne eq_refl) ].
+    - destruct (node_at_nid act nj Hjin) as [_ Hnj].
+      destruct (node_at_nid act ndr Hrin) as [_ Hnr].
+      assert (Haop : node_op act a = DFG_Join d prev)
+        by (unfold node_op; rewrite <- Hjid, Hnj; exact Hjop).
+      assert (Hdop : node_op act d = DFG_Drive p arg en')
+        by (unfold node_op; rewrite <- Hrid, Hnr; exact Hrop).
+      rewrite Haop, Hdop.
+      destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) p p) as [_ | Hne];
+        [ exists d; reflexivity | exfalso; exact (Hne eq_refl) ].
   Qed.
 
   (* So a drive emitted after the call.s drive is emitted after its SAMPLE. *)
