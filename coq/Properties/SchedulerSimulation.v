@@ -2359,14 +2359,251 @@ Section SchedulerSimulation.
     rewrite Hdis. reflexivity.
   Qed.
 
-  (* Every ordering join sits between a drive and a SAMPLE on the same port
-     whose guard it could share -- which is exactly what [last_sample] gave. *)
+  (* Every id [pending_samples] returns names a sample on that port under a
+     guard the caller could share. *)
+  Lemma pending_samples_spec (s: wst) (p: p_var) en n :
+    In n (pending_samples ctx s p en) ->
+    exists nd tok en',
+      In nd (graph s) /\ nid nd = n
+      /\ op nd = DFG_Sample p tok en'
+      /\ guards_disjoint en en' = false.
+  Proof.
+    unfold pending_samples. intro Hin.
+    apply in_map_iff in Hin. destruct Hin as [q [Hq Hqin]].
+    match type of Hqin with
+    | In _ (fold_left ?F _ _) =>
+        assert (Hgen : forall g acc,
+                  (forall x, In x g -> In x (graph s)) ->
+                  (forall r, In r acc ->
+                     exists nd tok, In nd (graph s) /\ nid nd = fst r
+                       /\ op nd = DFG_Sample p tok (snd r)
+                       /\ guards_disjoint en (snd r) = false) ->
+                  forall r, In r (fold_left F g acc) ->
+                    exists nd tok, In nd (graph s) /\ nid nd = fst r
+                      /\ op nd = DFG_Sample p tok (snd r)
+                      /\ guards_disjoint en (snd r) = false)
+    end.
+    { intro g. induction g as [| nd g IH]; intros acc Hsub Hacc.
+      - cbn [fold_left]. exact Hacc.
+      - cbn [fold_left]. apply IH; [ intros x Hx; apply Hsub; right; exact Hx |].
+        assert (Hnd : In nd (graph s)) by (apply Hsub; left; reflexivity).
+        destruct (op nd) as [ c | iv | v2 | uop a | bop a1 a2 | a | cd t e
+                            | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo;
+          try exact Hacc.
+        destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) siv p) as [-> | Hne];
+          [| exact Hacc ].
+        destruct (guards_disjoint en sen) eqn:Edis; [ exact Hacc |].
+        destruct (forallb (fun r => guards_disjoint (snd r) sen) acc);
+          [| exact Hacc ].
+        intros r Hr. apply in_app_or in Hr. destruct Hr as [Hr | [<- | []]].
+        + exact (Hacc r Hr).
+        + exists nd, sn. cbn [fst snd].
+          split; [ exact Hnd
+                 | split; [ reflexivity | split; [ exact Eo | exact Edis ] ] ]. }
+    assert (Hbase : forall r : (nid_t * list (nid_t * bool))%type, In r [] ->
+              exists nd tok, In nd (graph s) /\ nid nd = fst r
+                /\ op nd = DFG_Sample p tok (snd r)
+                /\ guards_disjoint en (snd r) = false)
+      by (intros r Hr; destruct Hr).
+    destruct (Hgen (graph s) [] (fun x Hx => Hx) Hbase q Hqin)
+      as [nd [tok [Hnd [Hnid [Hop Hdis]]]]].
+    exists nd, tok, (snd q). rewrite Hq in Hnid.
+    split; [ exact Hnd
+           | split; [ exact Hnid | split; [ exact Hop | exact Hdis ] ] ].
+  Qed.
+
+  Lemma forallb_false_ex {A} (f: A -> bool) l :
+    forallb f l = false -> exists x, In x l /\ f x = false.
+  Proof.
+    induction l as [| a l IH]; cbn [forallb]; intro H; [ discriminate H |].
+    destruct (f a) eqn:Ea.
+    - cbn [andb] in H. destruct (IH H) as [x [Hx Hfx]].
+      exists x. split; [ right; exact Hx | exact Hfx ].
+    - exists a. split; [ left; reflexivity | exact Ea ].
+  Qed.
+
+  Lemma guards_disjoint_sym g1 g2 : guards_disjoint g1 g2 = guards_disjoint g2 g1.
+  Proof.
+    unfold guards_disjoint.
+    apply Bool.eq_iff_eq_true. split; intro H;
+      (apply existsb_exists in H; destruct H as [a [Ha Hb]];
+       apply existsb_exists in Hb; destruct Hb as [b [Hb Hab]];
+       apply existsb_exists; exists b; split; [ exact Hb |];
+       apply existsb_exists; exists a; split; [ exact Ha |];
+       apply Bool.andb_true_iff in Hab; destruct Hab as [H1 H2];
+       apply Bool.andb_true_iff; split;
+       [ apply Nat.eqb_eq in H1; apply Nat.eqb_eq; lia
+       | destruct (snd a); destruct (snd b); cbn [Bool.eqb negb] in *; assumption ]).
+  Qed.
+
+  Lemma ids_desc_tl x L : ids_desc (x :: L) -> ids_desc L.
+  Proof.
+    intros H pre a rest Hsplit M HM.
+    apply (H (x :: pre) a rest); [ cbn [app]; rewrite Hsplit; reflexivity | exact HM ].
+  Qed.
+
+  Lemma ids_desc_hd x L : ids_desc (x :: L) -> forall y, In y L -> nid y < nid x.
+  Proof. intros H y Hy. exact (H [] x L eq_refl y Hy). Qed.
+
+  (* The pending set covers every earlier call it could collide with: such a
+     sample is either in the set itself, or blocked from it by a later member
+     under a guard it shares. *)
+  Lemma pending_samples_covers (s: wst) (p: p_var) en ns tok en' :
+    ids_desc (graph s) ->
+    In ns (graph s) -> op ns = DFG_Sample p tok en' ->
+    guards_disjoint en en' = false ->
+    exists q, In q (pending_samples ctx s p en) /\ nid ns <= q
+      /\ (q = nid ns
+          \/ exists nd tk en'', In nd (graph s) /\ nid nd = q
+               /\ op nd = DFG_Sample p tk en''
+               /\ guards_disjoint en' en'' = false).
+  Proof.
+    intros Hdesc Hin Hop Hdis. unfold pending_samples.
+    match goal with
+    | |- context [fold_left ?F (graph s) []] =>
+        assert (Hgrow : forall g acc r, In r acc -> In r (fold_left F g acc))
+    end.
+    { intro g. induction g as [| x g IHg]; intros acc r Hr; [ exact Hr |].
+      cbn [fold_left]. apply IHg.
+      destruct (op x) as [ c | iv | v2 | uop a | bop a1 a2 | a | cd t e
+                         | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo;
+        try exact Hr.
+      destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) siv p) as [-> | Hne]; [| exact Hr ].
+      destruct (guards_disjoint en sen); [ exact Hr |].
+      destruct (forallb (fun r0 => guards_disjoint (snd r0) sen) acc); [| exact Hr ].
+      apply in_or_app. left. exact Hr. }
+    match goal with
+    | |- context [fold_left ?F (graph s) []] =>
+        assert (Hgen : forall g acc,
+                  ids_desc g ->
+                  (forall x, In x g -> In x (graph s)) ->
+                  (forall r, In r acc -> forall y, In y g -> nid y < fst r) ->
+                  (forall r, In r acc -> exists nd tk, In nd (graph s)
+                        /\ nid nd = fst r /\ op nd = DFG_Sample p tk (snd r)) ->
+                  In ns g ->
+                  exists r, In r (fold_left F g acc)
+                    /\ nid ns <= fst r
+                    /\ (fst r = nid ns
+                        \/ exists nd tk, In nd (graph s) /\ nid nd = fst r
+                             /\ op nd = DFG_Sample p tk (snd r)
+                             /\ guards_disjoint en' (snd r) = false))
+    end.
+    { intro g. induction g as [| x g IHg];
+        intros acc Hdg Hsub Hlt Hacc Hns; [ destruct Hns |].
+      assert (Hdg' : ids_desc g) by exact (ids_desc_tl x g Hdg).
+      assert (Hsub' : forall y, In y g -> In y (graph s))
+        by (intros y Hy; apply Hsub; right; exact Hy).
+      assert (Hlt' : forall r, In r acc -> forall y, In y g -> nid y < fst r)
+        by (intros r Hr y Hy; exact (Hlt r Hr y (or_intror Hy))).
+      cbn [fold_left].
+      destruct Hns as [Hxn | Hns].
+      - subst x.
+        destruct (op ns) as [ c | iv | v2 | uop a | bop a1 a2 | a | cd t e
+                            | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo;
+          try discriminate Hop.
+        injection Hop as Hp1 Hp2 Hp3. subst siv. subst sn. subst sen.
+        destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) p p) as [_ | Hne];
+          [| exfalso; apply Hne; reflexivity ].
+        destruct (guards_disjoint en en') eqn:Ed2;
+          [ discriminate Hdis |].
+        destruct (forallb (fun q : nid_t * list (nid_t * bool) =>
+                             guards_disjoint (snd q) en') acc) eqn:Efb.
+        + exists (nid ns, en'). cbn [fst snd].
+          split; [ apply Hgrow; apply in_or_app; right; left; reflexivity |].
+          split; [ lia | left; reflexivity ].
+        + destruct (forallb_false_ex _ acc Efb) as [r [Hr Hfr]].
+          exists r. split; [ apply Hgrow; exact Hr |].
+          split; [ exact (Nat.lt_le_incl _ _ (Hlt r Hr ns (or_introl eq_refl))) |].
+          right. destruct (Hacc r Hr) as [nd [tk [Hnd [Hnid Hndop]]]].
+          exists nd, tk.
+          split; [ exact Hnd |]. split; [ exact Hnid |].
+          split; [ exact Hndop |]. rewrite guards_disjoint_sym. exact Hfr.
+      - destruct (op x) as [ c | iv | v2 | uop a | bop a1 a2 | a | cd t e
+                          | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo;
+          try exact (IHg acc Hdg' Hsub' Hlt' Hacc Hns).
+        destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) siv p) as [-> | Hne];
+          [| exact (IHg acc Hdg' Hsub' Hlt' Hacc Hns) ].
+        destruct (guards_disjoint en sen) eqn:Ed3;
+          [ exact (IHg acc Hdg' Hsub' Hlt' Hacc Hns) |].
+        destruct (forallb (fun q : nid_t * list (nid_t * bool) =>
+                             guards_disjoint (snd q) sen) acc) eqn:Efb;
+          [| exact (IHg acc Hdg' Hsub' Hlt' Hacc Hns) ].
+        apply (IHg (acc ++ [(nid x, sen)]) Hdg' Hsub'); [| | exact Hns ].
+        + intros r Hr y Hy. apply in_app_or in Hr. destruct Hr as [Hr | [<- | []]].
+          * exact (Hlt' r Hr y Hy).
+          * cbn [fst]. exact (ids_desc_hd x g Hdg y Hy).
+        + intros r Hr. apply in_app_or in Hr. destruct Hr as [Hr | [<- | []]].
+          * exact (Hacc r Hr).
+          * cbn [fst snd]. exists x, sn.
+            split; [ apply Hsub; left; reflexivity |].
+            split; [ reflexivity | exact Eo ]. }
+    assert (Hb1 : forall r : (nid_t * list (nid_t * bool))%type, In r [] ->
+                    forall y, In y (graph s) -> nid y < fst r)
+      by (intros r Hr; destruct Hr).
+    assert (Hb2 : forall r : (nid_t * list (nid_t * bool))%type, In r [] ->
+                    exists nd tk, In nd (graph s) /\ nid nd = fst r
+                      /\ op nd = DFG_Sample p tk (snd r))
+      by (intros r Hr; destruct Hr).
+    destruct (Hgen (graph s) [] Hdesc (fun x Hx => Hx) Hb1 Hb2 Hin)
+      as [r [Hr [Hle Hd2]]].
+    exists (fst r). split; [ apply in_map; exact Hr | split; [ exact Hle |]].
+    destruct Hd2 as [Hq | [nd [tk [Hnd [Hnid [Hndop Hdisj]]]]]].
+    - left. exact Hq.
+    - right. exists nd, tk, (snd r).
+      split; [ exact Hnd |]. split; [ exact Hnid |].
+      split; [ exact Hndop | exact Hdisj ].
+  Qed.
+
+  (* The set a call waits on, as a tree: a sample on its port it could share a
+     guard with, or a join of two such.  This is what [join_pendings] builds. *)
+  Inductive pends (L : list (@dfg_node_t s_var i_var o_var p_var))
+                  (p: p_var) (en: list (nid_t * bool)) : nid_t -> Prop :=
+  | pends_samp : forall ns tok en',
+      In ns L -> op ns = DFG_Sample p tok en' ->
+      guards_disjoint en en' = false ->
+      pends L p en (nid ns)
+  | pends_join : forall nj a b,
+      In nj L -> op nj = DFG_Join a b ->
+      pends L p en a -> pends L p en b ->
+      pends L p en (nid nj).
+
+  Lemma pends_mono L L' p en n :
+    (forall x, In x L -> In x L') -> pends L p en n -> pends L' p en n.
+  Proof.
+    intros Hsub H.
+    induction H as [ns tok en' Hin Hop Hdis | nj a b Hin Hop _ IHa _ IHb].
+    - exact (pends_samp L' p en ns tok en' (Hsub ns Hin) Hop Hdis).
+    - exact (pends_join L' p en nj a b (Hsub nj Hin) Hop IHa IHb).
+  Qed.
+
+  Lemma pends_cons (x: @dfg_node_t s_var i_var o_var p_var) L p en n :
+    pends L p en n -> pends (x :: L) p en n.
+  Proof. apply pends_mono. intros y Hy. right. exact Hy. Qed.
+
+  (* Every join is one of two: a call's ORDERING join, which sits at its own
+     drive's successor over the set it waits on, or a COMBINING join inside
+     that set. *)
+  Definition join_kind (L : list (@dfg_node_t s_var i_var o_var p_var))
+      (j d prev: nid_t) : Prop :=
+    (exists (p: p_var) arg en nd,
+       In nd L /\ nid nd = d /\ op nd = DFG_Drive p arg en
+       /\ j = S d /\ pends L p en prev)
+    \/ (exists (p: p_var) en, pends L p en d /\ pends L p en prev).
+
   Definition joins_sequence (L : list (@dfg_node_t s_var i_var o_var p_var)) : Prop :=
-    forall j d prev, In j L -> op j = DFG_Join d prev ->
-      exists (p: p_var) arg en tok en' nd ns,
-        In nd L /\ nid nd = d /\ op nd = DFG_Drive p arg en
-        /\ In ns L /\ nid ns = prev /\ op ns = DFG_Sample p tok en'
-        /\ guards_disjoint en en' = false.
+    forall j d prev, In j L -> op j = DFG_Join d prev -> join_kind L (nid j) d prev.
+
+  Lemma joins_sequence_cons (x: @dfg_node_t s_var i_var o_var p_var) L j d prev :
+    join_kind L j d prev -> join_kind (x :: L) j d prev.
+  Proof.
+    intros [[p [arg [en [nd [H1 [H2 [H3 [H4 H5]]]]]]]] | [p [en [H1 H2]]]].
+    - left. exists p, arg, en, nd.
+      split; [ right; exact H1 |]. split; [ exact H2 |]. split; [ exact H3 |].
+      split; [ exact H4 | exact (pends_cons x L p en prev H5) ].
+    - right. exists p, en.
+      split; [ exact (pends_cons x L p en d H1)
+             | exact (pends_cons x L p en prev H2) ].
+  Qed.
 
   Lemma joins_sequence_emit_other (s: wst) o size :
     joins_sequence (graph s) ->
@@ -2376,34 +2613,148 @@ Section SchedulerSimulation.
     intros Hjs Hno. rewrite emit_red. cbn [snd graph].
     intros j d prev Hin Hop. cbn [In] in Hin.
     destruct Hin as [<- | Hin]; [ cbn [op] in Hop; exfalso; exact (Hno d prev Hop) |].
-    destruct (Hjs j d prev Hin Hop)
-      as [p [arg [en [tok [en' [nd [ns [H1 [H2 [H3 [H4 [H5 [H6 H7]]]]]]]]]]]]].
-    exists p, arg, en, tok, en', nd, ns.
-    split; [ right; exact H1 |]. split; [ exact H2 |]. split; [ exact H3 |].
-    split; [ right; exact H4 |]. split; [ exact H5 |]. split; [ exact H6 | exact H7 ].
+    apply joins_sequence_cons. exact (Hjs j d prev Hin Hop).
   Qed.
 
-  Lemma joins_sequence_emit_join (s: wst) d prev (p: p_var) arg en tok en' :
+  (* A call's ordering join: its own drive, and the set it waits on. *)
+  Lemma joins_sequence_emit_order (s: wst) d prev (p: p_var) arg en :
     joins_sequence (graph s) ->
     (exists nd, In nd (graph s) /\ nid nd = d /\ op nd = DFG_Drive p arg en) ->
-    (exists ns, In ns (graph s) /\ nid ns = prev /\ op ns = DFG_Sample p tok en') ->
-    guards_disjoint en en' = false ->
+    length (graph s) = S d ->
+    pends (graph s) p en prev ->
     joins_sequence (graph (snd (emit ctx (DFG_Join d prev) 1 s))).
   Proof.
-    intros Hjs [nd [Hnd [Hnid Hdop]]] [ns [Hns [Hpid Hsop]]] Hdis.
+    intros Hjs [nd [Hnd [Hnid Hdop]]] Hlen Hpe.
+    rewrite emit_red. cbn [snd graph].
+    intros j d0 prev0 Hin Hop. cbn [In] in Hin.
+    destruct Hin as [<- | Hin].
+    - cbn [op] in Hop. injection Hop as <- <-. cbn [nid].
+      left. exists p, arg, en, nd.
+      split; [ right; exact Hnd |]. split; [ exact Hnid |]. split; [ exact Hdop |].
+      split; [ exact Hlen | apply pends_cons; exact Hpe ].
+    - apply joins_sequence_cons. exact (Hjs j d0 prev0 Hin Hop).
+  Qed.
+
+  (* A combining join inside the pending set. *)
+  Lemma joins_sequence_emit_comb (s: wst) d prev (p: p_var) en :
+    joins_sequence (graph s) ->
+    pends (graph s) p en d -> pends (graph s) p en prev ->
+    joins_sequence (graph (snd (emit ctx (DFG_Join d prev) 1 s))).
+  Proof.
+    intros Hjs Hd Hp.
     rewrite emit_red. cbn [snd graph].
     intros j d0 prev0 Hin Hop. cbn [In] in Hin.
     destruct Hin as [<- | Hin].
     - cbn [op] in Hop. injection Hop as <- <-.
-      exists p, arg, en, tok, en', nd, ns.
-      split; [ right; exact Hnd |]. split; [ exact Hnid |]. split; [ exact Hdop |].
-      split; [ right; exact Hns |]. split; [ exact Hpid |].
-      split; [ exact Hsop | exact Hdis ].
-    - destruct (Hjs j d0 prev0 Hin Hop)
-        as [p2 [arg2 [en2 [tok2 [en2' [nd2 [ns2 [H1 [H2 [H3 [H4 [H5 [H6 H7]]]]]]]]]]]]].
-      exists p2, arg2, en2, tok2, en2', nd2, ns2.
-      split; [ right; exact H1 |]. split; [ exact H2 |]. split; [ exact H3 |].
-      split; [ right; exact H4 |]. split; [ exact H5 |]. split; [ exact H6 | exact H7 ].
+      right. exists p, en. split; [ apply pends_cons; exact Hd
+                                  | apply pends_cons; exact Hp ].
+    - apply joins_sequence_cons. exact (Hjs j d0 prev0 Hin Hop).
+  Qed.
+
+  (* [join_pendings] conjoins the set into one node, keeping the invariant and
+     handing back a [pends] for the node it built. *)
+  Lemma join_pendings_js (s: wst) (p: p_var) en (prevs: list nid_t) :
+    joins_sequence (graph s) ->
+    (forall n, In n prevs -> pends (graph s) p en n) ->
+    joins_sequence (graph (snd (join_pendings ctx prevs s)))
+    /\ wgmono s (snd (join_pendings ctx prevs s))
+    /\ (forall n, fst (join_pendings ctx prevs s) = Some n ->
+          pends (graph (snd (join_pendings ctx prevs s))) p en n).
+  Proof.
+    revert s. induction prevs as [| q prevs IH]; intros s Hjs Hall.
+    - cbn [join_pendings]. unfold ret. cbn [fst snd].
+      split; [ exact Hjs | split; [ apply wgmono_refl |]].
+      intros n Hn. discriminate Hn.
+    - cbn [join_pendings]. unfold bind.
+      destruct (IH s Hjs (fun n Hn => Hall n (or_intror Hn))) as [H1 [Hg1 Hp1]].
+      destruct (join_pendings ctx prevs s) as [r s1] eqn:Er.
+      cbn [fst snd] in H1, Hg1, Hp1.
+      assert (Hq : pends (graph s1) p en q).
+      { apply (pends_mono (graph s) (graph s1) p en q Hg1).
+        exact (Hall q (or_introl eq_refl)). }
+      destruct r as [h |].
+      + unfold bind.
+        pose proof (joins_sequence_emit_comb s1 q h p en H1 Hq (Hp1 h eq_refl)) as Hcomb.
+        pose proof (emit_red (DFG_Join q h) 1 s1) as Ered.
+        destruct (emit ctx (DFG_Join q h) 1 s1) as [j s2] eqn:Ej.
+        cbn [snd] in Hcomb.
+        injection Ered as Hj Hs2. subst j. subst s2.
+        cbn [graph] in Hcomb. unfold ret. cbn [fst snd graph].
+        split; [ exact Hcomb | split ].
+        * intros nd Hnd. right. exact (Hg1 nd Hnd).
+        * intros n Hn. injection Hn as <-.
+          apply (pends_join _ p en
+                   {| nid := length (graph s1); op := DFG_Join q h; sz := 1 |} q h);
+            [ left; reflexivity | reflexivity
+            | apply pends_cons; exact Hq
+            | apply pends_cons; exact (Hp1 h eq_refl) ].
+      + unfold ret. cbn [fst snd].
+        split; [ exact H1 | split; [ exact Hg1 |]].
+        intros n Hn. injection Hn as <-. exact Hq.
+  Qed.
+
+  (* A leaf of the tree [join_pendings] built: the root itself, or a leaf of
+     either side of a join. *)
+  Inductive pleaf (L : list (@dfg_node_t s_var i_var o_var p_var))
+    : nid_t -> nid_t -> Prop :=
+  | pleaf_here : forall n, pleaf L n n
+  | pleaf_left : forall nj a b n,
+      In nj L -> op nj = DFG_Join a b -> pleaf L a n -> pleaf L (nid nj) n
+  | pleaf_right : forall nj a b n,
+      In nj L -> op nj = DFG_Join a b -> pleaf L b n -> pleaf L (nid nj) n.
+
+  Lemma pleaf_mono L L' root n :
+    (forall x, In x L -> In x L') -> pleaf L root n -> pleaf L' root n.
+  Proof.
+    intros Hsub H.
+    induction H as [ m | nj a b m Hin Hop _ IH | nj a b m Hin Hop _ IH ].
+    - apply pleaf_here.
+    - exact (pleaf_left L' nj a b m (Hsub nj Hin) Hop IH).
+    - exact (pleaf_right L' nj a b m (Hsub nj Hin) Hop IH).
+  Qed.
+
+  Lemma pleaf_cons (x: @dfg_node_t s_var i_var o_var p_var) L root n :
+    pleaf L root n -> pleaf (x :: L) root n.
+  Proof. apply pleaf_mono. intros y Hy. right. exact Hy. Qed.
+
+  Lemma join_pendings_none (s: wst) (prevs: list nid_t) s' :
+    join_pendings ctx prevs s = (None, s') -> prevs = [].
+  Proof.
+    destruct prevs as [| q prevs]; [ reflexivity |].
+    cbn [join_pendings]. unfold bind.
+    destruct (join_pendings ctx prevs s) as [r s1].
+    destruct r as [h |].
+    - unfold bind. destruct (emit ctx (DFG_Join q h) 1 s1) as [j s2].
+      unfold ret. intro H. discriminate H.
+    - unfold ret. intro H. discriminate H.
+  Qed.
+
+  (* Every member of the pending set is a leaf of the tree built from it. *)
+  Lemma join_pendings_leaves (s: wst) (prevs: list nid_t) root s' :
+    join_pendings ctx prevs s = (Some root, s') ->
+    forall q, In q prevs -> pleaf (graph s') root q.
+  Proof.
+    revert s root s'. induction prevs as [| q0 prevs IH]; intros s root s' Ejp q Hq.
+    - destruct Hq.
+    - cbn [join_pendings] in Ejp. unfold bind in Ejp.
+      destruct (join_pendings ctx prevs s) as [r s1] eqn:Er.
+      destruct r as [h |].
+      + unfold bind in Ejp.
+        pose proof (emit_red (DFG_Join q0 h) 1 s1) as Ered.
+        destruct (emit ctx (DFG_Join q0 h) 1 s1) as [j s2] eqn:Ej.
+        unfold ret in Ejp. injection Ejp as Hroot Hs'.
+        injection Ered as Hj Hs2. subst s'. subst s2. subst root. subst j.
+        destruct Hq as [<- | Hq].
+        * apply (pleaf_left _
+                   {| nid := length (graph s1); op := DFG_Join q0 h; sz := 1 |}
+                   q0 h q0); [ left; reflexivity | reflexivity | apply pleaf_here ].
+        * apply (pleaf_right _
+                   {| nid := length (graph s1); op := DFG_Join q0 h; sz := 1 |}
+                   q0 h q); [ left; reflexivity | reflexivity |].
+          apply pleaf_cons. exact (IH s h s1 Er q Hq).
+      + unfold ret in Ejp. injection Ejp as Hroot Hs'.
+        rewrite (join_pendings_none s prevs s1 Er) in Hq.
+        destruct Hq as [<- | []]. subst root. apply pleaf_here.
   Qed.
 
 
@@ -2427,6 +2778,51 @@ Section SchedulerSimulation.
         * simpl in Hx. specialize (Hargs x Hx).
           apply (wnidwf_bound s x Hns) in Hargs. exact Hargs.
         * apply Hab; assumption.
+  Qed.
+
+  Lemma pending_samples_nidwf (s: wst) (p: p_var) en n :
+    In n (pending_samples ctx s p en) -> wnidwf s n.
+  Proof.
+    intro Hin.
+    destruct (pending_samples_spec s p en n Hin)
+      as [nd [tok [en' [Hnd [Hnid _]]]]].
+    exists nd. split; [ exact Hnd | exact Hnid ].
+  Qed.
+
+  Lemma join_pendings_full (prevs: list nid_t) (s: wst) :
+    winv s ->
+    (forall n, In n prevs -> wnidwf s n) ->
+    wgmono s (snd (join_pendings ctx prevs s))
+    /\ winv (snd (join_pendings ctx prevs s))
+    /\ (forall n, fst (join_pendings ctx prevs s) = Some n ->
+          wnidwf (snd (join_pendings ctx prevs s)) n).
+  Proof.
+    revert s. induction prevs as [| q prevs IH]; intros s Hinv Hall.
+    - cbn [join_pendings]. unfold ret. cbn [fst snd].
+      split; [ apply wgmono_refl | split; [ exact Hinv |]].
+      intros n Hn. discriminate Hn.
+    - cbn [join_pendings]. unfold bind.
+      destruct (IH s Hinv (fun n Hn => Hall n (or_intror Hn))) as [Hg1 [Hinv1 Hn1]].
+      destruct (join_pendings ctx prevs s) as [r s1] eqn:Er.
+      cbn [fst snd] in Hg1, Hinv1, Hn1.
+      assert (Hq : wnidwf s1 q)
+        by (eapply wnidwf_gmono; [ exact (Hall q (or_introl eq_refl)) | exact Hg1 ]).
+      destruct r as [h |].
+      + unfold bind.
+        assert (He : let (id, s') := emit ctx (DFG_Join q h) 1 s1 in
+                     wgmono s1 s' /\ wnidwf s' id /\ winv s').
+        { apply emit_full; [ exact Hinv1 |].
+          intros x Hx. cbn [get_args] in Hx.
+          destruct Hx as [<- | [<- | []]]; [ exact Hq | exact (Hn1 h eq_refl) ]. }
+        destruct (emit ctx (DFG_Join q h) 1 s1) as [jj s2] eqn:Ej.
+        destruct He as [Ge [Ne Pe]].
+        unfold ret. cbn [fst snd].
+        split; [ exact (wgmono_trans s s1 s2 Hg1 Ge) |].
+        split; [ exact Pe |].
+        intros n Hn. injection Hn as <-. exact Ne.
+      + unfold ret. cbn [fst snd].
+        split; [ exact Hg1 | split; [ exact Hinv1 |]].
+        intros n Hn. injection Hn as <-. exact Hq.
   Qed.
 
   Lemma ensure_var_graph v (s: wst) id s' :
@@ -2707,33 +3103,29 @@ Section SchedulerSimulation.
     destruct (m s) as [x s1] eqn:E. cbn [snd] in Hm. exact (Hf x s1 eq_refl Hm).
   Qed.
 
-  (* The one emit in the builder that IS a join: a call.s ordering node, which
-     [last_sample] has just named a sample on the same port for. *)
-  Lemma js_call_head (s0 s2 s3: wst) (ip: p_var) arg_id en drive_id size :
-    joins_sequence (graph s3) ->
-    wgmono s0 s2 ->
-    emit ctx (DFG_Drive ip arg_id en) size s2 = (drive_id, s3) ->
+  (* The one emit in the builder that IS an ordering join: a call's own, over
+     the pending set [join_pendings] has just built. *)
+  Lemma js_call_head (s3 s4: wst) (ip: p_var) arg_id en drive_id size prev_opt :
+    joins_sequence (graph s4) ->
+    emit ctx (DFG_Drive ip arg_id en) size s3 = (drive_id, s4) ->
+    (forall prev, prev_opt = Some prev -> pends (graph s3) ip en prev) ->
     joins_sequence
-      (graph (snd (match last_sample ctx s0 ip en with
+      (graph (snd (match prev_opt with
                    | Some prev => emit ctx (DFG_Join drive_id prev) 1
                    | None => ret ctx drive_id
-                   end s3))).
+                   end s4))).
   Proof.
-    intros H3 Hg02 Ed.
-    destruct (last_sample ctx s0 ip en) as [prev |] eqn:Elast; [| exact H3 ].
-    destruct (last_sample_spec s0 ip en prev Elast)
-      as [nd [tok [en' [Hnd [Hnid [Hop Hdis]]]]]].
-    rewrite emit_red in Ed. injection Ed as Hdid Hs3.
-    apply (joins_sequence_emit_join s3 drive_id prev ip arg_id en tok en' H3).
-    - exists {| nid := length (graph s2);
+    intros H4 Ed Hpe.
+    destruct prev_opt as [prev |]; [| exact H4 ].
+    rewrite emit_red in Ed. injection Ed as Hdid Hs4.
+    apply (joins_sequence_emit_order s4 drive_id prev ip arg_id en H4).
+    - exists {| nid := length (graph s3);
                 op := DFG_Drive ip arg_id en; sz := size |}.
-      rewrite <- Hs3. cbn [graph nid op].
+      rewrite <- Hs4. cbn [graph nid op].
       split; [ left; reflexivity | split; [ exact Hdid | reflexivity ] ].
-    - exists nd. rewrite <- Hs3. cbn [graph].
-      split; [ right; exact (Hg02 nd Hnd) | split; [ exact Hnid | exact Hop ] ].
-    - exact Hdis.
+    - rewrite <- Hs4. cbn [graph length]. rewrite Hdid. reflexivity.
+    - rewrite <- Hs4. cbn [graph]. apply pends_cons. exact (Hpe prev eq_refl).
   Qed.
-
   (* [joins_sequence] reads only the graph. *)
   Lemma joins_sequence_graph_eq (s1 s2: wst) :
     graph s1 = graph s2 -> joins_sequence (graph s1) -> joins_sequence (graph s2).
@@ -2758,12 +3150,24 @@ Section SchedulerSimulation.
           pose proof (dataflow_expr_grows e (ip_req_sz (tfs_spec_ip ctx ip)) s) as H0.
           rewrite Ea in H0. cbn [snd] in H0. exact H0. }
         apply js_bind_at; [ apply dataflow_expr_joins; exact Hs | intros arg_id s2 Ea H2 ].
+        assert (Hpend : forall n, In n (pending_samples ctx s ip en) ->
+                          pends (graph s2) ip en n).
+        { intros n Hn.
+          destruct (pending_samples_spec s ip en n Hn)
+            as [nd [tok [en' [Hnd [Hnid [Hop Hdis]]]]]].
+          rewrite <- Hnid.
+          exact (pends_samp (graph s2) ip en nd tok en'
+                   (Hg arg_id s2 Ea nd Hnd) Hop Hdis). }
+        destruct (join_pendings_js s2 ip en (pending_samples ctx s ip en) H2 Hpend)
+          as [Hjp [_ Hppo]].
+        apply js_bind_at; [ exact Hjp | intros prev_opt s3 Ejp H3 ].
+        rewrite Ejp in Hppo. cbn [fst snd] in Hppo.
         apply js_bind_at;
           [ apply joins_sequence_emit_other;
-            [ exact H2 | intros d prev Hc; discriminate Hc ]
-          | intros drive_id s3 Ed H3 ].
+            [ exact H3 | intros d prev Hc; discriminate Hc ]
+          | intros drive_id sd Ed Hd ].
         apply js_bind_at;
-          [ exact (js_call_head s s2 s3 ip arg_id en drive_id _ H3 (Hg _ _ Ea) Ed)
+          [ exact (js_call_head s3 sd ip arg_id en drive_id _ prev_opt Hd Ed Hppo)
           | intros head_id s4 Eh H4 ].
         apply js_bind_at.
         * unfold stall_chain. destruct (ip_lat (tfs_spec_ip ctx ip));
@@ -2789,18 +3193,20 @@ Section SchedulerSimulation.
       rewrite (bind_red (get_state ctx) _ s4 s4 s4 (get_state_red s4)).
       cbn [snd]. exact H4.
   Qed.
-
   Lemma joins_sequence_rev L : joins_sequence L -> joins_sequence (rev L).
   Proof.
+    assert (Hsub : forall x, In x L -> In x (rev L))
+      by (intros x Hx; apply (proj1 (in_rev L x)); exact Hx).
     intros H j d prev Hin Hop.
     apply (proj2 (in_rev L j)) in Hin.
     destruct (H j d prev Hin Hop)
-      as [p [arg [en [tok [en' [nd [ns [H1 [H2 [H3 [H4 [H5 [H6 H7]]]]]]]]]]]]].
-    exists p, arg, en, tok, en', nd, ns.
-    split; [ apply (proj1 (in_rev L nd)); exact H1 |]. split; [ exact H2 |].
-    split; [ exact H3 |].
-    split; [ apply (proj1 (in_rev L ns)); exact H4 |]. split; [ exact H5 |].
-    split; [ exact H6 | exact H7 ].
+      as [[p [arg [en [nd [H1 [H2 [H3 [H4 H5]]]]]]]] | [p [en [H1 H2]]]].
+    - left. exists p, arg, en, nd.
+      split; [ exact (Hsub nd H1) |]. split; [ exact H2 |]. split; [ exact H3 |].
+      split; [ exact H4 | exact (pends_mono L (rev L) p en prev Hsub H5) ].
+    - right. exists p, en.
+      split; [ exact (pends_mono L (rev L) p en d Hsub H1)
+             | exact (pends_mono L (rev L) p en prev Hsub H2) ].
   Qed.
 
   (* A second, pointwise invariant, generic in the node predicate: [emit]
@@ -2950,17 +3356,31 @@ Section SchedulerSimulation.
       apply preserves_all_emit; [ exact HQ | intros; discriminate | intros; discriminate ].
   Qed.
 
-  (* The two nodes a call places by hand sit immediately above what they wait
-     on: [emit] hands out consecutive ids and nothing intervenes. *)
+  (* A stall sits immediately above what it waits on: [emit] hands out
+     consecutive ids and nothing intervenes.  An ordering join carries its own
+     successor fact, in [join_kind]. *)
   Definition succ_arg_node (nd: @dfg_node_t s_var i_var o_var p_var) : Prop :=
-    (forall d prev, op nd = DFG_Join d prev -> nid nd = S d)
-    /\ (forall l a, op nd = DFG_Stall l a -> nid nd = S a).
+    forall l a, op nd = DFG_Stall l a -> nid nd = S a.
 
   Lemma Q_plain_succ : Q_plain succ_arg_node.
   Proof.
-    intros n z o H1 H2. split.
-    - intros d prev Hop. cbn [op] in Hop. exfalso. exact (H1 d prev Hop).
-    - intros l a Hop. cbn [op] in Hop. exfalso. exact (H2 l a Hop).
+    intros n z o H1 H2 l a Hop. cbn [op] in Hop. exfalso. exact (H2 l a Hop).
+  Qed.
+
+  (* [join_pendings] emits joins only. *)
+  Lemma join_pendings_succ (prevs: list nid_t) :
+    preserves_all succ_arg_node (join_pendings ctx prevs).
+  Proof.
+    induction prevs as [| q prevs IH]; intros s Hs.
+    - cbn [join_pendings]. unfold ret. cbn [snd]. exact Hs.
+    - cbn [join_pendings]. unfold bind.
+      pose proof (IH s Hs) as H1.
+      destruct (join_pendings ctx prevs s) as [r s1] eqn:Er.
+      cbn [snd] in H1.
+      destruct r as [h |]; [| exact H1 ].
+      unfold bind. rewrite emit_red. unfold ret. cbn [snd graph].
+      intros nd [<- | Hin]; [| exact (H1 nd Hin) ].
+      intros l a Hop. cbn [op] in Hop. discriminate Hop.
   Qed.
 
   Lemma dataflow_ops_succ :
@@ -2982,43 +3402,32 @@ Section SchedulerSimulation.
           [ apply dataflow_expr_all; [ apply Q_plain_succ | exact Hs ]
           | intros arg_id s2 Ea H2 ].
         apply all_bind_at;
+          [ apply join_pendings_succ; exact H2
+          | intros prev_opt s3 Ejp H3 ].
+        apply all_bind_at;
           [ apply all_nodes_emit;
-            [ exact H2 | apply Q_plain_succ; intros; discriminate ]
-          | intros drive_id s3 Ed H3 ].
-        rewrite emit_red in Ed. injection Ed as Hdid Hs3.
-        assert (H3len : length (graph s3) = S drive_id).
-        { rewrite <- Hs3. cbn [graph length]. rewrite Hdid. reflexivity. }
-        destruct (last_sample ctx s ip en) as [prev |] eqn:Elast.
-        * apply all_bind_at.
-          -- apply all_nodes_emit; [ exact H3 |]. split.
-             ++ intros d0 prev0 Hop. cbn [op nid] in *. injection Hop as <- <-.
-                exact H3len.
-             ++ intros l a Hop. cbn [op] in Hop. discriminate Hop.
-          -- intros head_id s4 Eh H4.
-             rewrite emit_red in Eh. injection Eh as Hhid Hs4.
-             assert (H4len : length (graph s4) = S head_id).
-             { rewrite <- Hs4. cbn [graph length]. rewrite Hhid. reflexivity. }
-             apply all_bind_at.
-             ++ unfold stall_chain. destruct (ip_lat (tfs_spec_ip ctx ip));
-                  [ exact H4 |].
-                apply all_nodes_emit; [ exact H4 |]. split.
-                ** intros d0 prev0 Hop. cbn [op] in Hop. discriminate Hop.
-                ** intros l a Hop. cbn [op nid] in *. injection Hop as <- <-.
-                   exact H4len.
-             ++ intros stall_id s5 Es H5.
-                apply all_bind_at;
-                  [ apply all_nodes_emit;
-                    [ exact H5 | apply Q_plain_succ; intros; discriminate ]
-                  | intros samp_id s6 Esa H6 ].
-                exact (preserves_all_set_var succ_arg_node (DFG_SVar dst) samp_id s6 H6).
-        * rewrite (bind_red (ret ctx drive_id) _ s3 drive_id s3 eq_refl).
+            [ exact H3 | apply Q_plain_succ; intros; discriminate ]
+          | intros drive_id sd Ed Hd ].
+        rewrite emit_red in Ed. injection Ed as Hdid Hsd.
+        assert (Hdlen : length (graph sd) = S drive_id).
+        { rewrite <- Hsd. cbn [graph length]. rewrite Hdid. reflexivity. }
+        apply all_bind_at.
+        * destruct prev_opt as [prev |]; [| exact Hd ].
+          apply all_nodes_emit; [ exact Hd |].
+          intros l a Hop. cbn [op] in Hop. discriminate Hop.
+        * intros head_id s4 Eh H4.
+          assert (H4len : length (graph s4) = S head_id).
+          { destruct prev_opt as [prev |].
+            - rewrite emit_red in Eh. injection Eh as Hhid Hs4.
+              rewrite <- Hs4. cbn [graph length]. rewrite Hhid. reflexivity.
+            - unfold ret in Eh. injection Eh as Hhid Hs4.
+              rewrite <- Hs4. rewrite <- Hhid. exact Hdlen. }
           apply all_bind_at.
           -- unfold stall_chain. destruct (ip_lat (tfs_spec_ip ctx ip));
-               [ exact H3 |].
-             apply all_nodes_emit; [ exact H3 |]. split.
-             ++ intros d0 prev0 Hop. cbn [op] in Hop. discriminate Hop.
-             ++ intros l a Hop. cbn [op nid] in *. injection Hop as <- <-.
-                exact H3len.
+               [ exact H4 |].
+             apply all_nodes_emit; [ exact H4 |].
+             intros l a Hop. cbn [op nid] in *. injection Hop as <- <-.
+             exact H4len.
           -- intros stall_id s5 Es H5.
              apply all_bind_at;
                [ apply all_nodes_emit;
@@ -3057,7 +3466,7 @@ Section SchedulerSimulation.
               (graph {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0 |} ];
                         var_map := [] |})).
     { intros nd Hin. cbn [graph In] in Hin. destruct Hin as [<- | []].
-      split; intros; cbn [op] in *; discriminate. }
+      intros; cbn [op] in *; discriminate. }
     specialize (H Hbase).
     destruct (dataflow_ops ctx [] (tfs_spec_action_ops ctx act)
                 {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0 |} ];
@@ -3214,14 +3623,48 @@ Section SchedulerSimulation.
   Definition nids_bounded (L: list (@dfg_node_t s_var i_var o_var p_var)) : Prop :=
     forall nd, In nd L -> nid nd < length L.
 
-  (* THE LAST BUILDER INVARIANT: a call that could see an earlier call.s answer
-     on the same port is sequenced behind it by a join. *)
+  (* THE LAST BUILDER INVARIANT: a call that could see an earlier call's answer
+     on the same port is sequenced behind it by a join.  [covers] is what that
+     join gives: a leaf of the tree it waits on, at or after that answer. *)
+  Definition covers (L: list (@dfg_node_t s_var i_var o_var p_var))
+      (p: p_var) (en': list (nid_t * bool)) (s root: nid_t) : Prop :=
+    exists s', pleaf L root s' /\ s <= s'
+      /\ (s' = s
+          \/ exists nd tk en'', In nd L /\ nid nd = s'
+               /\ op nd = DFG_Sample p tk en''
+               /\ guards_disjoint en' en'' = false).
+
+  Lemma covers_mono L L' p en' s root :
+    (forall x, In x L -> In x L') ->
+    covers L p en' s root -> covers L' p en' s root.
+  Proof.
+    intros Hsub [s' [Hl [Hle Hd]]]. exists s'.
+    split; [ exact (pleaf_mono L L' root s' Hsub Hl) | split; [ exact Hle |]].
+    destruct Hd as [Hq | [nd [tk [en'' [Hnd [Hnid [Hop Hdis]]]]]]].
+    - left. exact Hq.
+    - right. exists nd, tk, en''.
+      split; [ exact (Hsub nd Hnd) |]. split; [ exact Hnid |].
+      split; [ exact Hop | exact Hdis ].
+  Qed.
+
+  Lemma covers_cons (x: @dfg_node_t s_var i_var o_var p_var) L p en' s root :
+    covers L p en' s root -> covers (x :: L) p en' s root.
+  Proof.
+    intros [s' [Hl [Hle Hd]]]. exists s'.
+    split; [ apply pleaf_cons; exact Hl | split; [ exact Hle |]].
+    destruct Hd as [Hq | [nd [tk [en'' [Hnd [Hnid [Hop Hdis]]]]]]].
+    - left. exact Hq.
+    - right. exists nd, tk, en''.
+      split; [ right; exact Hnd |]. split; [ exact Hnid |].
+      split; [ exact Hop | exact Hdis ].
+  Qed.
+
   Definition calls_main (L: list (@dfg_node_t s_var i_var o_var p_var)) : Prop :=
     forall (p: p_var) m arg en s tok en',
       (exists nm, In nm L /\ nid nm = m /\ op nm = DFG_Drive p arg en) ->
       (exists ns, In ns L /\ nid ns = s /\ op ns = DFG_Sample p tok en') ->
       s < m -> guards_disjoint en en' = false ->
-      exists j prev, In j L /\ op j = DFG_Join m prev /\ s <= prev.
+      exists j prev, In j L /\ op j = DFG_Join m prev /\ covers L p en' s prev.
 
   Definition calls_sequenced (L: list (@dfg_node_t s_var i_var o_var p_var)) : Prop :=
     nids_bounded L /\ ids_desc L /\ calls_main L.
@@ -3259,11 +3702,12 @@ Section SchedulerSimulation.
     destruct (Hmain p m arg en s tok en'
                 (ex_intro _ nm (conj Hnm (conj Hmid Hmop)))
                 (ex_intro _ ns (conj Hns (conj Hsid Hsop))) Hlt Hdis)
-      as [j [prev [Hj [Hjop Hle]]]].
-    exists j, prev. split; [ right; exact Hj | split; [ exact Hjop | exact Hle ] ].
+      as [j [prev [Hj [Hjop Hcov]]]].
+    exists j, prev. split; [ right; exact Hj |].
+    split; [ exact Hjop | apply covers_cons; exact Hcov ].
   Qed.
 
-  (* Prepending the call.s own SAMPLE: its id is above every drive already
+  (* Prepending the call's own SAMPLE: its id is above every drive already
      present, so it can only be the later end of a pair. *)
   Lemma calls_sequenced_cons_sample L (p: p_var) tok en z :
     calls_sequenced L ->
@@ -3283,74 +3727,201 @@ Section SchedulerSimulation.
     - destruct (Hmain p2 m arg en2 s tok2 en'
                   (ex_intro _ nm (conj Hnm (conj Hmid Hmop)))
                   (ex_intro _ ns (conj Hns (conj Hsid Hsop))) Hlt Hdis)
-        as [j [prev [Hj [Hjop Hle]]]].
-      exists j, prev. split; [ right; exact Hj | split; [ exact Hjop | exact Hle ] ].
+        as [j [prev [Hj [Hjop Hcov]]]].
+      exists j, prev. split; [ right; exact Hj |].
+      split; [ exact Hjop | apply covers_cons; exact Hcov ].
   Qed.
 
-  (* THE CALL.S OWN STEP: the drive and, when [last_sample] found one, the join.
+  (* Prepending a COMBINING join: neither end of a pair, so the obligation is
+     inherited unchanged. *)
+  Lemma calls_sequenced_cons_join L d prev z :
+    calls_sequenced L ->
+    calls_sequenced ({| nid := length L; op := DFG_Join d prev; sz := z |} :: L).
+  Proof.
+    intros [Hb [Hd Hmain]].
+    split; [ apply nids_bounded_cons; exact Hb |].
+    split; [ apply ids_desc_cons; assumption |].
+    intros p2 m arg en2 s tok2 en' Hdr Hsa Hlt Hdis.
+    destruct Hdr as [nm [Hnm [Hmid Hmop]]].
+    destruct Hsa as [ns [Hns [Hsid Hsop]]].
+    cbn [In] in Hnm, Hns.
+    destruct Hnm as [<- | Hnm]; [ cbn [op] in Hmop; discriminate Hmop |].
+    destruct Hns as [<- | Hns]; [ cbn [op] in Hsop; discriminate Hsop |].
+    destruct (Hmain p2 m arg en2 s tok2 en'
+                (ex_intro _ nm (conj Hnm (conj Hmid Hmop)))
+                (ex_intro _ ns (conj Hns (conj Hsid Hsop))) Hlt Hdis)
+      as [j [prev2 [Hj [Hjop Hcov]]]].
+    exists j, prev2. split; [ right; exact Hj |].
+    split; [ exact Hjop | apply covers_cons; exact Hcov ].
+  Qed.
+
+  (* [join_pendings] emits joins only, so any invariant a join preserves
+     survives it. *)
+  Lemma join_pendings_g (P: list (@dfg_node_t s_var i_var o_var p_var) -> Prop)
+      (prevs: list nid_t) :
+    (forall L d prev z, P L ->
+       P ({| nid := length L; op := DFG_Join d prev; sz := z |} :: L)) ->
+    preserves_g P (join_pendings ctx prevs).
+  Proof.
+    intro HJ. induction prevs as [| q prevs IH]; intros s Hs.
+    - cbn [join_pendings]. unfold ret. cbn [snd]. exact Hs.
+    - cbn [join_pendings]. unfold bind.
+      pose proof (IH s Hs) as H1.
+      destruct (join_pendings ctx prevs s) as [r s1] eqn:Er.
+      cbn [snd] in H1.
+      destruct r as [h |]; [| exact H1 ].
+      unfold bind. rewrite emit_red. unfold ret. cbn [snd graph].
+      apply HJ. exact H1.
+  Qed.
+
+  Lemma join_pendings_calls (prevs: list nid_t) :
+    preserves_g calls_sequenced (join_pendings ctx prevs).
+  Proof.
+    induction prevs as [| q prevs IH]; intros s Hs.
+    - cbn [join_pendings]. unfold ret. cbn [snd]. exact Hs.
+    - cbn [join_pendings]. unfold bind.
+      pose proof (IH s Hs) as H1.
+      destruct (join_pendings ctx prevs s) as [r s1] eqn:Er.
+      cbn [snd] in H1.
+      destruct r as [h |]; [| exact H1 ].
+      unfold bind. rewrite emit_red. unfold ret. cbn [snd graph].
+      apply calls_sequenced_cons_join. exact H1.
+  Qed.
+
+  Lemma join_pendings_samples (prevs: list nid_t) (s: wst) :
+    samples_within (graph s) (graph (snd (join_pendings ctx prevs s))).
+  Proof.
+    revert s. induction prevs as [| q prevs IH]; intro s.
+    - cbn [join_pendings]. unfold ret. cbn [snd].
+      intros nd Hin p tok en Hop. exact Hin.
+    - cbn [join_pendings]. unfold bind.
+      pose proof (IH s) as H1.
+      destruct (join_pendings ctx prevs s) as [r s1] eqn:Er.
+      cbn [snd] in H1.
+      destruct r as [h |]; [| exact H1 ].
+      unfold bind. rewrite emit_red. unfold ret. cbn [snd graph].
+      intros nd [<- | Hin] p tok en Hop;
+        [ cbn [op] in Hop; discriminate Hop | exact (H1 nd Hin p tok en Hop) ].
+  Qed.
+
+  Lemma join_pendings_grows (prevs: list nid_t) : grows (join_pendings ctx prevs).
+  Proof.
+    induction prevs as [| q prevs IH]; intro s.
+    - cbn [join_pendings]. unfold ret. cbn [snd]. apply wgmono_refl.
+    - cbn [join_pendings]. unfold bind.
+      pose proof (IH s) as H1.
+      destruct (join_pendings ctx prevs s) as [r s1] eqn:Er.
+      cbn [snd] in H1.
+      destruct r as [h |]; [| exact H1 ].
+      unfold bind. rewrite emit_red. unfold ret. cbn [snd graph].
+      intros nd Hnd. right. exact (H1 nd Hnd).
+  Qed.
+
+  Lemma join_pendings_vm_eq (prevs: list nid_t) (s: wst) :
+    var_map (snd (join_pendings ctx prevs s)) = var_map s.
+  Proof.
+    revert s. induction prevs as [| q prevs IH]; intro s.
+    - cbn [join_pendings]. unfold ret. cbn [snd]. reflexivity.
+    - cbn [join_pendings]. unfold bind.
+      pose proof (IH s) as H1.
+      destruct (join_pendings ctx prevs s) as [r s1] eqn:Er.
+      cbn [snd] in H1.
+      destruct r as [h |]; [| exact H1 ].
+      unfold bind. rewrite emit_red. unfold ret. cbn [snd var_map]. exact H1.
+  Qed.
+
+  (* THE CALL'S OWN STEP: the pending set, the drive, and the ordering join.
      This is the only place the obligation is ever discharged. *)
   Lemma calls_sequenced_head
-        (s0 s2 s3: wst) (ip: p_var) arg_id en size drive_id :
+        (s0 s2 s3 s4: wst) (ip: p_var) arg_id en size drive_id prev_opt :
     calls_sequenced (graph s2) ->
     ids_desc (graph s0) ->
     samples_within (graph s0) (graph s2) ->
-    emit ctx (DFG_Drive ip arg_id en) size s2 = (drive_id, s3) ->
+    wgmono s0 s2 ->
+    join_pendings ctx (pending_samples ctx s0 ip en) s2 = (prev_opt, s3) ->
+    emit ctx (DFG_Drive ip arg_id en) size s3 = (drive_id, s4) ->
     calls_sequenced
-      (graph (snd (match last_sample ctx s0 ip en with
+      (graph (snd (match prev_opt with
                    | Some prev => emit ctx (DFG_Join drive_id prev) 1
                    | None => ret ctx drive_id
-                   end s3))).
+                   end s4))).
   Proof.
-    intros [Hb [Hd Hmain]] Hd0 Hsw Ed.
-    rewrite emit_red in Ed. injection Ed as Hdid Hs3.
-    assert (Hb3 : nids_bounded (graph s3)).
-    { rewrite <- Hs3. cbn [graph]. apply nids_bounded_cons. exact Hb. }
-    assert (Hd3 : ids_desc (graph s3)).
-    { rewrite <- Hs3. cbn [graph]. apply ids_desc_cons; assumption. }
-    destruct (last_sample ctx s0 ip en) as [prev |] eqn:Elast.
+    intros Hcs2 Hd0 Hsw Hg02 Ejp Ed.
+    pose proof (join_pendings_calls (pending_samples ctx s0 ip en) s2 Hcs2) as Hcs3.
+    pose proof (join_pendings_samples (pending_samples ctx s0 ip en) s2) as Hsw23.
+    pose proof (join_pendings_grows (pending_samples ctx s0 ip en) s2) as Hg23.
+    rewrite Ejp in Hcs3, Hsw23, Hg23. cbn [snd] in Hcs3, Hsw23, Hg23.
+    destruct Hcs3 as [Hb3 [Hd3 Hm3]].
+    rewrite emit_red in Ed. injection Ed as Hdid Hs4.
+    assert (Hb4 : nids_bounded (graph s4)).
+    { rewrite <- Hs4. cbn [graph]. apply nids_bounded_cons. exact Hb3. }
+    assert (Hd4 : ids_desc (graph s4)).
+    { rewrite <- Hs4. cbn [graph]. apply ids_desc_cons; assumption. }
+    destruct prev_opt as [prev |].
     - rewrite emit_red. cbn [snd graph].
-      split; [ apply nids_bounded_cons; exact Hb3 |].
+      split; [ apply nids_bounded_cons; exact Hb4 |].
       split; [ apply ids_desc_cons; assumption |].
-      intros p2 m arg en2 s tok2 en' Hdr Hsa Hlt Hdis.
+      intros p2 m arg en2 s tok2 en'0 Hdr Hsa Hlt Hdis.
       destruct Hdr as [nm [Hnm [Hmid Hmop]]].
       destruct Hsa as [ns [Hns [Hsid Hsop]]].
       cbn [In] in Hnm, Hns.
       destruct Hnm as [<- | Hnm]; [ cbn [op] in Hmop; discriminate Hmop |].
       destruct Hns as [<- | Hns]; [ cbn [op] in Hsop; discriminate Hsop |].
-      rewrite <- Hs3 in Hnm, Hns. cbn [graph In] in Hnm, Hns.
+      rewrite <- Hs4 in Hnm, Hns. cbn [graph In] in Hnm, Hns.
       destruct Hns as [<- | Hns]; [ cbn [op] in Hsop; discriminate Hsop |].
-      assert (Hns0 : In ns (graph s0)) by exact (Hsw ns Hns p2 tok2 en' Hsop).
+      assert (Hns0 : In ns (graph s0))
+        by exact (Hsw ns (Hsw23 ns Hns p2 tok2 en'0 Hsop) p2 tok2 en'0 Hsop).
       destruct Hnm as [<- | Hnm].
       + cbn [op nid] in Hmop, Hmid. injection Hmop as <- <- <-.
-        exists {| nid := length (graph s3); op := DFG_Join drive_id prev; sz := 1 |}, prev.
+        exists {| nid := length (graph s4);
+                  op := DFG_Join drive_id prev; sz := 1 |}, prev.
         split; [ left; reflexivity |]. cbn [op]. rewrite <- Hmid, <- Hdid.
         split; [ reflexivity |].
-        rewrite <- Hsid.
-        exact (last_sample_max s0 ip en ns tok2 en' prev Hd0 Hns0 Hsop Hdis Elast).
-      + destruct (Hmain p2 m arg en2 s tok2 en'
+        destruct (pending_samples_covers s0 ip en ns tok2 en'0 Hd0 Hns0 Hsop Hdis)
+          as [q [Hq [Hqle Hqd]]].
+        rewrite <- Hsid. exists q.
+        split.
+        * apply pleaf_cons. rewrite <- Hs4. cbn [graph]. apply pleaf_cons.
+          exact (join_pendings_leaves s2 (pending_samples ctx s0 ip en)
+                   prev s3 Ejp q Hq).
+        * split; [ exact Hqle |].
+          destruct Hqd as [Hqe | [nd [tk [en'' [Hnd [Hnid [Hndop Hndis]]]]]]].
+          -- left. exact Hqe.
+          -- right. exists nd, tk, en''.
+             split; [ right; rewrite <- Hs4; cbn [graph]; right;
+                      exact (Hg23 nd (Hg02 nd Hnd)) |].
+             split; [ exact Hnid | split; [ exact Hndop | exact Hndis ] ].
+      + destruct (Hm3 p2 m arg en2 s tok2 en'0
                     (ex_intro _ nm (conj Hnm (conj Hmid Hmop)))
                     (ex_intro _ ns (conj Hns (conj Hsid Hsop))) Hlt Hdis)
-          as [j [prev2 [Hj [Hjop Hle]]]].
-        exists j, prev2. split; [ right; rewrite <- Hs3; cbn [graph]; right; exact Hj |].
-        split; [ exact Hjop | exact Hle ].
+          as [j [prev2 [Hj [Hjop Hcov]]]].
+        exists j, prev2.
+        split; [ right; rewrite <- Hs4; cbn [graph]; right; exact Hj |].
+        split; [ exact Hjop |].
+        apply covers_cons. rewrite <- Hs4. cbn [graph]. apply covers_cons. exact Hcov.
     - cbn [snd].
-      split; [ exact Hb3 |]. split; [ exact Hd3 |].
-      intros p2 m arg en2 s tok2 en' Hdr Hsa Hlt Hdis.
+      split; [ exact Hb4 |]. split; [ exact Hd4 |].
+      intros p2 m arg en2 s tok2 en'0 Hdr Hsa Hlt Hdis.
       destruct Hdr as [nm [Hnm [Hmid Hmop]]].
       destruct Hsa as [ns [Hns [Hsid Hsop]]].
-      rewrite <- Hs3 in Hnm, Hns. cbn [graph In] in Hnm, Hns.
+      rewrite <- Hs4 in Hnm, Hns. cbn [graph In] in Hnm, Hns.
       destruct Hns as [<- | Hns]; [ cbn [op] in Hsop; discriminate Hsop |].
-      assert (Hns0 : In ns (graph s0)) by exact (Hsw ns Hns p2 tok2 en' Hsop).
+      assert (Hns0 : In ns (graph s0))
+        by exact (Hsw ns (Hsw23 ns Hns p2 tok2 en'0 Hsop) p2 tok2 en'0 Hsop).
       destruct Hnm as [<- | Hnm].
       + exfalso. cbn [op] in Hmop. injection Hmop as <- <- <-.
-        destruct (last_sample_found s0 ip en ns tok2 en' Hns0 Hsop Hdis) as [q Hq].
-        rewrite Elast in Hq. discriminate Hq.
-      + destruct (Hmain p2 m arg en2 s tok2 en'
+        destruct (pending_samples_covers s0 ip en ns tok2 en'0 Hd0 Hns0 Hsop Hdis)
+          as [q [Hq _]].
+        rewrite (join_pendings_none s2 (pending_samples ctx s0 ip en) s3 Ejp) in Hq.
+        destruct Hq.
+      + destruct (Hm3 p2 m arg en2 s tok2 en'0
                     (ex_intro _ nm (conj Hnm (conj Hmid Hmop)))
                     (ex_intro _ ns (conj Hns (conj Hsid Hsop))) Hlt Hdis)
-          as [j [prev2 [Hj [Hjop Hle]]]].
-        exists j, prev2. split; [ rewrite <- Hs3; cbn [graph]; right; exact Hj |].
-        split; [ exact Hjop | exact Hle ].
+          as [j [prev2 [Hj [Hjop Hcov]]]].
+        exists j, prev2.
+        split; [ rewrite <- Hs4; cbn [graph]; right; exact Hj |].
+        split; [ exact Hjop |].
+        rewrite <- Hs4. cbn [graph]. apply covers_cons. exact Hcov.
   Qed.
 
   Lemma preserves_g_merge_maps P : P_emit_expr P ->
@@ -3380,28 +3951,33 @@ Section SchedulerSimulation.
                       (ip_req_sz (tfs_spec_ip ctx ip)) s Hsw0) as Hsw.
         pose proof (dataflow_expr_g calls_sequenced P_emit_expr_calls e
                       (ip_req_sz (tfs_spec_ip ctx ip)) s Hs) as Hcs.
+        pose proof (dataflow_expr_grows e (ip_req_sz (tfs_spec_ip ctx ip)) s) as Hgr.
         destruct (dataflow_expr ctx e (ip_req_sz (tfs_spec_ip ctx ip)) s)
           as [arg_id s2] eqn:Ea.
-        cbn [snd] in Hsw, Hcs.
+        cbn [snd] in Hsw, Hcs, Hgr.
         rewrite (bind_red _ _ s arg_id s2 Ea).
-        destruct (emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) s2)
-          as [drive_id s3] eqn:Ed.
-        rewrite (bind_red _ _ s2 drive_id s3 Ed).
-        pose proof (calls_sequenced_head s s2 s3 ip arg_id en
-                      (ip_req_sz (tfs_spec_ip ctx ip)) drive_id Hcs Hd0 Hsw Ed) as Hhead.
-        apply (g_bind_at calls_sequenced); [ exact Hhead | intros head_id s4 Eh H4 ].
+        destruct (join_pendings ctx (pending_samples ctx s ip en) s2)
+          as [prev_opt s3] eqn:Ejp.
+        rewrite (bind_red _ _ s2 prev_opt s3 Ejp).
+        destruct (emit ctx (DFG_Drive ip arg_id en)
+                    (ip_req_sz (tfs_spec_ip ctx ip)) s3) as [drive_id s4] eqn:Ed.
+        rewrite (bind_red _ _ s3 drive_id s4 Ed).
+        pose proof (calls_sequenced_head s s2 s3 s4 ip arg_id en
+                      (ip_req_sz (tfs_spec_ip ctx ip)) drive_id prev_opt
+                      Hcs Hd0 Hsw Hgr Ejp Ed) as Hhead.
+        apply (g_bind_at calls_sequenced); [ exact Hhead | intros head_id sh Eh Hh ].
         apply (g_bind_at calls_sequenced).
-        * unfold stall_chain. destruct (ip_lat (tfs_spec_ip ctx ip)); [ exact H4 |].
+        * unfold stall_chain. destruct (ip_lat (tfs_spec_ip ctx ip)); [ exact Hh |].
           rewrite emit_red. cbn [snd graph].
           apply P_emit_expr_calls;
             [ intros; discriminate | intros; discriminate | intros; discriminate
-            | exact H4 ].
-        * intros stall_id s5 Es H5.
+            | exact Hh ].
+        * intros stall_id st Es Hst.
           apply (g_bind_at calls_sequenced).
           -- rewrite emit_red. cbn [snd graph].
-             apply calls_sequenced_cons_sample. exact H5.
-          -- intros samp_id s6 Esa H6.
-             exact (preserves_g_set_var calls_sequenced (DFG_SVar dst) samp_id s6 H6).
+             apply calls_sequenced_cons_sample. exact Hst.
+          -- intros samp_id sp Esa Hsp.
+             exact (preserves_g_set_var calls_sequenced (DFG_SVar dst) samp_id sp Hsp).
     - cbn [dataflow_ops]. apply preserves_g_bind; [ apply IHo1 | intro x ]. apply IHo2.
     - intros s Hs. cbn [dataflow_ops].
       apply (g_bind_at calls_sequenced);
@@ -3435,7 +4011,9 @@ Section SchedulerSimulation.
                 (ex_intro _ ns (conj Hns (conj Hsid Hsop))) Hlt Hdis)
       as [j [prev [Hj [Hjop Hle]]]].
     exists j, prev.
-    split; [ apply (proj1 (in_rev L j)); exact Hj | split; [ exact Hjop | exact Hle ] ].
+    split; [ apply (proj1 (in_rev L j)); exact Hj | split; [ exact Hjop |]].
+    apply (covers_mono L (rev L) p en' s prev);
+      [ intros x Hx; apply (proj1 (in_rev L x)); exact Hx | exact Hle ].
   Qed.
 
   Lemma calls_main_build_dfg (act: tfs_action sched) :
@@ -3498,58 +4076,50 @@ Section SchedulerSimulation.
           [ apply dataflow_expr_g; [ apply P_emit_expr_ssucc | exact Hs ]
           | intros arg_id s2 Ea H2 ].
         apply (g_bind_at (all_nodes succ_sample_node));
-          [ apply all_nodes_emit; [ exact H2 | intros q tok en2 Hop; discriminate Hop ]
-          | intros drive_id s3 Ed H3 ].
-        rewrite emit_red in Ed. injection Ed as Hdid Hs3.
-        assert (H3len : length (graph s3) = S drive_id).
-        { rewrite <- Hs3. cbn [graph length]. rewrite Hdid. reflexivity. }
-        destruct (last_sample ctx s ip en) as [prev |] eqn:Elast.
-        * apply (g_bind_at (all_nodes succ_sample_node));
-            [ apply all_nodes_emit;
-              [ exact H3 | intros q tok en2 Hop; discriminate Hop ]
-            | intros head_id s4 Eh H4 ].
-          rewrite emit_red in Eh. injection Eh as Hhid Hs4.
-          assert (H4len : length (graph s4) = S head_id).
-          { rewrite <- Hs4. cbn [graph length]. rewrite Hhid. reflexivity. }
+          [ apply join_pendings_g;
+            [ intros L d prev z HL nd Hin q tok en2 Hop;
+              destruct Hin as [<- | Hin];
+              [ cbn [op] in Hop; discriminate Hop
+              | exact (HL nd Hin q tok en2 Hop) ]
+            | exact H2 ]
+          | intros prev_opt s3 Ejp H3 ].
+        apply (g_bind_at (all_nodes succ_sample_node));
+          [ apply all_nodes_emit;
+            [ exact H3 | intros q tok en2 Hop; discriminate Hop ]
+          | intros drive_id s4 Ed H4 ].
+        rewrite emit_red in Ed. injection Ed as Hdid Hs4.
+        assert (H4len : length (graph s4) = S drive_id).
+        { rewrite <- Hs4. cbn [graph length]. rewrite Hdid. reflexivity. }
+        apply (g_bind_at (all_nodes succ_sample_node)).
+        * destruct prev_opt as [prev |]; [| exact H4 ].
+          apply all_nodes_emit;
+            [ exact H4 | intros q tok en2 Hop; discriminate Hop ].
+        * intros head_id sh Eh Hh.
+          assert (Hhlen : length (graph sh) = S head_id).
+          { destruct prev_opt as [prev |].
+            - rewrite emit_red in Eh. injection Eh as Hhid Hsh.
+              rewrite <- Hsh. cbn [graph length]. rewrite Hhid. reflexivity.
+            - unfold ret in Eh. injection Eh as Hhid Hsh.
+              rewrite <- Hsh. rewrite <- Hhid. exact H4len. }
           apply (g_bind_at (all_nodes succ_sample_node)).
           -- unfold stall_chain. destruct (ip_lat (tfs_spec_ip ctx ip));
-               [ exact H4 |].
+               [ exact Hh |].
              apply all_nodes_emit;
-               [ exact H4 | intros q tok en2 Hop; discriminate Hop ].
-          -- intros stall_id s5 Es H5.
-             assert (H5len : length (graph s5) = S stall_id).
+               [ exact Hh | intros q tok en2 Hop; discriminate Hop ].
+          -- intros stall_id st Es Hst.
+             assert (Hstlen : length (graph st) = S stall_id).
              { unfold stall_chain in Es.
                destruct (ip_lat (tfs_spec_ip ctx ip)).
-               - unfold ret in Es. injection Es as <- <-. exact H4len.
-               - rewrite emit_red in Es. injection Es as Hsid Hs5.
-                 rewrite <- Hs5. cbn [graph length]. rewrite Hsid. reflexivity. }
+               - unfold ret in Es. injection Es as <- <-. exact Hhlen.
+               - rewrite emit_red in Es. injection Es as Hsid Hst2.
+                 rewrite <- Hst2. cbn [graph length]. rewrite Hsid. reflexivity. }
              apply (g_bind_at (all_nodes succ_sample_node)).
-             ++ apply all_nodes_emit; [ exact H5 |].
+             ++ apply all_nodes_emit; [ exact Hst |].
                 intros q tok en2 Hop. cbn [op nid] in *.
-                injection Hop as <- <- <-. exact H5len.
-             ++ intros samp_id s6 Esa H6.
+                injection Hop as <- <- <-. exact Hstlen.
+             ++ intros samp_id sp Esa Hsp.
                 exact (preserves_g_set_var (all_nodes succ_sample_node)
-                         (DFG_SVar dst) samp_id s6 H6).
-        * rewrite (bind_red (ret ctx drive_id) _ s3 drive_id s3 eq_refl).
-          apply (g_bind_at (all_nodes succ_sample_node)).
-          -- unfold stall_chain. destruct (ip_lat (tfs_spec_ip ctx ip));
-               [ exact H3 |].
-             apply all_nodes_emit;
-               [ exact H3 | intros q tok en2 Hop; discriminate Hop ].
-          -- intros stall_id s5 Es H5.
-             assert (H5len : length (graph s5) = S stall_id).
-             { unfold stall_chain in Es.
-               destruct (ip_lat (tfs_spec_ip ctx ip)).
-               - unfold ret in Es. injection Es as <- <-. exact H3len.
-               - rewrite emit_red in Es. injection Es as Hsid Hs5.
-                 rewrite <- Hs5. cbn [graph length]. rewrite Hsid. reflexivity. }
-             apply (g_bind_at (all_nodes succ_sample_node)).
-             ++ apply all_nodes_emit; [ exact H5 |].
-                intros q tok en2 Hop. cbn [op nid] in *.
-                injection Hop as <- <- <-. exact H5len.
-             ++ intros samp_id s6 Esa H6.
-                exact (preserves_g_set_var (all_nodes succ_sample_node)
-                         (DFG_SVar dst) samp_id s6 H6).
+                         (DFG_SVar dst) samp_id sp Hsp).
     - cbn [dataflow_ops]. apply preserves_g_bind; [ apply IHo1 | intro x ]. apply IHo2.
     - intros s Hs. cbn [dataflow_ops].
       apply (g_bind_at (all_nodes succ_sample_node));
@@ -3592,11 +4162,27 @@ Section SchedulerSimulation.
     apply all_nodes_rev. exact H.
   Qed.
 
-  (* Every ordering join carries a stall: [stall_chain] emits one on the head,
-     and [ip_lat_pos] says the latency it is given is at least one. *)
+  (* An ordering join carries a stall, emitted straight above it.  A combining
+     join is instead the SECOND argument of the join that consumes it. *)
+  Definition jst_node (L: list (@dfg_node_t s_var i_var o_var p_var))
+      (j: nid_t) : Prop :=
+    (exists t l, In t L /\ op t = DFG_Stall l j)
+    \/ (exists nj a, In nj L /\ op nj = DFG_Join a j).
+
   Definition joins_stalled (L: list (@dfg_node_t s_var i_var o_var p_var)) : Prop :=
-    forall j d prev, In j L -> op j = DFG_Join d prev ->
-      exists t l, In t L /\ op t = DFG_Stall l (nid j).
+    forall j d prev, In j L -> op j = DFG_Join d prev -> jst_node L (nid j).
+
+  Lemma jst_node_mono L L' j :
+    (forall x, In x L -> In x L') -> jst_node L j -> jst_node L' j.
+  Proof.
+    intros Hsub [[t [l [Ht Htop]]] | [nj [a [Hnj Hnjop]]]].
+    - left. exists t, l. split; [ exact (Hsub t Ht) | exact Htop ].
+    - right. exists nj, a. split; [ exact (Hsub nj Hnj) | exact Hnjop ].
+  Qed.
+
+  Lemma jst_node_cons (x: @dfg_node_t s_var i_var o_var p_var) L j :
+    jst_node L j -> jst_node (x :: L) j.
+  Proof. apply jst_node_mono. intros y Hy. right. exact Hy. Qed.
 
   Lemma joins_stalled_cons_nonjoin L o z :
     (forall d prev, o <> DFG_Join d prev) ->
@@ -3605,35 +4191,52 @@ Section SchedulerSimulation.
   Proof.
     intros Hno H j d prev Hin Hop. cbn [In] in Hin.
     destruct Hin as [<- | Hin]; [ cbn [op] in Hop; exfalso; exact (Hno d prev Hop) |].
-    destruct (H j d prev Hin Hop) as [t [l [Ht Htop]]].
-    exists t, l. split; [ right; exact Ht | exact Htop ].
+    apply jst_node_cons. exact (H j d prev Hin Hop).
   Qed.
 
   Lemma P_emit_expr_jst : P_emit_expr joins_stalled.
   Proof. intros L o z _ _ H3 H. exact (joins_stalled_cons_nonjoin L o z H3 H). Qed.
 
-  (* The call.s own join and the stall emitted straight above it. *)
-  Lemma joins_stalled_cons2 L (d prev: nid_t) (l: nat) z1 z2 :
-    joins_stalled L ->
-    joins_stalled
-      ({| nid := S (length L); op := DFG_Stall l (length L); sz := z2 |}
-       :: {| nid := length L; op := DFG_Join d prev; sz := z1 |} :: L).
-  Proof.
-    intros H j d2 prev2 Hin Hop. cbn [In] in Hin.
-    destruct Hin as [<- | [<- | Hin]].
-    - cbn [op] in Hop. discriminate Hop.
-    - exists {| nid := S (length L); op := DFG_Stall l (length L); sz := z2 |}, l.
-      split; [ left; reflexivity | cbn [op nid]; reflexivity ].
-    - destruct (H j d2 prev2 Hin Hop) as [t [l2 [Ht Htop]]].
-      exists t, l2. split; [ right; right; exact Ht | exact Htop ].
-  Qed.
-
   Lemma joins_stalled_rev L : joins_stalled L -> joins_stalled (rev L).
   Proof.
     intros H j d prev Hin Hop.
     apply (proj2 (in_rev L j)) in Hin.
-    destruct (H j d prev Hin Hop) as [t [l [Ht Htop]]].
-    exists t, l. split; [ apply (proj1 (in_rev L t)); exact Ht | exact Htop ].
+    apply (jst_node_mono L (rev L));
+      [ intros x Hx; apply (proj1 (in_rev L x)); exact Hx
+      | exact (H j d prev Hin Hop) ].
+  Qed.
+
+  (* Every join [join_pendings] builds is consumed by the next one up, so only
+     the root is left for the ordering join to take. *)
+  Lemma join_pendings_jst (prevs: list nid_t) (s: wst) root s' :
+    joins_stalled (graph s) ->
+    join_pendings ctx prevs s = (Some root, s') ->
+    forall j d prev, In j (graph s') -> op j = DFG_Join d prev ->
+      nid j = root \/ jst_node (graph s') (nid j).
+  Proof.
+    revert s root s'.
+    induction prevs as [| q prevs IH]; intros s root s' Hjs Ejp j d prev Hin Hop.
+    - cbn [join_pendings] in Ejp. unfold ret in Ejp. discriminate Ejp.
+    - cbn [join_pendings] in Ejp. unfold bind in Ejp.
+      destruct (join_pendings ctx prevs s) as [r s1] eqn:Er.
+      destruct r as [h |].
+      + unfold bind in Ejp.
+        pose proof (emit_red (DFG_Join q h) 1 s1) as Ered.
+        destruct (emit ctx (DFG_Join q h) 1 s1) as [jj s2] eqn:Ej.
+        unfold ret in Ejp. injection Ejp as Hroot Hs'.
+        injection Ered as Hjj Hs2. subst s'. subst s2. subst root. subst jj.
+        cbn [graph] in Hin. destruct Hin as [<- | Hin].
+        * left. cbn [nid]. reflexivity.
+        * destruct (IH s h s1 Hjs Er j d prev Hin Hop) as [Hjh | Hjst].
+          -- right. right.
+             exists {| nid := length (graph s1); op := DFG_Join q h; sz := 1 |}, q.
+             split; [ left; reflexivity |]. cbn [op]. rewrite Hjh. reflexivity.
+          -- right. apply jst_node_cons. exact Hjst.
+      + rewrite (join_pendings_none s prevs s1 Er) in Er.
+        cbn [join_pendings] in Er. unfold ret in Er. injection Er as Hs1.
+        unfold ret in Ejp. injection Ejp as Hroot Hs'.
+        subst s'. subst s1.
+        right. exact (Hjs j d prev Hin Hop).
   Qed.
 
   Lemma dataflow_ops_jst :
@@ -3656,40 +4259,75 @@ Section SchedulerSimulation.
         apply (g_bind_at joins_stalled);
           [ apply dataflow_expr_g; [ apply P_emit_expr_jst | exact Hs ]
           | intros arg_id s2 Ea H2 ].
-        apply (g_bind_at joins_stalled);
-          [ rewrite emit_red; cbn [snd graph];
-            apply joins_stalled_cons_nonjoin;
-            [ intros d prev Hc; discriminate Hc | exact H2 ]
-          | intros drive_id s3 Ed H3 ].
-        destruct (last_sample ctx s ip en) as [prev |] eqn:Elast.
-        * destruct (emit ctx (DFG_Join drive_id prev) 1 s3) as [head_id s4] eqn:Eh.
-          rewrite (bind_red _ _ s3 head_id s4 Eh).
+        destruct (join_pendings ctx (pending_samples ctx s ip en) s2)
+          as [prev_opt s3] eqn:Ejp.
+        rewrite (bind_red _ _ s2 prev_opt s3 Ejp).
+        destruct (emit ctx (DFG_Drive ip arg_id en)
+                    (ip_req_sz (tfs_spec_ip ctx ip)) s3) as [drive_id s4] eqn:Ed.
+        rewrite (bind_red _ _ s3 drive_id s4 Ed).
+        destruct prev_opt as [root |].
+        * destruct (emit ctx (DFG_Join drive_id root) 1 s4) as [head_id sh] eqn:Eh.
+          rewrite (bind_red _ _ s4 head_id sh Eh).
           unfold stall_chain.
           destruct (ip_lat (tfs_spec_ip ctx ip)) as [| lk] eqn:Elat;
             [ exfalso; try rewrite Elat in Hlat; lia |].
-          destruct (emit ctx (DFG_Stall (S lk) head_id) (counter_sz (S lk)) s4)
-            as [stall_id s5] eqn:Es.
-          rewrite (bind_red _ _ s4 stall_id s5 Es).
-          assert (H5 : joins_stalled (graph s5)).
-          { rewrite emit_red in Eh. injection Eh as Hhid Hs4.
-            rewrite emit_red in Es. injection Es as Hsid Hs5.
-            rewrite <- Hs5. cbn [graph]. rewrite <- Hs4. cbn [graph length].
-            rewrite <- Hhid. apply joins_stalled_cons2. exact H3. }
+          destruct (emit ctx (DFG_Stall (S lk) head_id) (counter_sz (S lk)) sh)
+            as [stall_id st] eqn:Es.
+          rewrite (bind_red _ _ sh stall_id st Es).
+          assert (Hstall : joins_stalled (graph st)).
+          { rewrite emit_red in Ed. injection Ed as Hdid Hs4.
+            rewrite emit_red in Eh. injection Eh as Hhid Hsh.
+            rewrite emit_red in Es. injection Es as Hsid Hst.
+            intros j d prev Hin Hop.
+            rewrite <- Hst in Hin. cbn [graph In] in Hin.
+            destruct Hin as [<- | Hin]; [ cbn [op] in Hop; discriminate Hop |].
+            rewrite <- Hsh in Hin. cbn [graph In] in Hin.
+            destruct Hin as [<- | Hin].
+            - left. cbn [nid].
+              exists {| nid := length (graph sh);
+                        op := DFG_Stall (S lk) head_id;
+                        sz := counter_sz (S lk) |}, (S lk).
+              split; [ rewrite <- Hst; cbn [graph]; left; reflexivity |].
+              cbn [op]. rewrite <- Hhid. reflexivity.
+            - rewrite <- Hs4 in Hin. cbn [graph In] in Hin.
+              destruct Hin as [<- | Hin]; [ cbn [op] in Hop; discriminate Hop |].
+              destruct (join_pendings_jst (pending_samples ctx s ip en) s2 root s3
+                          H2 Ejp j d prev Hin Hop) as [Hr | Hjst].
+              + right.
+                exists {| nid := length (graph s4);
+                          op := DFG_Join drive_id root; sz := 1 |}, drive_id.
+                split; [ rewrite <- Hst; cbn [graph]; right;
+                         rewrite <- Hsh; cbn [graph]; left; reflexivity |].
+                cbn [op]. rewrite Hr. reflexivity.
+              + apply (jst_node_mono (graph s3) (graph st)); [| exact Hjst ].
+                intros x Hx. rewrite <- Hst. cbn [graph]. right.
+                rewrite <- Hsh. cbn [graph]. right.
+                rewrite <- Hs4. cbn [graph]. right. exact Hx. }
           apply (g_bind_at joins_stalled);
             [ rewrite emit_red; cbn [snd graph];
               apply joins_stalled_cons_nonjoin;
-              [ intros d2 prev2 Hc; discriminate Hc | exact H5 ]
+              [ intros d2 prev2 Hc; discriminate Hc | exact Hstall ]
             | intros samp_id s6 Esa H6 ].
           exact (preserves_g_set_var joins_stalled (DFG_SVar dst) samp_id s6 H6).
-        * rewrite (bind_red (ret ctx drive_id) _ s3 drive_id s3 eq_refl).
+        * assert (Hs32 : graph s3 = graph s2).
+          { rewrite (join_pendings_none s2 (pending_samples ctx s ip en) s3 Ejp) in Ejp.
+            cbn [join_pendings] in Ejp. unfold ret in Ejp.
+            injection Ejp as Hs3. rewrite <- Hs3. reflexivity. }
+          assert (H3 : joins_stalled (graph s3)) by (rewrite Hs32; exact H2).
+          assert (H4 : joins_stalled (graph s4)).
+          { rewrite emit_red in Ed. injection Ed as Hdid Hs4.
+            rewrite <- Hs4. cbn [graph].
+            apply joins_stalled_cons_nonjoin;
+              [ intros d2 prev2 Hc; discriminate Hc | exact H3 ]. }
+          rewrite (bind_red (ret ctx drive_id) _ s4 drive_id s4 eq_refl).
           apply (g_bind_at joins_stalled).
           -- unfold stall_chain.
              destruct (ip_lat (tfs_spec_ip ctx ip)) as [| lk] eqn:Elat;
                [ exfalso; try rewrite Elat in Hlat; lia |].
              rewrite emit_red. cbn [snd graph].
              apply joins_stalled_cons_nonjoin;
-               [ intros d2 prev2 Hc; discriminate Hc | exact H3 ].
-          -- intros stall_id s5 Es H5.
+               [ intros d2 prev2 Hc; discriminate Hc | exact H4 ].
+          -- intros stall_id st Es H5.
              apply (g_bind_at joins_stalled);
                [ rewrite emit_red; cbn [snd graph];
                  apply joins_stalled_cons_nonjoin;
@@ -3801,43 +4439,34 @@ Section SchedulerSimulation.
           [ apply dataflow_expr_g; [ apply P_emit_expr_sst | exact Hs ]
           | intros arg_id s2 Ea H2 ].
         apply (g_bind_at samples_stalled);
+          [ apply join_pendings_g;
+            [ intros L d prev z HL;
+              apply samples_stalled_cons_nonsample;
+              [ intros q tok en2 Hc; discriminate Hc | exact HL ]
+            | exact H2 ]
+          | intros prev_opt s3 Ejp H3 ].
+        apply (g_bind_at samples_stalled);
           [ rewrite emit_red; cbn [snd graph];
             apply samples_stalled_cons_nonsample;
-            [ intros q tok en2 Hc; discriminate Hc | exact H2 ]
-          | intros drive_id s3 Ed H3 ].
-        destruct (last_sample ctx s ip en) as [prev |] eqn:Elast.
-        * destruct (emit ctx (DFG_Join drive_id prev) 1 s3) as [head_id s4] eqn:Eh.
-          rewrite (bind_red _ _ s3 head_id s4 Eh).
-          assert (H4 : samples_stalled (graph s4)).
-          { rewrite emit_red in Eh. injection Eh as Hhid Hs4.
-            rewrite <- Hs4. cbn [graph].
-            apply samples_stalled_cons_nonsample;
-              [ intros q tok en2 Hc; discriminate Hc | exact H3 ]. }
+            [ intros q tok en2 Hc; discriminate Hc | exact H3 ]
+          | intros drive_id s4 Ed H4 ].
+        apply (g_bind_at samples_stalled).
+        * destruct prev_opt as [root |]; [| exact H4 ].
+          rewrite emit_red. cbn [snd graph].
+          apply samples_stalled_cons_nonsample;
+            [ intros q tok en2 Hc; discriminate Hc | exact H4 ].
+        * intros head_id sh Eh Hh.
           unfold stall_chain.
           destruct (ip_lat (tfs_spec_ip ctx ip)) as [| lk] eqn:Elat;
             [ exfalso; try rewrite Elat in Hlat; lia |].
-          destruct (emit ctx (DFG_Stall (S lk) head_id) (counter_sz (S lk)) s4)
-            as [stall_id s5] eqn:Es.
-          rewrite (bind_red _ _ s4 stall_id s5 Es).
+          destruct (emit ctx (DFG_Stall (S lk) head_id) (counter_sz (S lk)) sh)
+            as [stall_id st] eqn:Es.
+          rewrite (bind_red _ _ sh stall_id st Es).
           apply (g_bind_at samples_stalled).
           -- rewrite emit_red. cbn [snd graph].
-             rewrite emit_red in Es. injection Es as Hsid Hs5.
-             rewrite <- Hs5. cbn [graph length]. rewrite <- Hsid.
-             apply samples_stalled_cons2. exact H4.
-          -- intros samp_id s6 Esa H6.
-             exact (preserves_g_set_var samples_stalled (DFG_SVar dst) samp_id s6 H6).
-        * rewrite (bind_red (ret ctx drive_id) _ s3 drive_id s3 eq_refl).
-          unfold stall_chain.
-          destruct (ip_lat (tfs_spec_ip ctx ip)) as [| lk] eqn:Elat;
-            [ exfalso; try rewrite Elat in Hlat; lia |].
-          destruct (emit ctx (DFG_Stall (S lk) drive_id) (counter_sz (S lk)) s3)
-            as [stall_id s5] eqn:Es.
-          rewrite (bind_red _ _ s3 stall_id s5 Es).
-          apply (g_bind_at samples_stalled).
-          -- rewrite emit_red. cbn [snd graph].
-             rewrite emit_red in Es. injection Es as Hsid Hs5.
-             rewrite <- Hs5. cbn [graph length]. rewrite <- Hsid.
-             apply samples_stalled_cons2. exact H3.
+             rewrite emit_red in Es. injection Es as Hsid Hst.
+             rewrite <- Hst. cbn [graph length]. rewrite <- Hsid.
+             apply samples_stalled_cons2. exact Hh.
           -- intros samp_id s6 Esa H6.
              exact (preserves_g_set_var samples_stalled (DFG_SVar dst) samp_id s6 H6).
     - cbn [dataflow_ops]. apply preserves_g_bind; [ apply IHo1 | intro x ]. apply IHo2.
@@ -4322,6 +4951,51 @@ Section SchedulerSimulation.
     - eapply node_args_sz_gmono; [ apply Hfg; exact Hin | exact Hg ].
   Qed.
 
+  Lemma join_pendings_fg (prevs: list nid_t) (s: wst) :
+    winv s -> wvsz s -> wfg s ->
+    (forall n, In n prevs -> wnidwf s n) ->
+    wgmono s (snd (join_pendings ctx prevs s))
+    /\ winv (snd (join_pendings ctx prevs s))
+    /\ wvsz (snd (join_pendings ctx prevs s))
+    /\ wfg (snd (join_pendings ctx prevs s))
+    /\ (forall n, fst (join_pendings ctx prevs s) = Some n ->
+          wnidwf (snd (join_pendings ctx prevs s)) n).
+  Proof.
+    revert s. induction prevs as [| q prevs IH]; intros s Hinv Hvsz Hfg Hall.
+    - cbn [join_pendings]. unfold ret. cbn [fst snd].
+      split; [ apply wgmono_refl |].
+      split; [ exact Hinv | split; [ exact Hvsz | split; [ exact Hfg |]]].
+      intros n Hn. discriminate Hn.
+    - cbn [join_pendings]. unfold bind.
+      destruct (IH s Hinv Hvsz Hfg (fun n Hn => Hall n (or_intror Hn)))
+        as [Hg1 [Hinv1 [Hvsz1 [Hfg1 Hn1]]]].
+      destruct (join_pendings ctx prevs s) as [r s1] eqn:Er.
+      cbn [fst snd] in Hg1, Hinv1, Hvsz1, Hfg1, Hn1.
+      assert (Hq : wnidwf s1 q)
+        by (eapply wnidwf_gmono; [ exact (Hall q (or_introl eq_refl)) | exact Hg1 ]).
+      destruct r as [h |].
+      + unfold bind.
+        pose proof (emit_fg (DFG_Join q h) 1 s1 Hinv1 Hvsz1 Hfg1) as He.
+        match type of He with
+        | ?A -> ?B -> _ =>
+            assert (HA : A) by
+              (intros x Hx; cbn [get_args] in Hx;
+               destruct Hx as [<- | [<- | []]]; [ exact Hq | exact (Hn1 h eq_refl) ]);
+            assert (HB : B) by (unfold node_args_sz; cbn [op]; exact I);
+            specialize (He HA HB)
+        end.
+        destruct (emit ctx (DFG_Join q h) 1 s1) as [jj s2] eqn:Ej.
+        destruct He as [Ge [Ne [Pe [Qe [_ Fe]]]]].
+        unfold ret. cbn [fst snd].
+        split; [ exact (wgmono_trans s s1 s2 Hg1 Ge) |].
+        split; [ exact Pe | split; [ exact Qe | split; [ exact Fe |]]].
+        intros n Hn. injection Hn as <-. exact Ne.
+      + unfold ret. cbn [fst snd].
+        split; [ exact Hg1 |].
+        split; [ exact Hinv1 | split; [ exact Hvsz1 | split; [ exact Hfg1 |]]].
+        intros n Hn. injection Hn as <-. exact Hq.
+  Qed.
+
   Lemma ensure_var_fg v (s: wst) :
     winv s -> wvsz s -> wfg s ->
     let (id, s') := ensure_var ctx v s in
@@ -4706,33 +5380,51 @@ Section SchedulerSimulation.
                    _ s _ _ Ea).
         assert (Hen_a : forall x, In x (map fst en) -> wnidwf sa x)
           by (intros x Hx; eapply wnidwf_gmono; [ apply Hen, Hx | exact Ga ]).
+        (* the pending set, conjoined before the drive *)
+        assert (Hjp : wgmono sa (snd (join_pendings ctx (pending_samples ctx s ip en) sa))
+                      /\ winv (snd (join_pendings ctx (pending_samples ctx s ip en) sa))
+                      /\ (forall n,
+                            fst (join_pendings ctx (pending_samples ctx s ip en) sa)
+                            = Some n ->
+                            wnidwf (snd (join_pendings ctx
+                                           (pending_samples ctx s ip en) sa)) n)).
+        { apply join_pendings_full; [ exact Pa |].
+          intros n Hn. eapply wnidwf_gmono;
+            [ exact (pending_samples_nidwf s ip en n Hn) | exact Ga ]. }
+        destruct (join_pendings ctx (pending_samples ctx s ip en) sa)
+          as [prev_opt sj] eqn:Ejp.
+        cbn [fst snd] in Hjp. destruct Hjp as [Gj [Pj Nj]].
+        rewrite (bind_red _ _ sa _ _ Ejp).
+        assert (Hen_j : forall x, In x (map fst en) -> wnidwf sj x)
+          by (intros x Hx; eapply wnidwf_gmono; [ apply Hen_a, Hx | exact Gj ]).
+        assert (Nj_arg : wnidwf sj arg_id)
+          by (eapply wnidwf_gmono; [ exact Na | exact Gj ]).
         (* the drive *)
         assert (Hd : let (id, s') :=
-                       emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sa in
-                     wgmono sa s' /\ wnidwf s' id /\ winv s').
-        { apply emit_full; [ exact Pa |].
+                       emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sj in
+                     wgmono sj s' /\ wnidwf s' id /\ winv s').
+        { apply emit_full; [ exact Pj |].
           intros x Hx. cbn [get_args] in Hx.
-          destruct Hx as [<- | Hx]; [ exact Na | exact (Hen_a x Hx) ]. }
-        destruct (emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sa)
+          destruct Hx as [<- | Hx]; [ exact Nj_arg | exact (Hen_j x Hx) ]. }
+        destruct (emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sj)
           as [drive_id sd] eqn:Ed.
         destruct Hd as [Gd [Nd Pd]].
         rewrite (bind_red (emit ctx (DFG_Drive ip arg_id en)
-                             (ip_req_sz (tfs_spec_ip ctx ip))) _ sa _ _ Ed).
-        (* the join, when an earlier call on this IP is still outstanding *)
+                             (ip_req_sz (tfs_spec_ip ctx ip))) _ sj _ _ Ed).
+        (* the ordering join, when the pending set is non-empty *)
         assert (Hhead : let (hid, sh) :=
-                          match last_sample ctx s ip en with
+                          match prev_opt with
                           | None => ret ctx drive_id
                           | Some prev => emit ctx (DFG_Join drive_id prev) 1
                           end sd in
                         wgmono sd sh /\ wnidwf sh hid /\ winv sh).
-        { destruct (last_sample ctx s ip en) as [prev |] eqn:Elast.
+        { destruct prev_opt as [prev |].
           - apply emit_full; [ exact Pd |].
             intros x Hx. cbn [get_args] in Hx.
             destruct Hx as [<- | [<- | []]]; [ exact Nd |].
-            eapply wnidwf_gmono; [ exact (last_sample_nidwf s ip en prev Elast) |].
-            eapply wgmono_trans; [ exact Ga | exact Gd ].
+            eapply wnidwf_gmono; [ exact (Nj prev eq_refl) | exact Gd ].
           - unfold ret. split; [ apply wgmono_refl | split; [ exact Nd | exact Pd ] ]. }
-        destruct (match last_sample ctx s ip en with
+        destruct (match prev_opt with
                   | None => ret ctx drive_id
                   | Some prev => emit ctx (DFG_Join drive_id prev) 1
                   end sd) as [head_id sh] eqn:Eh.
@@ -4768,6 +5460,7 @@ Section SchedulerSimulation.
         destruct Hs as [Gs Ps].
         split;
           [ eapply wgmono_trans; [ exact Ga |];
+            eapply wgmono_trans; [ exact Gj |];
             eapply wgmono_trans; [ exact Gd |];
             eapply wgmono_trans; [ exact Gh |];
             eapply wgmono_trans; [ exact Gt |];
@@ -5105,36 +5798,47 @@ Section SchedulerSimulation.
                    _ s _ _ Ea).
         assert (Hen_a : forall x, In x (map fst en) -> wnidwf sa x)
           by (intros x Hx; eapply wnidwf_gmono; [ apply Hen, Hx | exact Ga ]).
+        (* the pending set, conjoined before the drive *)
+        destruct (join_pendings_fg (pending_samples ctx s ip en) sa Pa Qa Fa
+                    (fun n Hn => wnidwf_gmono s sa n (pending_samples_nidwf s ip en n Hn) Ga)) as [GJ [PJ [QJ [FJ NJ]]]].
+        destruct (join_pendings ctx (pending_samples ctx s ip en) sa)
+          as [prev_opt sj] eqn:Ejp.
+        cbn [fst snd] in GJ, PJ, QJ, FJ, NJ.
+        rewrite (bind_red _ _ sa _ _ Ejp).
+        assert (Hen_j : forall x, In x (map fst en) -> wnidwf sj x)
+          by (intros x Hx; eapply wnidwf_gmono; [ apply Hen_a, Hx | exact GJ ]).
+        assert (NJ_arg : wnidwf sj arg_id)
+          by (eapply wnidwf_gmono; [ exact Na | exact GJ ]).
         (* the drive *)
         assert (Hd : let (id, s') :=
-                       emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sa in
-                     wgmono sa s' /\ wnidwf s' id /\ winv s' /\ wvsz s' /\
+                       emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sj in
+                     wgmono sj s' /\ wnidwf s' id /\ winv s' /\ wvsz s' /\
                      wsz s' id (ip_req_sz (tfs_spec_ip ctx ip)) /\ wfg s').
-        { apply emit_fg; [ exact Pa | exact Qa | exact Fa | | ].
+        { apply emit_fg; [ exact PJ | exact QJ | exact FJ | | ].
           - intros x Hx. cbn [get_args] in Hx.
-            destruct Hx as [<- | Hx]; [ exact Na | exact (Hen_a x Hx) ].
-          - unfold node_args_sz. cbn [op]. exact Sa. }
-        destruct (emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sa)
+            destruct Hx as [<- | Hx]; [ exact NJ_arg | exact (Hen_j x Hx) ].
+          - unfold node_args_sz. cbn [op].
+            eapply wsz_gmono; [ exact Sa | exact GJ ]. }
+        destruct (emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sj)
           as [drive_id sd] eqn:Ed.
         destruct Hd as [Gd [Nd [Pd [Qd [Sd Fd]]]]].
         rewrite (bind_red (emit ctx (DFG_Drive ip arg_id en)
-                             (ip_req_sz (tfs_spec_ip ctx ip))) _ sa _ _ Ed).
+                             (ip_req_sz (tfs_spec_ip ctx ip))) _ sj _ _ Ed).
         (* the ordering join *)
         assert (Hhead : let (hid, sh) :=
-                          match last_sample ctx s ip en with
+                          match prev_opt with
                           | None => ret ctx drive_id
                           | Some prev => emit ctx (DFG_Join drive_id prev) 1
                           end sd in
                         wgmono sd sh /\ wnidwf sh hid /\ winv sh /\ wvsz sh /\ wfg sh).
-        { destruct (last_sample ctx s ip en) as [prev |] eqn:Elast.
+        { destruct prev_opt as [prev |].
           - pose proof (emit_fg (DFG_Join drive_id prev) 1 sd Pd Qd Fd) as Hj.
             match type of Hj with
             | ?A -> ?B -> _ =>
                 assert (HA : A) by
                   (intros x Hx; cbn [get_args] in Hx;
                    destruct Hx as [<- | [<- | []]]; [ exact Nd |];
-                   eapply wnidwf_gmono; [ exact (last_sample_nidwf s ip en prev Elast) |];
-                   eapply wgmono_trans; [ exact Ga | exact Gd ]);
+                   eapply wnidwf_gmono; [ exact (NJ prev eq_refl) | exact Gd ]);
                 assert (HB : B) by (unfold node_args_sz; cbn [op]; exact I);
                 specialize (Hj HA HB)
             end.
@@ -5144,7 +5848,7 @@ Section SchedulerSimulation.
               | split; [ exact Qj | exact Fj ] ] ] ].
           - unfold ret. split; [ apply wgmono_refl | split; [ exact Nd
               | split; [ exact Pd | split; [ exact Qd | exact Fd ] ] ] ]. }
-        destruct (match last_sample ctx s ip en with
+        destruct (match prev_opt with
                   | None => ret ctx drive_id
                   | Some prev => emit ctx (DFG_Join drive_id prev) 1
                   end sd) as [head_id sh] eqn:Eh.
@@ -5195,6 +5899,7 @@ Section SchedulerSimulation.
         destruct Hs as [Gs [Ps [Qs Fs]]].
         split;
           [ eapply wgmono_trans; [ exact Ga |];
+            eapply wgmono_trans; [ exact GJ |];
             eapply wgmono_trans; [ exact Gd |];
             eapply wgmono_trans; [ exact Gh |];
             eapply wgmono_trans; [ exact Gt |];
@@ -5360,6 +6065,46 @@ Section SchedulerSimulation.
     - cbn [graph]. intros node Hin He. destruct Hin as [<-|Hin].
       + cbn [nid]. exact Hlen.
       + exact (Hnz node Hin He).
+  Qed.
+
+  Lemma pending_samples_pos (s: wst) (p: p_var) en n :
+    gpos s -> In n (pending_samples ctx s p en) -> 1 <= n.
+  Proof.
+    intros Hp Hin.
+    destruct (pending_samples_spec s p en n Hin)
+      as [nd [tok [en' [Hnd [Hnid [Hop _]]]]]].
+    destruct Hp as [_ [_ [_ [_ Hnz]]]].
+    rewrite <- Hnid. apply Hnz; [ exact Hnd |].
+    rewrite Hop. discriminate.
+  Qed.
+
+  Lemma join_pendings_pos (prevs: list nid_t) (s: wst) :
+    gpos s -> (forall n, In n prevs -> 1 <= n) ->
+    gpos (snd (join_pendings ctx prevs s))
+    /\ (forall n, fst (join_pendings ctx prevs s) = Some n -> 1 <= n).
+  Proof.
+    revert s. induction prevs as [| q prevs IH]; intros s Hp Hall.
+    - cbn [join_pendings]. unfold ret. cbn [fst snd].
+      split; [ exact Hp |]. intros n Hn. discriminate Hn.
+    - cbn [join_pendings]. unfold bind.
+      destruct (IH s Hp (fun n Hn => Hall n (or_intror Hn))) as [Hp1 Hn1].
+      destruct (join_pendings ctx prevs s) as [r s1] eqn:Er.
+      cbn [fst snd] in Hp1, Hn1.
+      destruct r as [h |].
+      + unfold bind.
+        assert (He : let (id, s') := emit ctx (DFG_Join q h) 1 s1 in
+                     1 <= id /\ gpos s').
+        { apply emit_pos; [ exact Hp1 | discriminate |].
+          intros x Hx. cbn [get_args] in Hx.
+          destruct Hx as [<- | [<- | []]];
+            [ exact (Hall q (or_introl eq_refl)) | exact (Hn1 h eq_refl) ]. }
+        destruct (emit ctx (DFG_Join q h) 1 s1) as [jj s2] eqn:Ej.
+        destruct He as [Ne Pe].
+        unfold ret. cbn [fst snd].
+        split; [ exact Pe |]. intros n Hn. injection Hn as <-. exact Ne.
+      + unfold ret. cbn [fst snd].
+        split; [ exact Hp1 |].
+        intros n Hn. injection Hn as <-. exact (Hall q (or_introl eq_refl)).
   Qed.
 
   Lemma ensure_var_pos v (s: wst) :
@@ -5636,30 +6381,35 @@ Section SchedulerSimulation.
         destruct Ha as [Na Pa].
         rewrite (bind_red (dataflow_expr ctx arg (ip_req_sz (tfs_spec_ip ctx ip)))
                    _ s _ _ Ea).
+        destruct (join_pendings_pos (pending_samples ctx s ip en) sa Pa
+                    (fun n Hn => pending_samples_pos s ip en n Hp Hn)) as [PJ NJ].
+        destruct (join_pendings ctx (pending_samples ctx s ip en) sa)
+          as [prev_opt sj] eqn:Ejp.
+        cbn [fst snd] in PJ, NJ.
+        rewrite (bind_red _ _ sa _ _ Ejp).
         assert (Hd : let (id, s') :=
-                       emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sa in
+                       emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sj in
                      1 <= id /\ gpos s').
-        { apply emit_pos; [ exact Pa | discriminate |].
+        { apply emit_pos; [ exact PJ | discriminate |].
           intros x Hx. cbn [get_args] in Hx.
           destruct Hx as [<- | Hx]; [ exact Na | exact (Hen x Hx) ]. }
-        destruct (emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sa)
+        destruct (emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sj)
           as [drive_id sd] eqn:Ed.
         destruct Hd as [Nd Pd].
         rewrite (bind_red (emit ctx (DFG_Drive ip arg_id en)
-                             (ip_req_sz (tfs_spec_ip ctx ip))) _ sa _ _ Ed).
+                             (ip_req_sz (tfs_spec_ip ctx ip))) _ sj _ _ Ed).
         assert (Hhead : let (hid, sh) :=
-                          match last_sample ctx s ip en with
+                          match prev_opt with
                           | None => ret ctx drive_id
                           | Some prev => emit ctx (DFG_Join drive_id prev) 1
                           end sd in
                         1 <= hid /\ gpos sh).
-        { destruct (last_sample ctx s ip en) as [prev |] eqn:Elast.
+        { destruct prev_opt as [prev |].
           - apply emit_pos; [ exact Pd | discriminate |].
             intros x Hx. cbn [get_args] in Hx.
-            destruct Hx as [<- | [<- | []]]; [ exact Nd |].
-            exact (last_sample_pos s ip en prev Hp Elast).
+            destruct Hx as [<- | [<- | []]]; [ exact Nd | exact (NJ prev eq_refl) ].
           - unfold ret. split; [ exact Nd | exact Pd ]. }
-        destruct (match last_sample ctx s ip en with
+        destruct (match prev_opt with
                   | None => ret ctx drive_id
                   | Some prev => emit ctx (DFG_Join drive_id prev) 1
                   end sd) as [head_id sh] eqn:Eh.
@@ -6243,6 +6993,51 @@ Section SchedulerSimulation.
         exists node. split; [ right; exact Hn | exact Hnid ].
   Qed.
 
+  Lemma pending_samples_nidwf' (s: dstate) (p: p_var) en n :
+    In n (pending_samples ctx s p en) -> nidwf s n.
+  Proof.
+    intro Hin.
+    destruct (pending_samples_spec s p en n Hin)
+      as [nd [tok [en' [Hnd [Hnid _]]]]].
+    exists nd. split; [ exact Hnd | exact Hnid ].
+  Qed.
+
+  Lemma join_pendings_espec (prevs: list nid_t) (s: dstate) :
+    (forall n, In n prevs -> nidwf s n) ->
+    gmono s (snd (join_pendings ctx prevs s))
+    /\ (vmg s ->
+        vmg (snd (join_pendings ctx prevs s))
+        /\ (forall n, fst (join_pendings ctx prevs s) = Some n ->
+              nidwf (snd (join_pendings ctx prevs s)) n)).
+  Proof.
+    revert s. induction prevs as [| q prevs IH]; intros s Hall.
+    - cbn [join_pendings]. unfold ret. cbn [fst snd].
+      split; [ apply gmono_refl |]. intro Hv.
+      split; [ exact Hv |]. intros n Hn. discriminate Hn.
+    - cbn [join_pendings]. unfold bind.
+      destruct (IH s (fun n Hn => Hall n (or_intror Hn))) as [Hg1 Hv1].
+      destruct (join_pendings ctx prevs s) as [r s1] eqn:Er.
+      cbn [fst snd] in Hg1, Hv1.
+      destruct r as [h |].
+      + unfold bind.
+        pose proof (emit_spec (DFG_Join q h) 1 s1) as He.
+        destruct (emit ctx (DFG_Join q h) 1 s1) as [jj s2] eqn:Ej.
+        destruct He as [[Ge Ve] _].
+        unfold ret. cbn [fst snd].
+        split; [ exact (gmono_trans s s1 s2 Hg1 Ge) |].
+        intro Hv. destruct (Hv1 Hv) as [Hv1' _].
+        destruct (Ve Hv1') as [Ne Ve'].
+        split; [ exact Ve' |].
+        intros n Hn. injection Hn as <-. exact Ne.
+      + unfold ret. cbn [fst snd].
+        split; [ exact Hg1 |].
+        intro Hv. destruct (Hv1 Hv) as [Hv1' _].
+        split; [ exact Hv1' |].
+        intros n Hn. injection Hn as <-.
+        destruct (Hall q (or_introl eq_refl)) as [nd [Hnd Hnid]].
+        exists nd. split; [ exact (Hg1 nd Hnd) | exact Hnid ].
+  Qed.
+
   (* set_var keeps the graph; preserves vmg provided the stored id is valid *)
   Lemma set_var_spec dfg_v id (s: dstate) :
     nidwf s id ->
@@ -6607,24 +7402,33 @@ Section SchedulerSimulation.
         pose proof (dataflow_expr_spec arg (ip_req_sz (tfs_spec_ip ctx ip)) s Hv) as Ha.
         destruct (dataflow_expr ctx arg (ip_req_sz (tfs_spec_ip ctx ip)) s)
           as [arg_id sa]. destruct Ha as [ga [na va]].
+        assert (HallJ : forall n, In n (pending_samples ctx s ip en) -> nidwf sa n).
+        { intros n Hn.
+          destruct (pending_samples_nidwf' s ip en n Hn) as [nd [Hnd Hnid]].
+          exists nd. split; [ exact (ga nd Hnd) | exact Hnid ]. }
+        pose proof (join_pendings_espec (pending_samples ctx s ip en) sa HallJ) as Hjp.
+        destruct (join_pendings ctx (pending_samples ctx s ip en) sa)
+          as [prev_opt sj].
+        cbn [fst snd] in Hjp. destruct Hjp as [gJ HvJ].
+        destruct (HvJ va) as [vJ nJ].
         pose proof (emit_spec (DFG_Drive ip arg_id en)
-                      (ip_req_sz (tfs_spec_ip ctx ip)) sa) as Hd.
+                      (ip_req_sz (tfs_spec_ip ctx ip)) sj) as Hd.
         destruct (emit ctx (DFG_Drive ip arg_id en)
-                    (ip_req_sz (tfs_spec_ip ctx ip)) sa) as [drive_id sd].
-        destruct Hd as [[gd vd] _]. destruct (vd va) as [nd vd2].
+                    (ip_req_sz (tfs_spec_ip ctx ip)) sj) as [drive_id sd].
+        destruct Hd as [[gd vd] _]. destruct (vd vJ) as [nd vd2].
         assert (Hhead : let (hid, sh) :=
-                          match last_sample ctx s ip en with
+                          match prev_opt with
                           | None => ret ctx drive_id
                           | Some prev => emit ctx (DFG_Join drive_id prev) 1
                           end sd in
                         gmono sd sh /\ nidwf sh hid /\ vmg sh).
-        { destruct (last_sample ctx s ip en) as [prev |].
+        { destruct prev_opt as [prev |].
           - pose proof (emit_spec (DFG_Join drive_id prev) 1 sd) as Hj.
             destruct (emit ctx (DFG_Join drive_id prev) 1 sd) as [hid sh].
             destruct Hj as [[gj vj] _]. destruct (vj vd2) as [nj vj2].
             split; [ exact gj | split; [ exact nj | exact vj2 ] ].
           - unfold ret. split; [ apply gmono_refl | split; [ exact nd | exact vd2 ] ]. }
-        destruct (match last_sample ctx s ip en with
+        destruct (match prev_opt with
                   | None => ret ctx drive_id
                   | Some prev => emit ctx (DFG_Join drive_id prev) 1
                   end sd) as [head_id sh].
@@ -6651,6 +7455,7 @@ Section SchedulerSimulation.
         destruct Hs as [gs vs].
         split;
           [ eapply gmono_trans; [ exact ga |];
+            eapply gmono_trans; [ exact gJ |];
             eapply gmono_trans; [ exact gd |];
             eapply gmono_trans; [ exact gh |];
             eapply gmono_trans; [ exact gt |];
@@ -8271,34 +9076,27 @@ Section SchedulerSimulation.
     rewrite eval1_svar_v. exact Hz.
   Qed.
 
-  (* The join.s own validity from the SAMPLE it waits on: a sample is always
-     buffered, so what the join ANDs in is that sample.s validity register. *)
-  Lemma join_gate_zero_of_prev
+  (* A join's validity is an AND, so either argument reading zero puts it down.
+     The second argument is the pending tree a call was sequenced behind. *)
+  Lemma join_gate_zero_of_arg
         (act: tfs_action sched)
         (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
-        (g m prev m0 msz fuel: nid_t)
-        (n_idx : Vect.index (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+        (g m prev fuel: nid_t)
         (bufs: list (nid_t * (nat * sz_t)))
         (ss: sched_sys_state) (input: sched_input_t) :
     node_op act g = DFG_Join m prev ->
     BitsToLists.list_assoc bufs g = None ->
-    BitsToLists.list_assoc bufs prev = Some (m0, msz) ->
-    index_of_nat (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m0
-      = Some n_idx ->
-    (fst ss).[tf_dfg_v a_idx n_idx] = Bits.zero ->
     1 < fuel ->
+    eval1 (snd (compile_dfg_expr ctx bneeds (pred fuel) a_idx
+                  (build_dfg ctx act) prev bufs)) ss input = Bits.zero ->
     eval1 (snd (compile_dfg_expr ctx bneeds fuel a_idx
-                  (build_dfg ctx act) g bufs)) ss input
-    = Bits.zero.
+                  (build_dfg ctx act) g bufs)) ss input = Bits.zero.
   Proof.
-    intros Hg Hgnb Hpb Hidx Hz Hf.
+    intros Hg Hgnb Hf Hz.
     assert (HA : 0 < fuel) by lia.
-    assert (HB : 0 < pred fuel) by lia.
     unfold node_op in Hg.
     rewrite (compile_join_valid _ _ _ a_idx g m prev _ [] _ Hg Hgnb HA).
-    rewrite valid_and_eval.
-    rewrite (compile_buffered_valid _ _ _ a_idx prev _ m0 msz n_idx _ [] Hpb Hidx HB).
-    rewrite eval1_svar_v, Hz. apply bits1_and_zero_r.
+    rewrite valid_and_eval, Hz. apply bits1_and_zero_r.
   Qed.
 
   (* ==================================================================== *)
@@ -11307,45 +12105,53 @@ Section SchedulerSimulation.
     - exact Hop.
   Qed.
 
-  (* THE JOIN, as the port argument reads it: it waits on a SAMPLE of the
-     drive.s own port, under a guard the drive could share. *)
-  Lemma join_waits_on_sample (act: tfs_action sched) (j d prev: nid_t) :
-    node_op act j = DFG_Join d prev ->
-    exists (p: p_var) arg en tok en',
-      node_op act d = DFG_Drive p arg en
-      /\ node_op act prev = DFG_Sample p tok en'
-      /\ guards_disjoint en en' = false.
+  (* A [pends] node is a sample or a join of such, never a drive. *)
+  Lemma pends_not_drive (act: tfs_action sched) (p: p_var) en n
+        (q: p_var) arg en2 :
+    pends (graph (build_dfg ctx act)) p en n ->
+    node_op act n = DFG_Drive q arg en2 -> False.
   Proof.
-    intro Hop.
-    assert (Hlt : j < length (graph (build_dfg ctx act)))
-      by (apply node_op_range; rewrite Hop; discriminate).
-    destruct (joins_sequence_build_dfg act
-                (nth j (graph (build_dfg ctx act))
-                   {| nid := 0; op := DFG_Empty; sz := 0 |}) d prev
-                (nth_In _ _ Hlt) Hop)
-      as [p [arg [en [tok [en' [nd [ns [H1 [H2 [H3 [H4 [H5 [H6 H7]]]]]]]]]]]]].
-    exists p, arg, en, tok, en'.
-    destruct (node_at_nid act nd H1) as [_ Hnth1].
-    destruct (node_at_nid act ns H4) as [_ Hnth4].
-    rewrite H2 in Hnth1. rewrite H5 in Hnth4.
-    unfold node_op. rewrite Hnth1, Hnth4.
-    split; [ exact H3 | split; [ exact H6 | exact H7 ] ].
+    intros Hp Hd.
+    destruct Hp as [ns tok en' Hin Hop Hdis | nj a b Hin Hop Ha Hb];
+      destruct (node_at_nid act _ Hin) as [_ Hnth];
+      unfold node_op in Hd; rewrite Hnth in Hd; rewrite Hop in Hd; discriminate Hd.
   Qed.
 
-  (* A join and a stall both sit at their argument.s successor, so a drive
-     that has an ordering join cannot also carry a stall of its own. *)
-  Lemma join_nid_succ (act: tfs_action sched) j d prev :
-    node_op act j = DFG_Join d prev -> j = S d.
+  (* THE JOIN, as the port argument reads it: a drive's ordering join sits at
+     its successor and waits on the pending set built for its port. *)
+  Lemma join_waits_on_sample (act: tfs_action sched) (j d prev: nid_t)
+        (p: p_var) arg en :
+    node_op act j = DFG_Join d prev ->
+    node_op act d = DFG_Drive p arg en ->
+    j = S d /\ pends (graph (build_dfg ctx act)) p en prev.
   Proof.
-    intro Hop.
+    intros Hop Hd.
     assert (Hlt : j < length (graph (build_dfg ctx act)))
       by (apply node_op_range; rewrite Hop; discriminate).
-    pose proof (succ_args_build_dfg act
+    pose proof (joins_sequence_build_dfg act
                   (nth j (graph (build_dfg ctx act))
-                     {| nid := 0; op := DFG_Empty; sz := 0 |})
-                  (nth_In _ _ Hlt)) as [Hj _].
-    rewrite (node_nid_at act j Hlt) in Hj.
-    exact (Hj d prev Hop).
+                     {| nid := 0; op := DFG_Empty; sz := 0 |}) d prev
+                  (nth_In _ _ Hlt) Hop) as Hk.
+    rewrite (node_nid_at act j Hlt) in Hk.
+    destruct Hk as [[p2 [arg2 [en2 [nd [H1 [H2 [H3 [H4 H5]]]]]]]]
+                   | [p2 [en2 [H1 H2]]]].
+    - destruct (node_at_nid act nd H1) as [_ Hnth].
+      rewrite H2 in Hnth.
+      assert (Hop2 : node_op act d = DFG_Drive p2 arg2 en2)
+        by (unfold node_op; rewrite Hnth; exact H3).
+      rewrite Hd in Hop2. injection Hop2 as <- <- <-.
+      split; [ exact H4 | exact H5 ].
+    - exfalso. exact (pends_not_drive act p2 en2 d p arg en H1 Hd).
+  Qed.
+
+  (* A join and a stall both sit at their argument's successor, so a drive
+     that has an ordering join cannot also carry a stall of its own. *)
+  Lemma join_nid_succ (act: tfs_action sched) j d prev (p: p_var) arg en :
+    node_op act j = DFG_Join d prev ->
+    node_op act d = DFG_Drive p arg en -> j = S d.
+  Proof.
+    intros Hop Hd.
+    exact (proj1 (join_waits_on_sample act j d prev p arg en Hop Hd)).
   Qed.
 
   Lemma stall_nid_succ (act: tfs_action sched) t l a :
@@ -11357,28 +12163,33 @@ Section SchedulerSimulation.
     pose proof (succ_args_build_dfg act
                   (nth t (graph (build_dfg ctx act))
                      {| nid := 0; op := DFG_Empty; sz := 0 |})
-                  (nth_In _ _ Hlt)) as [_ Hs].
+                  (nth_In _ _ Hlt)) as Hs.
+    unfold succ_arg_node in Hs.
     rewrite (node_nid_at act t Hlt) in Hs.
     exact (Hs l a Hop).
   Qed.
 
-  Lemma no_stall_on_joined (act: tfs_action sched) j d prev t l :
+  Lemma no_stall_on_joined (act: tfs_action sched) j d prev t l
+        (p: p_var) arg en :
+    node_op act d = DFG_Drive p arg en ->
     node_op act j = DFG_Join d prev -> node_op act t = DFG_Stall l d -> False.
   Proof.
-    intros Hj Ht.
-    pose proof (join_nid_succ act j d prev Hj) as Hjn.
+    intros Hd Hj Ht.
+    pose proof (join_nid_succ act j d prev p arg en Hj Hd) as Hjn.
     pose proof (stall_nid_succ act t l d Ht) as Htn.
     subst j. subst t. rewrite Hj in Ht. discriminate Ht.
   Qed.
 
   (* So a drive that HAS an ordering join has that join as its chain gate:
      [chain_gate] only looks for a stall on the drive first, and there is none. *)
-  Lemma chain_gate_is_join (act: tfs_action sched) (d j prev g h: nid_t) :
+  Lemma chain_gate_is_join (act: tfs_action sched) (d j prev g h: nid_t)
+        (p: p_var) arg en :
+    node_op act d = DFG_Drive p arg en ->
     node_op act j = DFG_Join d prev ->
     chain_gate ctx (build_dfg ctx act) d = Some (g, h) ->
     exists prev', node_op act g = DFG_Join d prev'.
   Proof.
-    intros Hj Hcg. unfold chain_gate in Hcg. cbv zeta in Hcg.
+    intros Hd Hj Hcg. unfold chain_gate in Hcg. cbv zeta in Hcg.
     destruct (find (fun nd => match op nd with
                               | DFG_Stall _ a => Nat.eqb a d
                               | _ => false
@@ -11389,7 +12200,7 @@ Section SchedulerSimulation.
         try discriminate Hp.
       apply Nat.eqb_eq in Hp. subst sa.
       destruct (node_at_nid act nd Hin) as [_ Hnth].
-      apply (no_stall_on_joined act j d prev (nid nd) slat Hj).
+      apply (no_stall_on_joined act j d prev (nid nd) slat p arg en Hd Hj).
       unfold node_op. rewrite Hnth. exact Eo.
     - destruct (find (fun nd => match op nd with
                                 | DFG_Join a _ => Nat.eqb a d
@@ -11411,20 +12222,47 @@ Section SchedulerSimulation.
       exists jb. unfold node_op. rewrite <- Hg. rewrite Hnth2. exact Eo2.
   Qed.
 
-  Lemma join_has_stall (act: tfs_action sched) j d prev :
+  (* An ordering join is never a [pends] node: that would put its drive in the
+     pending set, and a pending set holds samples. *)
+  Lemma pends_not_joined_drive (act: tfs_action sched) (pp: p_var) enp n d prev
+        (q: p_var) arg enq :
+    pends (graph (build_dfg ctx act)) pp enp n ->
+    node_op act n = DFG_Join d prev ->
+    node_op act d = DFG_Drive q arg enq -> False.
+  Proof.
+    intros Hp Hj Hd.
+    destruct Hp as [ns tok en' Hin Hop Hdis | nj a b Hin Hop Ha Hb].
+    - destruct (node_at_nid act ns Hin) as [_ Hnth].
+      unfold node_op in Hj. rewrite Hnth in Hj. rewrite Hop in Hj. discriminate Hj.
+    - destruct (node_at_nid act nj Hin) as [_ Hnth].
+      unfold node_op in Hj. rewrite Hnth in Hj. rewrite Hop in Hj.
+      injection Hj as -> ->.
+      exact (pends_not_drive act pp enp d q arg enq Ha Hd).
+  Qed.
+
+  Lemma join_has_stall (act: tfs_action sched) j d prev (p: p_var) arg en :
     node_op act j = DFG_Join d prev ->
+    node_op act d = DFG_Drive p arg en ->
     exists t l, node_op act t = DFG_Stall l j.
   Proof.
-    intro Hop.
+    intros Hop Hd.
     assert (Hlt : j < length (graph (build_dfg ctx act)))
       by (apply node_op_range; rewrite Hop; discriminate).
-    destruct (joins_stalled_build_dfg act
-                (nth j (graph (build_dfg ctx act))
-                   {| nid := 0; op := DFG_Empty; sz := 0 |})
-                d prev (nth_In _ _ Hlt) Hop) as [t [l [Ht Htop]]].
-    rewrite (node_nid_at act j Hlt) in Htop.
-    destruct (node_at_nid act t Ht) as [_ Hnth].
-    exists (nid t), l. unfold node_op. rewrite Hnth. exact Htop.
+    pose proof (joins_stalled_build_dfg act
+                  (nth j (graph (build_dfg ctx act))
+                     {| nid := 0; op := DFG_Empty; sz := 0 |})
+                  d prev (nth_In _ _ Hlt) Hop) as Hjst.
+    unfold jst_node in Hjst.
+    rewrite (node_nid_at act j Hlt) in Hjst.
+    destruct Hjst as [[t [l [Ht Htop]]] | [nj [a [Hnj Hnjop]]]].
+    - destruct (node_at_nid act t Ht) as [_ Hnth].
+      exists (nid t), l. unfold node_op. rewrite Hnth. exact Htop.
+    - exfalso.
+      pose proof (joins_sequence_build_dfg act nj a j Hnj Hnjop) as Hk.
+      destruct Hk as [[p2 [arg2 [en2 [nd2 [_ [_ [_ [_ H5]]]]]]]]
+                     | [p2 [en2 [_ H2]]]].
+      + exact (pends_not_joined_drive act p2 en2 j d prev p arg en H5 Hop Hd).
+      + exact (pends_not_joined_drive act p2 en2 j d prev p arg en H2 Hop Hd).
   Qed.
 
   Lemma sample_tok_is_stall (act: tfs_action sched) s (p: p_var) tok en :
@@ -11445,11 +12283,12 @@ Section SchedulerSimulation.
 
   (* With [ip_lat_pos] every join carries a stall, so a drive that has a join
      has a chain gate at all -- which is what the port argument assumed. *)
-  Lemma chain_gate_some (act: tfs_action sched) m j prev :
+  Lemma chain_gate_some (act: tfs_action sched) m j prev (p: p_var) arg en :
+    node_op act m = DFG_Drive p arg en ->
     node_op act j = DFG_Join m prev ->
     exists g h, chain_gate ctx (build_dfg ctx act) m = Some (g, h).
   Proof.
-    intro Hj. unfold chain_gate. cbv zeta.
+    intros Hm Hj. unfold chain_gate. cbv zeta.
     destruct (find (fun nd => match op nd with
                               | DFG_Stall _ a => Nat.eqb a m
                               | _ => false
@@ -11467,7 +12306,7 @@ Section SchedulerSimulation.
       destruct (node_at_nid act j2 Hin2) as [_ Hnth2].
       assert (Hj2 : node_op act (nid j2) = DFG_Join m jb)
         by (unfold node_op; rewrite Hnth2; exact Eo2).
-      destruct (join_has_stall act (nid j2) m jb Hj2) as [t [l Ht]].
+      destruct (join_has_stall act (nid j2) m jb p arg en Hj2 Hm) as [t [l Ht]].
       destruct (find (fun nd => match op nd with
                                 | DFG_Stall _ a => Nat.eqb a (nid j2)
                                 | _ => false
@@ -11511,7 +12350,8 @@ Section SchedulerSimulation.
   Lemma sample_drive_head_shape (act: tfs_action sched) (p: p_var) h d :
     sample_drive_head act p h = Some d ->
     (d = h /\ exists arg en, node_op act h = DFG_Drive p arg en)
-    \/ (exists prev, node_op act h = DFG_Join d prev).
+    \/ (exists prev arg en, node_op act h = DFG_Join d prev
+          /\ node_op act d = DFG_Drive p arg en).
   Proof.
     unfold sample_drive_head.
     destruct (node_op act h) as [ c | iv | v2 | uop a1 | bop a1 a2 | a1 | cd t1 e1
@@ -11524,7 +12364,8 @@ Section SchedulerSimulation.
         try discriminate.
       destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) dov p) as [-> | Hne];
         [| discriminate ].
-      intro H. injection H as <-. right. exists jb. reflexivity.
+      intro H. injection H as <-. right. exists jb, dn, den.
+      split; [ reflexivity | exact Ea ].
   Qed.
 
   (* What sits strictly between a call.s drive and its sample: its ordering
@@ -11542,15 +12383,15 @@ Section SchedulerSimulation.
     destruct (node_op act tok) as [ c | iv | v2 | uop a1 | bop a1 a2 | a1 | cd t1 e1
                                  | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Etok;
       try (destruct (sample_drive_head_shape act p tok d Hsd)
-             as [[Hdh [ar [e2 Hh]]] | [prev Hh]];
+             as [[Hdh [ar [e2 Hh]]] | [prev [ar2 [e3 [Hh Hdr]]]]];
            [ lia
-           | pose proof (join_nid_succ act tok d prev Hh) as Ht;
+           | pose proof (join_nid_succ act tok d prev p ar2 e3 Hh Hdr) as Ht;
              assert (i = tok) as -> by lia; right; exists d, prev; exact Hh ]).
     pose proof (stall_nid_succ act tok slat sa Etok) as Ht.
     destruct (sample_drive_head_shape act p sa d Hsd)
-      as [[Hdh [ar [e2 Hh]]] | [prev Hh]].
+      as [[Hdh [ar [e2 Hh]]] | [prev [ar2 [e3 [Hh Hdr]]]]].
     - assert (i = tok) as -> by lia. left. exists slat, sa. exact Etok.
-    - pose proof (join_nid_succ act sa d prev Hh) as Hsa.
+    - pose proof (join_nid_succ act sa d prev p ar2 e3 Hh Hdr) as Hsa.
       assert (i = sa \/ i = tok) as [-> | ->] by lia;
         [ right; exists d, prev; exact Hh | left; exists slat, sa; exact Etok ].
   Qed.
@@ -11565,13 +12406,13 @@ Section SchedulerSimulation.
     destruct (node_op act tok) as [ c | iv | v2 | uop a1 | bop a1 a2 | a1 | cd t1 e1
                                  | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Etok;
       try (destruct (sample_drive_head_shape act p tok d Hsd)
-             as [[Hdh [ar [e2 Hh]]] | [prev Hh]];
+             as [[Hdh [ar [e2 Hh]]] | [prev [ar2 [e3 [Hh Hdr]]]]];
            [ lia
-           | pose proof (join_nid_succ act tok d prev Hh) as Ht; lia ]).
+           | pose proof (join_nid_succ act tok d prev p ar2 e3 Hh Hdr) as Ht; lia ]).
     pose proof (stall_nid_succ act tok slat sa Etok) as Ht.
     destruct (sample_drive_head_shape act p sa d Hsd)
-      as [[Hdh [ar [e2 Hh]]] | [prev Hh]]; [ lia |].
-    pose proof (join_nid_succ act sa d prev Hh) as Hsa. lia.
+      as [[Hdh [ar [e2 Hh]]] | [prev [ar2 [e3 [Hh Hdr]]]]]; [ lia |].
+    pose proof (join_nid_succ act sa d prev p ar2 e3 Hh Hdr) as Hsa. lia.
   Qed.
 
   (* Nothing strictly between a call.s drive and its sample is a drive: the
@@ -11639,7 +12480,8 @@ Section SchedulerSimulation.
     node_op act m = DFG_Drive p arg en ->
     node_op act s = DFG_Sample p tok en' ->
     s < m -> guards_disjoint en en' = false ->
-    exists j prev, node_op act j = DFG_Join m prev /\ s <= prev.
+    exists j prev, node_op act j = DFG_Join m prev
+      /\ covers (graph (build_dfg ctx act)) p en' s prev.
   Proof.
     intros Hm Hs Hlt Hdis.
     assert (Hmlt : m < length (graph (build_dfg ctx act)))
@@ -11651,14 +12493,14 @@ Section SchedulerSimulation.
                                  (conj (node_nid_at act m Hmlt) Hm)))
                 (ex_intro _ _ (conj (nth_In _ _ Hslt)
                                  (conj (node_nid_at act s Hslt) Hs))) Hlt Hdis)
-      as [j [prev [Hj [Hjop Hle]]]].
+      as [j [prev [Hj [Hjop Hcov]]]].
     exists (nid j), prev.
     destruct (node_at_nid act j Hj) as [_ Hnth].
-    split; [ unfold node_op; rewrite Hnth; exact Hjop | exact Hle ].
+    split; [ unfold node_op; rewrite Hnth; exact Hjop | exact Hcov ].
   Qed.
 
-  (* ASSEMBLY: the chain gate of a drive emitted after this call.s sample is
-     the ordering join, and that join waits on a sample at or after it. *)
+  (* ASSEMBLY: the chain gate of a drive emitted after this call's sample is
+     the ordering join, and that join's pending tree covers that sample. *)
   Lemma later_drive_gate
         (act: tfs_action sched) (p: p_var) samp tok en_s d m arg_m en_m g h :
     node_op act samp = DFG_Sample p tok en_s ->
@@ -11668,28 +12510,25 @@ Section SchedulerSimulation.
     chain_gate ctx (build_dfg ctx act) m = Some (g, h) ->
     exists prev,
       node_op act g = DFG_Join m prev
-      /\ samp <= prev
-      /\ exists q tok' en'', node_op act prev = DFG_Sample q tok' en''.
+      /\ covers (graph (build_dfg ctx act)) p en_s samp prev.
   Proof.
     intros Hsamp Hsd Hm Hlt Hdis Hcg.
     pose proof (drive_after_sample act p samp tok en_s d m p arg_m en_m
                   Hsamp Hsd Hm Hlt) as Hsm.
     destruct (call_sequenced_join act p m arg_m en_m samp tok en_s Hm Hsamp Hsm Hdis)
-      as [j [prev [Hj Hle]]].
-    destruct (chain_gate_is_join act m j prev g h Hj Hcg) as [prev' Hg].
-    pose proof (join_nid_succ act j m prev Hj) as Hjn.
-    pose proof (join_nid_succ act g m prev' Hg) as Hgn.
+      as [j [prev [Hj Hcov]]].
+    destruct (chain_gate_is_join act m j prev g h p arg_m en_m Hm Hj Hcg)
+      as [prev' Hg].
+    pose proof (join_nid_succ act j m prev p arg_m en_m Hj Hm) as Hjn.
+    pose proof (join_nid_succ act g m prev' p arg_m en_m Hg Hm) as Hgn.
     assert (Hgj : g = j) by lia.
     assert (Hpp : prev' = prev) by congruence.
     subst prev'.
-    exists prev. split; [ exact Hg | split; [ exact Hle |]].
-    destruct (join_waits_on_sample act g m prev Hg)
-      as [q [arg2 [en2 [tok2 [en3 [_ [Hps _]]]]]]].
-    exists q, tok2, en3. exact Hps.
+    exists prev. split; [ exact Hg | exact Hcov ].
   Qed.
 
   (* And the same with no [chain_gate] hypothesis: it is [Some] because the
-     join carries a stall. *)
+     ordering join carries a stall. *)
   Lemma later_drive_gate_full
         (act: tfs_action sched) (p: p_var) samp tok en_s d m arg_m en_m :
     node_op act samp = DFG_Sample p tok en_s ->
@@ -11699,18 +12538,17 @@ Section SchedulerSimulation.
     exists g h prev,
       chain_gate ctx (build_dfg ctx act) m = Some (g, h)
       /\ node_op act g = DFG_Join m prev
-      /\ samp <= prev
-      /\ exists q tok' en'', node_op act prev = DFG_Sample q tok' en''.
+      /\ covers (graph (build_dfg ctx act)) p en_s samp prev.
   Proof.
     intros Hsamp Hsd Hm Hlt Hdis.
     pose proof (drive_after_sample act p samp tok en_s d m p arg_m en_m
                   Hsamp Hsd Hm Hlt) as Hsm.
     destruct (call_sequenced_join act p m arg_m en_m samp tok en_s Hm Hsamp Hsm Hdis)
       as [j [prev0 [Hj _]]].
-    destruct (chain_gate_some act m j prev0 Hj) as [g [h Hcg]].
+    destruct (chain_gate_some act m j prev0 p arg_m en_m Hm Hj) as [g [h Hcg]].
     destruct (later_drive_gate act p samp tok en_s d m arg_m en_m g h
-                Hsamp Hsd Hm Hlt Hdis Hcg) as [prev [Hg [Hle Hps]]].
-    exists g, h, prev. split; [ exact Hcg | split; [ exact Hg | split; [ exact Hle | exact Hps ] ] ].
+                Hsamp Hsd Hm Hlt Hdis Hcg) as [prev [Hg Hcov]].
+    exists g, h, prev. split; [ exact Hcg | split; [ exact Hg | exact Hcov ] ].
   Qed.
 
   (* Strictly decreasing, as [drive_nodes] produces it. *)
@@ -13284,11 +14122,14 @@ Section SchedulerSimulation.
           destruct Ha as [Ga [Na [Pa [Qa [Sa Fa]]]]].
           rewrite (bind_red (dataflow_expr ctx expr (ip_req_sz (tfs_spec_ip ctx ip)))
                      _ s _ _ Ea).
+          destruct (join_pendings ctx (pending_samples ctx s ip en) sa)
+            as [prev_opt sj] eqn:Ejp.
+          rewrite (bind_red _ _ sa _ _ Ejp).
           destruct (emit ctx (DFG_Drive ip arg_id en)
-                      (ip_req_sz (tfs_spec_ip ctx ip)) sa) as [drive_id sd] eqn:Ed.
+                      (ip_req_sz (tfs_spec_ip ctx ip)) sj) as [drive_id sd] eqn:Ed.
           rewrite (bind_red (emit ctx (DFG_Drive ip arg_id en)
-                               (ip_req_sz (tfs_spec_ip ctx ip))) _ sa _ _ Ed).
-          destruct (match last_sample ctx s ip en with
+                               (ip_req_sz (tfs_spec_ip ctx ip))) _ sj _ _ Ed).
+          destruct (match prev_opt with
                     | None => ret ctx drive_id
                     | Some prev => emit ctx (DFG_Join drive_id prev) 1
                     end sd) as [head_id sh] eqn:Eh.
@@ -13308,9 +14149,12 @@ Section SchedulerSimulation.
           cbn [snd] in Hhead, Hkeep, Hminv.
           intro Hg'.
           (* --- the graph grows along the chain, so each emit lands in [F] --- *)
-          assert (Gd : wgmono sa sd) by exact (emit_gmono _ _ _ _ _ Ed).
+          assert (Gj : wgmono sa sj).
+          { pose proof (join_pendings_grows (pending_samples ctx s ip en) sa) as Hgj.
+            rewrite Ejp in Hgj. cbn [snd] in Hgj. exact Hgj. }
+          assert (Gd : wgmono sj sd) by exact (emit_gmono _ _ _ _ _ Ed).
           assert (Gh : wgmono sd sh).
-          { revert Eh. destruct (last_sample ctx s ip en) as [prev |].
+          { revert Eh. destruct prev_opt as [prev |].
             - intro E. exact (emit_gmono _ _ _ _ _ E).
             - unfold ret. intro E. injection E as _ <-. apply wgmono_refl. }
           assert (Gt : wgmono sh s1).
@@ -13328,10 +14172,12 @@ Section SchedulerSimulation.
           assert (Gt1F : wgmono s1 F) by (eapply wgmono_trans; [ exact Gm | exact GmF ]).
           assert (GhF : wgmono sh F) by (eapply wgmono_trans; [ exact Gt | exact Gt1F ]).
           assert (GdF : wgmono sd F) by (eapply wgmono_trans; [ exact Gh | exact GhF ]).
-          assert (GaF : wgmono sa F) by (eapply wgmono_trans; [ exact Gd | exact GdF ]).
+          assert (GjF : wgmono sj F) by (eapply wgmono_trans; [ exact Gd | exact GdF ]).
+          assert (GaF : wgmono sa F) by (eapply wgmono_trans; [ exact Gj | exact GjF ]).
           (* --- and the nodes it records --- *)
           assert (Hnea : 0 < length (graph sa)) by exact (gne_gmono s sa Ga Hne).
-          assert (Hned : 0 < length (graph sd)) by exact (gne_gmono sa sd Gd Hnea).
+          assert (Hnej : 0 < length (graph sj)) by exact (gne_gmono sa sj Gj Hnea).
+          assert (Hned : 0 < length (graph sd)) by exact (gne_gmono sj sd Gd Hnej).
           assert (Hneh : 0 < length (graph sh)) by exact (gne_gmono sd sh Gh Hned).
           assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono sh s1 Gt Hneh).
           destruct (emitted_node_at act F s1 s2 (DFG_Sample ip stall_id en)
@@ -13339,13 +14185,13 @@ Section SchedulerSimulation.
             as [Msm1 [Msm2 [MsmOp MsmSz]]].
           (* the head is the drive, or the ordering join in front of it -- and
              either way it is no stall, which is what pins the token's arm *)
-          destruct (emitted_node_at act F sa sd (DFG_Drive ip arg_id en)
-                      (ip_req_sz (tfs_spec_ip ctx ip)) drive_id HF Hnea Ed GdF)
+          destruct (emitted_node_at act F sj sd (DFG_Drive ip arg_id en)
+                      (ip_req_sz (tfs_spec_ip ctx ip)) drive_id HF Hnej Ed GdF)
             as [_ [_ [MdrOp MdrSz]]].
           assert (Hhd : sample_req_head act head_id = Some arg_id
                         /\ match node_op act head_id with
                            | DFG_Stall _ _ => False | _ => True end).
-          { revert Eh. destruct (last_sample ctx s ip en) as [prev |].
+          { revert Eh. destruct prev_opt as [prev |].
             - intro E.
               destruct (emitted_node_at act F sd sh (DFG_Join drive_id prev) 1
                           head_id HF Hned E GhF) as [_ [_ [MjnOp _]]].
@@ -13357,7 +14203,7 @@ Section SchedulerSimulation.
           destruct Hhd as [Hhd1 Hhd2].
           (* the same walk, stopped at the drive and checked to be on [ip] *)
           assert (Hdh : sample_drive_head act ip head_id = Some drive_id).
-          { revert Eh. destruct (last_sample ctx s ip en) as [prev |].
+          { revert Eh. destruct prev_opt as [prev |].
             - intro E.
               destruct (emitted_node_at act F sd sh (DFG_Join drive_id prev) 1
                           head_id HF Hned E GhF) as [_ [_ [MjnOp2 _]]].
@@ -13410,10 +14256,12 @@ Section SchedulerSimulation.
               - intro E. exact (emit_vm _ _ _ _ _ E). }
             rewrite Hs1.
             assert (Hsh : var_map sh = var_map sd).
-            { revert Eh. destruct (last_sample ctx s ip en) as [prev |].
+            { revert Eh. destruct prev_opt as [prev |].
               - intro E. exact (emit_vm _ _ _ _ _ E).
               - unfold ret. intro E. injection E as _ <-. reflexivity. }
-            rewrite Hsh. exact (emit_vm _ _ _ _ _ Ed). }
+            rewrite Hsh. rewrite (emit_vm _ _ _ _ _ Ed).
+            pose proof (join_pendings_vm_eq (pending_samples ctx s ip en) sa) as Hvj.
+            rewrite Ejp in Hvj. cbn [snd] in Hvj. exact Hvj. }
           (* the sample's reference IS its register, and [Hrt] reads it *)
           assert (Hsampv : is_sample_of act samp_id = true)
             by (unfold is_sample_of, node_op; rewrite MsmOp; reflexivity).
@@ -14122,7 +14970,7 @@ Section SchedulerSimulation.
     (* down through the ordering join, if there is one, to the drive *)
     assert (Hnref : eval1 (node_ref_valid act a_idx n) ss input = Bits.ones 1).
     { destruct Hmshape as [-> | [prev Hj]]; [ exact Hmref |].
-      pose proof (join_nid_succ act m n prev Hj) as Hms.
+      pose proof (join_nid_succ act m n prev p arg en Hj Hop) as Hms.
       unfold node_ref_valid in Hmref.
       rewrite (compile_join_valid (build_dfg ctx act) _ _ a_idx m n prev
                  (sample_bufs act a_idx) [] (length (graph (build_dfg ctx act)))
@@ -14217,6 +15065,165 @@ Section SchedulerSimulation.
         exact bits1_neg_ones. }
     rewrite Hz2 in Hone. exact (ones1_neq_zero (eq_sym Hone)).
   Qed.
+
+  (* THE PENDING TREE, DESCENDED.  Wherever the tree of joins a call waits on
+     reads as valid, so does every sample in it; a buffered node inside speaks
+     for the cycle before, which is why the run appears here. *)
+  Lemma pleaf_valid_ones
+        (act: tfs_action sched) a_idx (input: input_t) (ss0: sched_sys_state) :
+    act_idx_aligned act a_idx ->
+    (forall qv, (fst ss0).[tf_dfg_v a_idx qv] = Bits.zero) ->
+    forall u, (forall i, 1 <= i <= u -> ~ done_set (run_n i act input ss0)) ->
+    forall root s, pleaf (graph (build_dfg ctx act)) root s ->
+    forall (s_idx : Vect.index
+              (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+           bufs fuel q qsz,
+      is_sample_of act s = true ->
+      BitsToLists.list_assoc bufs s = Some (q, qsz) ->
+      index_of_nat (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) q
+        = Some s_idx ->
+      (forall n e, BitsToLists.list_assoc bufs n = Some e ->
+         BitsToLists.list_assoc
+           (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) n = Some e) ->
+      root < fuel ->
+      eval1 (snd (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) root bufs))
+        (run_n u act input ss0) (sched_input input (run_n u act input ss0))
+        = Bits.ones 1 ->
+      (fst (run_n u act input ss0)).[tf_dfg_v a_idx s_idx] = Bits.ones 1.
+  Proof.
+    intros Halign Hzv u.
+    induction u as [u IHu] using (well_founded_induction lt_wf).
+    intros Hpre root s Hleaf.
+    induction Hleaf as [ n | nj a b s Hin Hop Hleaf IH | nj a b s Hin Hop Hleaf IH ];
+      intros s_idx bufs fuel q qsz Hsam Hbs Hqidx Hsub Hfuel Hones.
+    - assert (Hf0 : 0 < fuel) by lia.
+      rewrite (compile_buffered_valid _ _ _ a_idx n bufs q qsz s_idx fuel []
+                 Hbs Hqidx Hf0) in Hones.
+      rewrite eval1_svar_v in Hones. exact Hones.
+    - destruct (node_at_nid act nj Hin) as [Hnjlen Hnjat].
+      assert (Hf0 : 0 < fuel) by lia.
+      assert (Hopat : op (nth (nid nj) (graph (build_dfg ctx act))
+                              {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Join a b)
+        by (rewrite Hnjat; exact Hop).
+      destruct (BitsToLists.list_assoc bufs (nid nj)) as [[m0 msz] |] eqn:Enj.
+      + pose proof (Hsub (nid nj) (m0, msz) Enj) as Hreal.
+        destruct (buffer_slot_of act a_idx (nid nj) m0 msz Halign Hreal)
+          as [nj_idx [Hnjidx Hnjvn]].
+        rewrite (compile_buffered_valid _ _ _ a_idx (nid nj) bufs m0 msz nj_idx fuel []
+                   Enj Hnjidx Hf0) in Hones.
+        rewrite eval1_svar_v in Hones.
+        destruct u as [| j].
+        { exfalso. cbn [run_n] in Hones. rewrite Hzv in Hones.
+          exact (ones1_neq_zero (eq_sym Hones)). }
+        assert (Hnd : ~ done_set (run_n (S j) act input ss0)) by (apply Hpre; lia).
+        change (run_n (S j) act input ss0)
+          with (sched_step act (run_n j act input ss0)
+                  (sched_input input (run_n j act input ss0))) in Hones, Hnd.
+        pose proof (buffer_valid_gate act a_idx nj_idx (run_n j act input ss0)
+                      (sched_input input (run_n j act input ss0)) Halign Hnd Hones) as Hgate.
+        rewrite Hnjvn in Hgate.
+        assert (Hsnj : s <> nid nj).
+        { intro He. rewrite He in Hsam. unfold is_sample_of in Hsam.
+          unfold node_op in Hsam. rewrite Hopat in Hsam. discriminate Hsam. }
+        assert (HsubF : forall n0 e,
+                  BitsToLists.list_assoc
+                    (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (nid nj)))
+                       (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) n0
+                    = Some e ->
+                  BitsToLists.list_assoc
+                    (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) n0 = Some e).
+        { intros n0 e He. pose proof (wla_in _ _ _ He) as Hin0.
+          apply filter_In in Hin0. destruct Hin0 as [Hin1 _].
+          apply list_assoc_nodup_in;
+            [ exact (slot_keys_nodup act a_idx Halign) | exact Hin1 ]. }
+        assert (HfiltS : BitsToLists.list_assoc
+                  (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (nid nj)))
+                     (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) s
+                  = Some (q, qsz)).
+        { rewrite list_assoc_filter; [ exact (Hsub s (q, qsz) Hbs) |].
+          intros [k v] _ Hfe. cbn [fst] in Hfe. subst k.
+          apply negb_true_iff, Nat.eqb_neq. exact Hsnj. }
+        assert (Hjlt : j < S j) by lia.
+        assert (Hprej : forall i, 1 <= i <= j -> ~ done_set (run_n i act input ss0))
+          by (intros i Hi; apply Hpre; lia).
+        pose proof (IHu j Hjlt Hprej (nid nj) s
+                      (pleaf_left (graph (build_dfg ctx act)) nj a b s Hin Hop Hleaf)
+                      s_idx _ (length (graph (build_dfg ctx act))) q qsz
+                      Hsam HfiltS Hqidx HsubF Hnjlen Hgate) as Hj.
+        pose proof (validity_monotone_run act a_idx s_idx input ss0 j 1
+                      Halign Hzv ltac:(rewrite Nat.add_1_r; exact Hpre) Hj) as Hmono.
+        rewrite Nat.add_1_r in Hmono. exact Hmono.
+      + rewrite (compile_join_valid _ _ _ a_idx (nid nj) a b bufs [] fuel
+                   Hopat Enj Hf0) in Hones.
+        rewrite valid_and_eval in Hones.
+        destruct (bits1_and_split _ _ Hones) as [Ha _].
+        assert (Hga : In a (get_args ctx nj)) by (unfold get_args; rewrite Hop; left; reflexivity).
+        pose proof (args_lt_fwd act nj Hin a Hga) as Halt.
+        assert (Hfa : a < pred fuel) by lia.
+        exact (IH s_idx bufs (pred fuel) q qsz Hsam Hbs Hqidx Hsub Hfa Ha).
+    - destruct (node_at_nid act nj Hin) as [Hnjlen Hnjat].
+      assert (Hf0 : 0 < fuel) by lia.
+      assert (Hopat : op (nth (nid nj) (graph (build_dfg ctx act))
+                              {| nid := 0; op := DFG_Empty; sz := 0 |}) = DFG_Join a b)
+        by (rewrite Hnjat; exact Hop).
+      destruct (BitsToLists.list_assoc bufs (nid nj)) as [[m0 msz] |] eqn:Enj.
+      + pose proof (Hsub (nid nj) (m0, msz) Enj) as Hreal.
+        destruct (buffer_slot_of act a_idx (nid nj) m0 msz Halign Hreal)
+          as [nj_idx [Hnjidx Hnjvn]].
+        rewrite (compile_buffered_valid _ _ _ a_idx (nid nj) bufs m0 msz nj_idx fuel []
+                   Enj Hnjidx Hf0) in Hones.
+        rewrite eval1_svar_v in Hones.
+        destruct u as [| j].
+        { exfalso. cbn [run_n] in Hones. rewrite Hzv in Hones.
+          exact (ones1_neq_zero (eq_sym Hones)). }
+        assert (Hnd : ~ done_set (run_n (S j) act input ss0)) by (apply Hpre; lia).
+        change (run_n (S j) act input ss0)
+          with (sched_step act (run_n j act input ss0)
+                  (sched_input input (run_n j act input ss0))) in Hones, Hnd.
+        pose proof (buffer_valid_gate act a_idx nj_idx (run_n j act input ss0)
+                      (sched_input input (run_n j act input ss0)) Halign Hnd Hones) as Hgate.
+        rewrite Hnjvn in Hgate.
+        assert (Hsnj : s <> nid nj).
+        { intro He. rewrite He in Hsam. unfold is_sample_of in Hsam.
+          unfold node_op in Hsam. rewrite Hopat in Hsam. discriminate Hsam. }
+        assert (HsubF : forall n0 e,
+                  BitsToLists.list_assoc
+                    (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (nid nj)))
+                       (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) n0
+                    = Some e ->
+                  BitsToLists.list_assoc
+                    (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) n0 = Some e).
+        { intros n0 e He. pose proof (wla_in _ _ _ He) as Hin0.
+          apply filter_In in Hin0. destruct Hin0 as [Hin1 _].
+          apply list_assoc_nodup_in;
+            [ exact (slot_keys_nodup act a_idx Halign) | exact Hin1 ]. }
+        assert (HfiltS : BitsToLists.list_assoc
+                  (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (nid nj)))
+                     (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) s
+                  = Some (q, qsz)).
+        { rewrite list_assoc_filter; [ exact (Hsub s (q, qsz) Hbs) |].
+          intros [k v] _ Hfe. cbn [fst] in Hfe. subst k.
+          apply negb_true_iff, Nat.eqb_neq. exact Hsnj. }
+        assert (Hjlt : j < S j) by lia.
+        assert (Hprej : forall i, 1 <= i <= j -> ~ done_set (run_n i act input ss0))
+          by (intros i Hi; apply Hpre; lia).
+        pose proof (IHu j Hjlt Hprej (nid nj) s
+                      (pleaf_right (graph (build_dfg ctx act)) nj a b s Hin Hop Hleaf)
+                      s_idx _ (length (graph (build_dfg ctx act))) q qsz
+                      Hsam HfiltS Hqidx HsubF Hnjlen Hgate) as Hj.
+        pose proof (validity_monotone_run act a_idx s_idx input ss0 j 1
+                      Halign Hzv ltac:(rewrite Nat.add_1_r; exact Hpre) Hj) as Hmono.
+        rewrite Nat.add_1_r in Hmono. exact Hmono.
+      + rewrite (compile_join_valid _ _ _ a_idx (nid nj) a b bufs [] fuel
+                   Hopat Enj Hf0) in Hones.
+        rewrite valid_and_eval in Hones.
+        destruct (bits1_and_split _ _ Hones) as [_ Hb].
+        assert (Hgb : In b (get_args ctx nj))
+          by (unfold get_args; rewrite Hop; right; left; reflexivity).
+        pose proof (args_lt_fwd act nj Hin b Hgb) as Hblt.
+        assert (Hfb : b < pred fuel) by lia.
+        exact (IH s_idx bufs (pred fuel) q qsz Hsam Hbs Hqidx Hsub Hfb Hb).
+  Qed.
   Lemma no_later_drive
         (act: tfs_action sched) a_idx (p: p_var) samp tok en_s d m
         (input: input_t) (ss0: sched_sys_state) (u: nat) :
@@ -14248,24 +15255,65 @@ Section SchedulerSimulation.
     - exact (Hgm arg_m en_m Hm Hdis).
     - destruct (later_drive_gate_full act p samp tok en_s d m arg_m en_m
                   Hsamp Hsd Hm Hlt Hdis)
-        as [g [h [prev [Hcg [Hg [Hle _]]]]]].
-      destruct (join_waits_on_sample act g m prev Hg)
-        as [p0 [arg0 [en0 [tok2 [en3 [Hmd [Hpsp _]]]]]]].
-      assert (Hpp : p0 = p).
-      { rewrite Hm in Hmd. injection Hmd as Hp1 _ _. exact (eq_sym Hp1). }
-      subst p0.
-      assert (Hpsam : is_sample_of act prev = true)
-        by (unfold is_sample_of; rewrite Hpsp; reflexivity).
-      assert (Hpg : prev <> g)
-        by (intro He; rewrite He, Hg in Hpsp; discriminate Hpsp).
-      destruct (sample_slot act a_idx prev Halign Hpsam)
-        as [q0 [qsz [prev_idx [Hassoc [Hidx Hvn]]]]].
-      assert (Hpz : (fst (run_n u act input ss0)).[tf_dfg_v a_idx prev_idx] = Bits.zero)
-        by (apply (Hnl prev_idx tok2 en3); rewrite Hvn; [ exact Hle | exact Hpsp ]).
+        as [g [h [prev [Hcg [Hg Hcov]]]]].
+      destruct Hcov as [s' [Hpl [Hle Hd]]].
+      (* the covering leaf is a sample on [p] either way *)
+      assert (Hs'sam : is_sample_of act s' = true).
+      { destruct Hd as [Hq | [nd [tk [en'' [Hnd [Hnid [Hop _]]]]]]].
+        - subst s'. unfold is_sample_of. rewrite Hsamp. reflexivity.
+        - destruct (node_at_nid act nd Hnd) as [_ Hat].
+          unfold is_sample_of, node_op. rewrite Hnid in Hat. rewrite Hat, Hop.
+          reflexivity. }
+      assert (Hs'op : exists tok2 en3, node_op act s' = DFG_Sample p tok2 en3).
+      { destruct Hd as [Hq | [nd [tk [en'' [Hnd [Hnid [Hop _]]]]]]].
+        - subst s'. exists tok, en_s. exact Hsamp.
+        - destruct (node_at_nid act nd Hnd) as [_ Hat].
+          exists tk, en''. unfold node_op. rewrite Hnid in Hat. rewrite Hat.
+          exact Hop. }
+      destruct Hs'op as [tok2 [en3 Hs'sop]].
+      destruct (sample_slot act a_idx s' Halign Hs'sam)
+        as [q0 [qsz [s_idx [Hassoc [Hidx Hvn]]]]].
+      assert (Hpz : (fst (run_n u act input ss0)).[tf_dfg_v a_idx s_idx] = Bits.zero)
+        by (apply (Hnl s_idx tok2 en3); rewrite Hvn; [ exact Hle | exact Hs'sop ]).
+      (* [prev] is the join's second argument, so it sits one fuel step inside *)
+      assert (Hglt : g < length (graph (build_dfg ctx act)))
+        by (apply node_op_pos; rewrite Hg; discriminate).
+      assert (Hgnode : In (nth g (graph (build_dfg ctx act))
+                            {| nid := 0; op := DFG_Empty; sz := 0 |})
+                          (graph (build_dfg ctx act)))
+        by (apply nth_In; exact Hglt).
+      assert (Hprevlt : prev < g).
+      { pose proof (args_lt_fwd act _ Hgnode prev) as Hal.
+        rewrite (node_nid_at act g Hglt) in Hal. apply Hal.
+        unfold get_args. unfold node_op in Hg. rewrite Hg. right; left; reflexivity. }
+      assert (Hpfuel : prev < pred (length (graph (build_dfg ctx act)))) by lia.
+      (* the leaf's register is down, so the whole tree above it reads zero *)
+      assert (Htree : forall bufs fuel k,
+                (forall n e, BitsToLists.list_assoc bufs n = Some e ->
+                   BitsToLists.list_assoc
+                     (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) n = Some e) ->
+                BitsToLists.list_assoc bufs s' = Some (q0, qsz) ->
+                prev < fuel ->
+                (forall i, 1 <= i <= k -> ~ done_set (run_n i act input ss0)) ->
+                (fst (run_n k act input ss0)).[tf_dfg_v a_idx s_idx] = Bits.zero ->
+                eval1 (snd (compile_dfg_expr ctx bneeds fuel a_idx
+                              (build_dfg ctx act) prev bufs))
+                  (run_n k act input ss0) (sched_input input (run_n k act input ss0))
+                  = Bits.zero).
+      { intros bufs fuel k Hsub Hbs Hf Hprek Hz.
+        destruct (bits1_cases
+                    (eval1 (snd (compile_dfg_expr ctx bneeds fuel a_idx
+                                   (build_dfg ctx act) prev bufs))
+                       (run_n k act input ss0)
+                       (sched_input input (run_n k act input ss0))))
+          as [Hone | Hzero]; [ exfalso | exact Hzero ].
+        pose proof (pleaf_valid_ones act a_idx input ss0 Halign Hzv k Hprek prev s' Hpl
+                      s_idx bufs fuel q0 qsz Hs'sam Hbs Hidx Hsub Hf Hone) as Hc.
+        rewrite Hz in Hc. exact (ones1_neq_zero (eq_sym Hc)). }
       destruct (BitsToLists.list_assoc
                   (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) g)
         as [[m0 msz] |] eqn:Hgb.
-      + (* the join is buffered: its own validity bit has not risen yet *)
+      + (* the join is buffered: its own validity bit has yet to rise *)
         destruct (buffer_slot_of act a_idx g m0 msz Halign Hgb) as [g_idx [Hgidx Hgvn]].
         apply (drive_pulse_zero_of_gate_reg act a_idx m g h m0 msz g_idx _ _
                  Hcg Hgb Hgidx Hlen0).
@@ -14280,10 +15328,14 @@ Section SchedulerSimulation.
                   (sched_input input (run_n j act input ss0))) in Hone, Hnd.
         pose proof (buffer_valid_gate act a_idx g_idx (run_n j act input ss0)
                       (sched_input input (run_n j act input ss0)) Halign Hnd Hone) as Hgate.
-        assert (Hprevj : (fst (run_n j act input ss0)).[tf_dfg_v a_idx prev_idx]
+        assert (Hprevj : (fst (run_n j act input ss0)).[tf_dfg_v a_idx s_idx]
                          = Bits.zero)
-          by (apply (validity_zero_earlier act a_idx prev_idx input ss0 j (S j)
+          by (apply (validity_zero_earlier act a_idx s_idx input ss0 j (S j)
                        Halign Hzv Hpre ltac:(lia)); exact Hpz).
+        assert (Hsg : s' <> vreg_nid a_idx g_idx).
+        { rewrite Hgvn. intro He. rewrite He in Hs'sam.
+          unfold is_sample_of, node_op in Hs'sam. unfold node_op in Hg.
+          rewrite Hg in Hs'sam. discriminate Hs'sam. }
         assert (Hgnone : BitsToLists.list_assoc
                   (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (vreg_nid a_idx g_idx)))
                      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
@@ -14292,23 +15344,43 @@ Section SchedulerSimulation.
           apply in_map_iff in Hin2. destruct Hin2 as [[k v] [Hk Hmem]].
           cbn [fst] in Hk. subst k. apply filter_In in Hmem.
           destruct Hmem as [_ Hq2]. rewrite Nat.eqb_refl in Hq2. discriminate Hq2. }
-        assert (Hprevf : BitsToLists.list_assoc
+        assert (HsubF : forall n0 e,
+                  BitsToLists.list_assoc
+                    (filter (fun '(b_nid, _) =>
+                               negb (Nat.eqb b_nid (vreg_nid a_idx g_idx)))
+                       (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) n0
+                    = Some e ->
+                  BitsToLists.list_assoc
+                    (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) n0 = Some e).
+        { intros n0 e He. pose proof (wla_in _ _ _ He) as Hin0.
+          apply filter_In in Hin0. destruct Hin0 as [Hin1 _].
+          apply list_assoc_nodup_in;
+            [ exact (slot_keys_nodup act a_idx Halign) | exact Hin1 ]. }
+        assert (HfiltS : BitsToLists.list_assoc
                   (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (vreg_nid a_idx g_idx)))
-                     (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
-                  prev = Some (q0, qsz)).
+                     (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) s'
+                  = Some (q0, qsz)).
         { rewrite list_assoc_filter; [ exact Hassoc |].
           intros [k v] _ Hfe. cbn [fst] in Hfe. subst k.
-          apply negb_true_iff, Nat.eqb_neq. rewrite Hgvn. exact Hpg. }
-        pose proof (join_gate_zero_of_prev act a_idx (vreg_nid a_idx g_idx) m prev
-                      q0 qsz (length (graph (build_dfg ctx act))) prev_idx _ _
-                      (sched_input input (run_n j act input ss0))
-                      ltac:(rewrite Hgvn; exact Hg) Hgnone Hprevf Hidx Hprevj Hlen)
-          as Hzg.
+          apply negb_true_iff, Nat.eqb_neq. exact Hsg. }
+        assert (Hprej : forall i, 1 <= i <= j -> ~ done_set (run_n i act input ss0))
+          by (intros i Hi; apply Hpre; lia).
+        assert (Hgj : node_op act (vreg_nid a_idx g_idx) = DFG_Join m prev)
+          by (rewrite Hgvn; exact Hg).
+        assert (Hzg : eval1 (snd (compile_dfg_expr ctx bneeds
+                        (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act)
+                        (vreg_nid a_idx g_idx)
+                        (filter (fun '(b_nid, _) =>
+                                   negb (Nat.eqb b_nid (vreg_nid a_idx g_idx)))
+                           (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))))
+                      (run_n j act input ss0)
+                      (sched_input input (run_n j act input ss0)) = Bits.zero).
+        { apply (join_gate_zero_of_arg act a_idx (vreg_nid a_idx g_idx) m prev
+                   (length (graph (build_dfg ctx act))) _ _ _ Hgj Hgnone Hlen).
+          apply (Htree _ _ j HsubF HfiltS Hpfuel Hprej Hprevj). }
         rewrite Hgate in Hzg. exact (ones1_neq_zero Hzg).
       + apply (drive_pulse_zero_of_join act a_idx m g h m prev _ _ Hcg Hg Hgb Hlen0).
-        rewrite (compile_buffered_valid _ _ _ a_idx prev _ q0 qsz prev_idx _ _
-                   Hassoc Hidx Hlenp).
-        rewrite eval1_svar_v. exact Hpz.
+        apply (Htree _ _ u (fun n e H => H) Hassoc Hpfuel Hpre Hpz).
   Qed.
 
 
