@@ -15664,6 +15664,7 @@ Section SchedulerSimulation.
   Definition samples_ordered (act: tfs_action sched) a_idx (input: input_t)
       (ss0: sched_sys_state) : Prop :=
     forall (p: p_var) s1 s2 tok1 en1 tok2 en2 k,
+      (forall i, 1 <= i <= k -> ~ done_set (run_n i act input ss0)) ->
       node_op act (vreg_nid a_idx s1) = DFG_Sample p tok1 en1 ->
       node_op act (vreg_nid a_idx s2) = DFG_Sample p tok2 en2 ->
       vreg_nid a_idx s1 <= vreg_nid a_idx s2 ->
@@ -15698,14 +15699,261 @@ Section SchedulerSimulation.
               eval1 (drive_pulse act a_idx mm) (run_n w act input ss0)
                 (sched_input input (run_n w act input ss0)) = Bits.zero).
 
-  (* The three together, at the last cycle before the action reports done.
-     [guards_settled] was a fourth: a drive.s validity now carries its guard.s,
-     so [excl_drive_pulse_zero] proves what it assumed. *)
+  (* The two left, at the last cycle before the action reports done.
+     [guards_settled] and [samples_ordered] were the other two: a drive's
+     validity carries its guard's, and a call's pending tree is now walked
+     down to the samples in it. *)
   Definition call_discipline (act: tfs_action sched) a_idx (input: input_t)
       (ss0: sched_sys_state) (N: nat) : Prop :=
     samples_settled act a_idx input ss0 (pred N)
-    /\ samples_ordered act a_idx input ss0
     /\ requests_sent act a_idx input ss0 (pred N).
+
+
+  Lemma pleaf_le (act: tfs_action sched) root s :
+    pleaf (graph (build_dfg ctx act)) root s -> s <= root.
+  Proof.
+    intro H.
+    induction H as [ n | nj a b n Hin Hop _ IHp | nj a b n Hin Hop _ IHp ].
+    - lia.
+    - assert (Hga : In a (get_args ctx nj))
+        by (unfold get_args; rewrite Hop; left; reflexivity).
+      pose proof (args_lt_fwd act nj Hin a Hga). lia.
+    - assert (Hgb : In b (get_args ctx nj))
+        by (unfold get_args; rewrite Hop; right; left; reflexivity).
+      pose proof (args_lt_fwd act nj Hin b Hgb). lia.
+  Qed.
+
+  (* THE ORDER, as a lemma.  A later call on a port is sequenced behind every
+     earlier one whose guard can hold with its own, so the earlier answer is
+     latched first.  Strong induction on the later sample: the tree it waits
+     on may name a sample that in turn covers the one we want. *)
+  Lemma samples_ordered_holds
+        (act: tfs_action sched) a_idx (input: input_t) (ss0: sched_sys_state) :
+    act_idx_aligned act a_idx ->
+    (forall x, zeroed_at_start x -> (fst ss0).[x] = Bits.zero) ->
+    1 < length (graph (build_dfg ctx act)) ->
+    samples_ordered act a_idx input ss0.
+  Proof.
+    intros Halign Hz0 Hlen.
+    assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
+      by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
+    assert (Hlen0 : 0 < length (graph (build_dfg ctx act))) by lia.
+    assert (MAIN : forall n2 (p: p_var) s1 s2 tok1 en1 tok2 en2 k,
+              vreg_nid a_idx s2 <= n2 ->
+              (forall i, 1 <= i <= k -> ~ done_set (run_n i act input ss0)) ->
+              node_op act (vreg_nid a_idx s1) = DFG_Sample p tok1 en1 ->
+              node_op act (vreg_nid a_idx s2) = DFG_Sample p tok2 en2 ->
+              vreg_nid a_idx s1 <= vreg_nid a_idx s2 ->
+              (vreg_nid a_idx s2 = vreg_nid a_idx s1
+               \/ guards_disjoint en1 en2 = false) ->
+              (fst (run_n k act input ss0)).[tf_dfg_v a_idx s2] = Bits.ones 1 ->
+              (fst (run_n k act input ss0)).[tf_dfg_v a_idx s1] = Bits.ones 1).
+    { intro n2. induction n2 as [n2 IH] using (well_founded_induction lt_wf).
+      intros p s1 s2 tok1 en1 tok2 en2 k Hn2 Hpre Hs1 Hs2 Hle Hdj Hones.
+      destruct (Nat.eq_dec (vreg_nid a_idx s1) (vreg_nid a_idx s2)) as [Heq | Hne12].
+      { pose proof (vreg_nid_inj act a_idx s1 s2 Halign Heq) as ->. exact Hones. }
+      assert (Hlt12 : vreg_nid a_idx s1 < vreg_nid a_idx s2) by lia.
+      assert (Hdis : guards_disjoint en1 en2 = false)
+        by (destruct Hdj as [Hq | Hq];
+            [ exfalso; apply Hne12; exact (eq_sym Hq) | exact Hq ]).
+      destruct (sample_has_drive act (vreg_nid a_idx s2) p tok2 en2 Hs2)
+        as [d2 [arg2 [Hsd2 Hd2op]]].
+      assert (Hs1d2 : vreg_nid a_idx s1 < d2).
+      { destruct (Nat.lt_trichotomy (vreg_nid a_idx s1) d2) as [Hlt | [Heq2 | Hgt]].
+        - exact Hlt.
+        - exfalso. rewrite Heq2, Hd2op in Hs1. discriminate Hs1.
+        - exfalso.
+          destruct (sample_chain_between act (vreg_nid a_idx s2) p tok2 en2 d2
+                      (vreg_nid a_idx s1) Hs2 Hsd2 Hgt Hlt12)
+            as [[ll [aa2 Hst]] | [aa2 [bb2 Hjj]]];
+            [ rewrite Hst in Hs1 | rewrite Hjj in Hs1 ]; discriminate Hs1. }
+      assert (Hdis2 : guards_disjoint en2 en1 = false)
+        by (rewrite guards_disjoint_sym; exact Hdis).
+      destruct (call_sequenced_join act p d2 arg2 en2 (vreg_nid a_idx s1) tok1 en1
+                  Hd2op Hs1 Hs1d2 Hdis2) as [j [prev [Hj Hcov]]].
+      (* the stall the sample reads, and the head it hangs off *)
+      assert (Hs2len : vreg_nid a_idx s2 < length (graph (build_dfg ctx act)))
+        by (apply node_op_range; rewrite Hs2; discriminate).
+      assert (Hs2in : In (nth (vreg_nid a_idx s2) (graph (build_dfg ctx act))
+                            {| nid := 0; op := DFG_Empty; sz := 0 |})
+                         (graph (build_dfg ctx act)))
+        by (apply nth_In; exact Hs2len).
+      assert (Hs2raw : op (nth (vreg_nid a_idx s2) (graph (build_dfg ctx act))
+                             {| nid := 0; op := DFG_Empty; sz := 0 |})
+                       = DFG_Sample p tok2 en2) by exact Hs2.
+      destruct (samples_stalled_build_dfg act _ p tok2 en2 Hs2in Hs2raw)
+        as [t [l [aa [Ht [Htid Htop]]]]].
+      destruct (node_at_nid act t Ht) as [_ Hnth].
+      assert (Htok2 : node_op act tok2 = DFG_Stall l aa)
+        by (unfold node_op; rewrite <- Htid, Hnth; exact Htop).
+      assert (Hsdh : sample_drive_head act p aa = Some d2).
+      { unfold sample_drive in Hsd2. rewrite Hs2, Htok2 in Hsd2. exact Hsd2. }
+      assert (Htoklt : tok2 < vreg_nid a_idx s2).
+      { pose proof (args_lt_fwd act _ Hs2in tok2) as Hal.
+        rewrite (node_nid_at act (vreg_nid a_idx s2) Hs2len) in Hal.
+        apply Hal. unfold get_args. rewrite Hs2raw. left; reflexivity. }
+      assert (Htok2len : tok2 < length (graph (build_dfg ctx act))) by lia.
+      assert (Htok2in : In (nth tok2 (graph (build_dfg ctx act))
+                              {| nid := 0; op := DFG_Empty; sz := 0 |})
+                           (graph (build_dfg ctx act)))
+        by (apply nth_In; exact Htok2len).
+      assert (Htok2raw : op (nth tok2 (graph (build_dfg ctx act))
+                               {| nid := 0; op := DFG_Empty; sz := 0 |})
+                         = DFG_Stall l aa) by exact Htok2.
+      assert (Haalt : aa < tok2).
+      { pose proof (args_lt_fwd act _ Htok2in aa) as Hal.
+        rewrite (node_nid_at act tok2 Htok2len) in Hal.
+        apply Hal. unfold get_args. rewrite Htok2raw. left; reflexivity. }
+      (* the head is the ordering join, and it is [j] *)
+      destruct (sample_drive_head_shape act p aa d2 Hsdh)
+        as [[Hdaa [ar1 [e1 Haadr]]] | [prev' [ar2 [e2 [Haaj Hd2dr]]]]].
+      { exfalso. rewrite <- Hdaa in Htok2.
+        exact (no_stall_on_joined act j d2 prev tok2 l p arg2 en2 Hd2op Hj Htok2). }
+      pose proof (join_nid_succ act j d2 prev p arg2 en2 Hj Hd2op) as Hjn.
+      pose proof (join_nid_succ act aa d2 prev' p ar2 e2 Haaj Hd2dr) as Han.
+      assert (Haj : aa = j) by lia.
+      assert (Hpv : prev' = prev).
+      { rewrite Haj, Hj in Haaj. injection Haaj as Hq. exact (eq_sym Hq). }
+      subst prev'.
+      assert (Haalen : aa < length (graph (build_dfg ctx act))) by lia.
+      assert (Haain : In (nth aa (graph (build_dfg ctx act))
+                            {| nid := 0; op := DFG_Empty; sz := 0 |})
+                         (graph (build_dfg ctx act)))
+        by (apply nth_In; exact Haalen).
+      assert (Haaraw : op (nth aa (graph (build_dfg ctx act))
+                             {| nid := 0; op := DFG_Empty; sz := 0 |})
+                       = DFG_Join d2 prev) by exact Haaj.
+      assert (Hprevlt : prev < aa).
+      { pose proof (args_lt_fwd act _ Haain prev) as Hal.
+        rewrite (node_nid_at act aa Haalen) in Hal.
+        apply Hal. unfold get_args. rewrite Haaraw. right; left; reflexivity. }
+      (* the covering leaf *)
+      destruct Hcov as [s' [Hpl [Hles' Hd']]].
+      assert (Hplaa : pleaf (graph (build_dfg ctx act)) aa s').
+      { pose proof (pleaf_right (graph (build_dfg ctx act))
+                      (nth aa (graph (build_dfg ctx act))
+                         {| nid := 0; op := DFG_Empty; sz := 0 |})
+                      d2 prev s' Haain Haaraw Hpl) as Hp.
+        rewrite (node_nid_at act aa Haalen) in Hp. exact Hp. }
+      assert (Hs'le : s' <= prev) by (exact (pleaf_le act prev s' Hpl)).
+      assert (Hs'sam : is_sample_of act s' = true).
+      { destruct Hd' as [Hq | [nd [tk [en'' [Hnd [Hnid [Hop _]]]]]]].
+        - rewrite Hq. unfold is_sample_of. rewrite Hs1. reflexivity.
+        - destruct (node_at_nid act nd Hnd) as [_ Hat].
+          unfold is_sample_of, node_op. rewrite Hnid in Hat. rewrite Hat, Hop.
+          reflexivity. }
+      destruct (sample_slot act a_idx s' Halign Hs'sam)
+        as [q0 [qsz [s'_idx [Hassoc [Hidx Hvn]]]]].
+      (* the lookups the descent needs, for either filtered table *)
+      assert (HsubG : forall key n0 e,
+                BitsToLists.list_assoc
+                  (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid key))
+                     (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) n0
+                  = Some e ->
+                BitsToLists.list_assoc
+                  (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) n0
+                  = Some e).
+      { intros key n0 e He. pose proof (wla_in _ _ _ He) as Hin0.
+        apply filter_In in Hin0. destruct Hin0 as [Hin1 _].
+        apply list_assoc_nodup_in;
+          [ exact (slot_keys_nodup act a_idx Halign) | exact Hin1 ]. }
+      assert (HfiltG : forall key, s' <> key ->
+                BitsToLists.list_assoc
+                  (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid key))
+                     (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) s'
+                = Some (q0, qsz)).
+      { intros key Hne. rewrite list_assoc_filter; [ exact Hassoc |].
+        intros [kk vv] _ Hfe. cbn [fst] in Hfe. subst kk.
+        apply negb_true_iff, Nat.eqb_neq. exact Hne. }
+      (* one cycle back from the sample's register *)
+      destruct k as [| k0].
+      { exfalso. cbn [run_n] in Hones. rewrite Hzv in Hones.
+        exact (ones1_neq_zero (eq_sym Hones)). }
+      assert (Hnd0 : ~ done_set (run_n (S k0) act input ss0)) by (apply Hpre; lia).
+      assert (Hprek0 : forall i, 1 <= i <= k0 -> ~ done_set (run_n i act input ss0))
+        by (intros i Hi; apply Hpre; lia).
+      assert (Hfin : forall kk, kk <= S k0 ->
+                (fst (run_n kk act input ss0)).[tf_dfg_v a_idx s1] = Bits.ones 1 ->
+                (fst (run_n (S k0) act input ss0)).[tf_dfg_v a_idx s1] = Bits.ones 1).
+      { intros kk Hkk Hv.
+        assert (Hp' : forall i, 1 <= i <= kk + (S k0 - kk) ->
+                  ~ done_set (run_n i act input ss0))
+          by (intros i Hi; apply Hpre; lia).
+        pose proof (validity_monotone_run act a_idx s1 input ss0 kk (S k0 - kk)
+                      Halign Hzv Hp' Hv) as Hm.
+        replace (kk + (S k0 - kk)) with (S k0) in Hm by lia. exact Hm. }
+      assert (LEAF : forall kk, kk <= S k0 ->
+                (forall i, 1 <= i <= kk -> ~ done_set (run_n i act input ss0)) ->
+                (fst (run_n kk act input ss0)).[tf_dfg_v a_idx s'_idx] = Bits.ones 1 ->
+                (fst (run_n (S k0) act input ss0)).[tf_dfg_v a_idx s1] = Bits.ones 1).
+      { intros kk Hkk Hprekk Hv.
+        destruct Hd' as [Hq | [nd [tk [en'' [Hnd [Hnid [Hop Hdisl]]]]]]].
+        - assert (Hids : s'_idx = s1).
+          { apply (vreg_nid_inj act a_idx); [ exact Halign |].
+            rewrite Hvn, Hq. reflexivity. }
+          rewrite Hids in Hv. exact (Hfin kk Hkk Hv).
+        - destruct (node_at_nid act nd Hnd) as [_ Hat].
+          assert (Hs'op : node_op act (vreg_nid a_idx s'_idx) = DFG_Sample p tk en'')
+            by (unfold node_op; rewrite Hvn, <- Hnid, Hat; exact Hop).
+          assert (Hs'lt : s' < n2) by lia.
+          assert (Hbound : vreg_nid a_idx s'_idx <= s') by (rewrite Hvn; lia).
+          assert (Hge' : vreg_nid a_idx s1 <= vreg_nid a_idx s'_idx)
+            by (rewrite Hvn; exact Hles').
+          assert (Hv1 : (fst (run_n kk act input ss0)).[tf_dfg_v a_idx s1]
+                        = Bits.ones 1)
+            by (exact (IH s' Hs'lt p s1 s'_idx tok1 en1 tk en'' kk Hbound Hprekk
+                         Hs1 Hs'op Hge' (or_intror Hdisl) Hv)).
+          exact (Hfin kk Hkk Hv1). }
+      change (run_n (S k0) act input ss0)
+        with (sched_step act (run_n k0 act input ss0)
+                (sched_input input (run_n k0 act input ss0))) in Hones, Hnd0.
+      pose proof (buffer_valid_gate act a_idx s2 (run_n k0 act input ss0)
+                    (sched_input input (run_n k0 act input ss0)) Halign Hnd0 Hones)
+        as Hgate.
+      assert (Htokne : tok2 <> vreg_nid a_idx s2) by lia.
+      destruct (sample_gate_cases act a_idx s2 p tok2 en2 l aa Halign Hs2 Htok2
+                  Htokne Hlen)
+        as [[m0 [msz [t_idx [Hta [Htidx [Htvn Hbg]]]]]] | [Htnone Hbg]].
+      + (* the stall is buffered: one more cycle back, then it walks to the head *)
+        rewrite Hbg, eval1_svar_v in Hgate.
+        destruct k0 as [| k1].
+        { exfalso. cbn [run_n] in Hgate. rewrite Hzv in Hgate.
+          exact (ones1_neq_zero (eq_sym Hgate)). }
+        assert (Hnd1 : ~ done_set (run_n (S k1) act input ss0)) by (apply Hpre; lia).
+        assert (Hprek1 : forall i, 1 <= i <= k1 -> ~ done_set (run_n i act input ss0))
+          by (intros i Hi; apply Hpre; lia).
+        change (run_n (S k1) act input ss0)
+          with (sched_step act (run_n k1 act input ss0)
+                  (sched_input input (run_n k1 act input ss0))) in Hgate, Hnd1.
+        pose proof (buffer_valid_gate act a_idx t_idx (run_n k1 act input ss0)
+                      (sched_input input (run_n k1 act input ss0)) Halign Hnd1 Hgate)
+          as Hgate2.
+        assert (Htokstall : node_op act (vreg_nid a_idx t_idx) = DFG_Stall l aa)
+          by (rewrite Htvn; exact Htok2).
+        assert (Haane : aa <> vreg_nid a_idx t_idx) by (rewrite Htvn; lia).
+        rewrite (stall_gate_walks act a_idx t_idx l aa Htokstall Haane Hlen0) in Hgate2.
+        assert (Hs'ne : s' <> vreg_nid a_idx t_idx) by (rewrite Htvn; lia).
+        assert (Haafuel : aa < pred (length (graph (build_dfg ctx act)))) by lia.
+        pose proof (pleaf_valid_ones act a_idx input ss0 Halign Hzv k1 Hprek1 aa s'
+                      Hplaa s'_idx _ (pred (length (graph (build_dfg ctx act))))
+                      q0 qsz Hs'sam (HfiltG _ Hs'ne) Hidx (HsubG _) Haafuel Hgate2)
+          as Hs'ones.
+        exact (LEAF k1 ltac:(lia) Hprek1 Hs'ones).
+      + (* the stall is not buffered: the gate reads the head directly *)
+        rewrite Hbg in Hgate.
+        assert (Hs'ne : s' <> vreg_nid a_idx s2) by lia.
+        assert (Haafuel : aa < pred (pred (length (graph (build_dfg ctx act)))))
+          by lia.
+        pose proof (pleaf_valid_ones act a_idx input ss0 Halign Hzv k0 Hprek0 aa s'
+                      Hplaa s'_idx _
+                      (pred (pred (length (graph (build_dfg ctx act)))))
+                      q0 qsz Hs'sam (HfiltG _ Hs'ne) Hidx (HsubG _) Haafuel Hgate)
+          as Hs'ones.
+        exact (LEAF k0 ltac:(lia) Hprek0 Hs'ones). }
+    intros p s1 s2 tok1 en1 tok2 en2 k Hpre Hs1 Hs2 Hle Hdj Hones.
+    exact (MAIN (vreg_nid a_idx s2) p s1 s2 tok1 en1 tok2 en2 k
+             (le_n _) Hpre Hs1 Hs2 Hle Hdj Hones).
+  Qed.
 
   (* THE PORT AT THE LATCH.  When a call's answer is latched, the port still
      carries that call's own request: its drive put it there, phase 3b keeps
@@ -15718,7 +15966,6 @@ Section SchedulerSimulation.
     1 < length (graph (build_dfg ctx act)) ->
     (forall x, zeroed_at_start x -> (fst ss0).[x] = Bits.zero) ->
     (forall i, 1 <= i <= M -> ~ done_set (run_n i act input ss0)) ->
-    samples_ordered act a_idx input ss0 ->
     requests_sent act a_idx input ss0 M ->
     node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
     sample_drive act (vreg_nid a_idx n_idx) = Some d ->
@@ -15735,7 +15982,8 @@ Section SchedulerSimulation.
         (node_ref_expr act a_idx av)
         (run_n M act input ss0) (sched_input input (run_n M act input ss0)).
   Proof.
-    intros Halign Hlen Hz0 Hpre Hord Hrs Hsamp Hsd Hdop Hdsz Hgd Hjm Hvj HvSj.
+    intros Halign Hlen Hz0 Hpre Hrs Hsamp Hsd Hdop Hdsz Hgd Hjm Hvj HvSj.
+    pose proof (samples_ordered_holds act a_idx input ss0 Halign Hz0 Hlen) as Hord.
     assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
       by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
     destruct (node_op_pos act d ltac:(rewrite Hdop; discriminate)) as [Hd1 Hdlen].
@@ -15749,7 +15997,10 @@ Section SchedulerSimulation.
     { intros u Hu q_idx tok2 en3 Hge Hq Hdj.
       destruct (bits1_cases ((fst (run_n u act input ss0)).[tf_dfg_v a_idx q_idx]))
         as [Hone | Hz]; [ exfalso | exact Hz ].
-      pose proof (Hord p n_idx q_idx tok en tok2 en3 u Hsamp Hq Hge Hdj Hone) as Hsone.
+      assert (Hpu' : forall i, 1 <= i <= u -> ~ done_set (run_n i act input ss0))
+        by (intros i Hi; apply Hpre; lia).
+      pose proof (Hord p n_idx q_idx tok en tok2 en3 u Hpu' Hsamp Hq Hge Hdj Hone)
+        as Hsone.
       assert (Hpu : forall i, 1 <= i <= j -> ~ done_set (run_n i act input ss0))
         by (intros i Hi; apply Hpre; lia).
       rewrite (validity_zero_earlier act a_idx n_idx input ss0 u j Halign Hzv
@@ -15915,7 +16166,6 @@ Section SchedulerSimulation.
     (forall x, zeroed_at_start x -> (fst ss0).[x] = Bits.zero) ->
     (forall i, 1 <= i <= M -> ~ done_set (run_n i act input ss0)) ->
     samples_settled act a_idx input ss0 M ->
-    samples_ordered act a_idx input ss0 ->
     requests_sent act a_idx input ss0 M ->
     node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
     sample_drive act (vreg_nid a_idx n_idx) = Some d ->
@@ -15930,7 +16180,7 @@ Section SchedulerSimulation.
            (node_ref_expr act a_idx av) (run_n M act input ss0)
            (sched_input input (run_n M act input ss0)))).
   Proof.
-    intros Halign Hlen Hz0 Hpre Hset Hord Hrs Hsamp Hsd Hdop Hdsz Hgd.
+    intros Halign Hlen Hz0 Hpre Hset Hrs Hsamp Hsd Hdop Hdsz Hgd.
     assert (Hlen0 : 0 < length (graph (build_dfg ctx act))) by lia.
     assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
       by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
@@ -16013,7 +16263,7 @@ Section SchedulerSimulation.
     end.
     cbn beta iota. cbn [sched_input].
     rewrite (port_holds_request act a_idx input ss0 M n_idx p tok en d av en' j
-               Halign Hlen Hz0 Hpre Hord Hrs Hsamp Hsd Hdop Hdsz Hgd
+               Halign Hlen Hz0 Hpre Hrs Hsamp Hsd Hdop Hdsz Hgd
                Hjm Hvj HPN).
     reflexivity.
   Qed.
