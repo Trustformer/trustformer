@@ -31,6 +31,17 @@ Section SchedulerCore.
   Context (ctx: TFSchedContext).
   Context (cost_limit: nat).
 
+  (* A cycle holds at least one unit of work.  At [cost_limit = 0] every target
+     cycle collapses to 0, so no stall crosses a cycle boundary, no stall is
+     buffered, and [stall_start] leaves every drive's pulse at zero. *)
+  Definition clim : nat := Nat.max 1 cost_limit.
+
+  Lemma clim_pos : 0 < clim.
+  Proof. unfold clim. apply Nat.lt_le_trans with (m := 1); [ lia | apply Nat.le_max_l ]. Qed.
+
+  Lemma clim_eq : 1 <= cost_limit -> clim = cost_limit.
+  Proof. unfold clim. intro H. apply Nat.max_r. exact H. Qed.
+
   Local Notation states_var := (tfs_spec_states ctx).
   Local Notation states_var_eq_dec := (tfs_spec_states_eq_dec ctx).
   Local Notation states_var_fin := (tfs_spec_states_fin ctx).
@@ -456,7 +467,7 @@ Section SchedulerCore.
     (* [ip_lat] is in CYCLES, so scale by [cost_limit]: a whole multiple shifts
        [calc_target_cycle]'s quotient by exactly that many cycles, whatever the
        remainder.  Regressions: StallLatencySpike [sep_pad_r0..r5], [sep_lat_0..6]. *)
-    | DFG_Stall lat _ => lat * cost_limit
+    | DFG_Stall lat _ => lat * clim
     (* SPIKE 2b: a drive and a sample are wiring, not logic. *)
     | DFG_Drive _ _ _ => 0
     | DFG_Sample _ _ _ => 0
@@ -497,7 +508,7 @@ Section SchedulerCore.
   Definition cycle_t := nat.
 
   Definition calc_target_cycle (cost_map: list (nid_t * cost_t)) : list (nid_t * cycle_t) :=
-    map (fun '(nid, c) => (nid, c / cost_limit)) cost_map.
+    map (fun '(nid, c) => (nid, c / clim)) cost_map.
 
   (* Definition calc_max_cycle (cost_map: list (nid_t * cycle_t)) : cycle_t :=
     fold_left (fun amax '(_, c) => Nat.max amax c) cost_map 0. *)

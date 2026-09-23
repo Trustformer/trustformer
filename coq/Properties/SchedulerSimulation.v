@@ -2041,7 +2041,7 @@ Section SchedulerSimulation.
   Lemma list_assoc_calc_target_cycle :
     forall cm n,
       BitsToLists.list_assoc (calc_target_cycle cost_limit cm) n
-      = option_map (fun c => c / cost_limit) (BitsToLists.list_assoc cm n).
+      = option_map (fun c => c / clim cost_limit) (BitsToLists.list_assoc cm n).
   Proof.
     intros cm n. unfold calc_target_cycle.
     induction cm as [| [k c] cm IH]; cbn [map BitsToLists.list_assoc].
