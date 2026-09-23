@@ -643,6 +643,46 @@ Section SchedulerSimulation.
     pose proof (Hmono (r + top) k ltac:(lia) ltac:(lia)). lia.
   Qed.
 
+
+  (* The backward twin of [counter_saturates]: a counter that has left zero
+     started somewhere, and has not been back since. *)
+  Lemma counter_started (sz top K: nat) (b: nat -> bits_t sz) (adv: nat -> bool) :
+    top < pow2 sz ->
+    Bits.to_nat (b 0) = 0 ->
+    (forall j, j < K -> Bits.to_nat (b j) <= top ->
+               Bits.to_nat (b (S j))
+               = if andb (adv j) (negb (Nat.eqb (Bits.to_nat (b j)) top))
+                 then S (Bits.to_nat (b j)) else Bits.to_nat (b j)) ->
+    forall k, k <= K -> Bits.to_nat (b k) <> 0 ->
+      exists t, t < k /\ Bits.to_nat (b t) = 0 /\ adv t = true
+        /\ (forall w, t < w -> w <= k -> Bits.to_nat (b w) <> 0).
+  Proof.
+    intros Htop Hzero Hrec.
+    assert (Hle : forall j, j <= K -> Bits.to_nat (b j) <= top).
+    { intro j. induction j as [| j IHj]; intro Hj; [ lia |].
+      rewrite (Hrec j ltac:(lia) (IHj ltac:(lia))).
+      destruct (andb _ _) eqn:Hc; [| apply IHj; lia ].
+      apply andb_prop in Hc. destruct Hc as [_ Hne].
+      apply negb_true_iff, Nat.eqb_neq in Hne.
+      pose proof (IHj ltac:(lia)). lia. }
+    intro k. induction k as [| k IHk]; intros HK Hne; [ lia |].
+    rewrite (Hrec k ltac:(lia) (Hle k ltac:(lia))) in Hne.
+    destruct (Nat.eq_dec (Bits.to_nat (b k)) 0) as [Hk0 | Hk0].
+    - exists k. split; [ lia | split; [ exact Hk0 |]].
+      destruct (adv k) eqn:Ha.
+      + split; [ reflexivity |]. intros w Hw1 Hw2.
+        assert (w = S k) as -> by lia.
+        rewrite (Hrec k ltac:(lia) (Hle k ltac:(lia))), Ha. exact Hne.
+      + exfalso. cbn [andb] in Hne. apply Hne. exact Hk0.
+    - destruct (IHk ltac:(lia) Hk0) as [t [Ht1 [Ht2 [Ht3 Ht4]]]].
+      exists t. split; [ lia | split; [ exact Ht2 | split; [ exact Ht3 |]]].
+      intros w Hw1 Hw2.
+      destruct (Nat.eq_dec w (S k)) as [-> | Hwk].
+      + rewrite (Hrec k ltac:(lia) (Hle k ltac:(lia))). exact Hne.
+      + apply Ht4; lia.
+  Qed.
+
+
   Lemma valid_and_eval
     (e1 e2: @tf_expr (tfs_states sched) si_var o_var) (ss: sched_sys_state) (input: sched_input_t) :
     eval1 (valid_expr_and ctx bneeds e1 e2) ss input
@@ -11235,6 +11275,64 @@ Section SchedulerSimulation.
     - intros j Hj. cbn beta. rewrite (Hadv j Hj).
       destruct (beq_dec (Bits.ones 1) Bits.zero) eqn:E; [| reflexivity].
       exfalso. apply ones1_neq_zero. exact (proj1 (beq_dec_iff _ _ _) E).
+  Qed.
+
+  (* A stall whose counter has left zero began its wait at some earlier cycle,
+     with its gate up, and has been counting ever since. *)
+  Lemma stall_wait_start
+        (act: tfs_action sched) a_idx n_idx (input: input_t)
+        (ss0: sched_sys_state) l K :
+    act_idx_aligned act a_idx ->
+    stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
+    (fst ss0).[tf_dfg_b a_idx n_idx] = Bits.zero ->
+    (forall i, 1 <= i <= K -> ~ done_set (run_n i act input ss0)) ->
+    forall k, k <= K ->
+      Bits.to_nat ((fst (run_n k act input ss0)).[tf_dfg_b a_idx n_idx]) <> 0 ->
+      exists t, t < k
+        /\ Bits.to_nat ((fst (run_n t act input ss0)).[tf_dfg_b a_idx n_idx]) = 0
+        /\ eval1 (buf_gate act a_idx n_idx) (run_n t act input ss0)
+             (sched_input input (run_n t act input ss0)) = Bits.ones 1
+        /\ (forall w, t < w -> w <= k ->
+              Bits.to_nat ((fst (run_n w act input ss0)).[tf_dfg_b a_idx n_idx])
+              <> 0).
+  Proof.
+    intros Halign Hst Hzero Hnd.
+    destruct (stall_counter_wide act a_idx n_idx l Halign Hst) as [Hl Hwide].
+    pose (b := fun j => (fst (run_n j act input ss0)).[tf_dfg_b a_idx n_idx]).
+    pose (adv := fun j => if beq_dec
+                               (eval1 (buf_gate act a_idx n_idx)
+                                  (run_n j act input ss0)
+                                  (sched_input input (run_n j act input ss0)))
+                               Bits.zero
+                          then false else true).
+    assert (Hz0 : Bits.to_nat (b 0) = 0).
+    { unfold b. cbn [run_n]. rewrite Hzero.
+      change (@Bits.zero (ss_sz (tf_dfg_b a_idx n_idx)))
+        with (Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) 0).
+      apply Bits.to_nat_of_nat. lia. }
+    assert (Hrec : forall j, j < K -> Bits.to_nat (b j) <= pred l ->
+              Bits.to_nat (b (S j))
+              = if andb (adv j) (negb (Nat.eqb (Bits.to_nat (b j)) (pred l)))
+                then S (Bits.to_nat (b j)) else Bits.to_nat (b j)).
+    { intros j HjK Hinv. unfold b, adv.
+      change (run_n (S j) act input ss0)
+        with (sched_step act (run_n j act input ss0)
+                (sched_input input (run_n j act input ss0))).
+      pose proof (buffer_after_cycle act a_idx n_idx (run_n j act input ss0)
+                    (sched_input input (run_n j act input ss0)) Halign
+                    ltac:(apply (Hnd (S j)); lia)) as Hba.
+      cbv zeta in Hba. destruct Hba as [Hvalb _]. rewrite Hvalb.
+      exact (stall_counter_step act a_idx n_idx _ _ l _ _ Hst Hwide Hinv). }
+    intros k HK Hne.
+    destruct (counter_started (ss_sz (tf_dfg_b a_idx n_idx)) (pred l) K b adv
+                Hwide Hz0 Hrec k HK Hne) as [t [Ht1 [Ht2 [Ht3 Ht4]]]].
+    exists t. split; [ exact Ht1 | split; [ exact Ht2 | split; [| exact Ht4 ]]].
+    unfold adv in Ht3.
+    destruct (beq_dec (eval1 (buf_gate act a_idx n_idx) (run_n t act input ss0)
+                         (sched_input input (run_n t act input ss0))) Bits.zero)
+      eqn:Hq; [ discriminate Ht3 |].
+    apply (proj1 (bits1_nonzero_ones _)).
+    intro Hz2. rewrite Hz2, beq_dec_refl in Hq. discriminate Hq.
   Qed.
 
   (* SATURATION (validity).  After [k] pre-done cycles, every buffer whose node
