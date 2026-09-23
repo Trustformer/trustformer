@@ -15375,6 +15375,107 @@ Section SchedulerSimulation.
       unfold node_op. rewrite Hnth, Ejop. reflexivity.
   Qed.
 
+
+  (* ... and so it has a slot in this action's table, which is the form
+     [sample_gate_cases] and [stall_gate_walks] ask for. *)
+  Lemma stall_has_slot (act: tfs_action sched) a_idx s t l a :
+    act_idx_aligned act a_idx ->
+    In s (graph (build_dfg ctx act)) ->
+    In t (graph (build_dfg ctx act)) ->
+    In (nid t) (get_args ctx s) ->
+    op t = DFG_Stall l a ->
+    BitsToLists.list_assoc
+      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) (nid t) <> None.
+  Proof.
+    intros Halign Hs Ht Harg Hop.
+    pose proof (stall_is_buffered act s t l a Hs Ht Harg Hop) as Hin.
+    assert (Hfst : In (nid t) (map fst (nth (index_to_nat a_idx)
+                                          (buffer_needs ctx cost_limit) []))).
+    { rewrite (buffer_slot_eq act a_idx Halign), gsi_map_fst. exact Hin. }
+    apply in_map_iff in Hfst. destruct Hfst as [[n' v] [Heq Hentry]].
+    cbn [fst] in Heq. subst n'.
+    apply (list_assoc_in_some _ (nid t) v). exact Hentry.
+  Qed.
+
+  (* What [chain_gate] returns as its second component is a stall on the first. *)
+  Lemma chain_gate_stall (act: tfs_action sched) n g h :
+    chain_gate ctx (build_dfg ctx act) n = Some (g, h) ->
+    exists l, node_op act h = DFG_Stall l g.
+  Proof.
+    assert (Hstall : forall m nd,
+              find (fun nd0 => match op nd0 with
+                               | DFG_Stall _ a => Nat.eqb a m
+                               | _ => false
+                               end) (graph (build_dfg ctx act)) = Some nd ->
+              exists l, node_op act (nid nd) = DFG_Stall l m).
+    { intros m nd Hf. apply find_some in Hf. destruct Hf as [Hin Hp].
+      destruct (node_at_nid act nd Hin) as [_ Hnth].
+      destruct (op nd) as [ | | | | | | | l aa | | | | ] eqn:Hop;
+        try discriminate Hp.
+      apply Nat.eqb_eq in Hp. subst aa.
+      exists l. unfold node_op. rewrite Hnth. exact Hop. }
+    unfold chain_gate. cbv zeta.
+    destruct (find (fun nd => match op nd with
+                              | DFG_Stall _ a => Nat.eqb a n
+                              | _ => false
+                              end) (graph (build_dfg ctx act))) as [nds |] eqn:E1.
+    - intro H. injection H as <- <-. exact (Hstall n nds E1).
+    - destruct (find (fun nd => match op nd with
+                                | DFG_Join a _ => Nat.eqb a n
+                                | _ => false
+                                end) (graph (build_dfg ctx act))) as [ndj |] eqn:E2;
+        [| discriminate ].
+      destruct (find (fun nd => match op nd with
+                                | DFG_Stall _ a => Nat.eqb a (nid ndj)
+                                | _ => false
+                                end) (graph (build_dfg ctx act))) as [nds2 |] eqn:E3;
+        [| discriminate ].
+      intro H. injection H as <- <-. exact (Hstall (nid ndj) nds2 E3).
+  Qed.
+
+  (* ... and it is the very stall the call's sample reads. *)
+  Lemma chain_gate_stall_is_token
+        (act: tfs_action sched) (p: p_var) samp tok en d g h :
+    node_op act samp = DFG_Sample p tok en ->
+    sample_drive act samp = Some d ->
+    chain_gate ctx (build_dfg ctx act) d = Some (g, h) ->
+    h = tok.
+  Proof.
+    intros Hsamp Hsd Hcg.
+    destruct (chain_gate_stall act d g h Hcg) as [lh Hh].
+    pose proof (stall_nid_succ act h lh g Hh) as Hhs.
+    (* the token is a stall, on the head the walk used *)
+    assert (Hslen : samp < length (graph (build_dfg ctx act)))
+      by (apply node_op_range; rewrite Hsamp; discriminate).
+    assert (Hsin : In (nth samp (graph (build_dfg ctx act))
+                         {| nid := 0; op := DFG_Empty; sz := 0 |})
+                      (graph (build_dfg ctx act)))
+      by (apply nth_In; exact Hslen).
+    assert (Hsraw : op (nth samp (graph (build_dfg ctx act))
+                          {| nid := 0; op := DFG_Empty; sz := 0 |})
+                    = DFG_Sample p tok en) by exact Hsamp.
+    destruct (samples_stalled_build_dfg act _ p tok en Hsin Hsraw)
+      as [t [lt [aa [Ht [Htid Htop]]]]].
+    destruct (node_at_nid act t Ht) as [_ Hnth].
+    assert (Htok : node_op act tok = DFG_Stall lt aa)
+      by (unfold node_op; rewrite <- Htid, Hnth; exact Htop).
+    pose proof (stall_nid_succ act tok lt aa Htok) as Htoks.
+    assert (Hsdh : sample_drive_head act p aa = Some d)
+      by (unfold sample_drive in Hsd; rewrite Hsamp, Htok in Hsd; exact Hsd).
+    (* both heads are [d] itself or the ordering join above it *)
+    destruct (sample_drive_head_shape act p aa d Hsdh)
+      as [[Hdaa [ar1 [e1 Haadr]]] | [prev' [ar2 [e2 [Haaj Hd2dr]]]]];
+      destruct (chain_gate_cases act d g h Hcg) as [Hgd | [prev Hgj]].
+    - lia.
+    - exfalso. subst d.
+      exact (no_stall_on_joined act g aa prev tok lt p ar1 e1 Haadr Hgj Htok).
+    - exfalso. subst g.
+      exact (no_stall_on_joined act aa d prev' h lh p ar2 e2 Hd2dr Haaj Hh).
+    - pose proof (join_nid_succ act g d prev p ar2 e2 Hgj Hd2dr) as Hgs.
+      pose proof (join_nid_succ act aa d prev' p ar2 e2 Haaj Hd2dr) as Has.
+      lia.
+  Qed.
+
   (* [nre_fuel]'s twin for the validity half. *)
   Lemma nrv_fuel (act: tfs_action sched) a_idx x f :
     1 <= x -> x < length (graph (build_dfg ctx act)) -> x < f ->
