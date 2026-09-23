@@ -15814,13 +15814,15 @@ Section SchedulerSimulation.
 
   (* A call's request reaches the port before its answer is latched, carrying
      a settled argument, and no call emitted at or before it moves the port
-     again while the answer is outstanding.  Phase 3b covers the LATER calls;
-     this covers the drive's own firing. *)
+     again while the answer is outstanding.  Only WHERE THE CALL FIRES: an
+     untaken arm's sample latches too, and its drive never pulsed. *)
   Definition requests_sent (act: tfs_action sched) a_idx (input: input_t)
       (ss0: sched_sys_state) (M: nat) : Prop :=
     forall n_idx (p: p_var) tok en d j,
       node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
       sample_drive act (vreg_nid a_idx n_idx) = Some d ->
+      guard_holds act a_idx (run_n M act input ss0)
+        (sched_input input (run_n M act input ss0)) en ->
       j < M ->
       (fst (run_n j act input ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero ->
       (fst (run_n (S j) act input ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
@@ -16171,7 +16173,7 @@ Section SchedulerSimulation.
         by (intros arg_m en_m Hm2 Hdis; apply (Hgm u ltac:(lia) mm arg_m en_m Hm2 Hdis)).
       exact (no_later_drive act a_idx p (vreg_nid a_idx n_idx) tok en d mm input ss0 u
                Halign Hlen Hz0 Hpu Hsamp Hsd Hinm Hltm Hgu (Hnl u Hu)). }
-    destruct (Hrs n_idx p tok en d j Hsamp Hsd Hjm Hvj HvSj)
+    destruct (Hrs n_idx p tok en d j Hsamp Hsd Hgd Hjm Hvj HvSj)
       as [t [Htj [Hpulse [Hdval Hearly]]]].
     pose proof (sample_drive_in_drive_nodes act (vreg_nid a_idx n_idx) d p tok en
                   Hsamp Hsd) as Hdin.
