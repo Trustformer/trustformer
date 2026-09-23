@@ -16652,6 +16652,46 @@ Section SchedulerSimulation.
                Hjm Hvj HPN).
     reflexivity.
   Qed.
+
+  (* ==================================================================== *)
+  (* THE OPEN OBLIGATIONS.                                                *)
+  (*                                                                      *)
+  (* These two are all that keeps the round trip from being closed.  They *)
+  (* are ADMITTED on purpose, so the file compiles and                    *)
+  (* [Print Assumptions variable_scheduler_correct] names exactly what is *)
+  (* still owed.  Shrinking this list is the campaign; two of the four    *)
+  (* schedule facts have already come off it.                             *)
+  (* ==================================================================== *)
+
+  (* OPEN.  The design is settled and its structural prerequisites are
+     proved -- [stall_wait_start], [stall_is_buffered],
+     [chain_gate_stall_is_token].  What is left is the walk from a sample's
+     latch back to the cycle its drive pulsed on. *)
+  Lemma requests_sent_holds
+        (act: tfs_action sched) a_idx (input: input_t) (ss0: sched_sys_state) M :
+    act_idx_aligned act a_idx ->
+    1 < length (graph (build_dfg ctx act)) ->
+    (forall x, zeroed_at_start x -> (fst ss0).[x] = Bits.zero) ->
+    (forall i, 1 <= i <= M -> ~ done_set (run_n i act input ss0)) ->
+    requests_sent act a_idx input ss0 M.
+  Proof.
+  Admitted.
+
+  (* OPEN, and NOT PROVABLE AS IT STANDS.  This records the obligation; it is
+     not a claim that it holds.  [samples_settled] says every sample has
+     latched by the done cycle, and done ANDs the var_map ROOTS only, so a
+     sample whose destination is later overwritten need not have latched at
+     all.  Narrowing it to the samples that are read needs [dataflow_ops_sem]
+     restructured, and that needs [requests_sent_holds] first. *)
+  Lemma samples_settled_holds
+        (act: tfs_action sched) a_idx (input: input_t) (ss0: sched_sys_state) M :
+    act_idx_aligned act a_idx ->
+    1 < length (graph (build_dfg ctx act)) ->
+    (forall x, zeroed_at_start x -> (fst ss0).[x] = Bits.zero) ->
+    (forall i, 1 <= i <= M -> ~ done_set (run_n i act input ss0)) ->
+    samples_settled act a_idx input ss0 M.
+  Proof.
+  Admitted.
   (* PHASE 3 (correctness at done): once the done flag is set, the mapped
      final states and outputs match the one-shot source evaluation. *)
   Lemma scheduler_done_correct :
@@ -16722,10 +16762,32 @@ Section SchedulerSimulation.
       - exact Hnlen.
       - rewrite HszB. symmetry. exact (var_map_entry_size act v n Hin).
       - exact (sched_step_done_valid act a_idx ssM (sched_input input ssM) n Halign Hdone Hmem). }
-    (* the one obligation left in this file: a sample.s register holds the IP.s
-       answer to the request its own drive sent.  [round_trip] proves it from
-       four facts about the SCHEDULE that are not yet lemmas -- see
-       [call_discipline]. *)
+    (* THE ROUND TRIP, at the state the action finishes from: a sample's
+       register holds the IP's answer to the request its own drive sent. *)
+    assert (Hrt_obligation : forall n_idx p tok en d av en',
+              node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
+              sample_drive act (vreg_nid a_idx n_idx) = Some d ->
+              node_op act d = DFG_Drive p av en' ->
+              sz (nth d (graph (build_dfg ctx act))
+                   {| nid := 0; op := DFG_Empty; sz := 0 |})
+                = ip_req_sz (tfs_spec_ip ctx p) ->
+              guard_holds act a_idx ssM (sched_input input ssM) en ->
+              (fst ssM).[tf_dfg_b a_idx n_idx]
+              = convert (ip_fn (tfs_spec_ip ctx p)
+                  (tf_eval_expr ss_sz si_sz oo_sz
+                     (szB := ip_req_sz (tfs_spec_ip ctx p))
+                     (node_ref_expr act a_idx av) ssM (sched_input input ssM)))).
+    { intros n_idx p tok en d av en' Hsamp Hsd Hdop Hdsz Hgd.
+      destruct (node_op_pos act (vreg_nid a_idx n_idx)
+                  ltac:(rewrite Hsamp; discriminate)) as [Hs1 Hslen].
+      assert (Hlen2 : 1 < length (graph (build_dfg ctx act))) by lia.
+      exact (round_trip act a_idx input ss0 M n_idx p tok en d av en'
+               Halign Hlen2 Hzero0 Hpre
+               (samples_settled_holds act a_idx input ss0 M
+                  Halign Hlen2 Hzero0 Hpre)
+               (requests_sent_holds act a_idx input ss0 M
+                  Halign Hlen2 Hzero0 Hpre)
+               Hsamp Hsd Hdop Hdsz Hgd). }
     destruct (dfg_action_semantics act a_idx sp0 ssM input (sched_input input ssM)
                 Halign ltac:(intro v; reflexivity) Hrt_obligation Hs Ho)
       as [Hsem_s [Hsem_o [Hfix_s Hfix_o]]].
