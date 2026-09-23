@@ -12340,6 +12340,148 @@ Section SchedulerSimulation.
     rewrite Hnid. split; [ exact Hp | exact Hnth ].
   Qed.
 
+
+  Lemma cost_mono_fold : forall suf acc j,
+    getn acc j <= getn (fold_left bc_aux suf acc) j.
+  Proof.
+    induction suf as [| M suf IH]; cbn [fold_left]; intros acc j;
+      [ apply Nat.le_refl |].
+    eapply Nat.le_trans; [| apply IH ]. unfold bc_aux. apply sam_mono.
+  Qed.
+
+  Lemma cost_frozen_fold : forall suf acc N,
+    (forall M, In M suf -> ~ In N (nid M :: get_args ctx M)) ->
+    getn (fold_left bc_aux suf acc) N = getn acc N.
+  Proof.
+    induction suf as [| M suf IH]; cbn [fold_left]; intros acc N Hfr;
+      [ reflexivity |].
+    rewrite (IH _ N ltac:(intros M' HM'; apply Hfr; right; exact HM')).
+    unfold bc_aux. apply sam_untouched. apply Hfr. left. reflexivity.
+  Qed.
+
+  (* A STALL COSTS WHOLE CYCLES.  Its consumer's backward cost is at least
+     [lat] whole cycles below its own, which is what puts the two on different
+     target cycles and so buffers the stall. *)
+  Lemma stall_cost_gap :
+    forall (act: tfs_action sched) s t l a,
+      In s (graph (build_dfg ctx act)) ->
+      In t (graph (build_dfg ctx act)) ->
+      In (nid t) (get_args ctx s) ->
+      op t = DFG_Stall l a ->
+      (match BitsToLists.list_assoc
+               (calc_backward_cost ctx cost_limit (build_dfg ctx act)) (nid s) with
+       | Some c => c | None => 0 end) + l * clim cost_limit
+      <= (match BitsToLists.list_assoc
+                 (calc_backward_cost ctx cost_limit (build_dfg ctx act)) (nid t) with
+          | Some c => c | None => 0 end).
+  Proof.
+    intros act s t l a Hs Ht Harg Hop.
+    change (getn (calc_backward_cost ctx cost_limit (build_dfg ctx act)) (nid s)
+              + l * clim cost_limit
+            <= getn (calc_backward_cost ctx cost_limit (build_dfg ctx act)) (nid t)).
+    pose proof (args_lt_fwd act s Hs (nid t) Harg) as Hlt.
+    rewrite calc_backward_cost_fold.
+    (* split at [t] *)
+    pose proof Ht as HtR. apply in_rev in HtR.
+    apply in_split in HtR. destruct HtR as [P' [R' Hsp2]].
+    (* [s] is processed before [t]: everything after [t] has a smaller nid *)
+    assert (Hsin : In s P').
+    { pose proof Hs as HsR. apply in_rev in HsR.
+      rewrite Hsp2 in HsR. apply in_app_iff in HsR.
+      destruct HsR as [Hin | [Heq | Hin]]; [ exact Hin | | ].
+      - exfalso. subst t. lia.
+      - exfalso.
+        destruct (build_dfg_wf act) as [Hdesc _].
+        pose proof (Hdesc P' t R' Hsp2 s Hin). lia. }
+    apply in_split in Hsin. destruct Hsin as [P1 [R1 Hsp1]].
+    assert (Hsplit : rev (graph (build_dfg ctx act))
+                     = P1 ++ s :: (R1 ++ t :: R'))
+      by (rewrite Hsp2, Hsp1, <- app_assoc; reflexivity).
+    (* the frozen fact for [nid s] over everything after it *)
+    pose proof (build_dfg_suffix_frozen act P1 s (R1 ++ t :: R') Hsplit) as Hfr.
+    rewrite Hsplit, fold_left_app. cbn [fold_left].
+    set (acc_s := fold_left bc_aux P1 []).
+    set (A := bc_aux acc_s s).
+    (* one step at [s] puts [nid t] at or above [nid s] *)
+    assert (HA : getn A (nid s) <= getn A (nid t)).
+    { unfold A, bc_aux.
+      eapply Nat.le_trans.
+      - eapply Nat.le_trans; [ apply sam_upper |].
+        apply Nat.max_lub; [ apply Nat.le_add_r | apply Nat.le_refl ].
+      - apply sam_in_ge. right. exact Harg. }
+    rewrite fold_left_app. cbn [fold_left].
+    set (acc0 := fold_left bc_aux R1 A).
+    set (acc1 := bc_aux acc0 t).
+    assert (Hs0 : getn acc0 (nid s) = getn A (nid s)).
+    { unfold acc0. apply cost_frozen_fold.
+      intros M HM. apply Hfr. apply in_app_iff. left. exact HM. }
+    assert (Ht0 : getn A (nid t) <= getn acc0 (nid t)) by apply cost_mono_fold.
+    assert (Hs1 : getn acc1 (nid s) = getn acc0 (nid s)).
+    { unfold acc1, bc_aux. apply sam_untouched.
+      apply Hfr. apply in_app_iff. right. left. reflexivity. }
+    assert (Ht1 : getn acc0 (nid t) + l * clim cost_limit <= getn acc1 (nid t)).
+    { unfold acc1, bc_aux.
+      assert (Hc : cost_fn ctx cost_limit (op t) (sz t) = l * clim cost_limit)
+        by (rewrite Hop; reflexivity).
+      rewrite Hc. apply sam_in_ge. left. reflexivity. }
+    assert (Hsf : getn (fold_left bc_aux R' acc1) (nid s) = getn acc1 (nid s)).
+    { apply cost_frozen_fold. intros M HM. apply Hfr.
+      apply in_app_iff. right. right. exact HM. }
+    assert (Htf : getn acc1 (nid t) <= getn (fold_left bc_aux R' acc1) (nid t))
+      by apply cost_mono_fold.
+    rewrite Hsf, Hs1, Hs0. lia.
+  Qed.
+
+  Lemma node_cycle_is_div (act: tfs_action sched) n :
+    node_cycle act n
+    = (match BitsToLists.list_assoc
+                (calc_backward_cost ctx cost_limit (build_dfg ctx act)) n with
+       | Some c => c | None => 0 end) / clim cost_limit.
+  Proof.
+    unfold node_cycle.
+    rewrite list_assoc_calc_target_cycle.
+    destruct (BitsToLists.list_assoc
+                (calc_backward_cost ctx cost_limit (build_dfg ctx act)) n)
+      as [c|]; cbn [option_map]; [ reflexivity |].
+    symmetry. apply Nat.div_0_l. pose proof (clim_pos cost_limit). lia.
+  Qed.
+
+  (* SO EVERY STALL IS BUFFERED.  [stall_start] is [tf_const 0] for a stall
+     the table does not hold, and [drive_pulse] ANDs it, so this is what keeps
+     a request from being silently never sent. *)
+  Lemma stall_is_buffered :
+    forall (act: tfs_action sched) s t l a,
+      In s (graph (build_dfg ctx act)) ->
+      In t (graph (build_dfg ctx act)) ->
+      In (nid t) (get_args ctx s) ->
+      op t = DFG_Stall l a ->
+      In (nid t) (require_buffer ctx (build_dfg ctx act) (act_cycle_map act)).
+  Proof.
+    intros act s t l a Hs Ht Harg Hop.
+    destruct (arg_same_cycle_or_buffer act s (nid t) Hs Harg)
+      as [Heq | [Hsrc | Hbuf]]; [| | exact Hbuf ].
+    - exfalso.
+      pose proof (stall_cost_gap act s t l a Hs Ht Harg Hop) as Hgap.
+      pose proof (wfg_build_dfg act t Ht) as Hfg.
+      unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+      destruct Hfg as [Hl _].
+      pose proof (clim_pos cost_limit) as Hcl.
+      rewrite !node_cycle_is_div in Heq.
+      assert (Hdiv :
+        (match BitsToLists.list_assoc
+                 (calc_backward_cost ctx cost_limit (build_dfg ctx act)) (nid s) with
+         | Some c => c | None => 0 end) / clim cost_limit + l
+        <= (match BitsToLists.list_assoc
+                   (calc_backward_cost ctx cost_limit (build_dfg ctx act)) (nid t) with
+            | Some c => c | None => 0 end) / clim cost_limit).
+      { rewrite <- Nat.div_add by lia.
+        apply Nat.div_le_mono; [ lia | exact Hgap ]. }
+      lia.
+    - exfalso. unfold is_source in Hsrc.
+      destruct (node_at_nid act t Ht) as [_ Hnth].
+      rewrite Hnth, Hop in Hsrc. discriminate Hsrc.
+  Qed.
+
   (* Every member of [drive_nodes] is a drive on that port. *)
   Lemma drive_nodes_spec (act: tfs_action sched) (p: p_var) (n: nid_t) :
     In n (drive_nodes ctx (build_dfg ctx act) p) ->
