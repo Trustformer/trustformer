@@ -4306,7 +4306,8 @@ Section SchedulerSimulation.
                           {| nid := 0; op := DFG_Empty; sz := 0 |})
                     = DFG_Sample p tok en) by exact Hsamp.
     destruct (samples_stalled_build_dfg act _ p tok en Hsin Hsraw)
-      as [t [lt [aa [Ht [Htid Htop]]]]].
+      as [t [aa [Ht [Htid Htop]]]].
+    set (lt := ip_lat (tfs_spec_ip ctx p)) in *.
     destruct (node_at_nid act t Ht) as [_ Hnth].
     assert (Htok : node_op act tok = DFG_Stall lt aa)
       by (unfold SchedulerSimulationBase.node_op; rewrite <- Htid, Hnth; exact Htop).
@@ -5009,7 +5010,8 @@ Section SchedulerSimulation.
                              {| nid := 0; op := DFG_Empty; sz := 0 |})
                        = DFG_Sample p tok2 en2) by exact Hs2.
       destruct (samples_stalled_build_dfg act _ p tok2 en2 Hs2in Hs2raw)
-        as [t [l [aa [Ht [Htid Htop]]]]].
+        as [t [aa [Ht [Htid Htop]]]].
+      set (l := ip_lat (tfs_spec_ip ctx p)) in *.
       destruct (node_at_nid act t Ht) as [_ Hnth].
       assert (Htok2 : node_op act tok2 = DFG_Stall l aa)
         by (unfold SchedulerSimulationBase.node_op; rewrite <- Htid, Hnth; exact Htop).
@@ -5724,11 +5726,11 @@ Section SchedulerSimulation.
     j < M ->
     (fst (run_n j act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero ->
     (fst (run_n (S j) act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-    exists t lt aa t_idx,
-      node_op act tok = DFG_Stall lt aa
+    exists t aa t_idx,
+      node_op act tok = DFG_Stall (ip_lat (tfs_spec_ip ctx p)) aa
       /\ vreg_nid a_idx t_idx = tok
       /\ t < j
-      /\ j = t + lt
+      /\ j = t + ip_lat (tfs_spec_ip ctx p)
       /\ Bits.to_nat ((fst (run_n t act input resp ss0)).[tf_dfg_b a_idx t_idx]) = 0
       /\ eval1 (buf_gate act a_idx t_idx) (run_n t act input resp ss0)
            (sched_input input (resp t)) = Bits.ones 1
@@ -5742,7 +5744,8 @@ Section SchedulerSimulation.
     assert (Hzb : forall q, (fst ss0).[tf_dfg_b a_idx q] = Bits.zero)
       by (intro q; exact (Hz0 (tf_dfg_b a_idx q) I)).
     destruct (sample_tok_is_stall act (vreg_nid a_idx n_idx) p tok en Hsamp)
-      as [lt [aa Htok]].
+      as [aa Htok].
+    set (lt := ip_lat (tfs_spec_ip ctx p)) in *.
     assert (Hndj : ~ done_set (sched_step act (run_n j act input resp ss0)
                      (sched_input input (resp j))))
       by (exact (Hpre (S j) ltac:(lia))).
@@ -5927,7 +5930,7 @@ Section SchedulerSimulation.
                  (S (S (t + pred lt))) (S j' - S (S (t + pred lt)))
                  Halign Hzv Hpre2 HvsampT). }
       rewrite Hvj in Hmono. exact (ones1_neq_zero (eq_sym Hmono)). }
-    exists t, lt, aa, t_idx.
+    exists t, aa, t_idx.
     split; [ exact Htok | split; [ exact Htvn | ]].
     split; [ lia | split; [ lia | ]].
     split; [ exact Hct | split; [ exact Hgt | ]].

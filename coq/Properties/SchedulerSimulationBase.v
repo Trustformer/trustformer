@@ -4480,10 +4480,12 @@ Section SchedulerSimulation.
     apply joins_stalled_rev. exact H.
   Qed.
 
-  (* And the twin: every sample.s TOKEN is the stall emitted just below it. *)
+  (* And the twin: every sample.s TOKEN is the stall emitted just below it,
+     counting out that IP.s latency. *)
   Definition samples_stalled (L: list (@dfg_node_t s_var i_var o_var p_var)) : Prop :=
     forall s (p: p_var) tok en, In s L -> op s = DFG_Sample p tok en ->
-      exists t l a, In t L /\ nid t = tok /\ op t = DFG_Stall l a.
+      exists t a, In t L /\ nid t = tok
+        /\ op t = DFG_Stall (ip_lat (tfs_spec_ip ctx p)) a.
 
   Lemma samples_stalled_cons_nonsample L o z :
     (forall (p: p_var) tok en, o <> DFG_Sample p tok en) ->
@@ -4492,27 +4494,29 @@ Section SchedulerSimulation.
   Proof.
     intros Hno H s2 p tok en Hin Hop. cbn [In] in Hin.
     destruct Hin as [<- | Hin]; [ cbn [op] in Hop; exfalso; exact (Hno p tok en Hop) |].
-    destruct (H s2 p tok en Hin Hop) as [t [l [a [Ht [Htid Htop]]]]].
-    exists t, l, a. split; [ right; exact Ht | split; [ exact Htid | exact Htop ] ].
+    destruct (H s2 p tok en Hin Hop) as [t [a [Ht [Htid Htop]]]].
+    exists t, a. split; [ right; exact Ht | split; [ exact Htid | exact Htop ] ].
   Qed.
 
   Lemma P_emit_expr_sst : P_emit_expr samples_stalled.
   Proof. intros L o z _ H2 _ H. exact (samples_stalled_cons_nonsample L o z H2 H). Qed.
 
-  Lemma samples_stalled_cons2 L (a: nid_t) (l: nat) (p: p_var) en z1 z2 :
+  Lemma samples_stalled_cons2 L (a: nid_t) (p: p_var) en z1 z2 :
     samples_stalled L ->
     samples_stalled
       ({| nid := S (length L); op := DFG_Sample p (length L) en; sz := z2 |}
-       :: {| nid := length L; op := DFG_Stall l a; sz := z1 |} :: L).
+       :: {| nid := length L; op := DFG_Stall (ip_lat (tfs_spec_ip ctx p)) a;
+             sz := z1 |} :: L).
   Proof.
     intros H s2 p2 tok en2 Hin Hop. cbn [In] in Hin.
     destruct Hin as [<- | [<- | Hin]].
     - cbn [op] in Hop. injection Hop as <- <- <-.
-      exists {| nid := length L; op := DFG_Stall l a; sz := z1 |}, l, a.
+      exists {| nid := length L; op := DFG_Stall (ip_lat (tfs_spec_ip ctx p)) a;
+                sz := z1 |}, a.
       split; [ right; left; reflexivity | split; cbn [nid op]; reflexivity ].
     - cbn [op] in Hop. discriminate Hop.
-    - destruct (H s2 p2 tok en2 Hin Hop) as [t [l2 [a2 [Ht [Htid Htop]]]]].
-      exists t, l2, a2.
+    - destruct (H s2 p2 tok en2 Hin Hop) as [t [a2 [Ht [Htid Htop]]]].
+      exists t, a2.
       split; [ right; right; exact Ht | split; [ exact Htid | exact Htop ] ].
   Qed.
 
@@ -4520,8 +4524,8 @@ Section SchedulerSimulation.
   Proof.
     intros H s2 p tok en Hin Hop.
     apply (proj2 (in_rev L s2)) in Hin.
-    destruct (H s2 p tok en Hin Hop) as [t [l [a [Ht [Htid Htop]]]]].
-    exists t, l, a.
+    destruct (H s2 p tok en Hin Hop) as [t [a [Ht [Htid Htop]]]].
+    exists t, a.
     split; [ apply (proj1 (in_rev L t)); exact Ht | split; [ exact Htid | exact Htop ] ].
   Qed.
 
@@ -4571,7 +4575,7 @@ Section SchedulerSimulation.
           apply (g_bind_at samples_stalled).
           -- rewrite emit_red. cbn [snd graph].
              rewrite emit_red in Es. injection Es as Hsid Hst.
-             rewrite <- Hst. cbn [graph length]. rewrite <- Hsid.
+             rewrite <- Hst. cbn [graph length]. rewrite <- Hsid. rewrite <- Elat.
              apply samples_stalled_cons2. exact Hh.
           -- intros samp_id s6 Esa H6.
              exact (preserves_g_set_var samples_stalled (DFG_SVar dst) samp_id s6 H6).
@@ -12866,7 +12870,7 @@ Section SchedulerSimulation.
 
   Lemma sample_tok_is_stall (act: tfs_action sched) s (p: p_var) tok en :
     node_op act s = DFG_Sample p tok en ->
-    exists l a, node_op act tok = DFG_Stall l a.
+    exists a, node_op act tok = DFG_Stall (ip_lat (tfs_spec_ip ctx p)) a.
   Proof.
     intro Hop.
     assert (Hlt : s < length (graph (build_dfg ctx act)))
@@ -12874,10 +12878,10 @@ Section SchedulerSimulation.
     destruct (samples_stalled_build_dfg act
                 (nth s (graph (build_dfg ctx act))
                    {| nid := 0; op := DFG_Empty; sz := 0 |})
-                p tok en (nth_In _ _ Hlt) Hop) as [t [l [a [Ht [Htid Htop]]]]].
+                p tok en (nth_In _ _ Hlt) Hop) as [t [a [Ht [Htid Htop]]]].
     destruct (node_at_nid act t Ht) as [_ Hnth].
     rewrite Htid in Hnth.
-    exists l, a. unfold node_op. rewrite Hnth. exact Htop.
+    exists a. unfold node_op. rewrite Hnth. exact Htop.
   Qed.
 
   (* With [ip_lat_pos] every join carries a stall, so a drive that has a join
