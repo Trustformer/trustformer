@@ -3887,6 +3887,7 @@ Section SchedulerSimulation.
       vm_compute. discriminate.
   Qed.
 
+
   (* A sample's VALUE is the response wire. *)
   Lemma compile_sample_value
         (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var)
@@ -4193,6 +4194,34 @@ Section SchedulerSimulation.
              (run_n w act input resp ss0) (run_n u act input resp ss0)
              Halign Hsvar Hovar ltac:(intro v; reflexivity) Hbfroz
              (length (graph (build_dfg ctx act))) c szB Hclen Hval).
+  Qed.
+  (* A path condition that holds at a later cycle held already at [t], once
+     every source it reads has settled there: the values cannot move. *)
+  Lemma guard_holds_earlier
+        (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val)
+        (ss0: sched_sys_state) (en: list (nid_t * bool)) t u :
+    act_idx_aligned act a_idx ->
+    (forall m, (fst ss0).[tf_dfg_v a_idx m] = Bits.zero) ->
+    (forall i, 1 <= i <= u -> ~ done_set (run_n i act input resp ss0)) ->
+    t <= u ->
+    (forall l, In l en -> fst l < length (graph (build_dfg ctx act))) ->
+    (forall l, In l en ->
+       eval1 (node_ref_valid act a_idx (fst l)) (run_n t act input resp ss0)
+         (sched_input input (resp t)) = Bits.ones 1) ->
+    guard_holds act a_idx (run_n u act input resp ss0)
+      (sched_input input (resp u)) en ->
+    guard_holds act a_idx (run_n t act input resp ss0)
+      (sched_input input (resp t)) en.
+  Proof.
+    intros Halign Hz0 Hpre Htu Hrange Hval Hgu c b Hin.
+    assert (Hstable : eval1 (node_ref_expr act a_idx c)
+                        (run_n t act input resp ss0) (sched_input input (resp t))
+                      = eval1 (node_ref_expr act a_idx c)
+                        (run_n u act input resp ss0) (sched_input input (resp u))).
+    { exact (node_ref_stable_run act a_idx input resp ss0 c t u 1
+               Halign Hz0 Hpre Htu (Hrange (c, b) Hin) (Hval (c, b) Hin)). }
+    destruct (Hgu c b Hin) as [Ht Hf].
+    split; intro Hb; rewrite Hstable; [ exact (Ht Hb) | exact (Hf Hb) ].
   Qed.
 
   (* The node whose validity gates a drive's pulse is the drive itself, or the
