@@ -3970,6 +3970,73 @@ Section SchedulerSimulation.
   Qed.
 
   (* ... so a bit that is down now was down at every earlier cycle. *)
+
+  (* A compiled validity that fires keeps firing: every leaf it reads is either
+     a buffer that freezes or a validity register that is monotone. *)
+  Lemma compile_valid_mono_run
+        (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val)
+        (ss0: sched_sys_state) (bufs: list (nid_t * (nat * sz_t)))
+        (fuel: nat) (n: nid_t) (pi: list lit) w dd :
+    act_idx_aligned act a_idx ->
+    (forall m, (fst ss0).[tf_dfg_v a_idx m] = Bits.zero) ->
+    (forall i, 1 <= i <= w + dd -> ~ done_set (run_n i act input resp ss0)) ->
+    (forall e, In e bufs ->
+       In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
+    n < length (graph (build_dfg ctx act)) ->
+    (forall x, x < n -> is_sample_of act x = true ->
+       BitsToLists.list_assoc bufs x <> None) ->
+    eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                  (build_dfg ctx act) n bufs))
+      (run_n w act input resp ss0) (sched_input input (resp w)) = Bits.ones 1 ->
+    eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                  (build_dfg ctx act) n bufs))
+      (run_n (w + dd) act input resp ss0) (sched_input input (resp (w + dd)))
+    = Bits.ones 1.
+  Proof.
+    intros Halign Hz0 Hpre Hsub Hnlen Hsamples Hval.
+    induction dd as [| dd IH].
+    - rewrite Nat.add_0_r. exact Hval.
+    - assert (Hpre' : forall i, 1 <= i <= w + dd -> ~ done_set (run_n i act input resp ss0))
+        by (intros i Hi; apply Hpre; lia).
+      pose proof (IH Hpre') as Hw.
+      assert (Hnd : ~ done_set (sched_step act (run_n (w + dd) act input resp ss0)
+                      (sched_input input (resp (w + dd)))))
+        by (exact (Hpre (S (w + dd)) ltac:(lia))).
+      destruct (valid_settled_run act a_idx input resp ss0 (w + dd) Halign Hz0)
+        as [Hgates [_ Hset]].
+      rewrite Nat.add_succ_r.
+      change (run_n (S (w + dd)) act input resp ss0)
+        with (sched_step act (run_n (w + dd) act input resp ss0)
+                (sched_input input (resp (w + dd)))).
+      apply (compile_valid_state_indep_gen act a_idx
+               (sched_input input (resp (w + dd)))
+               (sched_input input (resp (S (w + dd))))
+               (run_n (w + dd) act input resp ss0)
+               (sched_step act (run_n (w + dd) act input resp ss0)
+                  (sched_input input (resp (w + dd))))
+               _ _ bufs Halign
+               ltac:(intro s; symmetry;
+                     exact (sched_step_preserves_svar act
+                              (run_n (w + dd) act input resp ss0)
+                              (sched_input input (resp (w + dd))) s Hnd))
+               ltac:(intro o; symmetry;
+                     exact (sched_step_preserves_ovar act
+                              (run_n (w + dd) act input resp ss0)
+                              (sched_input input (resp (w + dd))) o Hnd))
+               ltac:(intro v; reflexivity)
+               Hsub
+               ltac:(intros m _ Hx;
+                     exact (buffer_frozen_step act a_idx m
+                              (run_n (w + dd) act input resp ss0)
+                              (sched_input input (resp (w + dd)))
+                              Halign Hnd Hset Hgates Hx))
+               ltac:(intros m Hx;
+                     exact (validity_monotone_step act a_idx m
+                              (run_n (w + dd) act input resp ss0)
+                              (sched_input input (resp (w + dd)))
+                              Halign Hnd Hgates Hx))
+               fuel n pi Hnlen Hsamples Hw).
+  Qed.
   Lemma validity_zero_earlier
         (act: tfs_action sched) a_idx n_idx (input: input_t) (resp: nat -> resp_val)
         (ss0: sched_sys_state) j u :
