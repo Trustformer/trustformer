@@ -2090,6 +2090,124 @@ Section SchedulerSimulation.
       exact Hin0.
     Qed.
 
+    Lemma emit_id (o: @dfg_op_t s_var i_var o_var p_var) size (s: wst) id s' :
+      emit ctx o size s = (id, s') -> id = length (graph s).
+    Proof. rewrite (emit_red o size s). intro H. injection H as <- _. reflexivity. Qed.
+
+    Lemma get_var_len (v: dvar) (s: wst) id s' :
+      0 < length (graph s) -> winv s -> wvsz s ->
+      get_var ctx v s = (id, s') -> length (graph s) <= length (graph s').
+    Proof.
+      intros Hne Hinv Hvsz Hgv.
+      pose proof (get_var_sz v s Hinv Hvsz) as Hsz. rewrite Hgv in Hsz.
+      destruct Hsz as [Hg [Hn [Hp [Hq Hz]]]].
+      exact (wgmono_len s s' Hne (proj1 (proj2 Hinv)) (proj1 (proj2 Hp)) Hg).
+    Qed.
+
+    (* An OLD id the expression compiler returns is one the map already held,
+       or the action's shared node for a variable READ. *)
+    Lemma dataflow_expr_ids : forall e sz (s: wst) id s',
+      0 < length (graph s) -> winv s -> wvsz s ->
+      dataflow_expr ctx e sz s = (id, s') ->
+      id < length (graph s) ->
+      In id (map snd (var_map s)) \/ vnode_at s id.
+    Proof.
+      intros e sz s id s' Hne Hinv Hvsz Hde Hlt.
+      assert (EMIT : forall (o: @dfg_op_t s_var i_var o_var p_var) size s1 s2,
+                       length (graph s) <= length (graph s1) ->
+                       emit ctx o size s1 = (id, s2) -> False).
+      { intros o size s1 s2 Hle Hem. rewrite (emit_id o size s1 id s2 Hem) in Hlt. lia. }
+      destruct e as [ c | sv | iv | ov | uop e1 | bop e1 e2 | ec et ee ].
+      - exfalso. exact (EMIT _ _ s s' (Nat.le_refl _) Hde).
+      - cbn [dataflow_expr] in Hde. unfold bind in Hde.
+        destruct (get_var ctx (DFG_SVar sv) s) as [src_id s1] eqn:Egv.
+        cbv beta in Hde.
+        destruct (Nat.eqb _ sz).
+        + unfold ret in Hde. injection Hde as <- _.
+          destruct (get_var_ids (DFG_SVar sv) s src_id s1 Egv)
+            as [Hin | [Hvn | Heq]];
+            [ left; exact Hin | right; exact Hvn | exfalso; lia ].
+        + exfalso. exact (EMIT _ _ s1 s'
+                            (get_var_len (DFG_SVar sv) s src_id s1 Hne Hinv Hvsz Egv) Hde).
+      - cbn [dataflow_expr] in Hde. unfold bind in Hde.
+        destruct (emit ctx (DFG_Input iv) sz s) as [src_id s1] eqn:Eem.
+        cbv beta in Hde.
+        assert (Hle1 : length (graph s) <= length (graph s1)).
+        { rewrite (emit_red (DFG_Input iv) sz s) in Eem. injection Eem as _ <-.
+          cbn [graph length]. lia. }
+        destruct (Nat.eqb _ sz).
+        + exfalso. unfold ret in Hde. injection Hde as <- _.
+          rewrite (emit_id (DFG_Input iv) sz s src_id s1 Eem) in Hlt. lia.
+        + exfalso. exact (EMIT _ _ s1 s' Hle1 Hde).
+      - cbn [dataflow_expr] in Hde. unfold bind in Hde.
+        destruct (get_var ctx (DFG_OVar ov) s) as [src_id s1] eqn:Egv.
+        cbv beta in Hde.
+        destruct (Nat.eqb _ sz).
+        + unfold ret in Hde. injection Hde as <- _.
+          destruct (get_var_ids (DFG_OVar ov) s src_id s1 Egv)
+            as [Hin | [Hvn | Heq]];
+            [ left; exact Hin | right; exact Hvn | exfalso; lia ].
+        + exfalso. exact (EMIT _ _ s1 s'
+                            (get_var_len (DFG_OVar ov) s src_id s1 Hne Hinv Hvsz Egv) Hde).
+      - exfalso. destruct uop as [ | source_size ]; cbn [dataflow_expr] in Hde;
+          unfold bind in Hde.
+        + destruct (dataflow_expr ctx e1 sz s) as [src_id s1] eqn:Ee1.
+          cbv beta in Hde.
+          exact (EMIT _ _ s1 s'
+                   (dataflow_expr_len e1 sz s src_id s1 Hne Hinv Hvsz Ee1) Hde).
+        + destruct (dataflow_expr ctx e1 source_size s) as [src_id s1] eqn:Ee1.
+          cbv beta in Hde.
+          exact (EMIT _ _ s1 s'
+                   (dataflow_expr_len e1 source_size s src_id s1 Hne Hinv Hvsz Ee1) Hde).
+      - exfalso. destruct bop as [ | | | | | | szC cop | hz lz ];
+          cbn [dataflow_expr] in Hde; unfold bind in Hde.
+        1-6: (destruct (dataflow_expr ctx e1 sz s) as [id1 s1] eqn:Ee1;
+              cbv beta in Hde;
+              pose proof (dataflow_expr_sz e1 sz s Hinv Hvsz) as Hz1;
+              rewrite Ee1 in Hz1; destruct Hz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hzz1]]]];
+              assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne);
+              destruct (dataflow_expr ctx e2 sz s1) as [id2 s2] eqn:Ee2;
+              cbv beta in Hde;
+              exact (EMIT _ _ s2 s'
+                       (Nat.le_trans _ _ _
+                          (dataflow_expr_len e1 sz s id1 s1 Hne Hinv Hvsz Ee1)
+                          (dataflow_expr_len e2 sz s1 id2 s2 Hne1 Hp1 Hq1 Ee2)) Hde)).
+        + destruct (dataflow_expr ctx e1 szC s) as [id1 s1] eqn:Ee1. cbv beta in Hde.
+          pose proof (dataflow_expr_sz e1 szC s Hinv Hvsz) as Hz1.
+          rewrite Ee1 in Hz1. destruct Hz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hzz1]]]].
+          assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
+          destruct (dataflow_expr ctx e2 szC s1) as [id2 s2] eqn:Ee2. cbv beta in Hde.
+          exact (EMIT _ _ s2 s'
+                   (Nat.le_trans _ _ _
+                      (dataflow_expr_len e1 szC s id1 s1 Hne Hinv Hvsz Ee1)
+                      (dataflow_expr_len e2 szC s1 id2 s2 Hne1 Hp1 Hq1 Ee2)) Hde).
+        + destruct (dataflow_expr ctx e1 hz s) as [id1 s1] eqn:Ee1. cbv beta in Hde.
+          pose proof (dataflow_expr_sz e1 hz s Hinv Hvsz) as Hz1.
+          rewrite Ee1 in Hz1. destruct Hz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hzz1]]]].
+          assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
+          destruct (dataflow_expr ctx e2 lz s1) as [id2 s2] eqn:Ee2. cbv beta in Hde.
+          exact (EMIT _ _ s2 s'
+                   (Nat.le_trans _ _ _
+                      (dataflow_expr_len e1 hz s id1 s1 Hne Hinv Hvsz Ee1)
+                      (dataflow_expr_len e2 lz s1 id2 s2 Hne1 Hp1 Hq1 Ee2)) Hde).
+      - exfalso. cbn [dataflow_expr] in Hde. unfold bind in Hde.
+        destruct (dataflow_expr ctx ec 1 s) as [cid s1] eqn:Ec. cbv beta in Hde.
+        pose proof (dataflow_expr_sz ec 1 s Hinv Hvsz) as Hz1.
+        rewrite Ec in Hz1. destruct Hz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hzz1]]]].
+        assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
+        destruct (dataflow_expr ctx et sz s1) as [tid s2] eqn:Et. cbv beta in Hde.
+        pose proof (dataflow_expr_sz et sz s1 Hp1 Hq1) as Hz2.
+        rewrite Et in Hz2. destruct Hz2 as [Hg2 [Hn2 [Hp2 [Hq2 Hzz2]]]].
+        assert (Hne2 : 0 < length (graph s2)) by exact (gne_gmono s1 s2 Hg2 Hne1).
+        destruct (dataflow_expr ctx ee sz s2) as [eid s3] eqn:El. cbv beta in Hde.
+        exact (EMIT _ _ s3 s'
+                 (Nat.le_trans _ _ _
+                    (Nat.le_trans _ _ _
+                       (dataflow_expr_len ec 1 s cid s1 Hne Hinv Hvsz Ec)
+                       (dataflow_expr_len et sz s1 tid s2 Hne1 Hp1 Hq1 Et))
+                    (dataflow_expr_len ee sz s2 eid s3 Hne2 Hp2 Hq2 El)) Hde).
+    Qed.
+
     (* ================================================================= *)
     (* Structural, and free of [guard_holds]: what the builder does to    *)
     (* [var_map] pins what the source does to the state.  Both arms of a  *)
@@ -2105,12 +2223,13 @@ Section SchedulerSimulation.
         (* a variable the builder leaves unbound is one the source leaves alone *)
         vm_frame (var_map s')
           (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) ops sp input)
-        (* every id is one [s] already held, or a node emitted since *)
-        /\ (forall v n, In (v, n) (var_map s') ->
-              In n (map snd (var_map s)) \/ length (graph s) <= n)
-        (* an entry at an OLD node is one no call produced, so its value needs
+        (* an OLD id it binds is one [s] held, or the shared node of a READ *)
+        /\ (forall v n, In (v, n) (var_map s') -> n < length (graph s) ->
+              In n (map snd (var_map s)) \/ vnode_at s n)
+        (* and at such an id no call produced the binding, so its value needs
            no path condition *)
-        /\ (forall v n pi, In (v, n) (var_map s') -> n < length (graph s) ->
+        /\ (forall v n pi, In (v, n) (var_map s') ->
+              (n < length (graph s) \/ vnode_at s' n) ->
               guard_holds pi ->
               rvalid act a_idx pi n ss sinput = Bits.ones 1 ->
               NV (dfg_var_size ctx v) n
@@ -2576,14 +2695,18 @@ Section SchedulerSimulation.
             exact (proj1 Pthen kk id Hint). }
           assert (HltR : id < length (graph sR))
             by (unfold sR; cbn [graph]; exact Hlt).
-          assert (Hlow : id < length (graph s1)).
-          { destruct (Hsple kk id Hine) as [Hin | Hge]; [| exfalso; lia ].
-            apply in_map_iff in Hin. destruct Hin as [[v2 n2] [Heq Hmem]].
-            cbn [snd] in Heq. subst n2.
-            unfold sR in Hmem; cbn [var_map] in Hmem.
-            exact (wnidwf_bound s1 id (proj1 (proj2 Pc)) (proj1 Pc v2 id Hmem)). }
-          rewrite <- (Hkeept kk id pi Hint Hlow Hgp Hv).
-          exact (Hkeepe kk id pi Hine HltR Hgp Hv). }
+          assert (Hthenside : NV (dfg_var_size ctx kk) id
+                    = src_get (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) op1 sp input) kk).
+          { destruct (Hsple kk id Hine HltR) as [Hin | Hvn].
+            - apply in_map_iff in Hin. destruct Hin as [[v2 n2] [Heq Hmem]].
+              cbn [snd] in Heq. subst n2.
+              unfold sR in Hmem; cbn [var_map] in Hmem.
+              exact (Hkeept kk id pi Hint
+                       (or_introl (wnidwf_bound s1 id (proj1 (proj2 Pc))
+                                     (proj1 Pc v2 id Hmem))) Hgp Hv).
+            - exact (Hkeept kk id pi Hint (or_intror Hvn) Hgp Hv). }
+          rewrite <- Hthenside.
+          exact (Hkeepe kk id pi Hine (or_introl HltR) Hgp Hv). }
         unfold sem_inv. rewrite HvmF.
         unfold tf_ops_run. cbn [tf_ops_updates].
         destruct (bits1_cases (tf_eval_expr ss_sz si_sz oo_sz (szB := 1)
