@@ -125,14 +125,21 @@ Section SchedulerSimulation.
     Bits.slice 0 (ip_req_sz (tfs_ip sched p))
       ((fst ss).[tfs_drive_reg sched p]).
 
-  (* A [DFG_Sample] reads the response wire LIVE, and the stall holds the request
-     on the port until it does, so the answer available in a state is [ip_fn] of
-     that state's driven payload.  Two calls on one IP therefore get two
-     different answers, which a response fixed across the run could not give. *)
-  Definition sched_input (input: input_t) (ss: sched_sys_state) : sched_input_t :=
+  (* The request strobe the IP sees on the port: one cycle per pulse. *)
+  Definition port_strobe (ss: sched_sys_state) (p: tfs_ips sched) : bits_t 1 :=
+    Bits.slice (ip_req_sz (tfs_ip sched p)) 1
+      ((fst ss).[tfs_drive_reg sched p]).
+
+  (* What each IP presents on its response channel during one cycle. *)
+  Local Notation resp_val :=
+    (forall p : tfs_ips sched, bits_t (ip_resp_sz (tfs_ip sched p))).
+
+  (* A [DFG_Sample] reads the response channel LIVE, so a cycle's inputs are the
+     action's own plus whatever each IP is presenting that cycle. *)
+  Definition sched_input (input: input_t) (r: resp_val) : sched_input_t :=
     fun x => match x with
              | inl v => input v
-             | inr p => ip_fn (tfs_ip sched p) (drive_payload ss p)
+             | inr p => r p
              end.
 
   (* ---- One scheduled cycle and its bounded iteration ---- *)
@@ -140,15 +147,25 @@ Section SchedulerSimulation.
     : sched_sys_state :=
     tfs_next_cycle sched act ss input.
 
-  (* The response is re-derived from the state each cycle, which is what lets
-     two calls on one IP see two different answers. *)
-  Fixpoint run_n (n: nat) (act: tfs_action sched) (input: input_t) (ss: sched_sys_state)
-    : sched_sys_state :=
+  (* [resp k] is what the IPs present during cycle [k]. *)
+  Fixpoint run_n (n: nat) (act: tfs_action sched) (input: input_t) (resp: nat -> resp_val) (ss: sched_sys_state) : sched_sys_state :=
     match n with
     | 0 => ss
-    | S k => let ss1 := run_n k act input ss in
-             sched_step act ss1 (sched_input input ss1)
+    | S k => let ss1 := run_n k act input resp ss in
+             sched_step act ss1 (sched_input input (resp k))
     end.
+
+  (* THE IP's DATASHEET.  A request strobed on the port and left undisturbed for
+     the IP's flight time is answered [ip_lat] cycles after the pulse that sent
+     it; at every other cycle the channel promises nothing. *)
+  Definition ip_contract (act: tfs_action sched) (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) : Prop :=
+    forall (p: tfs_ips sched) (s: nat),
+      port_strobe (run_n s act input resp ss0) p = Bits.ones 1 ->
+      (forall w, s < w -> w < s + pred (ip_lat (tfs_ip sched p)) ->
+         port_strobe (run_n w act input resp ss0) p = Bits.zero) ->
+      resp (s + pred (ip_lat (tfs_ip sched p))) p
+      = ip_fn (tfs_ip sched p) (drive_payload (run_n s act input resp ss0) p).
+
 
   (* ==================================================================== *)
   (* Phase 1: concrete characterization of ONE scheduled cycle.           *)
@@ -10775,29 +10792,29 @@ Section SchedulerSimulation.
   (* The downward twin, along the run: a validity bit that starts down and
      whose gate never rises stays down. *)
   Lemma valid_zero_run
-        (act: tfs_action sched) a_idx n_idx (input: input_t)
+        (act: tfs_action sched) a_idx n_idx (input: input_t) (resp: nat -> resp_val)
         (ss0: sched_sys_state) (K: nat) :
     act_idx_aligned act a_idx ->
     (fst ss0).[tf_dfg_v a_idx n_idx] = Bits.zero ->
-    (forall i, 1 <= i <= K -> ~ done_set (run_n i act input ss0)) ->
+    (forall i, 1 <= i <= K -> ~ done_set (run_n i act input resp ss0)) ->
     (forall j, j < K ->
-       eval1 (buf_gate act a_idx n_idx) (run_n j act input ss0)
-         (sched_input input (run_n j act input ss0)) <> Bits.ones 1) ->
+       eval1 (buf_gate act a_idx n_idx) (run_n j act input resp ss0)
+         (sched_input input (resp j)) <> Bits.ones 1) ->
     forall k, k <= K ->
-      (fst (run_n k act input ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero.
+      (fst (run_n k act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero.
   Proof.
     intros Halign Hz Hnd Hgate k HkK.
     destruct k as [| k]; [ cbn [run_n]; exact Hz |].
-    change (run_n (S k) act input ss0)
-      with (sched_step act (run_n k act input ss0)
-              (sched_input input (run_n k act input ss0))).
+    change (run_n (S k) act input resp ss0)
+      with (sched_step act (run_n k act input resp ss0)
+              (sched_input input (resp k))).
     destruct (bits1_cases
-                ((fst (sched_step act (run_n k act input ss0)
-                         (sched_input input (run_n k act input ss0))))
+                ((fst (sched_step act (run_n k act input resp ss0)
+                         (sched_input input (resp k))))
                    .[tf_dfg_v a_idx n_idx])) as [Hones | Hzero]; [| exact Hzero ].
     exfalso. apply (Hgate k ltac:(lia)).
-    exact (buffer_valid_gate act a_idx n_idx (run_n k act input ss0)
-             (sched_input input (run_n k act input ss0)) Halign
+    exact (buffer_valid_gate act a_idx n_idx (run_n k act input resp ss0)
+             (sched_input input (resp k)) Halign
              ltac:(apply (Hnd (S k)); lia) Hones).
   Qed.
 
@@ -10989,34 +11006,34 @@ Section SchedulerSimulation.
   (* Specialisation to one pre-done cycle: the reference is stable wherever its
      own validity fires, since the samples it reads have already latched. *)
   Lemma compile_nobuf_step_stable
-        (act: tfs_action sched) a_idx (ss: sched_sys_state) (input: input_t) :
+        (act: tfs_action sched) a_idx (ss: sched_sys_state) (input: input_t) (r0 r1: resp_val) :
     act_idx_aligned act a_idx ->
-    ~ done_set (sched_step act ss (sched_input input ss)) ->
+    ~ done_set (sched_step act ss (sched_input input r0)) ->
     forall fuel n szB,
       n < length (graph (build_dfg ctx act)) ->
       eval1 (snd (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act)
-                    n (sample_bufs act a_idx))) ss (sched_input input ss)
+                    n (sample_bufs act a_idx))) ss (sched_input input r0)
         = Bits.ones 1 ->
       tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
         (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
-        (sched_step act ss (sched_input input ss))
-        (sched_input input (sched_step act ss (sched_input input ss)))
+        (sched_step act ss (sched_input input r0))
+        (sched_input input r1)
       = tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
         (fst (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
-        ss (sched_input input ss).
+        ss (sched_input input r0).
   Proof.
     intros Halign Hnd fuel n szB Hnlen Hval. symmetry.
-    apply (compile_nobuf_state_indep act a_idx (sched_input input ss)
-             (sched_input input (sched_step act ss (sched_input input ss)))
-             ss (sched_step act ss (sched_input input ss))).
+    apply (compile_nobuf_state_indep act a_idx (sched_input input r0)
+             (sched_input input r1)
+             ss (sched_step act ss (sched_input input r0))).
     - exact Halign.
     - intro s. symmetry.
-      exact (sched_step_preserves_svar act ss (sched_input input ss) s Hnd).
+      exact (sched_step_preserves_svar act ss (sched_input input r0) s Hnd).
     - intro o. symmetry.
-      exact (sched_step_preserves_ovar act ss (sched_input input ss) o Hnd).
+      exact (sched_step_preserves_ovar act ss (sched_input input r0) o Hnd).
     - intro v. reflexivity.
     - intros n_idx Hsam Hv.
-      exact (sample_buffer_frozen act a_idx n_idx ss (sched_input input ss)
+      exact (sample_buffer_frozen act a_idx n_idx ss (sched_input input r0)
                Halign Hnd Hsam Hv).
     - exact Hnlen.
     - exact Hval.
@@ -11236,26 +11253,26 @@ Section SchedulerSimulation.
      the counter reads [pred l] from cycle [r + pred l] on.  This is A2 debt 3,
      and it is what licenses the weight [node_rank] gives a stall. *)
   Lemma stall_counter_run
-        (act: tfs_action sched) a_idx n_idx (input: input_t)
+        (act: tfs_action sched) a_idx n_idx (input: input_t) (resp: nat -> resp_val)
         (ss0: sched_sys_state) l r K :
     act_idx_aligned act a_idx ->
     stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
     (fst ss0).[tf_dfg_b a_idx n_idx] = Bits.zero ->
-    (forall i, 1 <= i <= K -> ~ done_set (run_n i act input ss0)) ->
+    (forall i, 1 <= i <= K -> ~ done_set (run_n i act input resp ss0)) ->
     (forall j, r <= j < K ->
-       eval1 (buf_gate act a_idx n_idx) (run_n j act input ss0)
-         (sched_input input (run_n j act input ss0)) = Bits.ones 1) ->
+       eval1 (buf_gate act a_idx n_idx) (run_n j act input resp ss0)
+         (sched_input input (resp j)) = Bits.ones 1) ->
     forall k, r + pred l <= k <= K ->
-      Bits.to_nat ((fst (run_n k act input ss0)).[tf_dfg_b a_idx n_idx]) = pred l.
+      Bits.to_nat ((fst (run_n k act input resp ss0)).[tf_dfg_b a_idx n_idx]) = pred l.
   Proof.
     intros Halign Hst Hzero Hnd Hadv.
     destruct (stall_counter_wide act a_idx n_idx l Halign Hst) as [Hl Hwide].
     apply (counter_saturates (ss_sz (tf_dfg_b a_idx n_idx)) (pred l) r K
-             (fun j => (fst (run_n j act input ss0)).[tf_dfg_b a_idx n_idx])
+             (fun j => (fst (run_n j act input resp ss0)).[tf_dfg_b a_idx n_idx])
              (fun j => if beq_dec
                             (eval1 (buf_gate act a_idx n_idx)
-                               (run_n j act input ss0)
-                               (sched_input input (run_n j act input ss0)))
+                               (run_n j act input resp ss0)
+                               (sched_input input (resp j)))
                             Bits.zero
                        then false else true)).
     - exact Hwide.
@@ -11264,11 +11281,11 @@ Section SchedulerSimulation.
         with (Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) 0).
       apply Bits.to_nat_of_nat. lia.
     - intros j HjK Hinv. cbn beta in Hinv |- *.
-      change (run_n (S j) act input ss0)
-        with (sched_step act (run_n j act input ss0)
-                (sched_input input (run_n j act input ss0))).
-      pose proof (buffer_after_cycle act a_idx n_idx (run_n j act input ss0)
-                    (sched_input input (run_n j act input ss0)) Halign
+      change (run_n (S j) act input resp ss0)
+        with (sched_step act (run_n j act input resp ss0)
+                (sched_input input (resp j))).
+      pose proof (buffer_after_cycle act a_idx n_idx (run_n j act input resp ss0)
+                    (sched_input input (resp j)) Halign
                     ltac:(apply (Hnd (S j)); lia)) as Hba.
       cbv zeta in Hba. destruct Hba as [Hvalb _]. rewrite Hvalb.
       apply (stall_counter_step act a_idx n_idx _ _ l _ _ Hst Hwide Hinv).
@@ -11280,29 +11297,29 @@ Section SchedulerSimulation.
   (* A stall whose counter has left zero began its wait at some earlier cycle,
      with its gate up, and has been counting ever since. *)
   Lemma stall_wait_start
-        (act: tfs_action sched) a_idx n_idx (input: input_t)
+        (act: tfs_action sched) a_idx n_idx (input: input_t) (resp: nat -> resp_val)
         (ss0: sched_sys_state) l K :
     act_idx_aligned act a_idx ->
     stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
     (fst ss0).[tf_dfg_b a_idx n_idx] = Bits.zero ->
-    (forall i, 1 <= i <= K -> ~ done_set (run_n i act input ss0)) ->
+    (forall i, 1 <= i <= K -> ~ done_set (run_n i act input resp ss0)) ->
     forall k, k <= K ->
-      Bits.to_nat ((fst (run_n k act input ss0)).[tf_dfg_b a_idx n_idx]) <> 0 ->
+      Bits.to_nat ((fst (run_n k act input resp ss0)).[tf_dfg_b a_idx n_idx]) <> 0 ->
       exists t, t < k
-        /\ Bits.to_nat ((fst (run_n t act input ss0)).[tf_dfg_b a_idx n_idx]) = 0
-        /\ eval1 (buf_gate act a_idx n_idx) (run_n t act input ss0)
-             (sched_input input (run_n t act input ss0)) = Bits.ones 1
+        /\ Bits.to_nat ((fst (run_n t act input resp ss0)).[tf_dfg_b a_idx n_idx]) = 0
+        /\ eval1 (buf_gate act a_idx n_idx) (run_n t act input resp ss0)
+             (sched_input input (resp t)) = Bits.ones 1
         /\ (forall w, t < w -> w <= k ->
-              Bits.to_nat ((fst (run_n w act input ss0)).[tf_dfg_b a_idx n_idx])
+              Bits.to_nat ((fst (run_n w act input resp ss0)).[tf_dfg_b a_idx n_idx])
               <> 0).
   Proof.
     intros Halign Hst Hzero Hnd.
     destruct (stall_counter_wide act a_idx n_idx l Halign Hst) as [Hl Hwide].
-    pose (b := fun j => (fst (run_n j act input ss0)).[tf_dfg_b a_idx n_idx]).
+    pose (b := fun j => (fst (run_n j act input resp ss0)).[tf_dfg_b a_idx n_idx]).
     pose (adv := fun j => if beq_dec
                                (eval1 (buf_gate act a_idx n_idx)
-                                  (run_n j act input ss0)
-                                  (sched_input input (run_n j act input ss0)))
+                                  (run_n j act input resp ss0)
+                                  (sched_input input (resp j)))
                                Bits.zero
                           then false else true).
     assert (Hz0 : Bits.to_nat (b 0) = 0).
@@ -11315,11 +11332,11 @@ Section SchedulerSimulation.
               = if andb (adv j) (negb (Nat.eqb (Bits.to_nat (b j)) (pred l)))
                 then S (Bits.to_nat (b j)) else Bits.to_nat (b j)).
     { intros j HjK Hinv. unfold b, adv.
-      change (run_n (S j) act input ss0)
-        with (sched_step act (run_n j act input ss0)
-                (sched_input input (run_n j act input ss0))).
-      pose proof (buffer_after_cycle act a_idx n_idx (run_n j act input ss0)
-                    (sched_input input (run_n j act input ss0)) Halign
+      change (run_n (S j) act input resp ss0)
+        with (sched_step act (run_n j act input resp ss0)
+                (sched_input input (resp j))).
+      pose proof (buffer_after_cycle act a_idx n_idx (run_n j act input resp ss0)
+                    (sched_input input (resp j)) Halign
                     ltac:(apply (Hnd (S j)); lia)) as Hba.
       cbv zeta in Hba. destruct Hba as [Hvalb _]. rewrite Hvalb.
       exact (stall_counter_step act a_idx n_idx _ _ l _ _ Hst Hwide Hinv). }
@@ -11328,8 +11345,8 @@ Section SchedulerSimulation.
                 Hwide Hz0 Hrec k HK Hne) as [t [Ht1 [Ht2 [Ht3 Ht4]]]].
     exists t. split; [ exact Ht1 | split; [ exact Ht2 | split; [| exact Ht4 ]]].
     unfold adv in Ht3.
-    destruct (beq_dec (eval1 (buf_gate act a_idx n_idx) (run_n t act input ss0)
-                         (sched_input input (run_n t act input ss0))) Bits.zero)
+    destruct (beq_dec (eval1 (buf_gate act a_idx n_idx) (run_n t act input resp ss0)
+                         (sched_input input (resp t))) Bits.zero)
       eqn:Hq; [ discriminate Ht3 |].
     apply (proj1 (bits1_nonzero_ones _)).
     intro Hz2. rewrite Hz2, beq_dec_refl in Hq. discriminate Hq.
@@ -11340,32 +11357,32 @@ Section SchedulerSimulation.
      counts, and its validity rises [lat] cycles after its argument's, so the
      induction needs every earlier cycle rather than the previous one. *)
   Lemma valids_ones_run :
-    forall (act: tfs_action sched) a_idx (input: input_t)
+    forall (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val)
            (ss0: sched_sys_state) (K: nat),
       act_idx_aligned act a_idx ->
       (forall x, zeroed_at_start x -> (fst ss0).[x] = Bits.zero) ->
-      (forall i, 1 <= i <= K -> ~ done_set (run_n i act input ss0)) ->
+      (forall i, 1 <= i <= K -> ~ done_set (run_n i act input resp ss0)) ->
       forall k, k <= K ->
       forall n_idx,
         node_rank act (vreg_nid a_idx n_idx) < k ->
-        (fst (run_n k act input ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1.
+        (fst (run_n k act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1.
   Proof.
-    intros act a_idx input ss0 K Halign Hzero Hnd.
+    intros act a_idx input resp ss0 K Halign Hzero Hnd.
     assert (main : forall bnd j, j <= bnd -> j <= K -> forall n_idx,
               node_rank act (vreg_nid a_idx n_idx) < j ->
-              (fst (run_n j act input ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1).
+              (fst (run_n j act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1).
     { intro bnd. induction bnd as [| m IH]; intros j Hjm HjK n_idx Hlt; [ lia |].
       destruct (Nat.eq_dec j (S m)) as [-> | Hne]; [| apply (IH j); lia ].
       destruct (vreg_nid_node_range act a_idx n_idx Halign) as [Hn1 Hnlen].
-      assert (Hstep : ~ done_set (sched_step act (run_n m act input ss0)
-                        (sched_input input (run_n m act input ss0))))
+      assert (Hstep : ~ done_set (sched_step act (run_n m act input resp ss0)
+                        (sched_input input (resp m))))
         by (apply (Hnd (S m)); lia).
-      pose proof (buffer_after_cycle act a_idx n_idx (run_n m act input ss0)
-                    (sched_input input (run_n m act input ss0)) Halign Hstep) as Hba.
+      pose proof (buffer_after_cycle act a_idx n_idx (run_n m act input resp ss0)
+                    (sched_input input (resp m)) Halign Hstep) as Hba.
       cbv zeta in Hba. destruct Hba as [_ Hval].
-      change (run_n (S m) act input ss0)
-        with (sched_step act (run_n m act input ss0)
-                (sched_input input (run_n m act input ss0))).
+      change (run_n (S m) act input resp ss0)
+        with (sched_step act (run_n m act input resp ss0)
+                (sched_input input (resp m))).
       rewrite Hval.
       (* the buffer lemmas hand the node id over UNFOLDED; fold it once, so the
          rank hypotheses and the stall lemmas speak of the same term *)
@@ -11403,8 +11420,8 @@ Section SchedulerSimulation.
         pose proof (node_rank_stall act (vreg_nid a_idx n_idx) sarg l Hst Hslt) as Hrk.
         (* the gate IS the argument's validity, up from the argument's rank on *)
         assert (Hgate : forall j, S (node_rank act sarg) <= j <= m ->
-                  eval1 (buf_gate act a_idx n_idx) (run_n j act input ss0)
-                    (sched_input input (run_n j act input ss0)) = Bits.ones 1).
+                  eval1 (buf_gate act a_idx n_idx) (run_n j act input resp ss0)
+                    (sched_input input (resp j)) = Bits.ones 1).
         { intros j Hj.
           rewrite (compile_stall_valid (build_dfg ctx act) _ _ a_idx _ _ sarg _ []
                      (length (graph (build_dfg ctx act))) Hop
@@ -11412,8 +11429,8 @@ Section SchedulerSimulation.
           rewrite (compile_fuel_irrel act a_idx _ sarg Hs1 Hslen
                      (pred (length (graph (build_dfg ctx act))))
                      (length (graph (build_dfg ctx act))) ltac:(lia) Hslen).
-          apply (compile_valid_ones act a_idx (run_n j act input ss0)
-                   (sched_input input (run_n j act input ss0)) Halign j
+          apply (compile_valid_ones act a_idx (run_n j act input resp ss0)
+                   (sched_input input (resp j)) Halign j
                    (IH j ltac:(lia) ltac:(lia))).
           + intros e He. exact (proj1 (proj1 (filter_In _ e _) He)).
           + exact Hs1.
@@ -11422,8 +11439,8 @@ Section SchedulerSimulation.
           + lia.
           + right. lia. }
         assert (Hcnt : Bits.to_nat
-                  ((fst (run_n m act input ss0)).[tf_dfg_b a_idx n_idx]) = pred l).
-        { apply (stall_counter_run act a_idx n_idx input ss0 l
+                  ((fst (run_n m act input resp ss0)).[tf_dfg_b a_idx n_idx]) = pred l).
+        { apply (stall_counter_run act a_idx n_idx input resp ss0 l
                    (S (node_rank act sarg)) m Halign Hst
                    (Hzero (tf_dfg_b a_idx n_idx) I)
                    ltac:(intros i Hi; apply Hnd; lia)).
@@ -11436,13 +11453,13 @@ Section SchedulerSimulation.
         match goal with
         | |- context [ @beq_dec ?T ?E ?c ?d ] =>
             replace c with
-              ((fst (run_n m act input ss0)).[tf_dfg_b a_idx n_idx]) by reflexivity
+              ((fst (run_n m act input resp ss0)).[tf_dfg_b a_idx n_idx]) by reflexivity
         end.
         (* the width comes from the goal too: [Bits.to_nat] carries it as an
            implicit, and a second copy of it breaks the rewrite *)
         match goal with
         | |- context [ beq_dec _ ?d ] =>
-            assert (Hreg : (fst (run_n m act input ss0)).[tf_dfg_b a_idx n_idx] = d)
+            assert (Hreg : (fst (run_n m act input resp ss0)).[tf_dfg_b a_idx n_idx] = d)
         end.
         { apply (bits_to_nat_inj (ss_sz (tf_dfg_b a_idx n_idx))).
           rewrite Hcnt. symmetry. apply Bits.to_nat_of_nat. exact Hwide. }
@@ -11455,8 +11472,8 @@ Section SchedulerSimulation.
         end.
         vm_compute. reflexivity.
       - (* every other node: the compiled validity of its own expression *)
-        apply (compile_valid_ones act a_idx (run_n m act input ss0)
-                 (sched_input input (run_n m act input ss0)) Halign m
+        apply (compile_valid_ones act a_idx (run_n m act input resp ss0)
+                 (sched_input input (resp m)) Halign m
                  (IH m (Nat.le_refl m) ltac:(lia))).
         + intros e He. exact (proj1 (proj1 (filter_In _ e _) He)).
         + exact Hn1.
@@ -11473,12 +11490,12 @@ Section SchedulerSimulation.
      settled and validated by settle_bound and the combined validity fires. *)
   Lemma done_by_settle_bound :
     forall (act: tfs_action sched) (sp0: src_sys_state)
-           (ss0: sched_sys_state) (input: input_t),
+           (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val),
       start_rel sp0 ss0 ->
-      exists N, N <= S (settle_bound act) /\ done_set (run_n N act input ss0).
+      exists N, N <= S (settle_bound act) /\ done_set (run_n N act input resp ss0).
   Proof.
-    intros act sp0 ss0 input Hstart.
-    destruct (bounded_dec (fun k => done_set (run_n k act input ss0))
+    intros act sp0 ss0 input resp Hstart.
+    destruct (bounded_dec (fun k => done_set (run_n k act input resp ss0))
                 (fun k => done_set_dec _) (settle_bound act)) as [Hearly | Hno].
     - destruct Hearly as [j [Hjle Hjdone]]. exists j. split; [ lia | exact Hjdone ].
     - exists (S (settle_bound act)). split; [ apply Nat.le_refl | ].
@@ -11510,7 +11527,7 @@ Section SchedulerSimulation.
           by (apply in_map; exact Hin).
         rewrite Hseq in Hinm. rewrite in_seq in Hinm. rewrite Hnid in Hinm. lia. }
       apply (compile_valid_ones act a_idx _ _ Halign (settle_bound act)
-               (valids_ones_run act a_idx input ss0 (settle_bound act) Halign
+               (valids_ones_run act a_idx input resp ss0 (settle_bound act) Halign
                   (proj2 (proj2 Hstart)) (fun i Hi => Hno i (proj2 Hi))
                   (settle_bound act) (Nat.le_refl _))
                _ (fun e He => He)
@@ -11524,17 +11541,17 @@ Section SchedulerSimulation.
      [done_set (run_n k ...)]), so "not done before N" holds by construction. *)
   Lemma scheduler_reaches_done :
     forall (act: tfs_action sched) (sp0: src_sys_state)
-           (ss0: sched_sys_state) (input: input_t),
+           (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val),
       start_rel sp0 ss0 ->
       exists N,
-        (forall k, k < N -> ~ done_set (run_n k act input ss0)) /\
-        done_set (run_n N act input ss0).
+        (forall k, k < N -> ~ done_set (run_n k act input resp ss0)) /\
+        done_set (run_n N act input resp ss0).
   Proof.
-    intros act sp0 ss0 input Hstart.
-    destruct (least_witness (fun k => done_set (run_n k act input ss0))
+    intros act sp0 ss0 input resp Hstart.
+    destruct (least_witness (fun k => done_set (run_n k act input resp ss0))
                 (fun k => done_set_dec _) (S (settle_bound act)))
       as [N [Hdone Hbefore]].
-    - apply (done_by_settle_bound act sp0 ss0 input Hstart).
+    - apply (done_by_settle_bound act sp0 ss0 input resp Hstart).
     - exists N. split; [ exact Hbefore | exact Hdone ].
   Qed.
 
@@ -11938,18 +11955,18 @@ Section SchedulerSimulation.
      validity substitutes onto the reference's table only if the VALUES agree,
      and both lean on the gate still being up. *)
   Lemma valid_settled_run :
-    forall (act: tfs_action sched) a_idx (input: input_t)
+    forall (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val)
            (ss0: sched_sys_state) (k: nat),
       act_idx_aligned act a_idx ->
       (forall n_idx, (fst ss0).[tf_dfg_v a_idx n_idx] = Bits.zero) ->
-      valid_gates act a_idx (run_n k act input ss0)
-        (sched_input input (run_n k act input ss0))
-      /\ valid_refs act a_idx (run_n k act input ss0)
-           (sched_input input (run_n k act input ss0))
-      /\ valid_settled act a_idx (run_n k act input ss0)
-           (sched_input input (run_n k act input ss0)).
+      valid_gates act a_idx (run_n k act input resp ss0)
+        (sched_input input (resp k))
+      /\ valid_refs act a_idx (run_n k act input resp ss0)
+           (sched_input input (resp k))
+      /\ valid_settled act a_idx (run_n k act input resp ss0)
+           (sched_input input (resp k)).
   Proof.
-    intros act a_idx input ss0 k Halign Hz0.
+    intros act a_idx input resp ss0 k Halign Hz0.
     induction k as [| k IH].
     - split; [| split ].
       + intros m Hv. exfalso. cbn [run_n] in Hv.
@@ -11959,52 +11976,52 @@ Section SchedulerSimulation.
       + intros m Hns Hv. exfalso. cbn [run_n] in Hv.
         rewrite Hz0 in Hv. apply ones1_neq_zero. symmetry. exact Hv.
     - destruct IH as [IHg [IHr IHs]].
-      set (ssk := run_n k act input ss0) in *.
-      change (run_n (S k) act input ss0)
-        with (sched_step act ssk (sched_input input ssk)).
-      destruct (done_set_dec (sched_step act ssk (sched_input input ssk)))
+      set (ssk := run_n k act input resp ss0) in *.
+      change (run_n (S k) act input resp ss0)
+        with (sched_step act ssk (sched_input input (resp k))).
+      destruct (done_set_dec (sched_step act ssk (sched_input input (resp k))))
         as [Hd | Hnd].
       + (* a done cycle clears every validity bit *)
         split; [| split ].
         * intros m Hv. exfalso.
           rewrite (sched_step_done_v act a_idx m ssk
-                     (sched_input input ssk) Hd) in Hv.
+                     (sched_input input (resp k)) Hd) in Hv.
           apply ones1_neq_zero. symmetry. exact Hv.
         * intros m pi Hv. exfalso.
           rewrite (sched_step_done_v act a_idx m ssk
-                     (sched_input input ssk) Hd) in Hv.
+                     (sched_input input (resp k)) Hd) in Hv.
           apply ones1_neq_zero. symmetry. exact Hv.
         * intros m Hns Hv. exfalso.
           rewrite (sched_step_done_v act a_idx m ssk
-                     (sched_input input ssk) Hd) in Hv.
+                     (sched_input input (resp k)) Hd) in Hv.
           apply ones1_neq_zero. symmetry. exact Hv.
       + (* a pre-done cycle *)
         assert (Hmono : forall m,
                   (fst ssk).[tf_dfg_v a_idx m] = Bits.ones 1 ->
-                  (fst (sched_step act ssk (sched_input input ssk))).[tf_dfg_v a_idx m]
+                  (fst (sched_step act ssk (sched_input input (resp k)))).[tf_dfg_v a_idx m]
                   = Bits.ones 1)
           by (intros m Hx; exact (validity_monotone_step act a_idx m ssk
-                (sched_input input ssk) Halign Hnd IHg Hx)).
+                (sched_input input (resp k)) Halign Hnd IHg Hx)).
         assert (Hfroz : forall m,
                   (fst ssk).[tf_dfg_v a_idx m] = Bits.ones 1 ->
                   (fst ssk).[tf_dfg_b a_idx m]
-                  = (fst (sched_step act ssk (sched_input input ssk))).[tf_dfg_b a_idx m])
+                  = (fst (sched_step act ssk (sched_input input (resp k)))).[tf_dfg_b a_idx m])
           by (intros m Hx; exact (buffer_frozen_step act a_idx m ssk
-                (sched_input input ssk) Halign Hnd IHs IHg Hx)).
+                (sched_input input (resp k)) Halign Hnd IHs IHg Hx)).
         assert (Hgk : forall m,
-                  (fst (sched_step act ssk (sched_input input ssk))).[tf_dfg_v a_idx m]
+                  (fst (sched_step act ssk (sched_input input (resp k)))).[tf_dfg_v a_idx m]
                     = Bits.ones 1 ->
-                  eval1 (buf_gate act a_idx m) ssk (sched_input input ssk)
+                  eval1 (buf_gate act a_idx m) ssk (sched_input input (resp k))
                   = Bits.ones 1)
           by (intros m Hx; exact (buffer_valid_gate act a_idx m ssk
-                (sched_input input ssk) Halign Hnd Hx)).
+                (sched_input input (resp k)) Halign Hnd Hx)).
         assert (Hnk : forall m,
-                  (fst (sched_step act ssk (sched_input input ssk))).[tf_dfg_v a_idx m]
+                  (fst (sched_step act ssk (sched_input input (resp k)))).[tf_dfg_v a_idx m]
                     = Bits.ones 1 ->
                   eval_st (tf_dfg_v a_idx m) (buf_valid_next act a_idx m)
-                    ssk (sched_input input ssk) = Bits.ones 1).
+                    ssk (sched_input input (resp k)) = Bits.ones 1).
         { intros m Hx.
-          pose proof (buffer_after_cycle act a_idx m ssk (sched_input input ssk)
+          pose proof (buffer_after_cycle act a_idx m ssk (sched_input input (resp k))
                         Halign Hnd) as Hba.
           cbv zeta in Hba. destruct Hba as [_ Hvalid].
           rewrite Hvalid in Hx. exact Hx. }
@@ -12028,18 +12045,18 @@ Section SchedulerSimulation.
         (* the reference's validity at [ssk], for every bit up after the step *)
         assert (Hrk : forall m pi,
                   is_sample_of act (vreg_nid a_idx m) = false ->
-                  (fst (sched_step act ssk (sched_input input ssk))).[tf_dfg_v a_idx m]
+                  (fst (sched_step act ssk (sched_input input (resp k)))).[tf_dfg_v a_idx m]
                     = Bits.ones 1 ->
                   eval1 (snd (compile_dfg_expr_at ctx bneeds pi
                                 (length (graph (build_dfg ctx act))) a_idx
                                 (build_dfg ctx act) (vreg_nid a_idx m)
                                 (sample_bufs act a_idx)))
-                    ssk (sched_input input ssk) = Bits.ones 1).
+                    ssk (sched_input input (resp k)) = Bits.ones 1).
         { intros m pi Hsam Hx.
           destruct (vreg_nid_node_range act a_idx m Halign) as [Hn1 Hnlen].
-          apply (compile_valid_path_mono act a_idx ssk (sched_input input ssk)
+          apply (compile_valid_path_mono act a_idx ssk (sched_input input (resp k))
                    (sample_bufs act a_idx) _ _ [] pi ltac:(intros y [])).
-          - apply (compile_subst_ref_valid_gen act a_idx ssk (sched_input input ssk)
+          - apply (compile_subst_ref_valid_gen act a_idx ssk (sched_input input (resp k))
                      Halign IHs IHr
                      (filter (fun '(b_nid, _) =>
                                 negb (Nat.eqb b_nid (vreg_nid a_idx m)))
@@ -12075,22 +12092,22 @@ Section SchedulerSimulation.
                        BitsToLists.list_assoc bufs x <> None) ->
                     eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                                   (build_dfg ctx act) n bufs))
-                      ssk (sched_input input ssk) = Bits.ones 1 ->
+                      ssk (sched_input input (resp k)) = Bits.ones 1 ->
                     eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                                   (build_dfg ctx act) n bufs))
-                      (sched_step act ssk (sched_input input ssk))
-                      (sched_input input (sched_step act ssk (sched_input input ssk)))
+                      (sched_step act ssk (sched_input input (resp k)))
+                      (sched_input input (resp (S k)))
                     = Bits.ones 1).
         { intros bufs Hsub.
-          apply (compile_valid_state_indep_gen act a_idx (sched_input input ssk)
-                   (sched_input input (sched_step act ssk (sched_input input ssk)))
-                   ssk (sched_step act ssk (sched_input input ssk)) _ _ bufs Halign
+          apply (compile_valid_state_indep_gen act a_idx (sched_input input (resp k))
+                   (sched_input input (resp (S k)))
+                   ssk (sched_step act ssk (sched_input input (resp k))) _ _ bufs Halign
                    ltac:(intro s; symmetry;
                          exact (sched_step_preserves_svar act ssk
-                                  (sched_input input ssk) s Hnd))
+                                  (sched_input input (resp k)) s Hnd))
                    ltac:(intro o; symmetry;
                          exact (sched_step_preserves_ovar act ssk
-                                  (sched_input input ssk) o Hnd))
+                                  (sched_input input (resp k)) o Hnd))
                    ltac:(intro v; reflexivity)
                    Hsub ltac:(intros m _ Hx; exact (Hfroz m Hx)) Hmono). }
         split; [| split ].
@@ -12098,9 +12115,8 @@ Section SchedulerSimulation.
           intros m Hv.
           destruct (vreg_nid_node_range act a_idx m Halign) as [Hn1 Hnlen].
           assert (Hgate' : eval1 (buf_gate act a_idx m)
-                             (sched_step act ssk (sched_input input ssk))
-                             (sched_input input
-                                (sched_step act ssk (sched_input input ssk)))
+                             (sched_step act ssk (sched_input input (resp k)))
+                             (sched_input input (resp (S k)))
                            = Bits.ones 1).
           { apply (Hstv (filter (fun '(b_nid, _) =>
                      negb (Nat.eqb b_nid (vreg_nid a_idx m)))
@@ -12109,14 +12125,13 @@ Section SchedulerSimulation.
               | exact Hnlen | exact (Hrest m) | exact (Hgk m Hv) ]. }
           destruct (stall_lat_of act (vreg_nid a_idx m)) as [l |] eqn:Hst.
           -- destruct (stall_counter_wide act a_idx m l Halign Hst) as [_ Hwide].
-             destruct (stall_valid_next_inv act a_idx m ssk (sched_input input ssk)
+             destruct (stall_valid_next_inv act a_idx m ssk (sched_input input (resp k))
                          l _ Hst Hwide (Hnk m Hv)) as [_ Hreg].
              exact (stall_valid_next_ones act a_idx m
-                      (sched_step act ssk (sched_input input ssk))
-                      (sched_input input
-                         (sched_step act ssk (sched_input input ssk)))
+                      (sched_step act ssk (sched_input input (resp k)))
+                      (sched_input input (resp (S k)))
                       l _ Hst Hgate'
-                      (stall_saturated_step act a_idx m ssk (sched_input input ssk)
+                      (stall_saturated_step act a_idx m ssk (sched_input input (resp k))
                          l Halign Hnd Hst Hreg)).
           -- unfold buf_valid_expr. rewrite Hst. exact Hgate'.
         * (* the reference's validity is still up *)
@@ -12134,7 +12149,7 @@ Section SchedulerSimulation.
         * (* and the register still holds the reference's value *)
           intros m Hns Hv.
           destruct (vreg_nid_node_range act a_idx m Halign) as [Hn1 Hnlen].
-          pose proof (buffer_after_cycle act a_idx m ssk (sched_input input ssk)
+          pose proof (buffer_after_cycle act a_idx m ssk (sched_input input (resp k))
                         Halign Hnd) as Hba.
           cbv zeta in Hba. destruct Hba as [Hvalue _].
           unfold node_ref_expr.
@@ -12148,10 +12163,10 @@ Section SchedulerSimulation.
                             (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))
                with (vreg_nid a_idx m).
              unfold buf_value_expr. rewrite Hns, Hsam.
-             rewrite (compile_nobuf_step_stable act a_idx ssk input Halign Hnd
+             rewrite (compile_nobuf_step_stable act a_idx ssk input (resp k) (resp (S k)) Halign Hnd
                         (length (graph (build_dfg ctx act))) (vreg_nid a_idx m)
                         _ Hnlen (Hrk m [] Hsam Hv)).
-             apply (compile_subst_valid act a_idx ssk (sched_input input ssk)
+             apply (compile_subst_valid act a_idx ssk (sched_input input (resp k))
                       Halign IHs
                       (filter (fun '(b_nid, _) =>
                                  negb (Nat.eqb b_nid (vreg_nid a_idx m)))
@@ -12285,34 +12300,34 @@ Section SchedulerSimulation.
   Qed.
 
   (* A run of pre-done cycles disturbs neither the base state nor the outputs. *)
-  Lemma run_preserves_svar (act: tfs_action sched) (input: input_t)
+  Lemma run_preserves_svar (act: tfs_action sched) (input: input_t) (resp: nat -> resp_val)
         (ss0: sched_sys_state) (M: nat) :
-    (forall i, 1 <= i <= M -> ~ done_set (run_n i act input ss0)) ->
-    forall sv, (fst (run_n M act input ss0)).[tf_dfg_s sv] = (fst ss0).[tf_dfg_s sv].
+    (forall i, 1 <= i <= M -> ~ done_set (run_n i act input resp ss0)) ->
+    forall sv, (fst (run_n M act input resp ss0)).[tf_dfg_s sv] = (fst ss0).[tf_dfg_s sv].
   Proof.
     induction M as [| M IH]; intros Hnd sv; [ reflexivity |].
-    assert (Hstep : ~ done_set (sched_step act (run_n M act input ss0)
-                      (sched_input input (run_n M act input ss0))))
+    assert (Hstep : ~ done_set (sched_step act (run_n M act input resp ss0)
+                      (sched_input input (resp M))))
       by (apply (Hnd (S M)); lia).
-    change (run_n (S M) act input ss0)
-      with (sched_step act (run_n M act input ss0)
-              (sched_input input (run_n M act input ss0))).
+    change (run_n (S M) act input resp ss0)
+      with (sched_step act (run_n M act input resp ss0)
+              (sched_input input (resp M))).
     rewrite (sched_step_preserves_svar act _ _ sv Hstep).
     apply IH. intros i Hi. apply Hnd. lia.
   Qed.
 
-  Lemma run_preserves_ovar (act: tfs_action sched) (input: input_t)
+  Lemma run_preserves_ovar (act: tfs_action sched) (input: input_t) (resp: nat -> resp_val)
         (ss0: sched_sys_state) (M: nat) :
-    (forall i, 1 <= i <= M -> ~ done_set (run_n i act input ss0)) ->
-    forall ov, (snd (run_n M act input ss0)).[ov] = (snd ss0).[ov].
+    (forall i, 1 <= i <= M -> ~ done_set (run_n i act input resp ss0)) ->
+    forall ov, (snd (run_n M act input resp ss0)).[ov] = (snd ss0).[ov].
   Proof.
     induction M as [| M IH]; intros Hnd ov; [ reflexivity |].
-    assert (Hstep : ~ done_set (sched_step act (run_n M act input ss0)
-                      (sched_input input (run_n M act input ss0))))
+    assert (Hstep : ~ done_set (sched_step act (run_n M act input resp ss0)
+                      (sched_input input (resp M))))
       by (apply (Hnd (S M)); lia).
-    change (run_n (S M) act input ss0)
-      with (sched_step act (run_n M act input ss0)
-              (sched_input input (run_n M act input ss0))).
+    change (run_n (S M) act input resp ss0)
+      with (sched_step act (run_n M act input resp ss0)
+              (sched_input input (resp M))).
     rewrite (sched_step_preserves_ovar act _ _ ov Hstep).
     apply IH. intros i Hi. apply Hnd. lia.
   Qed.
