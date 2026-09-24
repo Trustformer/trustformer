@@ -2028,11 +2028,28 @@ Section SchedulerSimulation.
     (* A variable READ shares one node across the whole action, so an id an
        [if] arm binds can be a [DFG_Var] node the OTHER arm emitted. *)
     Definition vnode_at (s: wst) (n: nid_t) : Prop :=
-      exists w, In {| nid := n; op := DFG_Var w; sz := dfg_var_size ctx w |} (graph s).
+      exists w szw, In {| nid := n; op := DFG_Var w; sz := szw |} (graph s).
 
     Lemma var_node_at_gmono (s s': wst) n :
       wgmono s s' -> vnode_at s n -> vnode_at s' n.
-    Proof. intros Hg [w Hin]. exists w. exact (Hg _ Hin). Qed.
+    Proof. intros Hg [w [szw Hin]]. exists w, szw. exact (Hg _ Hin). Qed.
+
+    (* Node ids are unique in the ACTION's graph, so a shared read node an
+       extension holds at an id [s] already binds is one [s] holds too. *)
+    Lemma vnode_low (s s2: wst) (v: dvar) n :
+      wgmono s s2 -> wgmono s2 F -> winv s ->
+      In (v, n) (var_map s) -> vnode_at s2 n -> vnode_at s n.
+    Proof.
+      intros Hg Hg2 Hinv Hin [w [szw Hvn]].
+      assert (HgsF : wgmono s F) by (eapply wgmono_trans; [ exact Hg | exact Hg2 ]).
+      destruct (proj1 Hinv v n Hin) as [nd [Hnds Hndid]].
+      pose proof (in_graph_fwd act F _ HF (HgsF _ Hnds)) as Hnd'.
+      pose proof (in_graph_fwd act F _ HF (Hg2 _ Hvn)) as Hvn'.
+      destruct (node_at_nid act _ Hnd') as [_ Hnth1].
+      destruct (node_at_nid act _ Hvn') as [_ Hnth2].
+      cbn [nid] in Hnth2. rewrite Hndid in Hnth1.
+      exists w, szw. rewrite <- Hnth2, Hnth1. exact Hnds.
+    Qed.
 
     Lemma get_var_ids (v: dvar) (s: wst) id s' :
       get_var ctx v s = (id, s') ->
@@ -2041,7 +2058,7 @@ Section SchedulerSimulation.
       intro H. destruct (get_var_cases v s id s' H) as [[Hin _] | [Her _]].
       - left. exact (in_map snd _ _ Hin).
       - destruct (read_var_cases v s id s' Her) as [[Hnd _] | Hem].
-        + right; left. exists v. exact Hnd.
+        + right; left. exists v, (dfg_var_size ctx v). exact Hnd.
         + right; right. rewrite (emit_red (DFG_Var v) (dfg_var_size ctx v) s) in Hem.
           injection Hem as <- _. reflexivity.
     Qed.
@@ -2247,13 +2264,16 @@ Section SchedulerSimulation.
     (* A node the action holds at [n] that is not a [DFG_Var] rules out a
        shared read node there. *)
     Lemma vnode_absurd (s': wst) (n: nid_t) :
-      wgmono s' F -> 1 <= n ->
+      wgmono s' F ->
       (forall w, node_op act n <> DFG_Var w) ->
       vnode_at s' n -> False.
     Proof.
-      intros Hg Hpos Hno [w Hin].
-      destruct (in_var_node_at act F s' w n HF Hin Hpos Hg) as [_ [_ Hop]].
-      exact (Hno w Hop).
+      intros Hg Hno [w [szw Hin]].
+      pose proof (in_graph_fwd act F _ HF (Hg _ Hin)) as Hin'.
+      destruct (node_at_nid act _ Hin') as [_ Hnth].
+      cbn [nid] in Hnth.
+      apply (Hno w). unfold SchedulerSimulationBase.node_op.
+      rewrite Hnth. reflexivity.
     Qed.
 
     (* [get_var_sem] under a BOUND: the claim is needed only at ids below [B]
@@ -2302,7 +2322,7 @@ Section SchedulerSimulation.
           as [R1 [R2 [Rop _]]].
         destruct Hlow as [Hlt | Hvn].
         - rewrite (emit_id o size s1 id s' Hem) in Hlt. lia.
-        - apply (vnode_absurd s' id Hg' R1); [| exact Hvn ].
+        - apply (vnode_absurd s' id Hg'); [| exact Hvn ].
           intros w Hc. unfold SchedulerSimulationBase.node_op in Hc.
           rewrite Rop in Hc. exact (Hnv w Hc). }
       destruct e as [ c | sv | iv | ov | uop e1 | bop e1 e2 | ec et ee ].
