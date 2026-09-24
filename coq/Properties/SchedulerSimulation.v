@@ -1939,6 +1939,24 @@ Section SchedulerSimulation.
     Qed.
 
 
+    (* The graph only grows, so an id emitted later sits above every id the
+       earlier state's [var_map] can hold. *)
+    Lemma wgmono_len (s s': wst) :
+      0 < length (graph s) -> nid_seq s -> nid_seq s' -> wgmono s s' ->
+      length (graph s) <= length (graph s').
+    Proof.
+      intros Hne Hs Hs' Hg.
+      unfold SchedulerSimulationBase.nid_seq in Hs.
+      destruct (graph s) as [| nd rest] eqn:Egs; [ cbn in Hne; lia |].
+      assert (Hnd : nid nd = length rest).
+      { cbn [map length] in Hs. rewrite revseq_S in Hs.
+        injection Hs as Hh _. exact Hh. }
+      assert (Hnin : In nd (graph s)) by (rewrite Egs; apply in_eq).
+      assert (Hin : In nd (graph s')) by exact (Hg nd Hnin).
+      pose proof (nid_seq_bound s' nd Hs' Hin) as Hb.
+      rewrite Hnd in Hb. cbn [length]. lia.
+    Qed.
+
     (* ================================================================= *)
     (* Structural, and free of [guard_holds]: what the builder does to    *)
     (* [var_map] pins what the source does to the state.  Both arms of a  *)
@@ -1954,15 +1972,16 @@ Section SchedulerSimulation.
         (* a variable the builder leaves unbound is one the source leaves alone *)
         vm_frame (var_map s')
           (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) ops sp input)
-        (* every entry is inherited, or its node is new *)
+        (* every id is one [s] already held, or a node emitted since *)
         /\ (forall v n, In (v, n) (var_map s') ->
-              In (v, n) (var_map s) \/ length (graph s) <= n)
-        (* an entry that survives unchanged is one the source did not write *)
-        /\ (forall v n pi, In (v, n) (var_map s) -> In (v, n) (var_map s') ->
+              In n (map snd (var_map s)) \/ length (graph s) <= n)
+        (* an entry at an OLD node is one no call produced, so its value needs
+           no path condition *)
+        /\ (forall v n pi, In (v, n) (var_map s') -> n < length (graph s) ->
               guard_holds pi ->
               rvalid act a_idx pi n ss sinput = Bits.ones 1 ->
-              src_get (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) ops sp input) v
-              = src_get sp v).
+              NV (dfg_var_size ctx v) n
+              = src_get (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) ops sp input) v).
     Proof.
     Admitted.
 
@@ -2410,25 +2429,28 @@ Section SchedulerSimulation.
         pose proof (dataflow_ops_struct op2 ((cond_id, false) :: en) sR sp
                       HneR PsR QsR FsR HposR HsemR) as Hste.
         rewrite Ee in Hste. destruct (Hste Hg_else) as [Hfre [Hsple Hkeepe]].
-        (* a key both arms leave at ONE node is the node [s1] already had *)
+        (* a key both arms leave at ONE node sits at an id [s1] already held,
+           so neither arm's binding came from a call and both read the same *)
         assert (Hboth : forall kk (id: nid_t),
                   In (kk, id) (var_map s_then) -> In (kk, id) (var_map s_else) ->
                   forall pi, guard_holds pi ->
                     rvalid act a_idx pi id ss sinput = Bits.ones 1 ->
                   src_get (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) op1 sp input) kk
-                    = src_get sp kk
-                  /\ src_get (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) op2 sp input) kk
-                    = src_get sp kk).
+                  = src_get (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) op2 sp input) kk).
         { intros kk id Hint Hine pi Hgp Hv.
           assert (Hlt : id < length (graph s_then)).
           { apply (wnidwf_bound s_then id); [ exact (proj1 (proj2 Pthen)) |].
             exact (proj1 Pthen kk id Hint). }
-          assert (Hin1 : In (kk, id) (var_map s1)).
-          { destruct (Hsple kk id Hine) as [Hin | Hge]; [ exact Hin |].
-            exfalso. unfold sR in Hge; cbn [graph] in Hge. lia. }
-          split.
-          - exact (Hkeept kk id pi Hin1 Hint Hgp Hv).
-          - exact (Hkeepe kk id pi Hin1 Hine Hgp Hv). }
+          assert (HltR : id < length (graph sR))
+            by (unfold sR; cbn [graph]; exact Hlt).
+          assert (Hlow : id < length (graph s1)).
+          { destruct (Hsple kk id Hine) as [Hin | Hge]; [| exfalso; lia ].
+            apply in_map_iff in Hin. destruct Hin as [[v2 n2] [Heq Hmem]].
+            cbn [snd] in Heq. subst n2.
+            unfold sR in Hmem; cbn [var_map] in Hmem.
+            exact (wnidwf_bound s1 id (proj1 (proj2 Pc)) (proj1 Pc v2 id Hmem)). }
+          rewrite <- (Hkeept kk id pi Hint Hlow Hgp Hv).
+          exact (Hkeepe kk id pi Hine HltR Hgp Hv). }
         unfold sem_inv. rewrite HvmF.
         unfold tf_ops_run. cbn [tf_ops_updates].
         destruct (bits1_cases (tf_eval_expr ss_sz si_sz oo_sz (szB := 1)
@@ -2468,12 +2490,11 @@ Section SchedulerSimulation.
             end. reflexivity.
           * (* a shared key: both arms leave it where it was *)
             intros kk id Hint Hine pi Hgp Hv.
-            destruct (Hboth kk id Hint Hine pi Hgp Hv) as [Hk1 Hk2].
+            pose proof (Hboth kk id Hint Hine pi Hgp Hv) as Hk.
             cbn beta iota.
             match goal with
             | |- context [ @beq_dec ?T ?E ?x ?z ] => destruct (@beq_dec T E x z)
-            end; first [ reflexivity | exact (eq_trans Hk2 (eq_sym Hk1))
-                       | exact (eq_trans Hk1 (eq_sym Hk2)) ].
+            end; first [ reflexivity | exact Hk | exact (eq_sym Hk) ].
           * (* a variable neither arm binds *)
             intros v Hnmt Hnme. cbn beta iota.
             match goal with
@@ -2506,12 +2527,11 @@ Section SchedulerSimulation.
           * intros pi Hgp Hv kk. pose proof (Hvc pi Hgp Hv) as Hcv.
             rewrite Hhw in Hcv. rewrite <- Hcv, beq_dec_refl. reflexivity.
           * intros kk id Hint Hine pi Hgp Hv.
-            destruct (Hboth kk id Hint Hine pi Hgp Hv) as [Hk1 Hk2].
+            pose proof (Hboth kk id Hint Hine pi Hgp Hv) as Hk.
             cbn beta iota.
             match goal with
             | |- context [ @beq_dec ?T ?E ?x ?z ] => destruct (@beq_dec T E x z)
-            end; first [ reflexivity | exact (eq_trans Hk2 (eq_sym Hk1))
-                       | exact (eq_trans Hk1 (eq_sym Hk2)) ].
+            end; first [ reflexivity | exact Hk | exact (eq_sym Hk) ].
           * intros v Hnmt Hnme. cbn beta iota.
             match goal with
             | |- context [ @beq_dec ?T ?E ?x ?z ] => destruct (@beq_dec T E x z)
