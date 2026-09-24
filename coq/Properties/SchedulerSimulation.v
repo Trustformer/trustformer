@@ -543,6 +543,7 @@ Section SchedulerSimulation.
   Local Notation slot_keys_nodup := (SchedulerSimulationBase.slot_keys_nodup ctx cost_limit).
   Local Notation ssucc_build_dfg := (SchedulerSimulationBase.ssucc_build_dfg ctx cost_limit).
   Local Notation stall_cost_gap := (SchedulerSimulationBase.stall_cost_gap ctx cost_limit).
+  Local Notation stall_counter_bounded := (SchedulerSimulationBase.stall_counter_bounded ctx cost_limit).
   Local Notation stall_counter_run := (SchedulerSimulationBase.stall_counter_run ctx cost_limit).
   Local Notation stall_counter_step := (SchedulerSimulationBase.stall_counter_step ctx cost_limit).
   Local Notation stall_counter_wide := (SchedulerSimulationBase.stall_counter_wide ctx cost_limit).

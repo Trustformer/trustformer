@@ -722,6 +722,32 @@ Section SchedulerSimulation.
       + apply Ht4; lia.
   Qed.
 
+  (* ... and it climbs by at most one a cycle, so reaching [top] takes [top]
+     cycles at least. *)
+  Lemma counter_bounded (sz top K: nat) (b: nat -> bits_t sz) (adv: nat -> bool) :
+    Bits.to_nat (b 0) = 0 ->
+    (forall j, j < K -> Bits.to_nat (b j) <= top ->
+               Bits.to_nat (b (S j))
+               = if andb (adv j) (negb (Nat.eqb (Bits.to_nat (b j)) top))
+                 then S (Bits.to_nat (b j)) else Bits.to_nat (b j)) ->
+    forall t k, t <= k -> k <= K ->
+      Bits.to_nat (b k) <= Bits.to_nat (b t) + (k - t).
+  Proof.
+    intros Hzero Hrec.
+    assert (Hle : forall j, j <= K -> Bits.to_nat (b j) <= top).
+    { intro j. induction j as [| j IHj]; intro Hj; [ lia |].
+      rewrite (Hrec j ltac:(lia) (IHj ltac:(lia))).
+      destruct (andb _ _) eqn:Hc; [| apply IHj; lia ].
+      apply andb_prop in Hc. destruct Hc as [_ Hne].
+      apply negb_true_iff, Nat.eqb_neq in Hne.
+      pose proof (IHj ltac:(lia)). lia. }
+    intros t k. induction k as [| k IH]; intros Htk HkK; [ lia |].
+    destruct (Nat.eq_dec t (S k)) as [-> | Hne]; [ lia |].
+    pose proof (IH ltac:(lia) ltac:(lia)) as IHk.
+    rewrite (Hrec k ltac:(lia) (Hle k ltac:(lia))).
+    destruct (andb _ _); lia.
+  Qed.
+
 
   Lemma valid_and_eval
     (e1 e2: @tf_expr (tfs_states sched) si_var o_var) (ss: sched_sys_state) (input: sched_input_t) :
@@ -11354,6 +11380,45 @@ Section SchedulerSimulation.
     - intros j Hj. cbn beta. rewrite (Hadv j Hj).
       destruct (beq_dec (Bits.ones 1) Bits.zero) eqn:E; [| reflexivity].
       exfalso. apply ones1_neq_zero. exact (proj1 (beq_dec_iff _ _ _) E).
+  Qed.
+
+  (* The run-level reading: a counter at zero on cycle [t] cannot have climbed
+     past [k - t] by cycle [k]. *)
+  Lemma stall_counter_bounded
+        (act: tfs_action sched) a_idx n_idx (input: input_t) (resp: nat -> resp_val)
+        (ss0: sched_sys_state) l K :
+    act_idx_aligned act a_idx ->
+    stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
+    (fst ss0).[tf_dfg_b a_idx n_idx] = Bits.zero ->
+    (forall i, 1 <= i <= K -> ~ done_set (run_n i act input resp ss0)) ->
+    forall t k, t <= k -> k <= K ->
+      Bits.to_nat ((fst (run_n k act input resp ss0)).[tf_dfg_b a_idx n_idx])
+      <= Bits.to_nat ((fst (run_n t act input resp ss0)).[tf_dfg_b a_idx n_idx])
+         + (k - t).
+  Proof.
+    intros Halign Hst Hzero Hnd.
+    destruct (stall_counter_wide act a_idx n_idx l Halign Hst) as [Hl Hwide].
+    apply (counter_bounded (ss_sz (tf_dfg_b a_idx n_idx)) (pred l) K
+             (fun j => (fst (run_n j act input resp ss0)).[tf_dfg_b a_idx n_idx])
+             (fun j => if beq_dec
+                            (eval1 (buf_gate act a_idx n_idx)
+                               (run_n j act input resp ss0)
+                               (sched_input input (resp j)))
+                            Bits.zero
+                       then false else true)).
+    - cbn [run_n]. rewrite Hzero.
+      change (@Bits.zero (ss_sz (tf_dfg_b a_idx n_idx)))
+        with (Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) 0).
+      apply Bits.to_nat_of_nat. lia.
+    - intros jj HjK Hinv. cbn beta in Hinv |- *.
+      change (run_n (S jj) act input resp ss0)
+        with (sched_step act (run_n jj act input resp ss0)
+                (sched_input input (resp jj))).
+      pose proof (buffer_after_cycle act a_idx n_idx (run_n jj act input resp ss0)
+                    (sched_input input (resp jj)) Halign
+                    ltac:(apply (Hnd (S jj)); lia)) as Hba.
+      cbv zeta in Hba. destruct Hba as [Hvalb _]. rewrite Hvalb.
+      apply (stall_counter_step act a_idx n_idx _ _ l _ _ Hst Hwide Hinv).
   Qed.
 
   (* A stall whose counter has left zero began its wait at some earlier cycle,
