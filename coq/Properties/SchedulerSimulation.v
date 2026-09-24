@@ -2432,11 +2432,28 @@ Section SchedulerSimulation.
     (* [var_map] pins what the source does to the state.  Both arms of a  *)
     (* conditional have these, which is what breaks the circularity there.*)
     (* ================================================================= *)
+    Lemma dataflow_ops_len : forall ops en (s: wst) u s',
+      0 < length (graph s) -> winv s -> wvsz s -> wfg s ->
+      (forall x, In x (map fst en) -> wnidwf s x) ->
+      dataflow_ops ctx en ops s = (u, s') ->
+      length (graph s) <= length (graph s').
+    Proof.
+      intros ops en s u s' Hne Hinv Hvsz Hfg Hen Hrun.
+      pose proof (dataflow_ops_fg ops en s Hinv Hvsz Hfg Hen) as Hfgo.
+      rewrite Hrun in Hfgo. destruct Hfgo as [Gg [Pp [Qq Ff]]].
+      exact (wgmono_len s s' Hne (proj1 (proj2 Hinv)) (proj1 (proj2 Pp)) Gg).
+    Qed.
+
     Lemma dataflow_ops_struct :
       forall (ops: @tf_ops s_var i_var o_var p_var) (en: list (nid_t * bool))
-             (s: wst) sp,
+             (s: wst) sp (B: nat),
         0 < length (graph s) -> winv s -> wvsz s -> wfg s -> gpos s ->
-        sem_inv s sp ->
+        (forall x, In x (map fst en) -> wnidwf s x) ->
+        B <= length (graph s) ->
+        vm_frame (var_map s) sp ->
+        (forall v n pi, In (v, n) (var_map s) -> (n < B \/ vnode_at s n) ->
+           guard_holds pi -> rvalid act a_idx pi n ss sinput = Bits.ones 1 ->
+           NV (dfg_var_size ctx v) n = src_get sp v) ->
         let (u, s') := dataflow_ops ctx en ops s in
         wgmono s' F ->
         (* a variable the builder leaves unbound is one the source leaves alone *)
@@ -2445,10 +2462,9 @@ Section SchedulerSimulation.
         (* an OLD id it binds is one [s] held, or the shared node of a READ *)
         /\ (forall v n, In (v, n) (var_map s') -> n < length (graph s) ->
               In n (map snd (var_map s)) \/ vnode_at s n)
-        (* and at such an id no call produced the binding, so its value needs
+        (* and below the bound no call produced the binding, so its value needs
            no path condition *)
-        /\ (forall v n pi, In (v, n) (var_map s') ->
-              (n < length (graph s) \/ vnode_at s' n) ->
+        /\ (forall v n pi, In (v, n) (var_map s') -> (n < B \/ vnode_at s' n) ->
               guard_holds pi ->
               rvalid act a_idx pi n ss sinput = Bits.ones 1 ->
               NV (dfg_var_size ctx v) n
@@ -2894,11 +2910,19 @@ Section SchedulerSimulation.
         assert (Hpos_else : gpos s_else).
         { pose proof (dataflow_ops_pos op2 ((cond_id, false) :: en) sR HposR Hen_ep) as Hq.
           rewrite Ee in Hq. exact Hq. }
+        assert (Hlen1t : length (graph s1) <= length (graph s_then)).
+        { exact (dataflow_ops_len op1 ((cond_id, true) :: en) s1 ut s_then
+                   Hne1 Pc Qc Fc Hen_t Et). }
         pose proof (dataflow_ops_struct op1 ((cond_id, true) :: en) s1 sp
-                      Hne1 Pc Qc Fc Hpos1 Hsem1) as Hstt.
+                      (length (graph s1))
+                      Hne1 Pc Qc Fc Hpos1 Hen_t (Nat.le_refl _) (proj2 Hsem1)
+                      (fun v n pi Hin _ Hgp Hv => proj1 Hsem1 v n pi Hin Hgp Hv)) as Hstt.
         rewrite Et in Hstt. destruct (Hstt Hg_then) as [Hfrt [Hsplt Hkeept]].
         pose proof (dataflow_ops_struct op2 ((cond_id, false) :: en) sR sp
-                      HneR PsR QsR FsR HposR HsemR) as Hste.
+                      (length (graph s1))
+                      HneR PsR QsR FsR HposR Hen_e
+                      ltac:(unfold sR; cbn [graph]; exact Hlen1t) (proj2 HsemR)
+                      (fun v n pi Hin _ Hgp Hv => proj1 HsemR v n pi Hin Hgp Hv)) as Hste.
         rewrite Ee in Hste. destruct (Hste Hg_else) as [Hfre [Hsple Hkeepe]].
         (* a key both arms leave at ONE node sits at an id [s1] already held,
            so neither arm's binding came from a call and both read the same *)
@@ -2924,8 +2948,14 @@ Section SchedulerSimulation.
                        (or_introl (wnidwf_bound s1 id (proj1 (proj2 Pc))
                                      (proj1 Pc v2 id Hmem))) Hgp Hv).
             - exact (Hkeept kk id pi Hint (or_intror Hvn) Hgp Hv). }
+          assert (Hlow1 : id < length (graph s1) \/ vnode_at s_else id).
+          { destruct (Hsple kk id Hine HltR) as [Hin | Hvn].
+            - left. apply in_map_iff in Hin. destruct Hin as [[v2 n2] [Heq Hmem]].
+              cbn [snd] in Heq. subst n2. unfold sR in Hmem; cbn [var_map] in Hmem.
+              exact (wnidwf_bound s1 id (proj1 (proj2 Pc)) (proj1 Pc v2 id Hmem)).
+            - right. exact (var_node_at_gmono sR s_else id Gelse Hvn). }
           rewrite <- Hthenside.
-          exact (Hkeepe kk id pi Hine (or_introl HltR) Hgp Hv). }
+          exact (Hkeepe kk id pi Hine Hlow1 Hgp Hv). }
         unfold sem_inv. rewrite HvmF.
         unfold tf_ops_run. cbn [tf_ops_updates].
         destruct (bits1_cases (tf_eval_expr ss_sz si_sz oo_sz (szB := 1)
