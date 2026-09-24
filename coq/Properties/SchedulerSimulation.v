@@ -2208,6 +2208,42 @@ Section SchedulerSimulation.
                     (dataflow_expr_len ee sz s2 eid s3 Hne2 Hp2 Hq2 El)) Hde).
     Qed.
 
+    (* Length monotonicity with NO invariant side conditions: every builder
+       step prepends. *)
+    Lemma emit_len (o: @dfg_op_t s_var i_var o_var p_var) size (s: wst) id s' :
+      emit ctx o size s = (id, s') -> length (graph s') = S (length (graph s)).
+    Proof.
+      rewrite (emit_red o size s). intro H. injection H as _ <-.
+      cbn [graph length]. reflexivity.
+    Qed.
+
+    Lemma join_pendings_len (prevs: list nid_t) (s: wst) r s' :
+      join_pendings ctx prevs s = (r, s') ->
+      length (graph s) <= length (graph s').
+    Proof.
+      revert s r s'. induction prevs as [| q rest IH]; intros s r s' Hjp.
+      - cbn [join_pendings] in Hjp. unfold ret in Hjp.
+        injection Hjp as _ <-. apply Nat.le_refl.
+      - cbn [join_pendings] in Hjp. unfold bind in Hjp.
+        destruct (join_pendings ctx rest s) as [r1 s1] eqn:E1.
+        cbv beta in Hjp. pose proof (IH s r1 s1 E1) as Hle1.
+        destruct r1 as [h |].
+        + unfold bind in Hjp.
+          destruct (emit ctx (DFG_Join q h) 1 s1) as [j s2] eqn:Ej.
+          cbv beta in Hjp. unfold ret in Hjp. injection Hjp as _ <-.
+          rewrite (emit_len _ _ s1 j s2 Ej). lia.
+        + unfold ret in Hjp. injection Hjp as _ <-. exact Hle1.
+    Qed.
+
+    Lemma stall_chain_len (n: nat) (idn: nid_t) (s: wst) id s' :
+      stall_chain ctx n idn s = (id, s') ->
+      length (graph s) <= length (graph s').
+    Proof.
+      unfold stall_chain. destruct n as [| n].
+      - unfold ret. intro H. injection H as _ <-. apply Nat.le_refl.
+      - intro H. rewrite (emit_len _ _ s id s' H). lia.
+    Qed.
+
     (* ================================================================= *)
     (* Structural, and free of [guard_holds]: what the builder does to    *)
     (* [var_map] pins what the source does to the state.  Both arms of a  *)
