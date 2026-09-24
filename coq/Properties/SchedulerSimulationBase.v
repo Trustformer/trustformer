@@ -9182,6 +9182,98 @@ Section SchedulerSimulation.
     exact (compile_fuel_irrel_gen act a_idx buffers _ _ n Hn1 Hnlen f1 f2 [] Hf1 Hf2).
   Qed.
 
+  (* Compiling [n] consults the buffer table only at [n] and below, so two
+     tables that agree there compile it the same way. *)
+  Lemma compile_table_irrel_gen (act: tfs_action sched) a_idx
+        (tainted: list nid_t) (dfacts: list gfact)
+        (b1 b2: list (nid_t * (nat * sz_t))) :
+    forall n,
+      1 <= n ->
+      n < length (graph (build_dfg ctx act)) ->
+      (forall x, x <= n ->
+         BitsToLists.list_assoc b1 x = BitsToLists.list_assoc b2 x) ->
+      forall f (pi: list lit),
+        n < f ->
+        compile_dfg_expr_aux ctx bneeds tainted dfacts pi f a_idx
+          (build_dfg ctx act) n b1
+        = compile_dfg_expr_aux ctx bneeds tainted dfacts pi f a_idx
+          (build_dfg ctx act) n b2.
+  Proof.
+    intros n. induction n as [n IH] using (well_founded_induction lt_wf).
+    intros Hn1 Hnlen Hagree f pi Hf.
+    destruct f as [| f']; [ lia | ].
+    set (dfg := build_dfg ctx act) in *.
+    cbn [compile_dfg_expr_aux].
+    rewrite (Hagree n (Nat.le_refl n)).
+    destruct (BitsToLists.list_assoc b2 n) as [[n_idx n_sz] |] eqn:Hla.
+    - reflexivity.
+    - set (node := nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}) in *.
+      assert (Hnode_in : In node (graph dfg)) by (unfold node; apply nth_In; exact Hnlen).
+      pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
+      pose proof (node_nid_at act n Hnlen) as Hnid. fold dfg in Hnid. fold node in Hnid.
+      assert (Harg : forall x, In x (get_args ctx node) -> 1 <= x /\ x < n).
+      { intros x Hx. split.
+        - exact (Hargpos node Hnode_in x Hx).
+        - pose proof (args_lt_fwd act node) as Hlt2. fold dfg in Hlt2.
+          specialize (Hlt2 Hnode_in x Hx). rewrite Hnid in Hlt2. exact Hlt2. }
+      assert (Hrec : forall x (p: list lit), In x (get_args ctx node) ->
+                compile_dfg_expr_aux ctx bneeds tainted dfacts p f' a_idx dfg x b1
+                = compile_dfg_expr_aux ctx bneeds tainted dfacts p f' a_idx dfg x b2).
+      { intros x p Hx. destruct (Harg x Hx) as [Hx1 Hx2].
+        apply (IH x Hx2 Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen));
+          [ intros y Hy; apply Hagree; lia | lia ]. }
+      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Hop.
+      + reflexivity.
+      + reflexivity.
+      + destruct v; reflexivity.
+      + assert (Hain : In arg (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        rewrite (Hrec arg pi Hain). reflexivity.
+      + assert (Ha1 : In arg1 (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        assert (Ha2 : In arg2 (get_args ctx node))
+          by (unfold get_args; rewrite Hop; right; left; reflexivity).
+        rewrite (Hrec arg1 pi Ha1), (Hrec arg2 pi Ha2). reflexivity.
+      + assert (Hain : In arg (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        rewrite (Hrec arg pi Hain). reflexivity.
+      + assert (Hcin : In cnd (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        assert (Htin : In tid (get_args ctx node))
+          by (unfold get_args; rewrite Hop; right; left; reflexivity).
+        assert (Hein : In eid (get_args ctx node))
+          by (unfold get_args; rewrite Hop; right; right; left; reflexivity).
+        rewrite (Hrec cnd pi Hcin), (Hrec tid (ppath tainted dfacts pi cnd true) Htin),
+                (Hrec eid (ppath tainted dfacts pi cnd false) Hein). reflexivity.
+      + assert (Hain : In sa (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        rewrite (Hrec sa pi Hain). reflexivity.
+      + assert (Hain : In dn (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        rewrite (Hrec dn pi Hain).
+        destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi f' a_idx
+                    dfg dn b2) as [de ve] eqn:ED.
+        cbv beta iota zeta. f_equal.
+        apply (fold_valid_and_ext
+                 (fun m => snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi f'
+                                  a_idx dfg m b1))
+                 (fun m => snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi f'
+                                  a_idx dfg m b2)) ve den).
+        intros x Hin.
+        rewrite (Hrec (fst x) pi
+          ltac:(unfold get_args; rewrite Hop; right; exact (in_map fst den x Hin))).
+        reflexivity.
+      + assert (Hain : In sn (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        rewrite (Hrec sn pi Hain). reflexivity.
+      + assert (Hain : In ja (get_args ctx node))
+          by (unfold get_args; rewrite Hop; left; reflexivity).
+        assert (Hbin : In jb (get_args ctx node))
+          by (unfold get_args; rewrite Hop; right; left; reflexivity).
+        rewrite (Hrec ja pi Hain), (Hrec jb pi Hbin). reflexivity.
+      + exfalso. apply (node_op_not_empty act n Hn1 Hnlen). exact Hop.
+  Qed.
+
   (* A stall carries no value, whether or not it is buffered: the buffered
      branch returns [tf_const 0] because the register holds its COUNTER, and the
      op branch returns [tf_const 0] because the answer arrives at the sample. *)

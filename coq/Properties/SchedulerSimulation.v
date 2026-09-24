@@ -113,6 +113,7 @@ Section SchedulerSimulation.
   Local Notation compile_valid_ones := (SchedulerSimulationBase.compile_valid_ones ctx cost_limit).
   Local Notation compile_valid_ones_gen := (SchedulerSimulationBase.compile_valid_ones_gen ctx cost_limit).
   Local Notation compile_valid_path_mono := (SchedulerSimulationBase.compile_valid_path_mono ctx cost_limit).
+  Local Notation compile_table_irrel_gen := (SchedulerSimulationBase.compile_table_irrel_gen ctx cost_limit).
   Local Notation compile_valid_state_indep_gen := (SchedulerSimulationBase.compile_valid_state_indep_gen ctx cost_limit).
   Local Notation cost_frozen_fold := (SchedulerSimulationBase.cost_frozen_fold ctx cost_limit).
   Local Notation cost_ge_after_fold := (SchedulerSimulationBase.cost_ge_after_fold ctx cost_limit).
@@ -5726,9 +5727,15 @@ Section SchedulerSimulation.
     j < M ->
     (fst (run_n j act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero ->
     (fst (run_n (S j) act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-    exists t aa t_idx,
+    exists t aa t_idx m0 msz,
       node_op act tok = DFG_Stall (ip_lat (tfs_spec_ip ctx p)) aa
       /\ vreg_nid a_idx t_idx = tok
+      /\ BitsToLists.list_assoc
+           (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) tok
+         = Some (m0, msz)
+      /\ index_of_nat
+           (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m0
+         = Some t_idx
       /\ t < j
       /\ j = t + ip_lat (tfs_spec_ip ctx p)
       /\ Bits.to_nat ((fst (run_n t act input resp ss0)).[tf_dfg_b a_idx t_idx]) = 0
@@ -5930,8 +5937,9 @@ Section SchedulerSimulation.
                  (S (S (t + pred lt))) (S j' - S (S (t + pred lt)))
                  Halign Hzv Hpre2 HvsampT). }
       rewrite Hvj in Hmono. exact (ones1_neq_zero (eq_sym Hmono)). }
-    exists t, aa, t_idx.
+    exists t, aa, t_idx, m0, msz.
     split; [ exact Htok | split; [ exact Htvn | ]].
+    split; [ exact Hta | split; [ exact Htidx | ]].
     split; [ lia | split; [ lia | ]].
     split; [ exact Hct | split; [ exact Hgt | ]].
     intros w Hw1 Hw2. apply Hnz; lia.
