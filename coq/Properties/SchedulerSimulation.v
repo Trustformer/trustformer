@@ -2025,6 +2025,71 @@ Section SchedulerSimulation.
         exact (emit_vm _ _ s3 id s' Hde).
     Qed.
 
+    (* A variable READ shares one node across the whole action, so an id an
+       [if] arm binds can be a [DFG_Var] node the OTHER arm emitted. *)
+    Definition vnode_at (s: wst) (n: nid_t) : Prop :=
+      exists w, In {| nid := n; op := DFG_Var w; sz := dfg_var_size ctx w |} (graph s).
+
+    Lemma var_node_at_gmono (s s': wst) n :
+      wgmono s s' -> vnode_at s n -> vnode_at s' n.
+    Proof. intros Hg [w Hin]. exists w. exact (Hg _ Hin). Qed.
+
+    Lemma get_var_ids (v: dvar) (s: wst) id s' :
+      get_var ctx v s = (id, s') ->
+      In id (map snd (var_map s)) \/ vnode_at s id \/ id = length (graph s).
+    Proof.
+      intro H. destruct (get_var_cases v s id s' H) as [[Hin _] | [Her _]].
+      - left. exact (in_map snd _ _ Hin).
+      - destruct (read_var_cases v s id s' Her) as [[Hnd _] | Hem].
+        + right; left. exists v. exact Hnd.
+        + right; right. rewrite (emit_red (DFG_Var v) (dfg_var_size ctx v) s) in Hem.
+          injection Hem as <- _. reflexivity.
+    Qed.
+
+    Lemma dataflow_expr_len : forall e sz (s: wst) id s',
+      0 < length (graph s) -> winv s -> wvsz s ->
+      dataflow_expr ctx e sz s = (id, s') ->
+      length (graph s) <= length (graph s').
+    Proof.
+      intros e sz s id s' Hne Hinv Hvsz Hde.
+      pose proof (dataflow_expr_sz e sz s Hinv Hvsz) as Hsz.
+      rewrite Hde in Hsz. destruct Hsz as [Hg [Hn [Hp [Hq Hz]]]].
+      exact (wgmono_len s s' Hne (proj1 (proj2 Hinv)) (proj1 (proj2 Hp)) Hg).
+    Qed.
+
+    (* A node the later graph holds at an OLD id is a node the earlier graph
+       already held: [nid_seq] makes ids unique. *)
+    Lemma nodup_map_inj {A B} (f: A -> B) (l: list A) :
+      NoDup (map f l) -> forall a b, In a l -> In b l -> f a = f b -> a = b.
+    Proof.
+      induction l as [| x l IH]; intros Hnd a b Ha Hb Hf; [ destruct Ha |].
+      cbn [map] in Hnd. apply NoDup_cons_iff in Hnd. destruct Hnd as [Hnin Hnd'].
+      cbn [In] in Ha, Hb.
+      destruct Ha as [Ha | Ha]; destruct Hb as [Hb | Hb].
+      - rewrite <- Ha, <- Hb. reflexivity.
+      - exfalso. apply Hnin. rewrite <- Ha in Hf. rewrite Hf.
+        exact (in_map f l b Hb).
+      - exfalso. apply Hnin. rewrite <- Hb in Hf. rewrite <- Hf.
+        exact (in_map f l a Ha).
+      - exact (IH Hnd' a b Ha Hb Hf).
+    Qed.
+
+    Lemma node_low_in (s s': wst) nd :
+      nid_seq s -> nid_seq s' -> wgmono s s' ->
+      In nd (graph s') -> nid nd < length (graph s) -> In nd (graph s).
+    Proof.
+      intros Hs Hs' Hg Hin Hlt.
+      assert (Hnodup : NoDup (map nid (graph s'))).
+      { unfold SchedulerSimulationBase.nid_seq in Hs'. rewrite Hs'.
+        apply NoDup_rev. apply seq_NoDup. }
+      assert (Hnd : In (nid nd) (map nid (graph s))).
+      { unfold SchedulerSimulationBase.nid_seq in Hs. rewrite Hs.
+        apply in_rev. rewrite rev_involutive. apply in_seq. lia. }
+      apply in_map_iff in Hnd. destruct Hnd as [nd0 [Hn0 Hin0]].
+      rewrite <- (nodup_map_inj nid (graph s') Hnodup nd0 nd (Hg _ Hin0) Hin Hn0).
+      exact Hin0.
+    Qed.
+
     (* ================================================================= *)
     (* Structural, and free of [guard_holds]: what the builder does to    *)
     (* [var_map] pins what the source does to the state.  Both arms of a  *)
