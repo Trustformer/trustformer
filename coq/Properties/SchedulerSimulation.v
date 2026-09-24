@@ -2464,6 +2464,116 @@ Section SchedulerSimulation.
       exact (wgmono_len s s' Hne (proj1 (proj2 Hinv)) (proj1 (proj2 Pp)) Gg).
     Qed.
 
+    (* [merge_key] returns an id the graph already held only in its symmetric
+       case, where the key is at that node in BOTH arms. *)
+    Lemma merge_key_ids (cond_id: nid_t) (k: dvar) vt_opt ve_opt (s: wst) res s' :
+      merge_key ctx cond_id k vt_opt ve_opt s = (res, s') ->
+      length (graph s) <= length (graph s')
+      /\ (forall fid, res = Some fid -> fid < length (graph s) ->
+            vt_opt = Some fid /\ ve_opt = Some fid).
+    Proof.
+      intro Hrun. unfold merge_key in Hrun.
+      destruct vt_opt as [vt |]; destruct ve_opt as [ve |].
+      - destruct (eq_dec vt ve) as [Heq | Hne].
+        + unfold ret in Hrun. injection Hrun as Hr Hs. subst s'.
+          split; [ apply Nat.le_refl | ].
+          intros fid Hf _. rewrite <- Hr in Hf. injection Hf as <-.
+          split; [ reflexivity | rewrite Heq; reflexivity ].
+        + destruct (emit ctx (DFG_Phi cond_id vt ve) (dfg_var_size ctx k) s)
+            as [phi s1] eqn:Ee.
+          rewrite (bind_red (emit ctx (DFG_Phi cond_id vt ve) (dfg_var_size ctx k))
+                     _ s _ _ Ee) in Hrun.
+          unfold ret in Hrun. injection Hrun as Hr Hs. subst s'.
+          pose proof (emit_len _ _ s phi s1 Ee) as Hl.
+          split; [ lia | ].
+          intros fid Hf Hlt. exfalso. rewrite <- Hr in Hf. injection Hf as <-.
+          rewrite (emit_id _ _ s phi s1 Ee) in Hlt. lia.
+      - destruct (ensure_var ctx k s) as [ve0 sA] eqn:Ev.
+        rewrite (bind_red (ensure_var ctx k) _ s _ _ Ev) in Hrun.
+        destruct (emit ctx (DFG_Phi cond_id vt ve0) (dfg_var_size ctx k) sA)
+          as [phi s1] eqn:Ee.
+        rewrite (bind_red (emit ctx (DFG_Phi cond_id vt ve0) (dfg_var_size ctx k))
+                   _ sA _ _ Ee) in Hrun.
+        unfold ret in Hrun. injection Hrun as Hr Hs. subst s'.
+        destruct (ensure_var_graph k s ve0 sA Ev) as [Hgr Hid0].
+        assert (HlA : length (graph s) < length (graph sA))
+          by (rewrite Hgr; cbn [length]; lia).
+        pose proof (emit_len _ _ sA phi s1 Ee) as Hl.
+        split; [ lia | ].
+        intros fid Hf Hlt. exfalso. rewrite <- Hr in Hf. injection Hf as <-.
+        rewrite (emit_id _ _ sA phi s1 Ee) in Hlt. lia.
+      - destruct (ensure_var ctx k s) as [vt0 sA] eqn:Ev.
+        rewrite (bind_red (ensure_var ctx k) _ s _ _ Ev) in Hrun.
+        destruct (emit ctx (DFG_Phi cond_id vt0 ve) (dfg_var_size ctx k) sA)
+          as [phi s1] eqn:Ee.
+        rewrite (bind_red (emit ctx (DFG_Phi cond_id vt0 ve) (dfg_var_size ctx k))
+                   _ sA _ _ Ee) in Hrun.
+        unfold ret in Hrun. injection Hrun as Hr Hs. subst s'.
+        destruct (ensure_var_graph k s vt0 sA Ev) as [Hgr Hid0].
+        assert (HlA : length (graph s) < length (graph sA))
+          by (rewrite Hgr; cbn [length]; lia).
+        pose proof (emit_len _ _ sA phi s1 Ee) as Hl.
+        split; [ lia | ].
+        intros fid Hf Hlt. exfalso. rewrite <- Hr in Hf. injection Hf as <-.
+        rewrite (emit_id _ _ sA phi s1 Ee) in Hlt. lia.
+      - unfold ret in Hrun. injection Hrun as Hr Hs. subst s'.
+        split; [ apply Nat.le_refl | ].
+        intros fid Hf. rewrite <- Hr in Hf. discriminate Hf.
+    Qed.
+
+    (* An id the merged map holds that the graph already had comes from the
+       accumulator, or sits at that node in both arms. *)
+    Lemma merge_loop_ids (cond_id: nid_t) mt me :
+      forall keys acc (s: wst) fin s',
+        merge_loop ctx cond_id mt me keys acc s = (fin, s') ->
+        length (graph s) <= length (graph s')
+        /\ (forall k id, In (k, id) fin -> id < length (graph s) ->
+              In (k, id) acc \/ (In (k, id) mt /\ In (k, id) me)).
+    Proof.
+      induction keys as [| [k0 v0] rest IH]; intros acc s fin s' Hrun.
+      - simpl in Hrun. unfold ret in Hrun. injection Hrun as Hf Hs.
+        subst fin s'.
+        split; [ apply Nat.le_refl | intros k id Hin _; left; exact Hin ].
+      - simpl in Hrun.
+        destruct (BitsToLists.list_assoc acc k0) as [existing |] eqn:Ek.
+        + exact (IH acc s fin s' Hrun).
+        + unfold bind in Hrun. cbv beta in Hrun.
+          destruct (merge_key ctx cond_id k0 (BitsToLists.list_assoc mt k0)
+                      (BitsToLists.list_assoc me k0) s) as [res_opt s1] eqn:Emk.
+          cbv beta iota in Hrun.
+          destruct (merge_key_ids cond_id k0 _ _ s res_opt s1 Emk) as [Hlk Hold].
+          destruct res_opt as [final_id |].
+          * destruct (IH ((k0, final_id) :: acc) s1 fin s' Hrun) as [Hl1 Hids].
+            split; [ lia | ].
+            intros k id Hin Hlt.
+            assert (Hlt1 : id < length (graph s1)) by lia.
+            destruct (Hids k id Hin Hlt1) as [Hacc | Hboth]; [| right; exact Hboth ].
+            destruct Hacc as [Heq | Hacc]; [| left; exact Hacc ].
+            injection Heq as Hk Hv. subst k0 final_id.
+            destruct (Hold id eq_refl Hlt) as [Hmt Hme].
+            apply wla_in in Hmt. apply wla_in in Hme.
+            right. split; [ exact Hmt | exact Hme ].
+          * destruct (IH acc s1 fin s' Hrun) as [Hl1 Hids].
+            split; [ lia | ].
+            intros k id Hin Hlt.
+            assert (Hlt1 : id < length (graph s1)) by lia.
+            exact (Hids k id Hin Hlt1).
+    Qed.
+
+    Lemma merge_maps_ids (cond_id: nid_t) mo mt me (s: wst) fin s' :
+      merge_maps ctx cond_id mo mt me s = (fin, s') ->
+      length (graph s) <= length (graph s')
+      /\ (forall k id, In (k, id) fin -> id < length (graph s) ->
+            In (k, id) mt /\ In (k, id) me).
+    Proof.
+      intro Hrun. unfold merge_maps in Hrun.
+      destruct (merge_loop_ids cond_id mt me (mt ++ me) [] s fin s' Hrun)
+        as [Hl Hids].
+      split; [ exact Hl | ].
+      intros k id Hin Hlt.
+      destruct (Hids k id Hin Hlt) as [Hacc | Hboth]; [ destruct Hacc | exact Hboth ].
+    Qed.
+
     Lemma dataflow_ops_struct :
       forall (ops: @tf_ops s_var i_var o_var p_var) (en: list (nid_t * bool))
              (s: wst) sp (B: nat),
