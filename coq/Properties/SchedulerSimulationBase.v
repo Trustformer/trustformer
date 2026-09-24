@@ -13027,6 +13027,31 @@ Section SchedulerSimulation.
       discriminate Hn.
   Qed.
 
+  (* ... and a stall standing directly on the drive is enough on its own: the
+     walk's first [find] cannot miss it. *)
+  Lemma chain_gate_some_of_stall (act: tfs_action sched) m tok l :
+    node_op act tok = DFG_Stall l m ->
+    exists g h, chain_gate ctx (build_dfg ctx act) m = Some (g, h).
+  Proof.
+    intro Ht.
+    assert (Htlen : tok < length (graph (build_dfg ctx act)))
+      by (apply node_op_range; rewrite Ht; discriminate).
+    unfold chain_gate. cbv zeta.
+    destruct (find (fun nd => match op nd with
+                              | DFG_Stall _ a => Nat.eqb a m
+                              | _ => false
+                              end) (graph (build_dfg ctx act))) as [nd |] eqn:Ef1;
+      [ exists m, (nid nd); reflexivity |].
+    exfalso.
+    pose proof (find_none _ _ Ef1
+                  (nth tok (graph (build_dfg ctx act))
+                     {| nid := 0; op := DFG_Empty; sz := 0 |})
+                  (nth_In _ _ Htlen)) as Hno.
+    cbv beta in Hno.
+    unfold node_op in Ht. rewrite Ht in Hno.
+    rewrite Nat.eqb_refl in Hno. discriminate Hno.
+  Qed.
+
   Lemma sample_nid_succ (act: tfs_action sched) s (p: p_var) tok en :
     node_op act s = DFG_Sample p tok en -> s = S tok.
   Proof.
