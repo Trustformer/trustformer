@@ -5418,6 +5418,70 @@ Section SchedulerSimulation.
     reflexivity.
   Qed.
 
+  (* [stall_start] reads the stall.s counter, so it is up exactly while the
+     counter sits at zero -- the cycle the wait begins on. *)
+  Lemma eval_stall_start_ones
+        (act: tfs_action sched) a_idx h m msz n_idx
+        (ss: sched_sys_state) (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
+    BitsToLists.list_assoc
+      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) h = Some (m, msz) ->
+    index_of_nat (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m
+      = Some n_idx ->
+    (fst ss).[tf_dfg_b a_idx n_idx] = Bits.zero ->
+    eval1 (stall_start ctx bneeds a_idx (build_dfg ctx act)
+             (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) h) ss input
+    = Bits.ones 1.
+  Proof.
+    intros Halign Hassoc Hidx Hz.
+    pose proof (buffer_slot_size act a_idx h m msz n_idx Halign
+                  (wla_in _ _ _ Hassoc) Hidx) as Hsz.
+    subst msz.
+    unfold stall_start. rewrite Hassoc, Hidx.
+    cbn [tf_eval_expr]. rewrite convert_same.
+    match goal with
+    | |- context [ @beq_dec ?T ?E ?x ?z ] => destruct (@beq_dec T E x z) eqn:Hb
+    end.
+    - rewrite convert_same. reflexivity.
+    - exfalso.
+      match type of Hb with
+      | @beq_dec ?T ?E ?x ?z = false =>
+          rewrite (proj2 (beq_dec_iff E x z) Hz) in Hb
+      end.
+      discriminate Hb.
+  Qed.
+
+  (* The pulse is the AND of the guard, the gate and the first wait cycle. *)
+  Lemma drive_pulse_ones
+        (act: tfs_action sched) a_idx n g h (p: p_var) arg en
+        (ss: sched_sys_state) (input: sched_input_t) :
+    node_op act n = DFG_Drive p arg en ->
+    chain_gate ctx (build_dfg ctx act) n = Some (g, h) ->
+    eval1 (gexpr act a_idx (drive_sbufs act a_idx) en) ss input = Bits.ones 1 ->
+    eval1 (snd (compile_dfg_expr ctx bneeds (length (graph (build_dfg ctx act))) a_idx
+                  (build_dfg ctx act) g
+                  (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))) ss input
+      = Bits.ones 1 ->
+    eval1 (stall_start ctx bneeds a_idx (build_dfg ctx act)
+             (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) h) ss input
+      = Bits.ones 1 ->
+    eval1 (drive_pulse act a_idx n) ss input = Bits.ones 1.
+  Proof.
+    intros Hop Hcg Hen Hvg Hvf.
+    unfold SchedulerSimulationBase.node_op in Hop.
+    unfold SchedulerSimulationBase.drive_pulse. cbv zeta. rewrite Hop, Hcg.
+    cbn [tf_eval_expr].
+    change (filter
+              (fun '(m, _) =>
+                 match op (nth m (graph (build_dfg ctx act))
+                             {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+                 | DFG_Sample _ _ _ => true
+                 | _ => false
+                 end) (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
+      with (drive_sbufs act a_idx).
+    rewrite Hen, Hvg, Hvf. vm_compute. reflexivity.
+  Qed.
+
   (* ==================================================================== *)
   (* THE OPEN OBLIGATION.                                                 *)
   (*                                                                      *)
