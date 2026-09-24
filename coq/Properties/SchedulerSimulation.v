@@ -168,6 +168,10 @@ Section SchedulerSimulation.
   Local Notation drive_payload_expr_hold := (SchedulerSimulationBase.drive_payload_expr_hold ctx cost_limit).
   Local Notation drive_payload_hold := (SchedulerSimulationBase.drive_payload_hold ctx cost_limit).
   Local Notation ip_contract := (SchedulerSimulationBase.ip_contract ctx cost_limit).
+  Local Notation port_strobe_after := (SchedulerSimulationBase.port_strobe_after ctx cost_limit).
+  Local Notation port_strobe_quiet := (SchedulerSimulationBase.port_strobe_quiet ctx cost_limit).
+  Local Notation port_strobe_take_later := (SchedulerSimulationBase.port_strobe_take_later ctx cost_limit).
+  Local Notation slice_app_hi := (SchedulerSimulationBase.slice_app_hi ctx cost_limit).
   Local Notation port_strobe := (SchedulerSimulationBase.port_strobe ctx cost_limit).
   Local Notation drive_payload_slice := (SchedulerSimulationBase.drive_payload_slice ctx cost_limit).
   Local Notation drive_payload_take := (SchedulerSimulationBase.drive_payload_take ctx cost_limit).
@@ -4855,7 +4859,8 @@ Section SchedulerSimulation.
         /\ (forall mm, In mm (drive_nodes ctx (build_dfg ctx act) p) -> mm <= d ->
               forall w, t < w -> w < j ->
               eval1 (drive_pulse act a_idx mm) (run_n w act input resp ss0)
-                (sched_input input (resp w)) = Bits.zero).
+                (sched_input input (resp w)) = Bits.zero)
+        /\ j = t + ip_lat (tfs_ip sched p).
 
   (* The one left, at the last cycle before the action reports done. *)
   Definition call_discipline (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val)
@@ -5113,35 +5118,30 @@ Section SchedulerSimulation.
      carries that call's own request: its drive put it there, phase 3b keeps
      every later call off the wire, and [requests_sent] keeps the earlier
      ones off. *)
-  Lemma port_holds_request
-        (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) M
-        n_idx (p: p_var) tok en d av en' j :
+
+  (* No call AFTER this one takes the port while the answer is outstanding. *)
+  Lemma no_later_drive_upto
+        (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val)
+        (ss0: sched_sys_state) M n_idx (p: p_var) tok en d j :
     act_idx_aligned act a_idx ->
     1 < length (graph (build_dfg ctx act)) ->
     (forall x, zeroed_at_start x -> (fst ss0).[x] = Bits.zero) ->
     (forall i, 1 <= i <= M -> ~ done_set (run_n i act input resp ss0)) ->
-    requests_sent act a_idx input resp ss0 M ->
     node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
     sample_drive act (vreg_nid a_idx n_idx) = Some d ->
-    node_op act d = DFG_Drive p av en' ->
-    sz (nth d (graph (build_dfg ctx act))
-         {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p) ->
     guard_holds act a_idx (run_n M act input resp ss0)
       (sched_input input (resp M)) en ->
     j < M ->
     (fst (run_n j act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero ->
-    (fst (run_n (S j) act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-    drive_payload (run_n j act input resp ss0) p
-    = tf_eval_expr ss_sz si_sz oo_sz (szB := ip_req_sz (tfs_spec_ip ctx p))
-        (node_ref_expr act a_idx av)
-        (run_n M act input resp ss0) (sched_input input (resp M)).
+    forall u, u <= j -> forall mm,
+      In mm (drive_nodes ctx (build_dfg ctx act) p) -> d < mm ->
+      eval1 (drive_pulse act a_idx mm) (run_n u act input resp ss0)
+        (sched_input input (resp u)) = Bits.zero.
   Proof.
-    intros Halign Hlen Hz0 Hpre Hrs Hsamp Hsd Hdop Hdsz Hgd Hjm Hvj HvSj.
+    intros Halign Hlen Hz0 Hpre Hsamp Hsd Hgd Hjm Hvj.
     pose proof (samples_ordered_holds act a_idx input resp ss0 Halign Hz0 Hlen) as Hord.
     assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
       by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
-    destruct (node_op_pos act d ltac:(rewrite Hdop; discriminate)) as [Hd1 Hdlen].
-    (* no answer at or after this one has been latched, up to cycle [j] *)
     assert (Hnl : forall u, u <= j -> forall q_idx tok2 en3,
               vreg_nid a_idx n_idx <= vreg_nid a_idx q_idx ->
               node_op act (vreg_nid a_idx q_idx) = DFG_Sample p tok2 en3 ->
@@ -5185,8 +5185,42 @@ Section SchedulerSimulation.
         by (intros arg_m en_m Hm2 Hdis; apply (Hgm u ltac:(lia) mm arg_m en_m Hm2 Hdis)).
       exact (no_later_drive act a_idx p (vreg_nid a_idx n_idx) tok en d mm input resp ss0 u
                Halign Hlen Hz0 Hpu Hsamp Hsd Hinm Hltm Hgu (Hnl u Hu)). }
+    exact Hlater.
+  Qed.
+
+  Lemma port_holds_request
+        (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) M
+        n_idx (p: p_var) tok en d av en' j :
+    act_idx_aligned act a_idx ->
+    1 < length (graph (build_dfg ctx act)) ->
+    (forall x, zeroed_at_start x -> (fst ss0).[x] = Bits.zero) ->
+    (forall i, 1 <= i <= M -> ~ done_set (run_n i act input resp ss0)) ->
+    requests_sent act a_idx input resp ss0 M ->
+    node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
+    sample_drive act (vreg_nid a_idx n_idx) = Some d ->
+    node_op act d = DFG_Drive p av en' ->
+    sz (nth d (graph (build_dfg ctx act))
+         {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p) ->
+    guard_holds act a_idx (run_n M act input resp ss0)
+      (sched_input input (resp M)) en ->
+    j < M ->
+    (fst (run_n j act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero ->
+    (fst (run_n (S j) act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
+    drive_payload (run_n j act input resp ss0) p
+    = tf_eval_expr ss_sz si_sz oo_sz (szB := ip_req_sz (tfs_spec_ip ctx p))
+        (node_ref_expr act a_idx av)
+        (run_n M act input resp ss0) (sched_input input (resp M)).
+  Proof.
+    intros Halign Hlen Hz0 Hpre Hrs Hsamp Hsd Hdop Hdsz Hgd Hjm Hvj HvSj.
+    pose proof (samples_ordered_holds act a_idx input resp ss0 Halign Hz0 Hlen) as Hord.
+    assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
+      by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
+    destruct (node_op_pos act d ltac:(rewrite Hdop; discriminate)) as [Hd1 Hdlen].
+    (* no answer at or after this one has been latched, up to cycle [j] *)
+    assert (Hlater := no_later_drive_upto act a_idx input resp ss0 M n_idx p tok en d j
+                        Halign Hlen Hz0 Hpre Hsamp Hsd Hgd Hjm Hvj).
     destruct (Hrs n_idx p tok en d j Hsamp Hsd Hgd Hjm Hvj HvSj)
-      as [t [Htj [Hpulse [Hdval Hearly]]]].
+      as [t [Htj [Hpulse [Hdval [Hearly Htime]]]]].
     pose proof (sample_drive_in_drive_nodes act (vreg_nid a_idx n_idx) d p tok en
                   Hsamp Hsd) as Hdin.
     (* the drive puts its request on the port ... *)
@@ -5333,9 +5367,74 @@ Section SchedulerSimulation.
     (fst (run_n j act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero ->
     (fst (run_n (S j) act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
     resp j p
-    = ip_fn (tfs_spec_ip ctx p) (drive_payload (run_n j act input resp ss0) p).
+    = ip_fn (tfs_ip sched p) (drive_payload (run_n j act input resp ss0) p).
   Proof.
-  Admitted.
+    intros Halign Hlen Hz0 Hpre Hipc Hrs Hsamp Hsd Hdop Hgd Hjm Hvj HPN.
+    assert (Hlat : S (pred (ip_lat (tfs_ip sched p))) = ip_lat (tfs_ip sched p)).
+    { apply Nat.succ_pred_pos.
+      pose proof (ip_lat_pos (tfs_ip sched p)) as Hlp. lia. }
+    assert (Hlater := no_later_drive_upto act a_idx input resp ss0 M n_idx p tok en d j
+                        Halign Hlen Hz0 Hpre Hsamp Hsd Hgd Hjm Hvj).
+    destruct (Hrs n_idx p tok en d j Hsamp Hsd Hgd Hjm Hvj HPN)
+      as [t [Htj [Hpulse [Hdval [Hearly Htime]]]]].
+    pose proof (sample_drive_in_drive_nodes act (vreg_nid a_idx n_idx) d p tok en
+                  Hsamp Hsd) as Hdin.
+    (* no drive at all takes the port strictly between the pulse and the latch *)
+    assert (Hquiet : forall u, t < u -> u < j -> forall mm,
+              In mm (drive_nodes ctx (build_dfg ctx act) p) ->
+              eval1 (drive_pulse act a_idx mm) (run_n u act input resp ss0)
+                (sched_input input (resp u)) = Bits.zero).
+    { intros u Hu1 Hu2 mm Hin.
+      destruct (Nat.ltb d mm) eqn:Hcmp.
+      - apply Nat.ltb_lt in Hcmp.
+        assert (Hu : u <= j) by lia. exact (Hlater u Hu mm Hin Hcmp).
+      - apply Nat.ltb_ge in Hcmp. exact (Hearly mm Hin Hcmp u Hu1 Hu2). }
+    assert (Hndt : ~ done_set (sched_step act (run_n t act input resp ss0)
+                     (sched_input input (resp t))))
+      by (exact (Hpre (S t) ltac:(lia))).
+    (* the port takes this request at [S t] ... *)
+    assert (Hstrobe : port_strobe (run_n (S t) act input resp ss0) p = Bits.ones 1).
+    { change (run_n (S t) act input resp ss0)
+        with (sched_step act (run_n t act input resp ss0)
+                (sched_input input (resp t))).
+      apply (port_strobe_take_later act a_idx p d _ _ Halign Hndt Hdin); [| exact Hpulse ].
+      intros mm Hin2 Hlt2. assert (Ht : t <= j) by lia.
+      exact (Hlater t Ht mm Hin2 Hlt2). }
+    (* ... and nothing else strobes while the answer is in flight *)
+    assert (Hqs : forall w, S t < w -> w < S t + pred (ip_lat (tfs_ip sched p)) ->
+              port_strobe (run_n w act input resp ss0) p = Bits.zero).
+    { intros w Hw1 Hw2. destruct w as [| w']; [ lia |].
+      assert (Hnw : ~ done_set (run_n (S w') act input resp ss0)) by (apply Hpre; lia).
+      change (run_n (S w') act input resp ss0)
+        with (sched_step act (run_n w' act input resp ss0)
+                (sched_input input (resp w'))) in Hnw |- *.
+      apply (port_strobe_quiet act a_idx p _ _ Halign Hnw).
+      intros mm Hin. assert (H1 : t < w') by lia. assert (H2 : w' < j) by lia.
+      exact (Hquiet w' H1 H2 mm Hin). }
+    pose proof (Hipc p (S t) Hstrobe Hqs) as Hans.
+    assert (Hidx : S t + pred (ip_lat (tfs_ip sched p)) = j) by lia.
+    rewrite Hidx in Hans. rewrite Hans. f_equal.
+    (* the payload has not moved since the pulse *)
+    assert (Hhold : forall k, S t + k <= j ->
+              drive_payload (run_n (S t + k) act input resp ss0) p
+              = drive_payload (run_n (S t) act input resp ss0) p).
+    { intro k. induction k as [| k IH]; intro Hk.
+      - rewrite Nat.add_0_r. reflexivity.
+      - rewrite <- (IH ltac:(lia)). rewrite Nat.add_succ_r.
+        assert (Hnk : ~ done_set (run_n (S (S t + k)) act input resp ss0))
+          by (apply Hpre; lia).
+        change (run_n (S (S t + k)) act input resp ss0)
+          with (sched_step act (run_n (S t + k) act input resp ss0)
+                  (sched_input input (resp (S t + k)))) in Hnk |- *.
+        apply (drive_payload_hold act a_idx p _ _ Halign Hnk).
+        intros mm Hin. assert (H1 : t < S t + k) by lia.
+        assert (H2 : S t + k < j) by lia.
+        exact (Hquiet (S t + k) H1 H2 mm Hin). }
+    assert (Hk : S t + (j - S t) <= j) by lia.
+    pose proof (Hhold (j - S t) Hk) as Hfin.
+    assert (He : S t + (j - S t) = j) by lia.
+    rewrite He in Hfin. exact (eq_sym Hfin).
+  Qed.
 
   Lemma round_trip
         (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) M

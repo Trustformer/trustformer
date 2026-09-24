@@ -519,6 +519,29 @@ Section SchedulerSimulation.
     intro e. subst szB. rewrite convert_same. reflexivity.
   Qed.
 
+  (* And the high slice gives the strobe. *)
+  Lemma slice_app_hi {hs ls} (hi: bits_t hs) (lo: bits_t ls) :
+    Bits.slice ls hs (Bits.app hi lo) = hi.
+  Proof.
+    apply (vect_to_list_inj bool hs).
+    rewrite (BitsToLists.slice (ls + hs) (Bits.app hi lo) ls hs).
+    unfold BitsToLists.take_drop'. cbn [List.firstn List.skipn].
+    rewrite vect_to_list_app, List.skipn_app.
+    rewrite List.skipn_all2 by (rewrite vect_to_list_length; lia).
+    rewrite vect_to_list_length, Nat.sub_diag. cbn [List.skipn List.app].
+    rewrite List.firstn_all2 by (rewrite vect_to_list_length; lia).
+    replace (ls + hs - ls) with hs by lia.
+    rewrite Nat.min_id, Nat.sub_diag. cbn [repeat]. apply List.app_nil_r.
+  Qed.
+
+  (* A cast between propositionally equal widths survives any slice. *)
+  Lemma slice_convert_at {szA szB} (x: bits_t szA) (o w: nat) :
+    szA = szB ->
+    Bits.slice o w (Semantics.convert (szB := szB) x) = Bits.slice o w x.
+  Proof.
+    intro e. subst szB. rewrite convert_same. reflexivity.
+  Qed.
+
   (* The payload half, as a slice of the named register. *)
   Lemma drive_payload_slice (p: p_var) (ss: sched_sys_state) :
     drive_payload ss p
@@ -10709,6 +10732,45 @@ Section SchedulerSimulation.
     exact (drive_payload_expr_hold act a_idx p ss input Hdown).
   Qed.
 
+  (* The strobe half after a cycle: what the port carries is what the drives
+     did. *)
+  Lemma port_strobe_after
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) (p: p_var)
+        (ss: sched_sys_state) (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
+    ~ done_set (sched_step act ss input) ->
+    port_strobe (sched_step act ss input) p
+    = eval1 (drive_strobe_expr act a_idx p) ss input.
+  Proof.
+    intros Halign Hnd.
+    change (port_strobe (sched_step act ss input) p)
+      with (Bits.slice (ip_req_sz (tfs_spec_ip ctx p)) 1
+              ((fst (sched_step act ss input)).[tf_dfg_ov p])).
+    rewrite (drive_after_cycle act a_idx p ss input Halign Hnd).
+    rewrite drive_value_expr_split. cbn [tf_eval_expr].
+    rewrite slice_convert_at by (cbn; lia).
+    apply slice_app_hi.
+  Qed.
+
+  (* With no drive pulsing, the port carries no request. *)
+  Lemma port_strobe_quiet
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) (p: p_var)
+        (ss: sched_sys_state) (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
+    ~ done_set (sched_step act ss input) ->
+    (forall n, In n (drive_nodes ctx (build_dfg ctx act) p) ->
+       eval1 (drive_pulse act a_idx n) ss input = Bits.zero) ->
+    port_strobe (sched_step act ss input) p = Bits.zero.
+  Proof.
+    intros Halign Hnd Hdown.
+    rewrite (port_strobe_after act a_idx p ss input Halign Hnd).
+    unfold drive_strobe_expr.
+    rewrite (eval_pulse_fold_hold act a_idx _ _ _ 1 ss input Hdown).
+    reflexivity.
+  Qed.
+
   (* THE PORT TAKES: the latest pulsing drive on [p] puts its own argument on
      the wire.  [drive_nodes] is latest first, so [pre] is what came after it. *)
   Lemma drive_payload_take
@@ -13168,6 +13230,32 @@ Section SchedulerSimulation.
     intros m Hm. apply (Hlater m).
     - rewrite Heq. apply in_or_app. left. exact Hm.
     - exact (Hgt m Hm).
+  Qed.
+
+  (* A pulsing drive puts a request on the port. *)
+  Lemma port_strobe_take_later
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) (p: p_var)
+        (n: nid_t) (ss: sched_sys_state) (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
+    ~ done_set (sched_step act ss input) ->
+    In n (drive_nodes ctx (build_dfg ctx act) p) ->
+    (forall m, In m (drive_nodes ctx (build_dfg ctx act) p) -> n < m ->
+       eval1 (drive_pulse act a_idx m) ss input = Bits.zero) ->
+    eval1 (drive_pulse act a_idx n) ss input <> Bits.zero ->
+    port_strobe (sched_step act ss input) p = Bits.ones 1.
+  Proof.
+    intros Halign Hnd Hin Hlater Hn.
+    rewrite (port_strobe_after act a_idx p ss input Halign Hnd).
+    destruct (drive_nodes_split act p n Hin) as [pre [post [Heq Hgt]]].
+    assert (Hpre : forall m, In m pre ->
+              eval1 (drive_pulse act a_idx m) ss input = Bits.zero).
+    { intros m Hm. apply (Hlater m).
+      - rewrite Heq. apply in_or_app. left. exact Hm.
+      - exact (Hgt m Hm). }
+    unfold drive_strobe_expr. rewrite Heq.
+    rewrite (eval_pulse_fold_take act a_idx _ _ pre post n 1 ss input Hpre Hn).
+    reflexivity.
   Qed.
 
   (* Every arg of a real forward node is itself a real node with a strictly
