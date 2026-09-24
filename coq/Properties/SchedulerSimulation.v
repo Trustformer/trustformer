@@ -1957,6 +1957,74 @@ Section SchedulerSimulation.
       rewrite Hnd in Hb. cbn [length]. lia.
     Qed.
 
+    (* [get_var] and [emit] both leave [var_map] alone, and [dataflow_expr] is
+       built from nothing else. *)
+    Lemma get_var_vmap (v: dvar) (s: wst) id s' :
+      get_var ctx v s = (id, s') -> var_map s' = var_map s.
+    Proof.
+      intro H. destruct (get_var_cases v s id s' H) as [[_ ->] | [Her _]];
+        [ reflexivity | exact (read_var_vmap v s id s' Her) ].
+    Qed.
+
+    Lemma dataflow_expr_vmap : forall e sz (s: wst) id s',
+      dataflow_expr ctx e sz s = (id, s') -> var_map s' = var_map s.
+    Proof.
+      induction e as [ c | sv | iv | ov | uop e1 IH1 | bop e1 IH1 e2 IH2
+                     | ec IHc et IHt ee IHe ]; intros sz s id s' Hde.
+      - exact (emit_vm _ _ s id s' Hde).
+      - cbn [dataflow_expr] in Hde. unfold bind in Hde.
+        destruct (get_var ctx (DFG_SVar sv) s) as [src_id s1] eqn:Egv.
+        cbv beta in Hde. rewrite <- (get_var_vmap (DFG_SVar sv) s src_id s1 Egv).
+        destruct (Nat.eqb _ sz).
+        + unfold ret in Hde. injection Hde as _ <-. reflexivity.
+        + exact (emit_vm _ _ s1 id s' Hde).
+      - cbn [dataflow_expr] in Hde. unfold bind in Hde.
+        destruct (emit ctx (DFG_Input iv) sz s) as [src_id s1] eqn:Eem.
+        cbv beta in Hde. rewrite <- (emit_vm _ _ s src_id s1 Eem).
+        destruct (Nat.eqb _ sz).
+        + unfold ret in Hde. injection Hde as _ <-. reflexivity.
+        + exact (emit_vm _ _ s1 id s' Hde).
+      - cbn [dataflow_expr] in Hde. unfold bind in Hde.
+        destruct (get_var ctx (DFG_OVar ov) s) as [src_id s1] eqn:Egv.
+        cbv beta in Hde. rewrite <- (get_var_vmap (DFG_OVar ov) s src_id s1 Egv).
+        destruct (Nat.eqb _ sz).
+        + unfold ret in Hde. injection Hde as _ <-. reflexivity.
+        + exact (emit_vm _ _ s1 id s' Hde).
+      - destruct uop as [ | source_size ]; cbn [dataflow_expr] in Hde;
+          unfold bind in Hde.
+        + destruct (dataflow_expr ctx e1 sz s) as [src_id s1] eqn:Ee1.
+          cbv beta in Hde. rewrite <- (IH1 sz s src_id s1 Ee1).
+          exact (emit_vm _ _ s1 id s' Hde).
+        + destruct (dataflow_expr ctx e1 source_size s) as [src_id s1] eqn:Ee1.
+          cbv beta in Hde. rewrite <- (IH1 source_size s src_id s1 Ee1).
+          exact (emit_vm _ _ s1 id s' Hde).
+      - destruct bop as [ | | | | | | szC cop | hz lz ]; cbn [dataflow_expr] in Hde;
+          unfold bind in Hde;
+          [ destruct (dataflow_expr ctx e1 sz s) as [id1 s1] eqn:Ee1 ..
+          | destruct (dataflow_expr ctx e1 szC s) as [id1 s1] eqn:Ee1
+          | destruct (dataflow_expr ctx e1 hz s) as [id1 s1] eqn:Ee1 ];
+          cbv beta in Hde.
+        1-6: (destruct (dataflow_expr ctx e2 sz s1) as [id2 s2] eqn:Ee2;
+              cbv beta in Hde;
+              rewrite <- (IH1 sz s id1 s1 Ee1), <- (IH2 sz s1 id2 s2 Ee2);
+              exact (emit_vm _ _ s2 id s' Hde)).
+        + destruct (dataflow_expr ctx e2 szC s1) as [id2 s2] eqn:Ee2.
+          cbv beta in Hde.
+          rewrite <- (IH1 szC s id1 s1 Ee1), <- (IH2 szC s1 id2 s2 Ee2).
+          exact (emit_vm _ _ s2 id s' Hde).
+        + destruct (dataflow_expr ctx e2 lz s1) as [id2 s2] eqn:Ee2.
+          cbv beta in Hde.
+          rewrite <- (IH1 hz s id1 s1 Ee1), <- (IH2 lz s1 id2 s2 Ee2).
+          exact (emit_vm _ _ s2 id s' Hde).
+      - cbn [dataflow_expr] in Hde. unfold bind in Hde.
+        destruct (dataflow_expr ctx ec 1 s) as [cid s1] eqn:Ec. cbv beta in Hde.
+        destruct (dataflow_expr ctx et sz s1) as [tid s2] eqn:Et. cbv beta in Hde.
+        destruct (dataflow_expr ctx ee sz s2) as [eid s3] eqn:El. cbv beta in Hde.
+        rewrite <- (IHc 1 s cid s1 Ec), <- (IHt sz s1 tid s2 Et),
+                <- (IHe sz s2 eid s3 El).
+        exact (emit_vm _ _ s3 id s' Hde).
+    Qed.
+
     (* ================================================================= *)
     (* Structural, and free of [guard_holds]: what the builder does to    *)
     (* [var_map] pins what the source does to the state.  Both arms of a  *)
