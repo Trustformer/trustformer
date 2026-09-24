@@ -2244,6 +2244,189 @@ Section SchedulerSimulation.
       - intro H. rewrite (emit_len _ _ s id s' H). lia.
     Qed.
 
+    (* A node the action holds at [n] that is not a [DFG_Var] rules out a
+       shared read node there. *)
+    Lemma vnode_absurd (s': wst) (n: nid_t) :
+      wgmono s' F -> 1 <= n ->
+      (forall w, node_op act n <> DFG_Var w) ->
+      vnode_at s' n -> False.
+    Proof.
+      intros Hg Hpos Hno [w Hin].
+      destruct (in_var_node_at act F s' w n HF Hin Hpos Hg) as [_ [_ Hop]].
+      exact (Hno w Hop).
+    Qed.
+
+    (* [get_var_sem] under a BOUND: the claim is needed only at ids below [B]
+       or at a shared read node, and the hypothesis is restricted the same way,
+       so it propagates through a sequence. *)
+    Lemma get_var_low (s s': wst) (v: dvar) id (sq: src_sys_state) (B: nat) pi :
+      0 < length (graph s) ->
+      vm_frame (var_map s) sq ->
+      (forall v2 n pi', In (v2, n) (var_map s) -> (n < B \/ vnode_at s n) ->
+         guard_holds pi' -> rvalid act a_idx pi' n ss sinput = Bits.ones 1 ->
+         NV (dfg_var_size ctx v2) n = src_get sq v2) ->
+      get_var ctx v s = (id, s') -> wgmono s' F ->
+      (id < B \/ vnode_at s' id) ->
+      guard_holds pi -> rvalid act a_idx pi id ss sinput = Bits.ones 1 ->
+      NV (dfg_var_size ctx v) id = src_get sq v.
+    Proof.
+      intros Hne Hfr Hvm Hgv Hg' Hlow Hgp Hv.
+      destruct (get_var_cases v s id s' Hgv) as [[Hin Hseq] | [Her Hnotin]].
+      - rewrite Hseq in Hlow. exact (Hvm v id pi Hin Hlow Hgp Hv).
+      - pose proof (nval_read s s' v id Hne Her Hg') as Hfresh.
+        rewrite Hfresh. symmetry. exact (Hfr v Hnotin).
+    Qed.
+
+    (* [dataflow_expr_sem] under the same bound.  Only a variable READ can land
+       at an old id or a shared read node; every other arm ends in an [emit]. *)
+    Lemma dataflow_expr_low : forall e sz (s: wst) id s' (B: nat)
+                                     (sq: src_sys_state) pi,
+      0 < length (graph s) -> winv s -> wvsz s -> B <= length (graph s) ->
+      vm_frame (var_map s) sq ->
+      (forall v2 n pi', In (v2, n) (var_map s) -> (n < B \/ vnode_at s n) ->
+         guard_holds pi' -> rvalid act a_idx pi' n ss sinput = Bits.ones 1 ->
+         NV (dfg_var_size ctx v2) n = src_get sq v2) ->
+      dataflow_expr ctx e sz s = (id, s') -> wgmono s' F ->
+      (id < B \/ vnode_at s' id) ->
+      guard_holds pi -> rvalid act a_idx pi id ss sinput = Bits.ones 1 ->
+      NV sz id = tf_eval_expr s_sz i_sz o_sz (szB := sz) e sq input.
+    Proof.
+      intros e sz s id s' B sq pi Hne Hinv Hvsz HB Hfr Hvm Hde Hg' Hlow Hgp Hv.
+      assert (ABSURD : forall (o: @dfg_op_t s_var i_var o_var p_var) size s1,
+                0 < length (graph s1) ->
+                length (graph s) <= length (graph s1) ->
+                emit ctx o size s1 = (id, s') ->
+                (forall w, o <> DFG_Var w) -> False).
+      { intros o size s1 Hne1 Hle Hem Hnv.
+        destruct (emitted_node_at act F s1 s' o size id HF Hne1 Hem Hg')
+          as [R1 [R2 [Rop _]]].
+        destruct Hlow as [Hlt | Hvn].
+        - rewrite (emit_id o size s1 id s' Hem) in Hlt. lia.
+        - apply (vnode_absurd s' id Hg' R1); [| exact Hvn ].
+          intros w Hc. unfold SchedulerSimulationBase.node_op in Hc.
+          rewrite Rop in Hc. exact (Hnv w Hc). }
+      destruct e as [ c | sv | iv | ov | uop e1 | bop e1 e2 | ec et ee ].
+      - exfalso. exact (ABSURD _ _ s Hne (Nat.le_refl _)
+                          Hde ltac:(intros w Hc; discriminate Hc)).
+      - cbn [dataflow_expr] in Hde. unfold bind in Hde.
+        destruct (get_var ctx (DFG_SVar sv) s) as [src_id s1] eqn:Egv.
+        cbv beta in Hde.
+        pose proof (get_var_sz (DFG_SVar sv) s Hinv Hvsz) as Hgs.
+        rewrite Egv in Hgs. destruct Hgs as [Gv [Nv [Pv [Qv Zv]]]].
+        assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Gv Hne).
+        destruct (Nat.eqb (dfg_var_size ctx (DFG_SVar sv)) sz) eqn:Eb.
+        + unfold ret in Hde. injection Hde as Hid Hs1. subst id. subst s'.
+          apply Nat.eqb_eq in Eb. subst sz.
+          rewrite (get_var_low s s1 (DFG_SVar sv) src_id sq B pi
+                     Hne Hfr Hvm Egv Hg' Hlow Hgp Hv).
+          cbn [src_get dfg_var_size tf_eval_expr]. symmetry. apply convert_same.
+        + exfalso. exact (ABSURD _ _ s1 Hne1
+                            (get_var_len (DFG_SVar sv) s src_id s1 Hne Hinv Hvsz Egv)
+                            Hde ltac:(intros w Hc; discriminate Hc)).
+      - exfalso. cbn [dataflow_expr] in Hde. unfold bind in Hde.
+        destruct (emit ctx (DFG_Input iv) sz s) as [src_id s1] eqn:Eem.
+        cbv beta in Hde.
+        assert (Hle1 : length (graph s) <= length (graph s1))
+          by (rewrite (emit_len _ _ s src_id s1 Eem); lia).
+        assert (Hne1 : 0 < length (graph s1)) by lia.
+        destruct (Nat.eqb _ sz).
+        + unfold ret in Hde. injection Hde as Hid Hs1. subst id. subst s'.
+          exact (ABSURD _ _ s Hne (Nat.le_refl _)
+                   Eem ltac:(intros w Hc; discriminate Hc)).
+        + exact (ABSURD _ _ s1 Hne1 Hle1
+                   Hde ltac:(intros w Hc; discriminate Hc)).
+      - cbn [dataflow_expr] in Hde. unfold bind in Hde.
+        destruct (get_var ctx (DFG_OVar ov) s) as [src_id s1] eqn:Egv.
+        cbv beta in Hde.
+        pose proof (get_var_sz (DFG_OVar ov) s Hinv Hvsz) as Hgs.
+        rewrite Egv in Hgs. destruct Hgs as [Gv [Nv [Pv [Qv Zv]]]].
+        assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Gv Hne).
+        destruct (Nat.eqb (dfg_var_size ctx (DFG_OVar ov)) sz) eqn:Eb.
+        + unfold ret in Hde. injection Hde as Hid Hs1. subst id. subst s'.
+          apply Nat.eqb_eq in Eb. subst sz.
+          rewrite (get_var_low s s1 (DFG_OVar ov) src_id sq B pi
+                     Hne Hfr Hvm Egv Hg' Hlow Hgp Hv).
+          cbn [src_get dfg_var_size tf_eval_expr]. symmetry. apply convert_same.
+        + exfalso. exact (ABSURD _ _ s1 Hne1
+                            (get_var_len (DFG_OVar ov) s src_id s1 Hne Hinv Hvsz Egv)
+                            Hde ltac:(intros w Hc; discriminate Hc)).
+      - exfalso. destruct uop as [ | source_size ]; cbn [dataflow_expr] in Hde;
+          unfold bind in Hde.
+        + destruct (dataflow_expr ctx e1 sz s) as [src_id s1] eqn:Ee1.
+          cbv beta in Hde.
+          pose proof (dataflow_expr_sz e1 sz s Hinv Hvsz) as Hz1.
+          rewrite Ee1 in Hz1. destruct Hz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hzz1]]]].
+          exact (ABSURD _ _ s1 (gne_gmono s s1 Hg1 Hne)
+                   (dataflow_expr_len e1 sz s src_id s1 Hne Hinv Hvsz Ee1)
+                   Hde ltac:(intros w Hc; discriminate Hc)).
+        + destruct (dataflow_expr ctx e1 source_size s) as [src_id s1] eqn:Ee1.
+          cbv beta in Hde.
+          pose proof (dataflow_expr_sz e1 source_size s Hinv Hvsz) as Hz1.
+          rewrite Ee1 in Hz1. destruct Hz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hzz1]]]].
+          exact (ABSURD _ _ s1 (gne_gmono s s1 Hg1 Hne)
+                   (dataflow_expr_len e1 source_size s src_id s1 Hne Hinv Hvsz Ee1)
+                   Hde ltac:(intros w Hc; discriminate Hc)).
+      - exfalso. destruct bop as [ | | | | | | szC cop | hz lz ];
+          cbn [dataflow_expr] in Hde; unfold bind in Hde.
+        1-6: (destruct (dataflow_expr ctx e1 sz s) as [id1 s1] eqn:Ee1;
+              cbv beta in Hde;
+              pose proof (dataflow_expr_sz e1 sz s Hinv Hvsz) as Hz1;
+              rewrite Ee1 in Hz1; destruct Hz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hzz1]]]];
+              assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne);
+              destruct (dataflow_expr ctx e2 sz s1) as [id2 s2] eqn:Ee2;
+              cbv beta in Hde;
+              pose proof (dataflow_expr_sz e2 sz s1 Hp1 Hq1) as Hz2;
+              rewrite Ee2 in Hz2; destruct Hz2 as [Hg2 [Hn2 [Hp2 [Hq2 Hzz2]]]];
+              exact (ABSURD _ _ s2 (gne_gmono s1 s2 Hg2 Hne1)
+                       (Nat.le_trans _ _ _
+                          (dataflow_expr_len e1 sz s id1 s1 Hne Hinv Hvsz Ee1)
+                          (dataflow_expr_len e2 sz s1 id2 s2 Hne1 Hp1 Hq1 Ee2))
+                       Hde ltac:(intros w Hc; discriminate Hc))).
+        + destruct (dataflow_expr ctx e1 szC s) as [id1 s1] eqn:Ee1. cbv beta in Hde.
+          pose proof (dataflow_expr_sz e1 szC s Hinv Hvsz) as Hz1.
+          rewrite Ee1 in Hz1. destruct Hz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hzz1]]]].
+          assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
+          destruct (dataflow_expr ctx e2 szC s1) as [id2 s2] eqn:Ee2. cbv beta in Hde.
+          pose proof (dataflow_expr_sz e2 szC s1 Hp1 Hq1) as Hz2.
+          rewrite Ee2 in Hz2. destruct Hz2 as [Hg2 [Hn2 [Hp2 [Hq2 Hzz2]]]].
+          exact (ABSURD _ _ s2 (gne_gmono s1 s2 Hg2 Hne1)
+                   (Nat.le_trans _ _ _
+                      (dataflow_expr_len e1 szC s id1 s1 Hne Hinv Hvsz Ee1)
+                      (dataflow_expr_len e2 szC s1 id2 s2 Hne1 Hp1 Hq1 Ee2))
+                   Hde ltac:(intros w Hc; discriminate Hc)).
+        + destruct (dataflow_expr ctx e1 hz s) as [id1 s1] eqn:Ee1. cbv beta in Hde.
+          pose proof (dataflow_expr_sz e1 hz s Hinv Hvsz) as Hz1.
+          rewrite Ee1 in Hz1. destruct Hz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hzz1]]]].
+          assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
+          destruct (dataflow_expr ctx e2 lz s1) as [id2 s2] eqn:Ee2. cbv beta in Hde.
+          pose proof (dataflow_expr_sz e2 lz s1 Hp1 Hq1) as Hz2.
+          rewrite Ee2 in Hz2. destruct Hz2 as [Hg2 [Hn2 [Hp2 [Hq2 Hzz2]]]].
+          exact (ABSURD _ _ s2 (gne_gmono s1 s2 Hg2 Hne1)
+                   (Nat.le_trans _ _ _
+                      (dataflow_expr_len e1 hz s id1 s1 Hne Hinv Hvsz Ee1)
+                      (dataflow_expr_len e2 lz s1 id2 s2 Hne1 Hp1 Hq1 Ee2))
+                   Hde ltac:(intros w Hc; discriminate Hc)).
+      - exfalso. cbn [dataflow_expr] in Hde. unfold bind in Hde.
+        destruct (dataflow_expr ctx ec 1 s) as [cid s1] eqn:Ec. cbv beta in Hde.
+        pose proof (dataflow_expr_sz ec 1 s Hinv Hvsz) as Hz1.
+        rewrite Ec in Hz1. destruct Hz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hzz1]]]].
+        assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
+        destruct (dataflow_expr ctx et sz s1) as [tid s2] eqn:Et. cbv beta in Hde.
+        pose proof (dataflow_expr_sz et sz s1 Hp1 Hq1) as Hz2.
+        rewrite Et in Hz2. destruct Hz2 as [Hg2 [Hn2 [Hp2 [Hq2 Hzz2]]]].
+        assert (Hne2 : 0 < length (graph s2)) by exact (gne_gmono s1 s2 Hg2 Hne1).
+        destruct (dataflow_expr ctx ee sz s2) as [eid s3] eqn:El. cbv beta in Hde.
+        pose proof (dataflow_expr_sz ee sz s2 Hp2 Hq2) as Hz3.
+        rewrite El in Hz3. destruct Hz3 as [Hg3 [Hn3 [Hp3 [Hq3 Hzz3]]]].
+        exact (ABSURD _ _ s3 (gne_gmono s2 s3 Hg3 Hne2)
+                 (Nat.le_trans _ _ _
+                    (Nat.le_trans _ _ _
+                       (dataflow_expr_len ec 1 s cid s1 Hne Hinv Hvsz Ec)
+                       (dataflow_expr_len et sz s1 tid s2 Hne1 Hp1 Hq1 Et))
+                    (dataflow_expr_len ee sz s2 eid s3 Hne2 Hp2 Hq2 El))
+                 Hde ltac:(intros w Hc; discriminate Hc)).
+    Qed.
+
     (* ================================================================= *)
     (* Structural, and free of [guard_holds]: what the builder does to    *)
     (* [var_map] pins what the source does to the state.  Both arms of a  *)
