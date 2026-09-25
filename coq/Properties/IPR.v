@@ -115,6 +115,7 @@ Section IPR.
   Local Notation s_var := (tfs_spec_states ctx).
   Local Notation i_var := (tfs_spec_inputs ctx).
   Local Notation o_var := (tfs_spec_outputs ctx).
+  Local Notation p_var := (tfs_spec_ips ctx).
   Local Notation node_t := (@dfg_node_t s_var i_var o_var).
 
   Local Notation s_sz := (tfs_spec_states_size ctx).
@@ -316,14 +317,13 @@ Section IPR.
 
   (* The sample-side sibling of [input_secret_tainted]: a sample reads a trusted
      port, so it is a taint source, on [self_tainted]'s [DFG_Sample] arm. *)
-  Lemma sample_secret_tainted (act: tfs_action sched) (node: node_t) (iv: i_var) tok :
+  Lemma sample_secret_tainted (act: tfs_action sched) (node: node_t) (pv: p_var) tok en :
     List.In node (graph (build_dfg ctx act)) ->
-    op node = DFG_Sample iv tok ->
-    tfs_spec_inputs_class ctx iv = Secret ->
+    op node = DFG_Sample pv tok en ->
     ~ List.In (nid node) (untainted_roots ctx (build_dfg ctx act)) ->
     List.In (nid node) (get_tainted ctx (build_dfg ctx act)).
   Proof.
-    intros Hnode Hop Hcls Hnd.
+    intros Hnode Hop Hnd.
     destruct (in_split _ _ Hnode) as [pre [post Hsplit]].
     unfold get_tainted. cbv zeta.
     set (U := untainted_roots ctx (build_dfg ctx act)) in *.
@@ -340,7 +340,7 @@ Section IPR.
     unfold aux; cbn beta.
     destruct (mem (nid node) U) as [m | _].
     { exfalso. apply Hnd. exact (member_In _ _ m). }
-    rewrite Hop, Hcls. cbn [orb]. left. reflexivity.
+    rewrite Hop. cbn [orb]. left. reflexivity.
   Qed.
 
   (* ------------------------------------------------------------------- *)
