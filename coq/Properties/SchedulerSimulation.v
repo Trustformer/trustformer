@@ -5726,6 +5726,55 @@ Section SchedulerSimulation.
     rewrite Nat.eqb_refl in Hb. discriminate Hb.
   Qed.
 
+
+  (* A sample's token is a stall, and a stall feeding a sample has a slot. *)
+  Lemma stall_token_slot (act: tfs_action sched) a_idx (p: p_var) samp tok en :
+    act_idx_aligned act a_idx ->
+    node_op act samp = DFG_Sample p tok en ->
+    exists m msz t_idx,
+      BitsToLists.list_assoc
+        (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) tok = Some (m, msz)
+      /\ index_of_nat
+           (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m
+         = Some t_idx
+      /\ vreg_nid a_idx t_idx = tok.
+  Proof.
+    intros Halign Hsamp.
+    destruct (sample_tok_is_stall act samp p tok en Hsamp) as [aa Htok].
+    assert (Hslen : samp < length (graph (build_dfg ctx act)))
+      by (apply node_op_range; rewrite Hsamp; discriminate).
+    assert (Htlen : tok < length (graph (build_dfg ctx act)))
+      by (apply node_op_range; rewrite Htok; discriminate).
+    assert (Hne : BitsToLists.list_assoc
+              (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) tok <> None).
+    { replace tok with (nid (nth tok (graph (build_dfg ctx act))
+                               {| nid := 0; op := DFG_Empty; sz := 0 |}))
+        by (exact (node_nid_at act tok Htlen)).
+      apply (stall_has_slot act a_idx
+               (nth samp (graph (build_dfg ctx act))
+                  {| nid := 0; op := DFG_Empty; sz := 0 |})
+               (nth tok (graph (build_dfg ctx act))
+                  {| nid := 0; op := DFG_Empty; sz := 0 |})
+               (ip_lat (tfs_spec_ip ctx p)) aa Halign
+               (nth_In _ _ Hslen) (nth_In _ _ Htlen)).
+      - rewrite (node_nid_at act tok Htlen).
+        unfold SchedulerSimulationBase.node_op in Hsamp.
+        unfold get_args. rewrite Hsamp. left. reflexivity.
+      - unfold SchedulerSimulationBase.node_op in Htok. exact Htok. }
+    destruct (BitsToLists.list_assoc
+                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) tok)
+      as [[m msz] |] eqn:Hq; [| exfalso; exact (Hne eq_refl) ].
+    pose proof (wla_in _ _ _ Hq) as Hinq.
+    assert (Hltq : m < length
+              (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
+    { rewrite (buffer_slot_eq act a_idx Halign), gsi_length.
+      apply (gsi_idx_bound (build_dfg ctx act) _ tok m msz).
+      rewrite <- (buffer_slot_eq act a_idx Halign). exact Hinq. }
+    destruct (index_of_nat_bounded Hltq) as [t_idx Ht_idx].
+    exists m, msz, t_idx.
+    split; [ reflexivity | split; [ exact Ht_idx | ]].
+    exact (vreg_nid_of_entry act a_idx _ m msz t_idx Halign Hinq Ht_idx).
+  Qed.
   (* A join that reads valid has BOTH arguments valid, whether or not the join
      itself is buffered: if it is, its register says so one cycle back, and
      validity does not fall. *)
