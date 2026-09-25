@@ -10519,7 +10519,10 @@ Section SchedulerSimulation.
      reference's table too.  The untainted-Phi case is where this needs
      [valid_settled]: the two tables give two different CONDITION expressions,
      and the branch that is known valid is the one the condition selects. *)
-  Lemma compile_subst_ref_valid_gen
+  (* As [compile_subst_valid_gen_at]: the sample-table conditions bite only at
+     the ids the expression can reach, which is what lets a GATE table satisfy
+     them. *)
+  Lemma compile_subst_ref_valid_gen_at
         (act: tfs_action sched)
         (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
         (ss: sched_sys_state) (input: sched_input_t) :
@@ -10529,12 +10532,14 @@ Section SchedulerSimulation.
     forall bufs,
       (forall e, In e bufs ->
          In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
-      (forall x, BitsToLists.list_assoc bufs x = None ->
-                 BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
-      (forall x m msz, BitsToLists.list_assoc bufs x = Some (m, msz) ->
-                 is_sample_of act x = true ->
-                 BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)) ->
       forall fuel n (pi: list lit),
+        (forall x, x <= n ->
+           BitsToLists.list_assoc bufs x = None ->
+           BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
+        (forall x m msz, x <= n ->
+           BitsToLists.list_assoc bufs x = Some (m, msz) ->
+           is_sample_of act x = true ->
+           BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)) ->
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
         n < fuel ->
@@ -10543,8 +10548,9 @@ Section SchedulerSimulation.
         eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                       n (sample_bufs act a_idx))) ss input = Bits.ones 1.
   Proof.
-    intros Halign Hinv Hrefs bufs Hsub Hsam_sub Hsam_same fuel.
-    induction fuel as [| fuel IH]; intros n pi Hn1 Hnlen Hnfuel Hval; [ lia |].
+    intros Halign Hinv Hrefs bufs Hsub fuel.
+    induction fuel as [| fuel IH];
+      intros n pi Hsam_sub Hsam_same Hn1 Hnlen Hnfuel Hval; [ lia |].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:Hla.
     - (* buffered leaf: its validity bit is the one that fired *)
       cbn [compile_dfg_expr_aux] in Hval. rewrite Hla in Hval.
@@ -10579,7 +10585,7 @@ Section SchedulerSimulation.
       rewrite <- Hvn. exact (Hrefs n_idx' pi Hv').
     - (* not buffered: split the validity along the op's structure *)
       cbn [compile_dfg_expr_aux BitsToLists.list_assoc] in Hval |- *.
-      rewrite Hla in Hval. rewrite (Hsam_sub n Hla).
+      rewrite Hla in Hval. rewrite (Hsam_sub n (Nat.le_refl n) Hla).
       cbv beta iota in Hval |- *.
       set (node := nth n (graph (build_dfg ctx act))
                      {| nid := 0; op := DFG_Empty; sz := 0 |}) in *.
@@ -10600,7 +10606,10 @@ Section SchedulerSimulation.
                 = Bits.ones 1).
       { intros x p Hx Hxv.
         destruct (Harg x Hx) as [Hx1 Hx2].
-        apply (IH x p Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen) ltac:(lia) Hxv). }
+        apply (IH x p
+                 ltac:(intros y Hy; apply Hsam_sub; lia)
+                 ltac:(intros y my mszy Hy; apply Hsam_same; lia)
+                 Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen) ltac:(lia) Hxv). }
       pose proof (wfg_build_dfg act node Hnode_in) as Hfg.
       destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn den | siv sn sen | ja jb | ]
         eqn:Hop.
@@ -10659,8 +10668,11 @@ Section SchedulerSimulation.
         (* the condition agrees in VALUE across the two tables *)
         destruct (Harg cnd Hcin) as [Hc1 Hc2].
         destruct (wsz_node_sz act cnd 1 Hf1) as [Hclen Hcsz].
-        pose proof (compile_subst_valid_gen act a_idx ss input Halign Hinv bufs Hsub
-                      Hsam_sub Hsam_same fuel cnd 1 pi Hc1 Hclen ltac:(lia)
+        pose proof (compile_subst_valid_gen_at act a_idx ss input Halign Hinv bufs Hsub
+                      fuel cnd 1 pi
+                      ltac:(intros y Hy; apply Hsam_sub; lia)
+                      ltac:(intros y my mszy Hy; apply Hsam_same; lia)
+                      Hc1 Hclen ltac:(lia)
                       (eq_sym Hcsz)) as Hcondval.
         remember (ppath_at act pi cnd true) as pt eqn:Hpt. clear Hpt.
         remember (ppath_at act pi cnd false) as pe eqn:Hpe. clear Hpe.
@@ -10779,6 +10791,38 @@ Section SchedulerSimulation.
       + (* Empty: impossible for a real node *)
         exfalso. apply (node_op_not_empty act n Hn1 Hnlen).
         unfold node in Hop. exact Hop.
+  Qed.
+
+  (* The unbounded form, for the callers that pass the whole table. *)
+  Lemma compile_subst_ref_valid_gen
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+        (ss: sched_sys_state) (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
+    valid_settled act a_idx ss input ->
+    valid_refs act a_idx ss input ->
+    forall bufs,
+      (forall e, In e bufs ->
+         In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
+      (forall x, BitsToLists.list_assoc bufs x = None ->
+                 BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
+      (forall x m msz, BitsToLists.list_assoc bufs x = Some (m, msz) ->
+                 is_sample_of act x = true ->
+                 BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)) ->
+      forall fuel n (pi: list lit),
+        1 <= n ->
+        n < length (graph (build_dfg ctx act)) ->
+        n < fuel ->
+        eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                      n bufs)) ss input = Bits.ones 1 ->
+        eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                      n (sample_bufs act a_idx))) ss input = Bits.ones 1.
+  Proof.
+    intros Halign Hinv Hrefs bufs Hsub Hsam_sub Hsam_same fuel n pi.
+    exact (compile_subst_ref_valid_gen_at act a_idx ss input Halign Hinv Hrefs
+             bufs Hsub fuel n pi
+             (fun x _ => Hsam_sub x)
+             (fun x m msz _ => Hsam_same x m msz)).
   Qed.
 
   (* A key filtered OUT of an association list is absent from it.  This is what

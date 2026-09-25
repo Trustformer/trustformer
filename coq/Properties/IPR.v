@@ -297,6 +297,111 @@ Section IPR.
       exfalso. exact (f (In_member a accP HaP)).
   Qed.
 
+  (* ------------------------------------------------------------------- *)
+  (* Two syntactic facts about a built graph, carried as side conditions   *)
+  (* until they are read off the builder's invariants.                     *)
+  (* ------------------------------------------------------------------- *)
+
+  Definition is_plumbing (act: tfs_action sched) (n: nid_t) : bool :=
+    match node_op ctx cost_limit act n with
+    | DFG_Stall _ _ | DFG_Drive _ _ _ | DFG_Join _ _ => true
+    | _ => false
+    end.
+
+  (* [decl_instances] drops a rule that names one of these, and the builder
+     puts none of them in [var_map], so none is ever declassified. *)
+  Definition plumbing_not_root (act: tfs_action sched) : Prop :=
+    forall n, is_plumbing act n = true ->
+      ~ List.In n (untainted_roots ctx (build_dfg ctx act)).
+
+  (* [dataflow_ops] emits a drive at its IP's request width. *)
+  Definition drives_sized (act: tfs_action sched) : Prop :=
+    forall n (p: p_var) av en,
+      node_op ctx cost_limit act n = DFG_Drive p av en ->
+      sz (nth n (graph (build_dfg ctx act))
+           {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p).
+
+  (* One step of the taint walk, read backwards. *)
+  Lemma arg_untainted (act: tfs_action sched) (m x: nid_t) :
+    m < length (graph (build_dfg ctx act)) ->
+    ~ List.In m (get_tainted ctx (build_dfg ctx act)) ->
+    ~ List.In m (untainted_roots ctx (build_dfg ctx act)) ->
+    List.In x (get_args ctx (nth m (graph (build_dfg ctx act))
+                              {| nid := 0; op := DFG_Empty; sz := 0 |})) ->
+    ~ List.In x (get_tainted ctx (build_dfg ctx act)).
+  Proof.
+    intros Hlen Hmt Hmr Hx Hxt.
+    rewrite <- (node_nid_at ctx cost_limit act m Hlen) in Hmt, Hmr.
+    exact (Hmt (taint_propagates act _ x (nth_In _ _ Hlen) Hx Hxt Hmr)).
+  Qed.
+
+  Lemma sample_drive_head_untainted (act: tfs_action sched) (p: p_var) (h d: nid_t) :
+    plumbing_not_root act ->
+    h < length (graph (build_dfg ctx act)) ->
+    sample_drive_head ctx cost_limit act p h = Some d ->
+    ~ List.In h (get_tainted ctx (build_dfg ctx act)) ->
+    ~ List.In d (get_tainted ctx (build_dfg ctx act)).
+  Proof.
+    intros Hpl Hlen Hsd Hht.
+    unfold SchedulerSimulationBase.sample_drive_head,
+           SchedulerSimulationBase.node_op in Hsd.
+    destruct (op (nth h (graph (build_dfg ctx act))
+                   {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hh;
+      try discriminate.
+    - destruct (eq_dec p0 p); [ | discriminate ].
+      injection Hsd as Heq. rewrite <- Heq. exact Hht.
+    - destruct (op (nth a (graph (build_dfg ctx act))
+                     {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Ha;
+        try discriminate.
+      destruct (eq_dec p0 p); [ | discriminate ].
+      injection Hsd as Heq. rewrite <- Heq.
+      apply (arg_untainted act h a Hlen Hht).
+      + apply Hpl. unfold is_plumbing, SchedulerSimulationBase.node_op.
+        rewrite Hh. reflexivity.
+      + unfold get_args. rewrite Hh. left. reflexivity.
+  Qed.
+
+  (* An untainted sample has an untainted DRIVE: the walk runs through the
+     token and the stall, and a rule can declassify neither. *)
+  Lemma sample_drive_untainted (act: tfs_action sched) (n d: nid_t) :
+    plumbing_not_root act ->
+    n < length (graph (build_dfg ctx act)) ->
+    sample_drive ctx cost_limit act n = Some d ->
+    ~ List.In n (get_tainted ctx (build_dfg ctx act)) ->
+    ~ List.In n (untainted_roots ctx (build_dfg ctx act)) ->
+    ~ List.In d (get_tainted ctx (build_dfg ctx act)).
+  Proof.
+    intros Hpl Hlen Hsd Hnt Hnr.
+    unfold SchedulerSimulationBase.sample_drive,
+           SchedulerSimulationBase.node_op in Hsd.
+    destruct (op (nth n (graph (build_dfg ctx act))
+                   {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hn;
+      try discriminate.
+    assert (Hint : List.In tok (get_args ctx (nth n (graph (build_dfg ctx act))
+                                               {| nid := 0; op := DFG_Empty; sz := 0 |})))
+      by (unfold get_args; rewrite Hn; left; reflexivity).
+    pose proof (arg_lt_of_op ctx cost_limit act n tok Hlen Hint) as Htok.
+    assert (Htlen : tok < length (graph (build_dfg ctx act))) by lia.
+    pose proof (arg_untainted act n tok Hlen Hnt Hnr Hint) as Htokt.
+    destruct (op (nth tok (graph (build_dfg ctx act))
+                   {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Ht.
+    all: try (exact (sample_drive_head_untainted act p tok d Hpl Htlen Hsd Htokt)).
+    match goal with
+    | H : op (nth tok _ _) = DFG_Stall _ ?hh |- _ =>
+        assert (Hinh : List.In hh
+                  (get_args ctx (nth tok (graph (build_dfg ctx act))
+                                   {| nid := 0; op := DFG_Empty; sz := 0 |})))
+          by (unfold get_args; rewrite H; left; reflexivity);
+        pose proof (arg_lt_of_op ctx cost_limit act tok hh Htlen Hinh) as Hah;
+        assert (Halen : hh < length (graph (build_dfg ctx act))) by lia;
+        assert (Hhnr : ~ List.In tok (untainted_roots ctx (build_dfg ctx act)))
+          by (apply Hpl; unfold is_plumbing, SchedulerSimulationBase.node_op;
+              rewrite H; reflexivity);
+        pose proof (arg_untainted act tok hh Htlen Htokt Hhnr Hinh) as Hht;
+        exact (sample_drive_head_untainted act p hh d Hpl Halen Hsd Hht)
+    end.
+  Qed.
+
   (* The self-taint counterpart of [taint_propagates]: a read of pre-action
      secret state is a taint source, so it is tainted unless declassified. *)
   Lemma svar_tainted (act: tfs_action sched) (node: node_t) (sv: s_var) :
@@ -797,12 +902,14 @@ Section IPR.
   Theorem untainted_derivable (act: tfs_action sched) (a_idx: a_index)
       (input: sched_input_t) :
     act_idx_aligned ctx cost_limit act a_idx ->
+    plumbing_not_root act ->
+    drives_sized act ->
     forall n,
       1 <= n -> n < length (graph (build_dfg ctx act)) ->
       ~ List.In n (get_tainted ctx (build_dfg ctx act)) ->
       derivable act a_idx input n.
   Proof.
-    intro Halign.
+    intros Halign Hpl Hdsz.
     intro n. pattern n. apply (well_founded_ind lt_wf). clear n.
     intros n IH H1 Hlen Hnt.
 
@@ -1004,11 +1111,81 @@ Section IPR.
                (nrv_peel_drive ctx cost_limit act a_idx n dp darg den pi
                   ss' input' Eop Hdr1 Hlen Hvn')).
 
-    - (* The IP link sits outside the attacker model, so a sample is a taint
-         source whatever its request carries. *)
-      exfalso.
-      assert (Ht := sample_secret_tainted act _ sp stok sen Hin Eop Hnr').
-      rewrite Hnid in Ht. exact (Hnt Ht).
+    - (* A sample is [ip_fn] of its request.  Untainted means the REQUEST is
+         untainted, so both runs send the same payload and the pure IP hands
+         back the same answer. *)
+      assert (Hsam : is_sample_of ctx cost_limit act n = true)
+        by (unfold SchedulerSimulationBase.is_sample_of,
+                   SchedulerSimulationBase.node_op; rewrite Eop; reflexivity).
+      destruct (sample_index ctx cost_limit act a_idx n Halign Hsam) as [n_idx Hvid].
+      assert (Hop' : node_op ctx cost_limit act n = DFG_Sample sp stok sen)
+        by (unfold SchedulerSimulationBase.node_op; exact Eop).
+      destruct (sample_has_drive ctx cost_limit act n sp stok sen Hop')
+        as [d [av [Hsd Hdop]]].
+
+      (* the latch is up in both runs: a sample's compiled validity IS its
+         register, the same expression at every path *)
+      assert (Hrr : forall (s: sched_sys_state) (i: sched_input_t),
+                rvalid act a_idx pi n s i = Bits.ones 1 ->
+                (fst s).[tf_dfg_v a_idx n_idx] = Bits.ones 1).
+      { intros s i Hv. rewrite <- Hvid in Hv.
+        rewrite (sample_ref_is_register ctx cost_limit act a_idx n_idx Halign
+                   ltac:(rewrite Hvid; exact Hsam) pi
+                   (length (graph (build_dfg ctx act)))
+                   ltac:(rewrite Hvid; exact Hlen)) in Hv.
+        cbn [snd] in Hv. rewrite eval1_svar_v in Hv. exact Hv. }
+      pose proof (Hrr ss  input  Hvn)  as Hreg.
+      pose proof (Hrr ss' input' Hvn') as Hreg'.
+
+      (* the request is untainted and sits below [n], so [IH] reaches it *)
+      pose proof (sample_drive_lt act n d Hlen Hsd) as Hdn.
+      pose proof (sample_drive_untainted act n d Hpl Hlen Hsd Hnt Hnroot) as Hdt.
+      assert (Hdlen : d < length (graph (build_dfg ctx act))) by lia.
+      destruct (node_op_pos ctx cost_limit act d
+                  ltac:(rewrite Hdop; discriminate)) as [Hd1 _].
+      assert (Hain : List.In av (get_args ctx (nth d (graph (build_dfg ctx act))
+                                                {| nid := 0; op := DFG_Empty; sz := 0 |})))
+        by (unfold get_args, SchedulerSimulationBase.node_op in Hdop |- *;
+            rewrite Hdop; left; reflexivity).
+      assert (Hdnr : ~ List.In d (untainted_roots ctx (build_dfg ctx act)))
+        by (apply Hpl; unfold is_plumbing; rewrite Hdop; reflexivity).
+      pose proof (arg_untainted act d av Hdlen Hdt Hdnr Hain) as Havt.
+      destruct (node_args_range ctx cost_limit act d Hd1 Hdlen av Hain) as [Hav1 Havd].
+
+      (* the payload's width is the IP's request width *)
+      pose proof (wfg_build_dfg ctx cost_limit act
+                    (nth d (graph (build_dfg ctx act))
+                       {| nid := 0; op := DFG_Empty; sz := 0 |})
+                    (nth_In _ _ Hdlen)) as Hfgd.
+      unfold node_args_sz in Hfgd.
+      unfold SchedulerSimulationBase.node_op in Hdop.
+      rewrite Hdop in Hfgd.
+      destruct (wsz_node_sz ctx cost_limit act av _ Hfgd) as [_ Havsz].
+
+      destruct Hsa as [Hans Hargs]. destruct Hsa' as [Hans' Hargs'].
+      rewrite <- Hvid in Hop', Hsd.
+      assert (Hdz : sz (nth d (graph (build_dfg ctx act))
+                         {| nid := 0; op := DFG_Empty; sz := 0 |})
+                    = ip_req_sz (tfs_spec_ip ctx sp))
+        by (apply (Hdsz d sp av sen); exact Hdop).
+
+      (* both latches hold [ip_fn] of the payload *)
+      pose proof (Hans  n_idx sp stok sen d av sen Hop' Hsd Hdop Hdz Hreg)  as Hb.
+      pose proof (Hans' n_idx sp stok sen d av sen Hop' Hsd Hdop Hdz Hreg') as Hb'.
+      pose proof (Hargs  n_idx sp stok sen d av sen Hop' Hsd Hdop Hreg)  as Hvav.
+      pose proof (Hargs' n_idx sp stok sen d av sen Hop' Hsd Hdop Hreg') as Hvav'.
+
+      (* and the payloads agree *)
+      pose proof (IH av ltac:(lia) Hav1 ltac:(lia) Havt ss ss' input' []
+                    Hpub (conj Hans Hargs) (conj Hans' Hargs') Hvav Hvav') as Hav.
+      unfold SchedulerSimulationBase.nval in Hav.
+      rewrite Havsz, Hdz in Hav.
+
+      unfold SchedulerSimulationBase.nval. rewrite <- Hvid.
+      rewrite (nre_sample ctx cost_limit act a_idx n_idx Halign
+                 ltac:(rewrite Hvid; exact Hsam)).
+      rewrite <- (buffer_register_node_size ctx cost_limit act a_idx n_idx Halign).
+      rewrite !eval_svar_same. rewrite Hb, Hb'. rewrite Hav. reflexivity.
 
     - (* A join ORDERS the calls on a port and carries no value. *)
       assert (Hemp : node_ref_expr ctx cost_limit act a_idx n = tf_const 0).
@@ -1082,10 +1259,14 @@ Section IPR.
      input. *)
   Definition gderivable (act: tfs_action sched) (a_idx: a_index)
       (input: sched_input_t) (g: list lit) (n: nid_t) : Prop :=
-    forall ss ss' input',
+    forall ss ss' input' (pi: list lit),
       pub_eq act a_idx input input' ss ss' ->
+      settled act a_idx ss  input  ->
+      settled act a_idx ss' input' ->
       pi_holds act a_idx input  g ss ->
       pi_holds act a_idx input' g ss' ->
+      rvalid act a_idx pi n ss  input  = Bits.ones 1 ->
+      rvalid act a_idx pi n ss' input' = Bits.ones 1 ->
       nval ctx cost_limit act a_idx ss  input  (nsz act n) n
       = nval ctx cost_limit act a_idx ss' input' (nsz act n) n.
 
@@ -1096,41 +1277,54 @@ Section IPR.
     gderivable act a_idx input g n ->
     gderivable act a_idx input g' n.
   Proof.
-    intros Hincl Hg ss ss' input' Hpub Hp Hp'.
-    exact (Hg ss ss' input' Hpub
+    intros Hincl Hg ss ss' input' pi Hpub Hs Hs' Hp Hp' Hv Hv'.
+    exact (Hg ss ss' input' pi Hpub Hs Hs'
              (guard_incl_holds act a_idx input  g g' ss  Hincl Hp)
-             (guard_incl_holds act a_idx input' g g' ss' Hincl Hp')).
+             (guard_incl_holds act a_idx input' g g' ss' Hincl Hp')
+             Hv Hv').
   Qed.
 
   Lemma derivable_gderivable (act: tfs_action sched) (a_idx: a_index)
       (input: sched_input_t) (g: list lit) (n: nid_t) :
     derivable act a_idx input n -> gderivable act a_idx input g n.
-  Proof. intros Hd ss ss' input' Hpub _ _. exact (Hd ss ss' input' Hpub). Qed.
+  Proof.
+    intros Hd ss ss' input' pi Hpub Hs Hs' _ _ Hv Hv'.
+    exact (Hd ss ss' input' pi Hpub Hs Hs' Hv Hv').
+  Qed.
 
   (* An unconditionally derivable node is derivable under any guard. *)
   Lemma untainted_gderivable (act: tfs_action sched) (a_idx: a_index)
       (input: sched_input_t) (g: list lit) (n: nid_t) :
+    act_idx_aligned ctx cost_limit act a_idx ->
+    plumbing_not_root act ->
+    drives_sized act ->
     1 <= n ->
     n < length (graph (build_dfg ctx act)) ->
     ~ List.In n (get_tainted ctx (build_dfg ctx act)) ->
     gderivable act a_idx input g n.
   Proof.
-    intros Hn1 Hnlen Hnt.
+    intros Halign Hpl Hdsz Hn1 Hnlen Hnt.
     exact (derivable_gderivable act a_idx input g n
-             (untainted_derivable act a_idx input n Hn1 Hnlen Hnt)).
+             (untainted_derivable act a_idx input Halign Hpl Hdsz n Hn1 Hnlen Hnt)).
   Qed.
 
   (* The uniform user obligation on a single declassification instance: it is
      [uncond_sound]'s premise plus the instance's own guard. *)
   Definition instance_sound (act: tfs_action sched) (a_idx: a_index)
       (input: sched_input_t) (i: decl_instance) : Prop :=
-    forall ss ss' input',
+    forall ss ss' input' (pi: list lit),
       pub_eq act a_idx input input' ss ss' ->
       pi_holds act a_idx input  (di_guard i) ss ->
       pi_holds act a_idx input' (di_guard i) ss' ->
-      (forall s, List.In s (di_sources i) ->
+      (* a source's value is given where the source is VALID, at the path it is
+         read under; the rule derives that from its own target's validity *)
+      (forall s (ps: list lit), List.In s (di_sources i) ->
+         rvalid act a_idx ps s ss  input  = Bits.ones 1 ->
+         rvalid act a_idx ps s ss' input' = Bits.ones 1 ->
          nval ctx cost_limit act a_idx ss  input  (nsz act s) s
          = nval ctx cost_limit act a_idx ss' input' (nsz act s) s) ->
+      rvalid act a_idx pi (di_target i) ss  input  = Bits.ones 1 ->
+      rvalid act a_idx pi (di_target i) ss' input' = Bits.ones 1 ->
       nval ctx cost_limit act a_idx ss  input  (nsz act (di_target i)) (di_target i)
       = nval ctx cost_limit act a_idx ss' input' (nsz act (di_target i)) (di_target i).
 
@@ -1142,11 +1336,13 @@ Section IPR.
     (forall s, List.In s (di_sources i) -> gderivable act a_idx input g s) ->
     gderivable act a_idx input (di_guard i ++ g) (di_target i).
   Proof.
-    intros Hi Hsrc ss ss' input' Hpub Hp Hp'.
+    intros Hi Hsrc ss ss' input' pi Hpub Hs Hs' Hp Hp' Hv Hv'.
     destruct (pi_holds_app act a_idx input  _ _ ss  Hp)  as [Hp1  Hp2 ].
     destruct (pi_holds_app act a_idx input' _ _ ss' Hp') as [Hp1' Hp2'].
-    exact (Hi ss ss' input' Hpub Hp1 Hp1'
-             (fun s Hs => Hsrc s Hs ss ss' input' Hpub Hp2 Hp2')).
+    exact (Hi ss ss' input' pi Hpub Hp1 Hp1'
+             (fun s ps Hs0 Hvs Hvs' =>
+                Hsrc s Hs0 ss ss' input' ps Hpub Hs Hs' Hp2 Hp2' Hvs Hvs')
+             Hv Hv').
   Qed.
 
   Lemma guard_incl_refl (g: list lit) : guard_incl g g = true.
@@ -1158,18 +1354,21 @@ Section IPR.
 
   Corollary decl_direct (act: tfs_action sched) (a_idx: a_index)
       (input: sched_input_t) (i: decl_instance) :
+    act_idx_aligned ctx cost_limit act a_idx ->
+    plumbing_not_root act ->
+    drives_sized act ->
     instance_sound act a_idx input i ->
     (forall s, List.In s (di_sources i) ->
        1 <= s /\ s < length (graph (build_dfg ctx act))
        /\ ~ List.In s (get_tainted ctx (build_dfg ctx act))) ->
     gderivable act a_idx input (di_guard i) (di_target i).
   Proof.
-    intros Hi Hsrc.
+    intros Halign Hpl Hdsz Hi Hsrc.
     apply (gderivable_weaken act a_idx input (di_guard i ++ []) (di_guard i));
       [ rewrite app_nil_r; apply guard_incl_refl | ].
     apply (decl_compose act a_idx input i []); [ exact Hi | ].
     intros s Hs. destruct (Hsrc s Hs) as [Hs1 [Hs2 Hs3]].
-    exact (untainted_gderivable act a_idx input [] s Hs1 Hs2 Hs3).
+    exact (untainted_gderivable act a_idx input [] s Halign Hpl Hdsz Hs1 Hs2 Hs3).
   Qed.
 
   (* What the compiler's producer owes the proof: every fact it records is a
@@ -1199,12 +1398,14 @@ Section IPR.
        instance_sound act a_idx input i) ->
     uncond_sound act a_idx input.
   Proof.
-    intros Hall i Hi Hsrc ss ss' input' Hpub.
+    intros Hall i Hi Hsrc ss ss' input' pi Hpub Hs Hs' Hv Hv'.
     pose proof (uncond_guard_nil (build_dfg ctx act) i Hi) as Hg.
-    apply (Hall i Hi ss ss' input' Hpub);
+    apply (Hall i Hi ss ss' input' pi Hpub);
       [ rewrite Hg; intros c b Hin; destruct Hin
       | rewrite Hg; intros c b Hin; destruct Hin
-      | intros s Hs; exact (Hsrc s Hs ss ss' input' Hpub) ].
+      | intros s ps Hs0 Hvs Hvs';
+        exact (Hsrc s Hs0 ss ss' input' ps Hpub Hs Hs' Hvs Hvs')
+      | exact Hv | exact Hv' ].
   Qed.
 
   (* And to the guarded one, which is what the compiler's producer emits.
@@ -1430,6 +1631,12 @@ Section IPR.
   Lemma valid_public_gen (act: tfs_action sched) (a_idx: a_index)
       (input input': sched_input_t) (ss ss': sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
+    plumbing_not_root act ->
+    drives_sized act ->
+    valid_refs ctx cost_limit act a_idx ss  input  ->
+    valid_refs ctx cost_limit act a_idx ss' input' ->
+    settled act a_idx ss  input  ->
+    settled act a_idx ss' input' ->
     valid_settled ctx cost_limit act a_idx ss  input  ->
     valid_settled ctx cost_limit act a_idx ss' input' ->
     pub_eq act a_idx input input' ss ss' ->
@@ -1459,7 +1666,7 @@ Section IPR.
         = eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                       (build_dfg ctx act) n bufs)) ss' input'.
   Proof.
-    intros Halign Hvs Hvs' Hpub Hveq bufs Hsub fuel.
+    intros Halign Hpl Hdsz Hrf Hrf' Hst Hst' Hvs Hvs' Hpub Hveq bufs Hsub fuel.
     induction fuel as [| fuel IH];
       intros n pi Hsam_sub Hsam_same Hn1 Hnlen Hnfuel Hpi Hpi'; [ lia | ].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:Hla.
@@ -1553,7 +1760,7 @@ Section IPR.
         assert (Hcder : gderivable act a_idx input pi cnd).
         { unfold phi_crit in Hcrit. apply andb_false_iff in Hcrit.
           destruct Hcrit as [Hmt | Hdg].
-          - exact (untainted_gderivable act a_idx input pi cnd Hc1 Hclen
+          - exact (untainted_gderivable act a_idx input pi cnd Halign Hpl Hdsz Hc1 Hclen
                      (mem_nid_not_In cnd _ Hmt)).
           - apply Bool.negb_false_iff in Hdg.
             unfold declassified_at in Hdg. apply existsb_exists in Hdg.
@@ -1596,9 +1803,29 @@ Section IPR.
         assert (Href' : eval1 ce ss' input'
                         = nval ctx cost_limit act a_idx ss' input' 1 cnd)
           by (rewrite S2; unfold nval, node_ref_expr; reflexivity).
+        (* the gate is read at the REFERENCE table; carry it over from this
+           cycle's table, then refuel to the reference fuel *)
+        assert (Hrv : forall (s: sched_sys_state) (i: sched_input_t),
+                  valid_settled ctx cost_limit act a_idx s i ->
+                  valid_refs ctx cost_limit act a_idx s i ->
+                  eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                                (build_dfg ctx act) cnd bufs)) s i = Bits.ones 1 ->
+                  rvalid act a_idx pi cnd s i = Bits.ones 1).
+        { intros s i Hvsi Hrfi Hv.
+          rewrite <- (compile_fuel_irrel_gen ctx cost_limit act a_idx
+                        (sample_bufs ctx cost_limit act a_idx) _ _ cnd Hc1 Hclen
+                        fuel (length (graph (build_dfg ctx act))) pi
+                        ltac:(lia) Hclen).
+          exact (compile_subst_ref_valid_gen_at ctx cost_limit act a_idx s i
+                   Halign Hvsi Hrfi bufs Hsub fuel cnd pi
+                   ltac:(intros y Hy; apply Hsam_sub; lia)
+                   ltac:(intros y my mszy Hy; apply Hsam_same; lia)
+                   Hc1 Hclen ltac:(lia) Hv). }
         assert (Hcev : eval1 ce ss input = eval1 ce ss' input').
         { rewrite Href, Href'.
-          pose proof (Hcder ss ss' input' Hpub Hpi Hpi') as Hcd.
+          pose proof (Hcder ss ss' input' pi Hpub Hst Hst' Hpi Hpi'
+                        (Hrv ss  input  Hvs  Hrf  Hvalc)
+                        (Hrv ss' input' Hvs' Hrf' Hvalc')) as Hcd.
           rewrite Hcsz in Hcd. exact Hcd. }
         assert (Hcase : (tv = tf_const 1 /\ ev = tf_const 1)
                         \/ valid_expr_if ctx bneeds ce tv ev
@@ -1722,6 +1949,12 @@ Section IPR.
   Lemma valid_public (act: tfs_action sched) (a_idx: a_index)
       (input input': sched_input_t) (ss ss': sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
+    plumbing_not_root act ->
+    drives_sized act ->
+    valid_refs ctx cost_limit act a_idx ss  input  ->
+    valid_refs ctx cost_limit act a_idx ss' input' ->
+    settled act a_idx ss  input  ->
+    settled act a_idx ss' input' ->
     valid_settled ctx cost_limit act a_idx ss  input  ->
     valid_settled ctx cost_limit act a_idx ss' input' ->
     pub_eq act a_idx input input' ss ss' ->
@@ -1747,9 +1980,11 @@ Section IPR.
         = eval1 (snd (compile_dfg_expr ctx bneeds fuel a_idx
                       (build_dfg ctx act) n bufs)) ss' input'.
   Proof.
-    intros Halign Hvs Hvs' Hpub Hveq bufs Hsub fuel n Hsam_sub Hsam_same
+    intros Halign Hpl Hdsz Hrf Hrf' Hst Hst' Hvs Hvs' Hpub Hveq bufs Hsub fuel n
+      Hsam_sub Hsam_same
       Hn1 Hnlen Hnfuel.
-    exact (valid_public_gen act a_idx input input' ss ss' Halign Hvs Hvs' Hpub Hveq
+    exact (valid_public_gen act a_idx input input' ss ss' Halign Hpl Hdsz
+             Hrf Hrf' Hst Hst' Hvs Hvs' Hpub Hveq
              bufs Hsub fuel n [] Hsam_sub Hsam_same Hn1 Hnlen Hnfuel
              (pi_holds_nil act a_idx input ss) (pi_holds_nil act a_idx input' ss')).
   Qed.
@@ -1831,7 +2066,7 @@ Section IPR.
         (map (fun e => eval1 e ss input)
            (map (fun n => root_valid act a_idx n) (vm_roots act))).
   Proof.
-    intro Halign.
+    intros Halign Hpl Hdsz.
     destruct (done_exprs_concrete ctx cost_limit act a_idx Halign) as [rest Heq].
     rewrite sched_step_done. unfold find_st_val. rewrite Heq.
     rewrite find_st_update_assign_head. apply combine_valid_eval.
