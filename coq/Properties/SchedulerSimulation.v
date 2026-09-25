@@ -6119,6 +6119,129 @@ Section SchedulerSimulation.
      [chain_gate_stall_is_token].  What is left is the walk from a sample's
      latch back to the cycle its drive pulsed on. *)
 
+  (* A saturated counter stays saturated for the rest of the run. *)
+  Lemma stall_saturated_run
+        (act: tfs_action sched) a_idx n_idx (input: input_t) (resp: nat -> resp_val)
+        (ss0: sched_sys_state) l u dd :
+    act_idx_aligned act a_idx ->
+    stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
+    (forall i, 1 <= i <= u + dd -> ~ done_set (run_n i act input resp ss0)) ->
+    (fst (run_n u act input resp ss0)).[tf_dfg_b a_idx n_idx]
+      = Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) (pred l) ->
+    (fst (run_n (u + dd) act input resp ss0)).[tf_dfg_b a_idx n_idx]
+      = Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) (pred l).
+  Proof.
+    intros Halign Hst Hpre Hreg.
+    induction dd as [| dd IH].
+    - rewrite Nat.add_0_r. exact Hreg.
+    - assert (Hpre' : forall i, 1 <= i <= u + dd ->
+                ~ done_set (run_n i act input resp ss0))
+        by (intros i Hi; apply Hpre; lia).
+      pose proof (IH Hpre') as Hw.
+      assert (Hnd : ~ done_set (sched_step act (run_n (u + dd) act input resp ss0)
+                      (sched_input input (resp (u + dd)))))
+        by (exact (Hpre (S (u + dd)) ltac:(lia))).
+      rewrite Nat.add_succ_r.
+      change (run_n (S (u + dd)) act input resp ss0)
+        with (sched_step act (run_n (u + dd) act input resp ss0)
+                (sched_input input (resp (u + dd)))).
+      exact (stall_saturated_step act a_idx n_idx _ _ l Halign Hnd Hst Hw).
+  Qed.
+
+
+  (* A call whose answer has landed leaves its stall's counter at the top, and
+     a saturated counter never returns to zero -- so that call's drive cannot
+     take the port again. *)
+  Lemma latched_sample_saturated
+        (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val)
+        (ss0: sched_sys_state) M n_idx (p: p_var) tok en t_idx u w :
+    act_idx_aligned act a_idx ->
+    1 < length (graph (build_dfg ctx act)) ->
+    (forall x, zeroed_at_start x -> (fst ss0).[x] = Bits.zero) ->
+    (forall i, 1 <= i <= M -> ~ done_set (run_n i act input resp ss0)) ->
+    node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
+    vreg_nid a_idx t_idx = tok ->
+    (fst (run_n u act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
+    u <= w -> w <= M ->
+    (fst (run_n w act input resp ss0)).[tf_dfg_b a_idx t_idx]
+      = Bits.of_nat (ss_sz (tf_dfg_b a_idx t_idx))
+          (pred (ip_lat (tfs_spec_ip ctx p))).
+  Proof.
+    intros Halign Hlen Hz0 Hpre Hsamp Htvn Hv Huw HwM.
+    assert (Hlen0 : 0 < length (graph (build_dfg ctx act))) by lia.
+    assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
+      by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
+    destruct (sample_tok_is_stall act (vreg_nid a_idx n_idx) p tok en Hsamp)
+      as [aa Htok].
+    assert (Htokne : tok <> vreg_nid a_idx n_idx).
+    { intro Heq. rewrite Heq, Hsamp in Htok. discriminate Htok. }
+    assert (Hstlat : stall_lat_of act (vreg_nid a_idx t_idx)
+                     = Some (ip_lat (tfs_spec_ip ctx p))).
+    { unfold SchedulerSimulationBase.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
+    destruct (stall_counter_wide act a_idx t_idx (ip_lat (tfs_spec_ip ctx p))
+                Halign Hstlat) as [Hlt1 Hwide].
+    (* one cycle back from the sample: its gate is the stall's register *)
+    destruct u as [| u'].
+    { exfalso. cbn [run_n] in Hv. rewrite Hzv in Hv.
+      exact (ones1_neq_zero (eq_sym Hv)). }
+    assert (Hndu : ~ done_set (sched_step act (run_n u' act input resp ss0)
+                     (sched_input input (resp u'))))
+      by (exact (Hpre (S u') ltac:(lia))).
+    change (run_n (S u') act input resp ss0)
+      with (sched_step act (run_n u' act input resp ss0)
+              (sched_input input (resp u'))) in Hv.
+    pose proof (buffer_valid_gate act a_idx n_idx (run_n u' act input resp ss0)
+                  (sched_input input (resp u')) Halign Hndu Hv) as Hgate_u.
+    destruct (sample_gate_cases act a_idx n_idx p tok en
+                (ip_lat (tfs_spec_ip ctx p)) aa Halign Hsamp Htok Htokne Hlen)
+      as [[m0 [msz [s_idx [Hta [Htidx [Hsvn Hbg]]]]]] | [Htnone Hbg]].
+    2: { exfalso.
+         destruct (vreg_nid_node_range act a_idx n_idx Halign) as [_ Hslen].
+         assert (Htoklen : tok < length (graph (build_dfg ctx act)))
+           by (apply node_op_range; rewrite Htok; discriminate).
+         apply (stall_has_slot act a_idx
+                  (nth (vreg_nid a_idx n_idx) (graph (build_dfg ctx act))
+                     {| nid := 0; op := DFG_Empty; sz := 0 |})
+                  (nth tok (graph (build_dfg ctx act))
+                     {| nid := 0; op := DFG_Empty; sz := 0 |})
+                  (ip_lat (tfs_spec_ip ctx p)) aa Halign
+                  (nth_In _ _ Hslen) (nth_In _ _ Htoklen)).
+         - rewrite (node_nid_at act tok Htoklen).
+           unfold SchedulerSimulationBase.node_op in Hsamp.
+           unfold get_args. rewrite Hsamp. left. reflexivity.
+         - unfold SchedulerSimulationBase.node_op in Htok. exact Htok.
+         - rewrite (node_nid_at act tok Htoklen). exact Htnone. }
+    assert (Hsid : s_idx = t_idx).
+    { apply (vreg_nid_inj act a_idx _ _ Halign). rewrite Hsvn, Htvn. reflexivity. }
+    subst s_idx.
+    rewrite Hbg, eval1_svar_v in Hgate_u.
+    (* and one more: the counter had reached the top *)
+    destruct u' as [| u''].
+    { exfalso. cbn [run_n] in Hgate_u. rewrite Hzv in Hgate_u.
+      exact (ones1_neq_zero (eq_sym Hgate_u)). }
+    assert (Hndu' : ~ done_set (sched_step act (run_n u'' act input resp ss0)
+                      (sched_input input (resp u''))))
+      by (exact (Hpre (S u'') ltac:(lia))).
+    change (run_n (S u'') act input resp ss0)
+      with (sched_step act (run_n u'' act input resp ss0)
+              (sched_input input (resp u''))) in Hgate_u.
+    pose proof (buffer_after_cycle act a_idx t_idx (run_n u'' act input resp ss0)
+                  (sched_input input (resp u'')) Halign Hndu') as Hba.
+    cbv zeta in Hba. destruct Hba as [_ Hval].
+    rewrite Hval in Hgate_u.
+    change (fst (nth (index_to_nat t_idx)
+                   (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))
+      with (vreg_nid a_idx t_idx) in Hgate_u.
+    destruct (stall_valid_next_inv act a_idx t_idx (run_n u'' act input resp ss0)
+                (sched_input input (resp u'')) (ip_lat (tfs_spec_ip ctx p)) _
+                Hstlat Hwide Hgate_u) as [_ Hcnt].
+    (* saturated from there on *)
+    replace w with (u'' + (w - u'')) by lia.
+    exact (stall_saturated_run act a_idx t_idx input resp ss0
+             (ip_lat (tfs_spec_ip ctx p)) u'' (w - u'')
+             Halign Hstlat ltac:(intros i Hi; apply Hpre; lia) Hcnt).
+  Qed.
+
   (* THE WAIT A LATCHED SAMPLE ENDS.  Its token is a stall; the cycle that stall
      started counting on is [lt] cycles before the answer lands, because the
      counter climbs by one a cycle and its gate cannot drop back down. *)
