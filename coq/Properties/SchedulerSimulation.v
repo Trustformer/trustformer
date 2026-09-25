@@ -5713,6 +5713,19 @@ Section SchedulerSimulation.
     rewrite Hen, Hvg, Hvf. vm_compute. reflexivity.
   Qed.
 
+
+  (* ... and the key it was filtered out under is gone. *)
+  Lemma list_assoc_filter_self {A} (l: list (nid_t * A)) (k: nid_t) :
+    BitsToLists.list_assoc (filter (fun '(b, _) => negb (Nat.eqb b k)) l) k = None.
+  Proof.
+    destruct (BitsToLists.list_assoc
+                (filter (fun '(b, _) => negb (Nat.eqb b k)) l) k) as [v |] eqn:E;
+      [ exfalso | reflexivity ].
+    pose proof (wla_in _ _ _ E) as Hin. apply filter_In in Hin.
+    destruct Hin as [_ Hb]. cbn [fst] in Hb.
+    rewrite Nat.eqb_refl in Hb. discriminate Hb.
+  Qed.
+
   (* THE DRIVE FIRES.  At the cycle the wait began, the call's request is on
      the port: its guard holds, its chain gate is up and its stall is at zero. *)
   Lemma drive_fires_at_wait_start
@@ -5738,7 +5751,12 @@ Section SchedulerSimulation.
     eval1 (buf_gate act a_idx t_idx) (run_n t act input resp ss0)
       (sched_input input (resp t)) = Bits.ones 1 ->
     eval1 (drive_pulse act a_idx d) (run_n t act input resp ss0)
-      (sched_input input (resp t)) <> Bits.zero.
+      (sched_input input (resp t)) <> Bits.zero
+    /\ eval1 (snd (compile_dfg_expr ctx bneeds
+            (length (graph (build_dfg ctx act))) a_idx
+            (build_dfg ctx act) d
+            (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+         (run_n t act input resp ss0) (sched_input input (resp t)) = Bits.ones 1.
   Proof.
     intros Halign Hlen Hz0 Hpre Hsamp Hsd Hgd Htok Htvn Hta Htidx Htm Hct Hgt.
     assert (Hlen0 : 0 < length (graph (build_dfg ctx act))) by lia.
@@ -5966,6 +5984,105 @@ Section SchedulerSimulation.
     { exact (eval_stall_start_ones act a_idx tok m0 msz t_idx
                (run_n t act input resp ss0) (sched_input input (resp t))
                Halign Hta Htidx Hbz). }
+    assert (Hdval : eval1 (snd (compile_dfg_expr ctx bneeds
+                      (length (graph (build_dfg ctx act))) a_idx
+                      (build_dfg ctx act) d
+                      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+                    (run_n t act input resp ss0) (sched_input input (resp t))
+                    = Bits.ones 1).
+    { destruct (sample_drive_head_shape act p aa d Hdh)
+        as [[Hda _] | [prev [arg2 [en2 [Hjop Hdop2]]]]].
+      - subst aa. exact Hvgate.
+      - unfold SchedulerSimulationBase.node_op in Hjop.
+        assert (Hdaa : d < aa).
+        { pose proof (args_lt_fwd act (nth aa (graph (build_dfg ctx act))
+                        {| nid := 0; op := DFG_Empty; sz := 0 |})
+                        (nth_In _ _ Haalen) d) as Hlt.
+          rewrite (node_nid_at act aa Haalen) in Hlt.
+          apply Hlt. unfold get_args. rewrite Hjop. left. reflexivity. }
+        assert (Hagree2 : forall x, x <= d ->
+                  BitsToLists.list_assoc
+                    (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid aa))
+                       (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) x
+                  = BitsToLists.list_assoc
+                      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) x).
+        { intros x Hx. apply list_assoc_filter.
+          intros [kk vv] _ Hfe. cbn [fst] in Hfe. subst kk.
+          apply negb_true_iff, Nat.eqb_neq. lia. }
+        assert (Hsamp_all : forall x, x < d -> is_sample_of act x = true ->
+                  BitsToLists.list_assoc
+                    (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) x
+                  <> None).
+        { intros x Hx Hsx.
+          destruct (sample_slot act a_idx x Halign Hsx) as [q0 [qsz [x_idx [Hass _]]]].
+          rewrite Hass. discriminate. }
+        destruct (BitsToLists.list_assoc
+                    (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) aa)
+          as [[mj mjsz] |] eqn:Hq.
+        + (* the join is buffered: its validity IS its register, so step back *)
+          pose proof (wla_in _ _ _ Hq) as Hinq.
+          assert (Hltq : mj < length
+                    (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
+          { rewrite (buffer_slot_eq act a_idx Halign), gsi_length.
+            apply (gsi_idx_bound (build_dfg ctx act) _ aa mj mjsz).
+            rewrite <- (buffer_slot_eq act a_idx Halign). exact Hinq. }
+          destruct (index_of_nat_bounded Hltq) as [j_idx Hj_idx].
+          assert (Hjv : vreg_nid a_idx j_idx = aa)
+            by (apply (vreg_nid_of_entry act a_idx _ mj mjsz j_idx Halign Hinq Hj_idx)).
+          rewrite (compile_buffered_valid (build_dfg ctx act) _ _ a_idx aa
+                     (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
+                     mj mjsz j_idx (length (graph (build_dfg ctx act))) []
+                     Hq Hj_idx ltac:(lia)) in Hvgate.
+          rewrite eval1_svar_v in Hvgate.
+          destruct t as [| t'].
+          { exfalso. cbn [run_n] in Hvgate. rewrite Hzv in Hvgate.
+            exact (ones1_neq_zero (eq_sym Hvgate)). }
+          assert (Hndt : ~ done_set (sched_step act (run_n t' act input resp ss0)
+                           (sched_input input (resp t'))))
+            by (exact (Hpre (S t') ltac:(lia))).
+          change (run_n (S t') act input resp ss0)
+            with (sched_step act (run_n t' act input resp ss0)
+                    (sched_input input (resp t'))) in Hvgate.
+          pose proof (buffer_valid_gate act a_idx j_idx (run_n t' act input resp ss0)
+                        (sched_input input (resp t')) Halign Hndt Hvgate) as Hjg.
+          rewrite Hjv in Hjg.
+          rewrite (compile_join_valid (build_dfg ctx act) _ _ a_idx aa d prev
+                     (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid aa))
+                        (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
+                     [] (length (graph (build_dfg ctx act))) Hjop
+                     (list_assoc_filter_self _ aa) ltac:(lia)) in Hjg.
+          rewrite valid_and_eval in Hjg.
+          destruct (bits1_and_split _ _ Hjg) as [Hdv _].
+          rewrite (compile_table_irrel_gen act a_idx
+                     (get_tainted ctx (build_dfg ctx act))
+                     (decl_facts ctx (build_dfg ctx act)) _ _ d Hd1 Hdlen Hagree2
+                     (pred (length (graph (build_dfg ctx act)))) [] ltac:(lia)) in Hdv.
+          rewrite (compile_fuel_irrel act a_idx
+                     (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) d
+                     Hd1 Hdlen (length (graph (build_dfg ctx act)))
+                     (pred (length (graph (build_dfg ctx act)))) Hdlen ltac:(lia)).
+          replace (S t') with (t' + 1) by lia.
+          apply (compile_valid_mono_run act a_idx input resp ss0
+                   (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
+                   (pred (length (graph (build_dfg ctx act)))) d [] t' 1
+                   Halign Hzv);
+            [ intros i Hi; apply Hpre; lia
+            | intros e He; exact He
+            | exact Hdlen
+            | exact Hsamp_all
+            | exact Hdv ].
+        + (* not buffered: the AND descends to the drive directly *)
+          rewrite (compile_join_valid (build_dfg ctx act) _ _ a_idx aa d prev
+                     (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) []
+                     (length (graph (build_dfg ctx act))) Hjop Hq ltac:(lia)) in Hvgate.
+          rewrite valid_and_eval in Hvgate.
+          destruct (bits1_and_split _ _ Hvgate) as [Hdv _].
+          rewrite (compile_fuel_irrel act a_idx
+                     (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) d
+                     Hd1 Hdlen (length (graph (build_dfg ctx act)))
+                     (pred (length (graph (build_dfg ctx act)))) Hdlen ltac:(lia)).
+          exact Hdv. }
+    split; [| exact Hdval ].
     rewrite (drive_pulse_ones act a_idx d aa tok p arg en
                (run_n t act input resp ss0) (sched_input input (resp t))
                Hd2op Hcg Hen_ones Hvgate Hvfirst).
