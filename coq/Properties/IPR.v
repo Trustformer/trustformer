@@ -116,7 +116,7 @@ Section IPR.
   Local Notation i_var := (tfs_spec_inputs ctx).
   Local Notation o_var := (tfs_spec_outputs ctx).
   Local Notation p_var := (tfs_spec_ips ctx).
-  Local Notation node_t := (@dfg_node_t s_var i_var o_var).
+  Local Notation node_t := (@dfg_node_t s_var i_var o_var p_var).
 
   Local Notation s_sz := (tfs_spec_states_size ctx).
   Local Notation i_sz := (tfs_spec_inputs_size ctx).
@@ -132,7 +132,17 @@ Section IPR.
   Local Notation sched_out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).
   Local Notation sched_sys_state := (sched_st_env * sched_out_env)%type.
   Local Notation input_t := (forall x : i_var, type_denote (tf_inputs_type i_sz x)).
+  Local Notation sched_input_t :=
+    (forall x : tfs_inputs sched, type_denote (tf_inputs_type (tfs_inputs_size sched) x)).
+  Local Notation si_sz := (tfs_inputs_size sched).
+  Local Notation ss_sz  := (tfs_states_size sched).
+  Local Notation oo_sz  := (tfs_outputs_size sched).
+  Local Notation eval1 e ss input :=
+    (tf_eval_expr ss_sz si_sz oo_sz (szB := 1) e ss input).
+  Local Notation resp_val :=
+    (forall p : tfs_ips sched, bits_t (ip_resp_sz (tfs_ip sched p))).
   Local Notation a_index := (Vect.index (length (buffer_needs ctx cost_limit))).
+  Local Notation bneeds := (buffer_needs ctx cost_limit).
 
   (* ------------------------------------------------------------------- *)
   (* Node ids increase along the forward graph.  [build_dfg_wf] states    *)
@@ -367,8 +377,8 @@ Section IPR.
      observes and may differ in secret state AND inputs.  A response is FREE
      here, stronger than oracle-determined for latency (MVP.md 9 A1). *)
   Definition pub_eq (act: tfs_action sched) (a_idx: a_index)
-      (input input': input_t) (ss ss': sched_sys_state) : Prop :=
-    (forall v : i_var, tfs_spec_inputs_class ctx v = Public -> input v = input' v)
+      (input input': sched_input_t) (ss ss': sched_sys_state) : Prop :=
+    (forall v : i_var, tfs_spec_inputs_class ctx v = Public -> input (inl v) = input' (inl v))
     /\ (forall o : o_var, tfs_spec_outputs_class ctx o = Public ->
         (snd ss).[o] = (snd ss').[o])
     /\ (forall (o: o_var) (r: nid_t), tfs_spec_outputs_class ctx o = Public ->
@@ -379,7 +389,7 @@ Section IPR.
   (* [derivable]'s signature is unchanged: the second run's input is quantified
      INSIDE, so every lemma stated about derivability keeps its statement and
      only the proofs that inspect [pub_eq] move. *)
-  Definition derivable (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+  Definition derivable (act: tfs_action sched) (a_idx: a_index) (input: sched_input_t)
       (n: nid_t) : Prop :=
     forall ss ss' input',
       pub_eq act a_idx input input' ss ss' ->
@@ -396,14 +406,14 @@ Section IPR.
   (* Only a PUBLIC destination declassifies: the public view covers exactly
      those, so a secret written anywhere else stays tainted.  REVIEW.md 2.3. *)
   Lemma public_dst_derivable (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (o: o_var) (r: nid_t) :
+      (input: sched_input_t) (o: o_var) (r: nid_t) :
     tfs_spec_outputs_class ctx o = Public ->
     List.In (DFG_OVar o, r) (var_map (build_dfg ctx act)) ->
     derivable act a_idx input r.
   Proof. intros Hpub Hin ss ss' input' [_ [_ Hroots]]. exact (Hroots o r Hpub Hin). Qed.
 
   Lemma public_dsts_derivable (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (n: nid_t) :
+      (input: sched_input_t) (n: nid_t) :
     List.In n (public_dsts ctx (build_dfg ctx act)) ->
     derivable act a_idx input n.
   Proof.
@@ -426,7 +436,7 @@ Section IPR.
   (* ------------------------------------------------------------------- *)
 
   Definition uncond_sound (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) : Prop :=
+      (input: sched_input_t) : Prop :=
     forall i,
       List.In i (uncond_instances ctx (build_dfg ctx act)) ->
       (forall s, List.In s (di_sources i) -> derivable act a_idx input s) ->
@@ -443,7 +453,7 @@ Section IPR.
   Qed.
 
   Lemma saturate_step_derivable (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (acc: list nid_t) :
+      (input: sched_input_t) (acc: list nid_t) :
     (forall x, List.In x acc -> derivable act a_idx input x) ->
     forall n, List.In n (saturate_step ctx (build_dfg ctx act) acc) ->
       derivable act a_idx input n.
@@ -478,7 +488,7 @@ Section IPR.
   Qed.
 
   Lemma saturate_derivable (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (fuel: nat) (acc: list nid_t) :
+      (input: sched_input_t) (fuel: nat) (acc: list nid_t) :
     (forall x, List.In x acc -> derivable act a_idx input x) ->
     forall n, List.In n (saturate ctx fuel (build_dfg ctx act) acc) ->
       derivable act a_idx input n.
@@ -496,7 +506,7 @@ Section IPR.
      attacker drives it and [pub_eq] pins it.  [trivially_public] admits exactly
      those, a secret input being a taint source. *)
   Lemma trivial_derivable (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (n: nid_t) :
+      (input: sched_input_t) (n: nid_t) :
     List.In n (trivially_public ctx (build_dfg ctx act)) ->
     derivable act a_idx input n.
   Proof.
@@ -507,7 +517,7 @@ Section IPR.
     intros ss ss' input' Hpe. unfold nval.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ] eqn:Hopn;
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dp darg den | sp stok sen | ja jb | ] eqn:Hopn;
       try discriminate.
     - rewrite (nre_const ctx cost_limit act a_idx n c Hn1 Hlen Hopn). reflexivity.
     - rewrite (nre_input ctx cost_limit act a_idx n v Hn1 Hlen Hopn).
@@ -518,7 +528,7 @@ Section IPR.
   Qed.
 
   Lemma untainted_roots_derivable (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (n: nid_t) :
+      (input: sched_input_t) (n: nid_t) :
     List.In n (untainted_roots ctx (build_dfg ctx act)) ->
     derivable act a_idx input n.
   Proof.
@@ -560,9 +570,9 @@ Section IPR.
       ~ List.In (DFG_OVar o, r) (var_map (build_dfg ctx act)).
 
   Lemma pub_eq_publishes_nothing (act: tfs_action sched) (a_idx: a_index)
-      (input input': input_t) (ss ss': sched_sys_state) :
+      (input input': sched_input_t) (ss ss': sched_sys_state) :
     publishes_nothing act ->
-    (forall v : i_var, tfs_spec_inputs_class ctx v = Public -> input v = input' v) ->
+    (forall v : i_var, tfs_spec_inputs_class ctx v = Public -> input (inl v) = input' (inl v)) ->
     (forall o : o_var, (snd ss).[o] = (snd ss').[o]) ->
     pub_eq act a_idx input input' ss ss'.
   Proof.
@@ -572,7 +582,7 @@ Section IPR.
   Qed.
 
   Lemma svar_nval (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: input_t) (szB: nat) (n: nid_t)
+      (ss: sched_sys_state) (input: sched_input_t) (szB: nat) (n: nid_t)
       (sv: s_var) :
     1 <= n -> n < length (graph (build_dfg ctx act)) ->
     op (nth n (graph (build_dfg ctx act))
@@ -588,7 +598,7 @@ Section IPR.
   (* Declassifying a secret read commits us to this: for an action that
      publishes nothing, the secret register is pinned by the outputs alone. *)
   Theorem svar_derivable_forces_secret_public (act: tfs_action sched)
-      (a_idx: a_index) (input: input_t) (n: nid_t) (sv: s_var) :
+      (a_idx: a_index) (input: sched_input_t) (n: nid_t) (sv: s_var) :
     publishes_nothing act ->
     1 <= n -> n < length (graph (build_dfg ctx act)) ->
     op (nth n (graph (build_dfg ctx act))
@@ -613,7 +623,7 @@ Section IPR.
      width tells apart, so [0 < width] is the real hypothesis.  [nsz act n] is
      explicit because no lemma records it as the register's own width. *)
   Theorem svar_not_derivable (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (n: nid_t) (sv: s_var) :
+      (input: sched_input_t) (n: nid_t) (sv: s_var) :
     publishes_nothing act ->
     1 <= n -> n < length (graph (build_dfg ctx act)) ->
     op (nth n (graph (build_dfg ctx act))
@@ -645,7 +655,7 @@ Section IPR.
   (* ------------------------------------------------------------------- *)
 
   Theorem untainted_derivable (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) :
+      (input: sched_input_t) :
     forall n,
       1 <= n -> n < length (graph (build_dfg ctx act)) ->
       ~ List.In n (get_tainted ctx (build_dfg ctx act)) ->
@@ -692,9 +702,9 @@ Section IPR.
               List.In x (get_args ctx (nth n (graph (build_dfg ctx act))
                                          {| nid := 0; op := DFG_Empty; sz := 0 |})) ->
               wsz ctx (build_dfg ctx act) x W ->
-              tf_eval_expr (tfs_states_size sched) i_sz (tfs_outputs_size sched)
+              tf_eval_expr (tfs_states_size sched) si_sz (tfs_outputs_size sched)
                 (szB := W) (node_ref_expr ctx cost_limit act a_idx x) ss input
-              = tf_eval_expr (tfs_states_size sched) i_sz (tfs_outputs_size sched)
+              = tf_eval_expr (tfs_states_size sched) si_sz (tfs_outputs_size sched)
                 (szB := W) (node_ref_expr ctx cost_limit act a_idx x) ss' input').
     { intros x W Hx Hwsz.
       destruct (wsz_node_sz ctx cost_limit act x W Hwsz) as [_ Hxsz].
@@ -702,7 +712,7 @@ Section IPR.
 
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | iv | [sv | ov] | uop arg | bop a1 a2 | src | cnd tid eid | slat sa | dov dn | siv sn | ]
+      as [c | iv | [sv | ov] | uop arg | bop a1 a2 | src | cnd tid eid | slat sa | dp darg den | sp stok sen | ja jb | ]
       eqn:Eop.
 
     - rewrite (nre_const ctx cost_limit act a_idx n c H1 Hlen Eop).
@@ -781,38 +791,46 @@ Section IPR.
       rewrite (Hder_at cnd _ Hc Hgc), (Hder_at tid _ Ht Hgt),
               (Hder_at eid _ He Hge). reflexivity.
 
-    - (* DFG_Stall: derivability passes through, since the stall's reference
-         expression IS its argument's and the delay is a public constant. *)
-      assert (Ha : List.In sa (get_args ctx (nth n (graph (build_dfg ctx act))
-                                               {| nid := 0; op := DFG_Empty; sz := 0 |})))
-        by (unfold get_args; rewrite Eop; left; reflexivity).
-      unfold node_args_sz in Hfg. rewrite Eop in Hfg.
+    - (* A stall is the round trip's COUNTER: it carries no value, so its
+         reference expression is a constant. *)
       rewrite (nre_stall ctx cost_limit act a_idx n slat sa H1 Hlen Eop).
-      exact (Hder_at sa _ Ha Hfg).
-    - (* SPIKE 2b: DFG_Drive -- derivability passes through, like the stall: a
-         drive is the message on its way to the port and adds no logic. *)
-      assert (Ha : List.In dn (get_args ctx (nth n (graph (build_dfg ctx act))
+      cbn [tf_eval_expr]. reflexivity.
+
+    - (* A drive is the message on its way to the port: its reference
+         expression is its argument's. *)
+      assert (Ha : List.In darg (get_args ctx (nth n (graph (build_dfg ctx act))
                                                {| nid := 0; op := DFG_Empty; sz := 0 |})))
         by (unfold get_args; rewrite Eop; left; reflexivity).
       unfold node_args_sz in Hfg. rewrite Eop in Hfg.
-      rewrite (nre_drive ctx cost_limit act a_idx n dov dn H1 Hlen Eop).
-      exact (Hder_at dn _ Ha Hfg).
+      rewrite (nre_drive ctx cost_limit act a_idx n dp darg den H1 Hlen Eop).
+      exact (Hder_at darg _ Ha Hfg).
 
-    - (* DFG_Sample mirrors DFG_Input, its reference expression being the
-         PORT: a public port agrees across runs, a secret one is a taint source
-         on [self_tainted]'s [DFG_Sample] arm. *)
-      rewrite (nre_sample ctx cost_limit act a_idx n siv sn H1 Hlen Eop).
-      cbn [tf_eval_expr]. destruct Hpub as [Hipub _].
-      destruct (tfs_spec_inputs_class ctx siv) eqn:Hcls.
-      + f_equal. exact (Hipub siv Hcls).
-      + exfalso.
-        assert (Ht := sample_secret_tainted act _ siv sn Hin Eop Hcls Hnr').
-        rewrite Hnid in Ht. exact (Hnt Ht).
+    - (* The IP link sits outside the attacker model, so a sample is a taint
+         source whatever its request carries. *)
+      exfalso.
+      assert (Ht := sample_secret_tainted act _ sp stok sen Hin Eop Hnr').
+      rewrite Hnid in Ht. exact (Hnt Ht).
 
+    - (* A join ORDERS the calls on a port and carries no value. *)
+      assert (Hemp : node_ref_expr ctx cost_limit act a_idx n = tf_const 0).
+      { rewrite (nre_unfold ctx cost_limit act a_idx n H1 Hlen).
+        cbn [compile_dfg_expr_aux].
+        rewrite (not_sample_not_in_sample_bufs ctx cost_limit act a_idx n
+                   ltac:(unfold is_sample_of, node_op; rewrite Eop; reflexivity)).
+        cbv beta iota. rewrite Eop.
+        destruct (compile_dfg_expr ctx (buffer_needs ctx cost_limit) n a_idx
+                    (build_dfg ctx act) ja (sample_bufs ctx cost_limit act a_idx)).
+        destruct (compile_dfg_expr ctx (buffer_needs ctx cost_limit) n a_idx
+                    (build_dfg ctx act) jb (sample_bufs ctx cost_limit act a_idx)).
+        reflexivity. }
+      rewrite Hemp. cbn [tf_eval_expr]. reflexivity.
 
     - assert (Hemp : node_ref_expr ctx cost_limit act a_idx n = tf_const 0).
       { rewrite (nre_unfold ctx cost_limit act a_idx n H1 Hlen).
-        cbn [compile_dfg_expr BitsToLists.list_assoc]. rewrite Eop. reflexivity. }
+        cbn [compile_dfg_expr_aux].
+        rewrite (not_sample_not_in_sample_bufs ctx cost_limit act a_idx n
+                   ltac:(unfold is_sample_of, node_op; rewrite Eop; reflexivity)).
+        cbv beta iota. rewrite Eop. reflexivity. }
       rewrite Hemp. cbn [tf_eval_expr]. reflexivity.
   Qed.
 
@@ -827,16 +845,16 @@ Section IPR.
 
   Definition bit_of (b: bool) : bits_t 1 := if b then Bits.ones 1 else Bits.zero.
 
-  Definition pi_holds (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+  Definition pi_holds (act: tfs_action sched) (a_idx: a_index) (input: sched_input_t)
       (pi: list lit) (ss: sched_sys_state) : Prop :=
     forall c b, List.In (c, b) pi ->
       nval ctx cost_limit act a_idx ss input 1 c = bit_of b.
 
-  Lemma pi_holds_nil (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+  Lemma pi_holds_nil (act: tfs_action sched) (a_idx: a_index) (input: sched_input_t)
       (ss: sched_sys_state) : pi_holds act a_idx input [] ss.
   Proof. intros c b Hin; destruct Hin. Qed.
 
-  Lemma guard_incl_holds (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+  Lemma guard_incl_holds (act: tfs_action sched) (a_idx: a_index) (input: sched_input_t)
       (g pi: list lit) (ss: sched_sys_state) :
     guard_incl g pi = true -> pi_holds act a_idx input pi ss ->
     pi_holds act a_idx input g ss.
@@ -851,7 +869,7 @@ Section IPR.
     exact (Hpi _ _ Hin').
   Qed.
 
-  Lemma pi_holds_app (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+  Lemma pi_holds_app (act: tfs_action sched) (a_idx: a_index) (input: sched_input_t)
       (g1 g2: list lit) (ss: sched_sys_state) :
     pi_holds act a_idx input (g1 ++ g2) ss ->
     pi_holds act a_idx input g1 ss /\ pi_holds act a_idx input g2 ss.
@@ -864,7 +882,7 @@ Section IPR.
      quantified inside, and each run's guard is evaluated against its OWN
      input. *)
   Definition gderivable (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (g: list lit) (n: nid_t) : Prop :=
+      (input: sched_input_t) (g: list lit) (n: nid_t) : Prop :=
     forall ss ss' input',
       pub_eq act a_idx input input' ss ss' ->
       pi_holds act a_idx input  g ss ->
@@ -874,7 +892,7 @@ Section IPR.
 
   (* A fact learned under fewer conditions still holds under more. *)
   Lemma gderivable_weaken (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (g g': list lit) (n: nid_t) :
+      (input: sched_input_t) (g g': list lit) (n: nid_t) :
     guard_incl g g' = true ->
     gderivable act a_idx input g n ->
     gderivable act a_idx input g' n.
@@ -886,13 +904,13 @@ Section IPR.
   Qed.
 
   Lemma derivable_gderivable (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (g: list lit) (n: nid_t) :
+      (input: sched_input_t) (g: list lit) (n: nid_t) :
     derivable act a_idx input n -> gderivable act a_idx input g n.
   Proof. intros Hd ss ss' input' Hpub _ _. exact (Hd ss ss' input' Hpub). Qed.
 
   (* An unconditionally derivable node is derivable under any guard. *)
   Lemma untainted_gderivable (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (g: list lit) (n: nid_t) :
+      (input: sched_input_t) (g: list lit) (n: nid_t) :
     1 <= n ->
     n < length (graph (build_dfg ctx act)) ->
     ~ List.In n (get_tainted ctx (build_dfg ctx act)) ->
@@ -906,7 +924,7 @@ Section IPR.
   (* The uniform user obligation on a single declassification instance: it is
      [uncond_sound]'s premise plus the instance's own guard. *)
   Definition instance_sound (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (i: decl_instance) : Prop :=
+      (input: sched_input_t) (i: decl_instance) : Prop :=
     forall ss ss' input',
       pub_eq act a_idx input input' ss ss' ->
       pi_holds act a_idx input  (di_guard i) ss ->
@@ -920,7 +938,7 @@ Section IPR.
   (* CHAINING.  A rule whose sources are themselves only known under [g]
      yields its target under both guards. *)
   Theorem decl_compose (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (i: decl_instance) (g: list lit) :
+      (input: sched_input_t) (i: decl_instance) (g: list lit) :
     instance_sound act a_idx input i ->
     (forall s, List.In s (di_sources i) -> gderivable act a_idx input g s) ->
     gderivable act a_idx input (di_guard i ++ g) (di_target i).
@@ -940,7 +958,7 @@ Section IPR.
   Qed.
 
   Corollary decl_direct (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (i: decl_instance) :
+      (input: sched_input_t) (i: decl_instance) :
     instance_sound act a_idx input i ->
     (forall s, List.In s (di_sources i) ->
        1 <= s /\ s < length (graph (build_dfg ctx act))
@@ -959,16 +977,16 @@ Section IPR.
      guarded derivability.  [gderivable] stays conjunctive, so a node derivable
      on several paths gets one entry per path. *)
   Definition base_sound (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (base: list gfact) : Prop :=
+      (input: sched_input_t) (base: list gfact) : Prop :=
     forall c g, List.In (c, g) base -> gderivable act a_idx input g c.
 
   Definition decl_sound (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) : Prop :=
+      (input: sched_input_t) : Prop :=
     base_sound act a_idx input (decl_facts ctx (build_dfg ctx act)).
 
   (* Bridge to the unconditional obligation, so the rules in coq/Rules/ can
      discharge [Hdecls] from the same [instance_sound] proof. *)
-  Lemma uncond_guard_nil (dfg: @dfg_state_t s_var i_var o_var) (i: decl_instance) :
+  Lemma uncond_guard_nil (dfg: @dfg_state_t s_var i_var o_var p_var) (i: decl_instance) :
     List.In i (uncond_instances ctx dfg) -> di_guard i = [].
   Proof.
     unfold uncond_instances. intro Hin.
@@ -977,7 +995,7 @@ Section IPR.
   Qed.
 
   Theorem uncond_sound_of_instances (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) :
+      (input: sched_input_t) :
     (forall i, List.In i (uncond_instances ctx (build_dfg ctx act)) ->
        instance_sound act a_idx input i) ->
     uncond_sound act a_idx input.
@@ -1034,7 +1052,7 @@ Section IPR.
       exists g. split; [ exact Hg | apply guard_incl_app_r, Hincl ].
   Qed.
 
-  Lemma gadd_of_sound (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+  Lemma gadd_of_sound (act: tfs_action sched) (a_idx: a_index) (input: sched_input_t)
       (i: decl_instance) (acc: list gfact) (gs: list lit) :
     gderivable act a_idx input (di_guard i ++ gs) (di_target i) ->
     base_sound act a_idx input acc ->
@@ -1047,7 +1065,7 @@ Section IPR.
     - destruct Hin as [Heq | []]. injection Heq as Ht Hgg. subst c g. exact Hg.
   Qed.
 
-  Lemma gfold_sound (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+  Lemma gfold_sound (act: tfs_action sched) (a_idx: a_index) (input: sched_input_t)
       (i: decl_instance) :
     forall combos acc,
       (forall gs, List.In gs combos ->
@@ -1062,7 +1080,7 @@ Section IPR.
              (Hnew gs (or_introl eq_refl)) Hacc).
   Qed.
 
-  Lemma gstep1_sound (act: tfs_action sched) (a_idx: a_index) (input: input_t)
+  Lemma gstep1_sound (act: tfs_action sched) (a_idx: a_index) (input: sched_input_t)
       (i: decl_instance) (acc: list gfact) :
     instance_sound act a_idx input i ->
     base_sound act a_idx input acc ->
@@ -1077,7 +1095,7 @@ Section IPR.
   Qed.
 
   Lemma gfold_instances_sound (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) :
+      (input: sched_input_t) :
     forall l base,
       (forall i, List.In i l -> instance_sound act a_idx input i) ->
       base_sound act a_idx input base ->
@@ -1090,7 +1108,7 @@ Section IPR.
   Qed.
 
   Lemma gsaturate_step_sound (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) :
+      (input: sched_input_t) :
     (forall i, List.In i (decl_instances ctx (build_dfg ctx act)) ->
        instance_sound act a_idx input i) ->
     forall base, base_sound act a_idx input base ->
@@ -1102,7 +1120,7 @@ Section IPR.
   Qed.
 
   Lemma gsaturate_sound (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) :
+      (input: sched_input_t) :
     (forall i, List.In i (decl_instances ctx (build_dfg ctx act)) ->
        instance_sound act a_idx input i) ->
     forall fuel base, base_sound act a_idx input base ->
@@ -1116,7 +1134,7 @@ Section IPR.
     exact (IH _ (gsaturate_step_sound act a_idx input Hall base Hbase)).
   Qed.
 
-  Lemma seed_sound (act: tfs_action sched) (a_idx: a_index) (input: input_t) :
+  Lemma seed_sound (act: tfs_action sched) (a_idx: a_index) (input: sched_input_t) :
     base_sound act a_idx input
       (map (fun n => (n, [])) (untainted_roots ctx (build_dfg ctx act))).
   Proof.
@@ -1127,7 +1145,7 @@ Section IPR.
   Qed.
 
   Theorem decl_sound_of_instances (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) :
+      (input: sched_input_t) :
     (forall i, List.In i (decl_instances ctx (build_dfg ctx act)) ->
        instance_sound act a_idx input i) ->
     decl_sound act a_idx input.
@@ -1140,67 +1158,48 @@ Section IPR.
   Context (Hdguard : forall act a_idx input, decl_sound act a_idx input).
 
   (* ------------------------------------------------------------------- *)
-  (* PHASE 2, step 1: the public view survives a pre-done cycle.           *)
-  (* [nval] reads only [tf_dfg_s] and the outputs, and a non-done cycle    *)
-  (* writes neither, so both conjuncts of [pub_eq] are stable.            *)
+  (* PHASE 2, step 1: what a pre-done cycle leaves alone.  Output registers
+     hold, and a VALID node keeps its reference value. *)
   (* ------------------------------------------------------------------- *)
 
   Local Notation ss_step := (sched_step ctx cost_limit).
   Local Notation ss_run  := (run_n ctx cost_limit).
   Local Notation ss_done := (done_set ctx cost_limit).
 
+  (* A node's reference value ignores the response coordinates: the sample
+     buffers stop the expansion at a latch, so no compiled value reads a port.
+     [r1] is therefore free of [r0] here. *)
   Lemma nval_step_stable (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: input_t) (szB: nat) (n: nid_t) :
-    ~ ss_done (ss_step act ss input) ->
-    nval ctx cost_limit act a_idx (ss_step act ss input) input szB n
-    = nval ctx cost_limit act a_idx ss input szB n.
+      (ss: sched_sys_state) (input: input_t) (r0 r1: resp_val)
+      (szB: nat) (n: nid_t) :
+    act_idx_aligned ctx cost_limit act a_idx ->
+    ~ ss_done (ss_step act ss (sched_input ctx cost_limit input r0)) ->
+    n < length (graph (build_dfg ctx act)) ->
+    eval1 (node_ref_valid ctx cost_limit act a_idx n)
+      ss (sched_input ctx cost_limit input r0) = Bits.ones 1 ->
+    nval ctx cost_limit act a_idx
+      (ss_step act ss (sched_input ctx cost_limit input r0))
+      (sched_input ctx cost_limit input r1) szB n
+    = nval ctx cost_limit act a_idx ss
+      (sched_input ctx cost_limit input r0) szB n.
   Proof.
-    intro Hnd. unfold nval, node_ref_expr.
-    apply (compile_nobuf_step_stable ctx cost_limit act a_idx ss input Hnd).
-  Qed.
-
-  Lemma nval_run_stable (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: input_t) (szB: nat) (n: nid_t) (k: nat) :
-    (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input ss)) ->
-    nval ctx cost_limit act a_idx (ss_run k act input ss) input szB n
-    = nval ctx cost_limit act a_idx ss input szB n.
-  Proof.
-    induction k as [| k IH]; intro Hnd; [ reflexivity | ].
-    cbn [run_n]. rewrite nval_step_stable.
-    - apply IH. intros i Hi. apply Hnd. lia.
-    - change (ss_step act (ss_run k act input ss) input)
-        with (ss_run (S k) act input ss).
-      apply Hnd. lia.
+    intros Halign Hnd Hnlen Hval. unfold nval, node_ref_expr.
+    exact (compile_nobuf_step_stable ctx cost_limit act a_idx ss input r0 r1
+             Halign Hnd (length (graph (build_dfg ctx act))) n szB Hnlen Hval).
   Qed.
 
   Lemma out_run_stable (act: tfs_action sched) (ss: sched_sys_state)
-      (input: input_t) (o: o_var) (k: nat) :
-    (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input ss)) ->
-    (snd (ss_run k act input ss)).[o] = (snd ss).[o].
+      (input: input_t) (resp: nat -> resp_val) (o: o_var) (k: nat) :
+    (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input resp ss)) ->
+    (snd (ss_run k act input resp ss)).[o] = (snd ss).[o].
   Proof.
     induction k as [| k IH]; intro Hnd; [ reflexivity | ].
     cbn [run_n]. rewrite sched_step_preserves_ovar.
     - apply IH. intros i Hi. apply Hnd. lia.
-    - change (ss_step act (ss_run k act input ss) input)
-        with (ss_run (S k) act input ss).
+    - change (ss_step act (ss_run k act input resp ss)
+                (sched_input ctx cost_limit input (resp k)))
+        with (ss_run (S k) act input resp ss).
       apply Hnd. lia.
-  Qed.
-
-  Theorem pub_eq_run (act: tfs_action sched) (a_idx: a_index)
-      (input input': input_t) (ss ss': sched_sys_state) (k: nat) :
-    (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input  ss)) ->
-    (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input' ss')) ->
-    pub_eq act a_idx input input' ss ss' ->
-    pub_eq act a_idx input input'
-      (ss_run k act input ss) (ss_run k act input' ss').
-  Proof.
-    intros Hnd Hnd' [Hipub [Hout Hroots]]. split; [ exact Hipub | split ].
-    - intros o Hc. rewrite (out_run_stable act ss  input  o k Hnd).
-      rewrite (out_run_stable act ss' input' o k Hnd'). exact (Hout o Hc).
-    - intros o r Hc Hin.
-      rewrite (nval_run_stable act a_idx ss  input  _ r k Hnd).
-      rewrite (nval_run_stable act a_idx ss' input' _ r k Hnd').
-      exact (Hroots o r Hc Hin).
   Qed.
 
   (* ------------------------------------------------------------------- *)
@@ -1216,10 +1215,6 @@ Section IPR.
   (* with the buffer-free reference, which taint soundness does equate.    *)
   (* ------------------------------------------------------------------- *)
 
-  Local Notation ss_sz := (tfs_states_size sched).
-  Local Notation oo_sz := (tfs_outputs_size sched).
-  Local Notation eval1 e ss input :=
-    (tf_eval_expr ss_sz i_sz oo_sz (szB := 1) e ss input).
 
   Lemma and1_zero_l (x: bits_t 1) : Bits.and Bits.zero x = Bits.zero.
   Proof. destruct (bits1_cases x) as [Hx | Hx]; subst; reflexivity. Qed.
@@ -1234,7 +1229,7 @@ Section IPR.
   Qed.
 
   Lemma valid_public_gen (act: tfs_action sched) (a_idx: a_index)
-      (input input': input_t) (ss ss': sched_sys_state) :
+      (input input': sched_input_t) (ss ss': sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
     valid_settled ctx cost_limit act a_idx ss  input  ->
     valid_settled ctx cost_limit act a_idx ss' input' ->
@@ -1245,24 +1240,37 @@ Section IPR.
       (forall e, List.In e bufs ->
          List.In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
       forall fuel n (pi: list lit),
+        (* the substitution to the reference needs the sample slots to match,
+           at the ids this expression can reach *)
+        (forall x, x < n ->
+           BitsToLists.list_assoc bufs x = None ->
+           BitsToLists.list_assoc (sample_bufs ctx cost_limit act a_idx) x = None) ->
+        (forall x m msz, x < n ->
+           BitsToLists.list_assoc bufs x = Some (m, msz) ->
+           is_sample_of ctx cost_limit act x = true ->
+           BitsToLists.list_assoc (sample_bufs ctx cost_limit act a_idx) x
+             = Some (m, msz)) ->
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
         n < fuel ->
         pi_holds act a_idx input  pi ss ->
         pi_holds act a_idx input' pi ss' ->
-        eval1 (snd (compile_dfg_expr_at ctx cost_limit pi fuel a_idx
+        eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                       (build_dfg ctx act) n bufs)) ss input
-        = eval1 (snd (compile_dfg_expr_at ctx cost_limit pi fuel a_idx
+        = eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                       (build_dfg ctx act) n bufs)) ss' input'.
   Proof.
     intros Halign Hvs Hvs' Hpub Hveq bufs Hsub fuel.
-    induction fuel as [| fuel IH]; intros n pi Hn1 Hnlen Hnfuel Hpi Hpi'; [ lia | ].
+    induction fuel as [| fuel IH];
+      intros n pi Hsam_sub Hsam_same Hn1 Hnlen Hnfuel Hpi Hpi'; [ lia | ].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:Hla.
     { cbn [compile_dfg_expr_aux]. rewrite Hla. cbv beta iota.
       destruct (index_of_nat
                   (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
                   m) as [n_idx' |]; cbn [snd]; [ | reflexivity ].
-      rewrite !eval1_svar_v. apply Hveq. }
+      destruct (op (nth n (graph (build_dfg ctx act))
+                      {| nid := 0; op := DFG_Empty; sz := 0 |}));
+        cbn [snd]; rewrite !eval1_svar_v; apply Hveq. }
     cbn [compile_dfg_expr_aux]. rewrite Hla. cbv beta iota.
     set (node := nth n (graph (build_dfg ctx act))
                    {| nid := 0; op := DFG_Empty; sz := 0 |}) in *.
@@ -1271,7 +1279,7 @@ Section IPR.
     assert (Hrange : forall x, List.In x (get_args ctx node) -> 1 <= x /\ x < n)
       by (intros x Hx; exact (node_args_range ctx cost_limit act n Hn1 Hnlen x Hx)).
     pose proof (wfg_build_dfg ctx cost_limit act node Hnode_in) as Hfg.
-    destruct (op node) as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ]
+    destruct (op node) as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dp darg den | sp stok sen | ja jb | ]
       eqn:Hop.
     - reflexivity.
     - reflexivity.
@@ -1279,9 +1287,9 @@ Section IPR.
     - assert (Hain : List.In arg (get_args ctx node))
         by (unfold get_args; rewrite Hop; left; reflexivity).
       destruct (Hrange arg Hain) as [Ha1 Ha2].
-      destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                   arg bufs) as [ae ve] eqn:E1.
-      pose proof (IH arg pi Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
+      pose proof (IH arg pi ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2)) ltac:(intros y my mszy Hy Hy2 Hy3; exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3)) Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
       rewrite E1 in Ha. cbn [snd] in Ha |- *. exact Ha.
     - assert (Ha1in : List.In a1 (get_args ctx node))
         by (unfold get_args; rewrite Hop; left; reflexivity).
@@ -1289,20 +1297,20 @@ Section IPR.
         by (unfold get_args; rewrite Hop; right; left; reflexivity).
       destruct (Hrange a1 Ha1in) as [Hb1 Hb2].
       destruct (Hrange a2 Ha2in) as [Hd1 Hd2].
-      destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                   a1 bufs) as [a1e v1e] eqn:E1.
-      destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                   a2 bufs) as [a2e v2e] eqn:E2.
-      pose proof (IH a1 pi Hb1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hx1.
-      pose proof (IH a2 pi Hd1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hx2.
+      pose proof (IH a1 pi ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2)) ltac:(intros y my mszy Hy Hy2 Hy3; exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3)) Hb1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hx1.
+      pose proof (IH a2 pi ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2)) ltac:(intros y my mszy Hy Hy2 Hy3; exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3)) Hd1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hx2.
       rewrite E1 in Hx1. rewrite E2 in Hx2. cbn [snd] in Hx1, Hx2 |- *.
       rewrite !valid_and_eval. rewrite Hx1, Hx2. reflexivity.
     - assert (Hain : List.In arg (get_args ctx node))
         by (unfold get_args; rewrite Hop; left; reflexivity).
       destruct (Hrange arg Hain) as [Ha1 Ha2].
-      destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                   arg bufs) as [ae ve] eqn:E1.
-      pose proof (IH arg pi Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
+      pose proof (IH arg pi ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2)) ltac:(intros y my mszy Hy Hy2 Hy3; exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3)) Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
       rewrite E1 in Ha. cbn [snd] in Ha |- *. exact Ha.
     - assert (Hcin : List.In cnd (get_args ctx node))
         by (unfold get_args; rewrite Hop; left; reflexivity).
@@ -1321,27 +1329,27 @@ Section IPR.
         cbn [phi_path]; cbv beta iota.
       + (* critical HERE: both branch validities are read, so the branches are
            compiled under the SAME path and no declassification is admitted *)
-        destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+        destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                     cnd bufs) as [ce cv] eqn:Ec.
-        destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+        destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                     tid bufs) as [te tv] eqn:Et.
-        destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+        destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                     eid bufs) as [ee ev] eqn:Ee.
-        pose proof (IH cnd pi Hc1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hcc.
-        pose proof (IH tid pi Ht1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hct.
-        pose proof (IH eid pi He1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hce.
+        pose proof (IH cnd pi ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2)) ltac:(intros y my mszy Hy Hy2 Hy3; exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3)) Hc1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hcc.
+        pose proof (IH tid pi ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2)) ltac:(intros y my mszy Hy Hy2 Hy3; exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3)) Ht1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hct.
+        pose proof (IH eid pi ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2)) ltac:(intros y my mszy Hy Hy2 Hy3; exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3)) He1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hce.
         rewrite Ec in Hcc. rewrite Et in Hct. rewrite Ee in Hce.
         cbn [snd] in Hcc, Hct, Hce |- *.
         rewrite !valid_and_eval. rewrite Hcc, Hct, Hce. reflexivity.
       + (* non-critical HERE: either the condition is untainted, or the analysis
            declassified it under a guard this path implies *)
-        destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+        destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                     cnd bufs) as [ce cv] eqn:Ec.
-        destruct (compile_dfg_expr_at ctx cost_limit ((cnd, true) :: pi) fuel a_idx
+        destruct (compile_dfg_expr_at ctx bneeds ((cnd, true) :: pi) fuel a_idx
                     (build_dfg ctx act) tid bufs) as [te tv] eqn:Et.
-        destruct (compile_dfg_expr_at ctx cost_limit ((cnd, false) :: pi) fuel a_idx
+        destruct (compile_dfg_expr_at ctx bneeds ((cnd, false) :: pi) fuel a_idx
                     (build_dfg ctx act) eid bufs) as [ee ev] eqn:Ee.
-        pose proof (IH cnd pi Hc1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hcc.
+        pose proof (IH cnd pi ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2)) ltac:(intros y my mszy Hy Hy2 Hy3; exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3)) Hc1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hcc.
         rewrite Ec in Hcc. cbn [snd] in Hcc |- *.
         assert (Hcder : gderivable act a_idx input pi cnd).
         { unfold phi_crit in Hcrit. apply andb_false_iff in Hcrit.
@@ -1357,22 +1365,30 @@ Section IPR.
         destruct (bits1_cases (eval1 cv ss' input')) as [Hones | Hzero];
           [ | rewrite Hzero, !and1_zero_l; reflexivity ].
         f_equal.
-        assert (Hvalc : eval1 (snd (compile_dfg_expr_at ctx cost_limit pi fuel a_idx
+        assert (Hvalc : eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                           (build_dfg ctx act) cnd bufs)) ss input = Bits.ones 1)
           by (rewrite Ec; cbn [snd]; rewrite Hcc; exact Hones).
-        assert (Hvalc' : eval1 (snd (compile_dfg_expr_at ctx cost_limit pi fuel a_idx
+        assert (Hvalc' : eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                           (build_dfg ctx act) cnd bufs)) ss' input' = Bits.ones 1)
           by (rewrite Ec; cbn [snd]; exact Hones).
-        pose proof (compile_subst_valid_gen ctx cost_limit act a_idx ss input
-                      Halign Hvs bufs Hsub fuel cnd 1 pi Hc1 Hclen ltac:(lia)
+        pose proof (compile_subst_valid_gen_at ctx cost_limit act a_idx ss input
+                      Halign Hvs bufs Hsub fuel cnd 1 pi
+                      ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2))
+                      ltac:(intros y my mszy Hy Hy2 Hy3;
+                            exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3))
+                      Hc1 Hclen ltac:(lia)
                       (eq_sym Hcsz) Hvalc) as S1.
-        pose proof (compile_subst_valid_gen ctx cost_limit act a_idx ss' input'
-                      Halign Hvs' bufs Hsub fuel cnd 1 pi Hc1 Hclen ltac:(lia)
+        pose proof (compile_subst_valid_gen_at ctx cost_limit act a_idx ss' input'
+                      Halign Hvs' bufs Hsub fuel cnd 1 pi
+                      ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2))
+                      ltac:(intros y my mszy Hy Hy2 Hy3;
+                            exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3))
+                      Hc1 Hclen ltac:(lia)
                       (eq_sym Hcsz) Hvalc') as S2.
         rewrite Ec in S1, S2. cbn [fst] in S1, S2.
-        rewrite (compile_fst_pi_irrel ctx cost_limit _ _ a_idx _ [] fuel cnd pi [])
+        rewrite (compile_fst_pi_irrel ctx cost_limit _ _ a_idx _ (sample_bufs ctx cost_limit act a_idx) fuel cnd pi [])
           in S1, S2.
-        rewrite (compile_fuel_irrel ctx cost_limit act a_idx [] cnd Hc1 Hclen
+        rewrite (compile_fuel_irrel ctx cost_limit act a_idx (sample_bufs ctx cost_limit act a_idx) cnd Hc1 Hclen
                    fuel (length (graph (build_dfg ctx act))) ltac:(lia) Hclen)
           in S1, S2.
         assert (Href : eval1 ce ss input
@@ -1386,7 +1402,7 @@ Section IPR.
           pose proof (Hcder ss ss' input' Hpub Hpi Hpi') as Hcd.
           rewrite Hcsz in Hcd. exact Hcd. }
         assert (Hcase : (tv = tf_const 1 /\ ev = tf_const 1)
-                        \/ valid_expr_if ctx cost_limit ce tv ev
+                        \/ valid_expr_if ctx bneeds ce tv ev
                            = tf_expr_if ce tv ev).
         { unfold valid_expr_if.
           destruct tv as [vt| | | | | |]; try (right; reflexivity).
@@ -1411,7 +1427,7 @@ Section IPR.
                - injection Heq as Hc Hbv. subst c b. unfold bit_of.
                  rewrite <- Href'. exact Hz.
                - exact (Hpi' _ _ Hin). }
-             pose proof (IH eid ((cnd, false) :: pi) He1 ltac:(lia) ltac:(lia)
+             pose proof (IH eid ((cnd, false) :: pi) ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2)) ltac:(intros y my mszy Hy Hy2 Hy3; exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3)) He1 ltac:(lia) ltac:(lia)
                            Hp0 Hp0') as Hce.
              rewrite Ee in Hce. cbn [snd] in Hce. exact Hce.
           -- (* then branch selected: extend the path with [cnd = 1] *)
@@ -1429,40 +1445,83 @@ Section IPR.
                - injection Heq as Hc Hbv. subst c b. unfold bit_of.
                  rewrite <- Href'. exact Hz.
                - exact (Hpi' _ _ Hin). }
-             pose proof (IH tid ((cnd, true) :: pi) Ht1 ltac:(lia) ltac:(lia)
+             pose proof (IH tid ((cnd, true) :: pi) ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2)) ltac:(intros y my mszy Hy Hy2 Hy3; exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3)) Ht1 ltac:(lia) ltac:(lia)
                            Hp1 Hp1') as Hct.
              rewrite Et in Hct. cbn [snd] in Hct. exact Hct.
     - (* DFG_Stall: same as DFG_Unary -- validity passes through. *)
       assert (Hain : List.In sa (get_args ctx node))
         by (unfold get_args; rewrite Hop; left; reflexivity).
       destruct (Hrange sa Hain) as [Ha1 Ha2].
-      destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                   sa bufs) as [ae ve] eqn:E1.
-      pose proof (IH sa pi Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
+      pose proof (IH sa pi ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2)) ltac:(intros y my mszy Hy Hy2 Hy3; exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3)) Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
       rewrite E1 in Ha. cbn [snd] in Ha |- *. exact Ha.
-    - (* SPIKE 2b: DFG_Drive -- validity passes through, as for the stall. *)
-      assert (Hain : List.In dn (get_args ctx node))
+    - (* A drive's validity is its argument's conjoined with every literal on
+         its path condition: a request must not leave before its guard reads
+         true. *)
+      assert (Hain : List.In darg (get_args ctx node))
         by (unfold get_args; rewrite Hop; left; reflexivity).
-      destruct (Hrange dn Hain) as [Ha1 Ha2].
-      destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
-                  dn bufs) as [ae ve] eqn:E1.
-      pose proof (IH dn pi Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
-      rewrite E1 in Ha. cbn [snd] in Ha |- *. exact Ha.
+      destruct (Hrange darg Hain) as [Ha1 Ha2].
+      assert (Hfold : forall (gs: list lit)
+                        (base: @tf_expr (tfs_states sched) (tfs_inputs sched) o_var),
+                (forall l, List.In l gs -> 1 <= fst l /\ fst l < n) ->
+                eval1 base ss input = eval1 base ss' input' ->
+                eval1 (fold_right (fun l acc =>
+                         valid_expr_and ctx bneeds
+                           (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                                   (build_dfg ctx act) (fst l) bufs)) acc)
+                         base gs) ss input
+              = eval1 (fold_right (fun l acc =>
+                         valid_expr_and ctx bneeds
+                           (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                                   (build_dfg ctx act) (fst l) bufs)) acc)
+                         base gs) ss' input').
+      { induction gs as [| l rest IHgs]; intros base Hr Hb;
+          cbn [fold_right]; [ exact Hb | ].
+        rewrite !valid_and_eval.
+        destruct (Hr l (or_introl eq_refl)) as [Hl1 Hl2].
+        pose proof (IH (fst l) pi ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2)) ltac:(intros y my mszy Hy Hy2 Hy3; exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3)) Hl1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hl.
+        rewrite Hl.
+        rewrite (IHgs base ltac:(intros l' Hl'; apply Hr; right; exact Hl') Hb).
+        reflexivity. }
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                  darg bufs) as [ae ve] eqn:E1.
+      pose proof (IH darg pi ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2)) ltac:(intros y my mszy Hy Hy2 Hy3; exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3)) Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
+      rewrite E1 in Ha. cbn [snd] in Ha |- *.
+      apply Hfold; [ | exact Ha ].
+      intros l Hl. apply Hrange.
+      unfold get_args; rewrite Hop; right; apply in_map; exact Hl.
     - (* DFG_Sample: its VALIDITY is the token's by construction in
          [compile_dfg_expr_aux], so validity passes through as for a stall
          though the VALUE does not. *)
-      assert (Hain : List.In sn (get_args ctx node))
+      assert (Hain : List.In stok (get_args ctx node))
         by (unfold get_args; rewrite Hop; left; reflexivity).
-      destruct (Hrange sn Hain) as [Ha1 Ha2].
-      destruct (compile_dfg_expr_at ctx cost_limit pi fuel a_idx (build_dfg ctx act)
-                  sn bufs) as [ae ve] eqn:E1.
-      pose proof (IH sn pi Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
+      destruct (Hrange stok Hain) as [Ha1 Ha2].
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                  stok bufs) as [ae ve] eqn:E1.
+      pose proof (IH stok pi ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2)) ltac:(intros y my mszy Hy Hy2 Hy3; exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3)) Ha1 ltac:(lia) ltac:(lia) Hpi Hpi') as Ha.
       rewrite E1 in Ha. cbn [snd] in Ha |- *. exact Ha.
+    - (* A join is valid when both its arguments are, which is the ordering
+         a second call on a port waits for. *)
+      assert (Haa : List.In ja (get_args ctx node))
+        by (unfold get_args; rewrite Hop; left; reflexivity).
+      assert (Hbb : List.In jb (get_args ctx node))
+        by (unfold get_args; rewrite Hop; right; left; reflexivity).
+      destruct (Hrange ja Haa) as [Hja1 Hja2].
+      destruct (Hrange jb Hbb) as [Hjb1 Hjb2].
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                  ja bufs) as [ae ve] eqn:E1.
+      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                  jb bufs) as [be vb] eqn:E2.
+      pose proof (IH ja pi ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2)) ltac:(intros y my mszy Hy Hy2 Hy3; exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3)) Hja1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hxa.
+      pose proof (IH jb pi ltac:(intros y Hy Hy2; exact (Hsam_sub y ltac:(lia) Hy2)) ltac:(intros y my mszy Hy Hy2 Hy3; exact (Hsam_same y my mszy ltac:(lia) Hy2 Hy3)) Hjb1 ltac:(lia) ltac:(lia) Hpi Hpi') as Hxb.
+      rewrite E1 in Hxa. rewrite E2 in Hxb. cbn [snd] in Hxa, Hxb |- *.
+      rewrite !valid_and_eval. rewrite Hxa, Hxb. reflexivity.
     - reflexivity.
   Qed.
 
   Lemma valid_public (act: tfs_action sched) (a_idx: a_index)
-      (input input': input_t) (ss ss': sched_sys_state) :
+      (input input': sched_input_t) (ss ss': sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
     valid_settled ctx cost_limit act a_idx ss  input  ->
     valid_settled ctx cost_limit act a_idx ss' input' ->
@@ -1473,17 +1532,26 @@ Section IPR.
       (forall e, List.In e bufs ->
          List.In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
       forall fuel n,
+        (forall x, x < n ->
+           BitsToLists.list_assoc bufs x = None ->
+           BitsToLists.list_assoc (sample_bufs ctx cost_limit act a_idx) x = None) ->
+        (forall x m msz, x < n ->
+           BitsToLists.list_assoc bufs x = Some (m, msz) ->
+           is_sample_of ctx cost_limit act x = true ->
+           BitsToLists.list_assoc (sample_bufs ctx cost_limit act a_idx) x
+             = Some (m, msz)) ->
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
         n < fuel ->
-        eval1 (snd (compile_dfg_expr ctx cost_limit fuel a_idx
+        eval1 (snd (compile_dfg_expr ctx bneeds fuel a_idx
                       (build_dfg ctx act) n bufs)) ss input
-        = eval1 (snd (compile_dfg_expr ctx cost_limit fuel a_idx
+        = eval1 (snd (compile_dfg_expr ctx bneeds fuel a_idx
                       (build_dfg ctx act) n bufs)) ss' input'.
   Proof.
-    intros Halign Hvs Hvs' Hpub Hveq bufs Hsub fuel n Hn1 Hnlen Hnfuel.
+    intros Halign Hvs Hvs' Hpub Hveq bufs Hsub fuel n Hsam_sub Hsam_same
+      Hn1 Hnlen Hnfuel.
     exact (valid_public_gen act a_idx input input' ss ss' Halign Hvs Hvs' Hpub Hveq
-             bufs Hsub fuel n [] Hn1 Hnlen Hnfuel
+             bufs Hsub fuel n [] Hsam_sub Hsam_same Hn1 Hnlen Hnfuel
              (pi_holds_nil act a_idx input ss) (pi_holds_nil act a_idx input' ss')).
   Qed.
 
@@ -1550,14 +1618,14 @@ Section IPR.
     (nodup Nat.eq_dec (map snd (var_map (build_dfg ctx act)))).
 
   Local Notation root_valid act a_idx n :=
-    (snd (compile_dfg_expr ctx cost_limit (length (graph (build_dfg ctx act)))
+    (snd (compile_dfg_expr ctx bneeds (length (graph (build_dfg ctx act)))
             a_idx (build_dfg ctx act) n
             (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))).
 
   (* [sched_step_done_set] hides the validity list behind a per-state existential,
      so it cannot relate two runs; [done_exprs_concrete] exposes the list instead. *)
   Lemma done_val_concrete (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: input_t) :
+      (ss: sched_sys_state) (input: sched_input_t) :
     act_idx_aligned ctx cost_limit act a_idx ->
     (fst (ss_step act ss input)).[tfs_done_signal sched]
     = fold_right Bits.and (Bits.ones 1)
@@ -1571,7 +1639,7 @@ Section IPR.
   Qed.
 
   Theorem done_public (act: tfs_action sched) (a_idx: a_index)
-      (input input': input_t) (ss ss': sched_sys_state) :
+      (input input': sched_input_t) (ss ss': sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
     valid_settled ctx cost_limit act a_idx ss  input  ->
     valid_settled ctx cost_limit act a_idx ss' input' ->
@@ -1708,7 +1776,7 @@ Section IPR.
     (tf_ops_run s_sz i_sz o_sz (tfs_spec_action_ops ctx act) sp input).
 
   Theorem obs_eq_pub_eq (act: tfs_action sched) (a_idx: a_index)
-      (input input': input_t)
+      (input input': sched_input_t)
       (sp sp': src_sys_state) (ss ss': sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
     (forall sv, (fst ss ).[tf_dfg_s sv] = (fst sp ).[sv]) ->
@@ -1724,7 +1792,7 @@ Section IPR.
               = (snd (spec_run act sp' input')).[ov]) ->
     (* ...and the attacker drives the same PUBLIC inputs in both runs.  Secret
        inputs are free: they come from inside the trust boundary. *)
-    (forall v, tfs_spec_inputs_class ctx v = Public -> input v = input' v) ->
+    (forall v, tfs_spec_inputs_class ctx v = Public -> input (inl v) = input' (inl v)) ->
     pub_eq act a_idx input input' ss ss'.
   Proof.
     intros Halign Hs Ho Hs' Ho' Hpre Hpost Hipub.

@@ -10097,7 +10097,10 @@ Section SchedulerSimulation.
   (* SUBSTITUTION, gated by VALIDITY: wherever a node's compiled validity fires,
      its value agrees with the buffer-free one.  An untainted Phi validates
      exactly the branch [tf_expr_if] selects, so it reads no unsettled one. *)
-  Lemma compile_subst_valid_gen
+  (* The two sample-table conditions bite only at the ids the expression can
+     reach, so a GATE table -- the full table with the node's own slot removed
+     -- satisfies them: the walk descends by node id and never reaches [n]. *)
+  Lemma compile_subst_valid_gen_at
         (act: tfs_action sched)
         (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
         (ss: sched_sys_state) (input: sched_input_t) :
@@ -10106,15 +10109,17 @@ Section SchedulerSimulation.
     forall bufs,
       (forall e, In e bufs ->
          In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
-      (* the reference keeps the SAMPLE buffers, so [bufs] must keep them too:
-         a sample read through a buffer on one side and off the wire on the
-         other would compare a latched answer against the live port *)
-      (forall x, BitsToLists.list_assoc bufs x = None ->
-                 BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
-      (forall x m msz, BitsToLists.list_assoc bufs x = Some (m, msz) ->
-                 is_sample_of act x = true ->
-                 BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)) ->
       forall fuel n szB (pi: list lit),
+        (* the reference keeps the SAMPLE buffers, so [bufs] must keep them too:
+           a sample read through a buffer on one side and off the wire on the
+           other would compare a latched answer against the live port *)
+        (forall x, x <= n ->
+           BitsToLists.list_assoc bufs x = None ->
+           BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
+        (forall x m msz, x <= n ->
+           BitsToLists.list_assoc bufs x = Some (m, msz) ->
+           is_sample_of act x = true ->
+           BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)) ->
         1 <= n ->
         n < length (graph (build_dfg ctx act)) ->
         n < fuel ->
@@ -10129,9 +10134,9 @@ Section SchedulerSimulation.
           (fst (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
           ss input.
   Proof.
-    intros Halign Hinv bufs Hsub Hsam_sub Hsam_same fuel.
+    intros Halign Hinv bufs Hsub fuel.
     induction fuel as [| fuel IH];
-      intros n szB pi Hn1 Hnlen Hnfuel HszB Hval; [ lia | ].
+      intros n szB pi Hsam_sub Hsam_same Hn1 Hnlen Hnfuel HszB Hval; [ lia | ].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:Hla.
     - (* buffered leaf: its validity bit is the one that fired *)
       rewrite (compile_fuel_irrel_gen act a_idx (sample_bufs act a_idx) _ _ n Hn1 Hnlen (S fuel)
@@ -10183,7 +10188,7 @@ Section SchedulerSimulation.
       reflexivity.
     - (* not buffered: split the validity along the op's structure *)
       cbn [compile_dfg_expr_aux BitsToLists.list_assoc] in Hval |- *.
-      rewrite Hla in Hval |- *. rewrite (Hsam_sub n Hla).
+      rewrite Hla in Hval |- *. rewrite (Hsam_sub n (Nat.le_refl n) Hla).
       cbv beta iota in Hval |- *.
       set (node := nth n (graph (build_dfg ctx act))
                      {| nid := 0; op := DFG_Empty; sz := 0 |}) in *.
@@ -10210,7 +10215,10 @@ Section SchedulerSimulation.
       { intros x sx p Hx Hwsz Hxv.
         destruct (Harg x Hx) as [Hx1 Hx2].
         destruct (wsz_node_sz act x sx Hwsz) as [Hxlen Hxsz].
-        apply (IH x sx p Hx1 Hxlen ltac:(lia) (eq_sym Hxsz) Hxv). }
+        apply (IH x sx p
+                 ltac:(intros y Hy; apply Hsam_sub; lia)
+                 ltac:(intros y my mszy Hy; apply Hsam_same; lia)
+                 Hx1 Hxlen ltac:(lia) (eq_sym Hxsz) Hxv). }
       pose proof (wfg_build_dfg act node Hnode_in) as Hfg.
       destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn den | siv sn sen | ja jb | ]
         eqn:Hop.
@@ -10293,6 +10301,8 @@ Section SchedulerSimulation.
                       = Bits.ones 1) by (rewrite E1; cbn [snd]; exact Hval).
         pose proof (IH arg (sz (nth arg (graph (build_dfg ctx act))
                                   {| nid := 0; op := DFG_Empty; sz := 0 |})) pi
+                      ltac:(intros y Hy; apply Hsam_sub; lia)
+                      ltac:(intros y my mszy Hy; apply Hsam_same; lia)
                       Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen)
                       ltac:(lia) eq_refl Hav) as Hc.
         rewrite E1, E2 in Hc. cbn [fst] in Hc.
@@ -10414,6 +10424,43 @@ Section SchedulerSimulation.
       + (* Empty: impossible for a real node *)
         exfalso. apply (node_op_not_empty act n Hn1 Hnlen).
         unfold node in Hop. exact Hop.
+  Qed.
+
+  (* The unbounded form, for the callers that pass the whole table. *)
+  Lemma compile_subst_valid_gen
+        (act: tfs_action sched)
+        (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+        (ss: sched_sys_state) (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
+    valid_settled act a_idx ss input ->
+    forall bufs,
+      (forall e, In e bufs ->
+         In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
+      (forall x, BitsToLists.list_assoc bufs x = None ->
+                 BitsToLists.list_assoc (sample_bufs act a_idx) x = None) ->
+      (forall x m msz, BitsToLists.list_assoc bufs x = Some (m, msz) ->
+                 is_sample_of act x = true ->
+                 BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)) ->
+      forall fuel n szB (pi: list lit),
+        1 <= n ->
+        n < length (graph (build_dfg ctx act)) ->
+        n < fuel ->
+        szB = sz (nth n (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}) ->
+        eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                      n bufs)) ss input = Bits.ones 1 ->
+        tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
+          (fst (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act) n bufs))
+          ss input
+        = tf_eval_expr ss_sz si_sz oo_sz (szB := szB)
+          (fst (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act) n (sample_bufs act a_idx)))
+          ss input.
+  Proof.
+    intros Halign Hinv bufs Hsub Hsam_sub Hsam_same fuel n szB pi.
+    exact (compile_subst_valid_gen_at act a_idx ss input Halign Hinv bufs Hsub
+             fuel n szB pi
+             (fun x _ => Hsam_sub x)
+             (fun x m msz _ => Hsam_same x m msz)).
   Qed.
 
   Lemma compile_subst_valid
