@@ -84,6 +84,7 @@ Section SchedulerSimulation.
   Local Notation calls_sequenced_cons_sample := (SchedulerSimulationBase.calls_sequenced_cons_sample ctx).
   Local Notation calls_sequenced_head := (SchedulerSimulationBase.calls_sequenced_head ctx).
   Local Notation chain_gate_is_join := (SchedulerSimulationBase.chain_gate_is_join ctx cost_limit).
+  Local Notation chain_gate_some_of_stall := (SchedulerSimulationBase.chain_gate_some_of_stall ctx cost_limit).
   Local Notation chain_gate_some := (SchedulerSimulationBase.chain_gate_some ctx cost_limit).
   Local Notation combine_valid_eval := (SchedulerSimulationBase.combine_valid_eval ctx cost_limit).
   Local Notation compile_buffered_valid := (SchedulerSimulationBase.compile_buffered_valid ctx cost_limit).
@@ -5710,6 +5711,265 @@ Section SchedulerSimulation.
                  end) (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
       with (drive_sbufs act a_idx).
     rewrite Hen, Hvg, Hvf. vm_compute. reflexivity.
+  Qed.
+
+  (* THE DRIVE FIRES.  At the cycle the wait began, the call's request is on
+     the port: its guard holds, its chain gate is up and its stall is at zero. *)
+  Lemma drive_fires_at_wait_start
+        (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val)
+        (ss0: sched_sys_state) M n_idx (p: p_var) tok en d aa t_idx m0 msz t :
+    act_idx_aligned act a_idx ->
+    1 < length (graph (build_dfg ctx act)) ->
+    (forall x, zeroed_at_start x -> (fst ss0).[x] = Bits.zero) ->
+    (forall i, 1 <= i <= M -> ~ done_set (run_n i act input resp ss0)) ->
+    node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
+    sample_drive act (vreg_nid a_idx n_idx) = Some d ->
+    guard_holds act a_idx (run_n M act input resp ss0)
+      (sched_input input (resp M)) en ->
+    node_op act tok = DFG_Stall (ip_lat (tfs_spec_ip ctx p)) aa ->
+    vreg_nid a_idx t_idx = tok ->
+    BitsToLists.list_assoc
+      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) tok = Some (m0, msz) ->
+    index_of_nat
+      (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m0
+      = Some t_idx ->
+    t <= M ->
+    Bits.to_nat ((fst (run_n t act input resp ss0)).[tf_dfg_b a_idx t_idx]) = 0 ->
+    eval1 (buf_gate act a_idx t_idx) (run_n t act input resp ss0)
+      (sched_input input (resp t)) = Bits.ones 1 ->
+    eval1 (drive_pulse act a_idx d) (run_n t act input resp ss0)
+      (sched_input input (resp t)) <> Bits.zero.
+  Proof.
+    intros Halign Hlen Hz0 Hpre Hsamp Hsd Hgd Htok Htvn Hta Htidx Htm Hct Hgt.
+    assert (Hlen0 : 0 < length (graph (build_dfg ctx act))) by lia.
+    assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
+      by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
+    (* the drive this sample names, and the head of its chain *)
+    destruct (sample_has_drive act (vreg_nid a_idx n_idx) p tok en Hsamp)
+      as [d2 [arg [Hsd2 Hd2op]]].
+    assert (Hd2 : d2 = d).
+    { rewrite Hsd in Hsd2. injection Hsd2 as He. symmetry. exact He. }
+    subst d2.
+    assert (Hdh : sample_drive_head act p aa = Some d).
+    { unfold SchedulerSimulationBase.sample_drive in Hsd.
+      rewrite Hsamp, Htok in Hsd. exact Hsd. }
+    assert (HCG : exists g h, chain_gate ctx (build_dfg ctx act) d = Some (g, h)).
+    { destruct (sample_drive_head_shape act p aa d Hdh)
+        as [[Hda [arg2 [en2 Haaop]]] | [prev [arg2 [en2 [Hjop Hdop2]]]]].
+      - subst aa. exact (chain_gate_some_of_stall act d tok
+                           (ip_lat (tfs_spec_ip ctx p)) Htok).
+      - exact (chain_gate_some act d aa prev p arg2 en2 Hdop2 Hjop). }
+    destruct HCG as [g [h Hcg]].
+    pose proof (chain_gate_stall_is_token act p (vreg_nid a_idx n_idx) tok en d g h
+                  Hsamp Hsd Hcg) as Hh. subst h.
+    destruct (chain_gate_stall act d g tok Hcg) as [lh Hlh].
+    assert (Hg : g = aa).
+    { rewrite Htok in Hlh. injection Hlh as _ Hgaa. symmetry. exact Hgaa. }
+    subst g.
+    (* the stall's gate, moved onto the full table at full fuel *)
+    assert (Htokstall : node_op act (vreg_nid a_idx t_idx)
+                        = DFG_Stall (ip_lat (tfs_spec_ip ctx p)) aa)
+      by (rewrite Htvn; exact Htok).
+    pose proof (stall_nid_succ act tok (ip_lat (tfs_spec_ip ctx p)) aa Htok) as Htoks.
+    assert (Haane : aa <> vreg_nid a_idx t_idx) by (rewrite Htvn; lia).
+    assert (Htoklen : tok < length (graph (build_dfg ctx act)))
+      by (apply node_op_range; rewrite Htok; discriminate).
+    assert (Haalen : aa < length (graph (build_dfg ctx act))) by lia.
+    assert (Haa1 : 1 <= aa).
+    { pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
+      apply (Hargpos (nth tok (graph (build_dfg ctx act))
+                        {| nid := 0; op := DFG_Empty; sz := 0 |})
+               (nth_In _ _ Htoklen)).
+      unfold get_args. unfold SchedulerSimulationBase.node_op in Htok.
+      rewrite Htok. left. reflexivity. }
+    rewrite (stall_gate_walks act a_idx t_idx (ip_lat (tfs_spec_ip ctx p)) aa
+               Htokstall Haane Hlen0) in Hgt.
+    assert (Hagree : forall x, x <= aa ->
+              BitsToLists.list_assoc
+                (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (vreg_nid a_idx t_idx)))
+                   (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) x
+              = BitsToLists.list_assoc
+                  (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) x).
+    { intros x Hx. apply list_assoc_filter.
+      intros [kk vv] _ Hfe. cbn [fst] in Hfe. subst kk.
+      apply negb_true_iff, Nat.eqb_neq. rewrite Htvn. lia. }
+    assert (Haa_pred : eval1 (snd (compile_dfg_expr ctx bneeds
+                         (pred (length (graph (build_dfg ctx act)))) a_idx
+                         (build_dfg ctx act) aa
+                         (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+                       (run_n t act input resp ss0) (sched_input input (resp t))
+                       = Bits.ones 1).
+    { rewrite <- (compile_table_irrel_gen act a_idx
+                    (get_tainted ctx (build_dfg ctx act))
+                    (decl_facts ctx (build_dfg ctx act)) _ _ aa Haa1 Haalen Hagree
+                    (pred (length (graph (build_dfg ctx act)))) [] ltac:(lia)).
+      exact Hgt. }
+    destruct (node_op_pos act d ltac:(rewrite Hd2op; discriminate)) as [Hd1 Hdlen].
+    (* the drive's REFERENCE validity at [t] *)
+    destruct (valid_settled_run act a_idx input resp ss0 t Halign Hzv)
+      as [Hgates [Hrefs Hinv]].
+    assert (Hsub : forall e,
+              In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) ->
+              In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))
+      by (intros e He; exact He).
+    assert (Hsam_sub : forall x,
+              BitsToLists.list_assoc
+                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) x = None ->
+              BitsToLists.list_assoc (sample_bufs act a_idx) x = None).
+    { intros x Hx. apply list_assoc_key_none. intro Hin2.
+      apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
+      cbn [fst] in Hxx. subst x2.
+      unfold SchedulerSimulationBase.sample_bufs in Hmem2. apply filter_In in Hmem2.
+      apply (list_assoc_none_key _ _ Hx), in_map_iff.
+      exists (x, v2). split; [ reflexivity | exact (proj1 Hmem2) ]. }
+    assert (Hsam_same : forall x m2 msz2,
+              BitsToLists.list_assoc
+                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) x
+                = Some (m2, msz2) ->
+              is_sample_of act x = true ->
+              BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m2, msz2)).
+    { intros x m2 msz2 Hx Hsx. apply list_assoc_nodup_in.
+      - unfold SchedulerSimulationBase.sample_bufs. apply nodup_map_fst_filter.
+        exact (slot_keys_nodup act a_idx Halign).
+      - unfold SchedulerSimulationBase.sample_bufs. apply filter_In.
+        split; [ exact (wla_in _ _ _ Hx) | exact Hsx ]. }
+    assert (Haa_ref : eval1 (snd (compile_dfg_expr_at ctx bneeds []
+                        (pred (length (graph (build_dfg ctx act)))) a_idx
+                        (build_dfg ctx act) aa (sample_bufs act a_idx)))
+                      (run_n t act input resp ss0) (sched_input input (resp t))
+                      = Bits.ones 1).
+    { exact (compile_subst_ref_valid_gen act a_idx (run_n t act input resp ss0)
+               (sched_input input (resp t)) Halign Hinv Hrefs
+               (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
+               Hsub Hsam_sub Hsam_same
+               (pred (length (graph (build_dfg ctx act)))) aa []
+               Haa1 Haalen ltac:(lia) Haa_pred). }
+    assert (Hd_ref : eval1 (node_ref_valid act a_idx d)
+                       (run_n t act input resp ss0) (sched_input input (resp t))
+                     = Bits.ones 1).
+    { unfold SchedulerSimulationBase.node_ref_valid.
+      destruct (sample_drive_head_shape act p aa d Hdh)
+        as [[Hda _] | [prev [arg2 [en2 [Hjop Hdop2]]]]].
+      - subst aa.
+        rewrite (compile_fuel_irrel act a_idx (sample_bufs act a_idx) d
+                      Hd1 Hdlen (length (graph (build_dfg ctx act)))
+                      (pred (length (graph (build_dfg ctx act))))
+                      Hdlen ltac:(lia)).
+        exact Haa_ref.
+      - assert (Hna : BitsToLists.list_assoc (sample_bufs act a_idx) aa = None).
+        { apply list_assoc_key_none. intro Hin2.
+          apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
+          cbn [fst] in Hxx. subst x2.
+          unfold SchedulerSimulationBase.sample_bufs in Hmem2.
+          apply filter_In in Hmem2. destruct Hmem2 as [_ Hsx].
+          unfold SchedulerSimulationBase.is_sample_of,
+                 SchedulerSimulationBase.node_op in Hsx.
+          unfold SchedulerSimulationBase.node_op in Hjop.
+          rewrite Hjop in Hsx. discriminate Hsx. }
+        unfold SchedulerSimulationBase.node_op in Hjop.
+        assert (Hdaa : d < aa).
+        { pose proof (args_lt_fwd act (nth aa (graph (build_dfg ctx act))
+                        {| nid := 0; op := DFG_Empty; sz := 0 |})
+                        (nth_In _ _ Haalen) d) as Hlt.
+          rewrite (node_nid_at act aa Haalen) in Hlt.
+          apply Hlt. unfold get_args. rewrite Hjop. left. reflexivity. }
+        rewrite (compile_join_valid (build_dfg ctx act) _ _ a_idx aa d prev
+                   (sample_bufs act a_idx) []
+                   (pred (length (graph (build_dfg ctx act)))) Hjop Hna
+                   ltac:(lia)) in Haa_ref.
+        rewrite valid_and_eval in Haa_ref.
+        destruct (bits1_and_split _ _ Haa_ref) as [Hdv _].
+        rewrite (compile_fuel_irrel act a_idx (sample_bufs act a_idx) d
+                      Hd1 Hdlen (length (graph (build_dfg ctx act)))
+                      (pred (pred (length (graph (build_dfg ctx act)))))
+                      Hdlen ltac:(lia)).
+        exact Hdv. }
+    (* the guard's sources are arguments of the drive *)
+    assert (Hlrange : forall l, In l en -> 1 <= fst l /\ fst l < d).
+    { intros l Hin.
+      assert (Hlin : In (fst l) (get_args ctx (nth d (graph (build_dfg ctx act))
+                        {| nid := 0; op := DFG_Empty; sz := 0 |}))).
+      { unfold get_args. unfold SchedulerSimulationBase.node_op in Hd2op.
+        rewrite Hd2op. right. exact (in_map fst en l Hin). }
+      pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
+      split; [ exact (Hargpos _ (nth_In _ _ Hdlen) _ Hlin) |].
+      pose proof (args_lt_fwd act _ (nth_In _ _ Hdlen) _ Hlin) as Hlt.
+      rewrite (node_nid_at act d Hdlen) in Hlt. exact Hlt. }
+    assert (Hnad : BitsToLists.list_assoc (sample_bufs act a_idx) d = None).
+    { apply list_assoc_key_none. intro Hin2.
+      apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
+      cbn [fst] in Hxx. subst x2.
+      unfold SchedulerSimulationBase.sample_bufs in Hmem2.
+      apply filter_In in Hmem2. destruct Hmem2 as [_ Hsx].
+      unfold SchedulerSimulationBase.is_sample_of,
+             SchedulerSimulationBase.node_op in Hsx.
+      unfold SchedulerSimulationBase.node_op in Hd2op.
+      rewrite Hd2op in Hsx. discriminate Hsx. }
+    assert (Hsrc : forall l, In l en ->
+              eval1 (node_ref_valid act a_idx (fst l))
+                (run_n t act input resp ss0) (sched_input input (resp t))
+              = Bits.ones 1).
+    { intros l Hin. destruct (Hlrange l Hin) as [Hl1 Hld].
+      assert (Hllen : fst l < length (graph (build_dfg ctx act))) by lia.
+      assert (Hlpred : fst l < pred (length (graph (build_dfg ctx act)))) by lia.
+      pose proof (compile_guard_sources_valid act a_idx d p arg en
+                    (sample_bufs act a_idx) []
+                    (length (graph (build_dfg ctx act)))
+                    (run_n t act input resp ss0) (sched_input input (resp t))
+                    Hd2op Hnad ltac:(lia) Hd_ref l Hin) as Hl.
+      unfold SchedulerSimulationBase.node_ref_valid.
+      rewrite (compile_fuel_irrel act a_idx (sample_bufs act a_idx) (fst l)
+                 Hl1 Hllen (length (graph (build_dfg ctx act)))
+                 (pred (length (graph (build_dfg ctx act)))) Hllen Hlpred).
+      exact Hl. }
+    assert (Hgd_t : guard_holds act a_idx (run_n t act input resp ss0)
+                      (sched_input input (resp t)) en).
+    { exact (guard_holds_earlier act a_idx input resp ss0 en t M
+               Halign Hzv Hpre Htm
+               (fun l Hin => Nat.lt_trans _ _ _ (proj2 (Hlrange l Hin)) Hdlen)
+               Hsrc Hgd). }
+    assert (Hen_ones : eval1 (gexpr act a_idx (drive_sbufs act a_idx) en)
+                         (run_n t act input resp ss0) (sched_input input (resp t))
+                       = Bits.ones 1).
+    { apply (proj1 (bits1_nonzero_ones _)).
+      exact (guard_holds_gexpr act a_idx (run_n t act input resp ss0)
+               (sched_input input (resp t)) en Hgd_t). }
+    (* the chain gate, at full fuel *)
+    assert (Hvgate : eval1 (snd (compile_dfg_expr ctx bneeds
+                       (length (graph (build_dfg ctx act))) a_idx
+                       (build_dfg ctx act) aa
+                       (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+                     (run_n t act input resp ss0) (sched_input input (resp t))
+                     = Bits.ones 1).
+    { rewrite (compile_fuel_irrel act a_idx
+                 (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) aa
+                 Haa1 Haalen (length (graph (build_dfg ctx act)))
+                 (pred (length (graph (build_dfg ctx act)))) Haalen ltac:(lia)).
+      exact Haa_pred. }
+    (* the wait is on its first cycle *)
+    assert (Hstlat : stall_lat_of act (vreg_nid a_idx t_idx)
+                     = Some (ip_lat (tfs_spec_ip ctx p))).
+    { unfold SchedulerSimulationBase.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
+    destruct (stall_counter_wide act a_idx t_idx (ip_lat (tfs_spec_ip ctx p))
+                Halign Hstlat) as [Hlt1 Hwide].
+    assert (Hbz : (fst (run_n t act input resp ss0)).[tf_dfg_b a_idx t_idx]
+                  = Bits.zero).
+    { apply (bits_to_nat_inj (ss_sz (tf_dfg_b a_idx t_idx))).
+      rewrite Hct. symmetry.
+      change (@Bits.zero (ss_sz (tf_dfg_b a_idx t_idx)))
+        with (Bits.of_nat (ss_sz (tf_dfg_b a_idx t_idx)) 0).
+      apply Bits.to_nat_of_nat. lia. }
+    assert (Hvfirst : eval1 (stall_start ctx bneeds a_idx (build_dfg ctx act)
+                        (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) tok)
+                      (run_n t act input resp ss0) (sched_input input (resp t))
+                      = Bits.ones 1).
+    { exact (eval_stall_start_ones act a_idx tok m0 msz t_idx
+               (run_n t act input resp ss0) (sched_input input (resp t))
+               Halign Hta Htidx Hbz). }
+    rewrite (drive_pulse_ones act a_idx d aa tok p arg en
+               (run_n t act input resp ss0) (sched_input input (resp t))
+               Hd2op Hcg Hen_ones Hvgate Hvfirst).
+    exact ones1_neq_zero.
   Qed.
 
   (* ==================================================================== *)
