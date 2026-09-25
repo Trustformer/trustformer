@@ -623,8 +623,24 @@ Section SchedulerCore.
   (* Every declassification instance the user's rules emit for this DFG.
      Instances are generated from the current graph, so node ids can never go
      stale across a re-elaboration. *)
+  Definition node_op_at (dfg: dfg_state) (n: nid_t) : dfg_op :=
+    op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0; |}).
+
+  (* The round trip's own nodes are plumbing, not values a rule may speak
+     about: a stall is a counter, a drive is a message in flight, a join is an
+     ordering edge, and a sample's answer is public only as far as [ip_fn] is
+     reversible, which no rule states.  A rule naming one of them is dropped.
+     It also keeps a rule on the STALL -- trivially sound, since a counter
+     carries no value -- from declassifying the answer behind it. *)
+  Definition declassifiable (dfg: dfg_state) (n: nid_t) : bool :=
+    match node_op_at dfg n with
+    | DFG_Stall _ _ | DFG_Drive _ _ _ | DFG_Sample _ _ _ | DFG_Join _ _ => false
+    | _ => true
+    end.
+
   Definition decl_instances (dfg: dfg_state) : list decl_instance :=
-    flat_map (fun r => r dfg) (tfs_spec_decls ctx).
+    filter (fun i => declassifiable dfg (di_target i))
+           (flat_map (fun r => r dfg) (tfs_spec_decls ctx)).
 
   (* Only unconditional instances may seed the taint fold: a node that is
      derivable merely on some path is not unconditionally untainted. *)
@@ -711,10 +727,9 @@ Section SchedulerCore.
                          | Public => false
                          | Secret => true
                          end
-        (* An IP link is outside the attacker model, so a sample is always a
-           taint source.  Without this arm the wildcard swallows it and IPR
-           goes unsound. *)
-        | DFG_Sample _ _ _ => true
+        (* A sample is [ip_fn] of its request, so it is exactly as secret as
+           that request: its token runs back through the stall to the drive,
+           which carries the payload and the guard. *)
         | _ => false
         end in
       (* If node depends on secrets it is tainted *)

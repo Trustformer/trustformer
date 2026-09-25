@@ -1011,6 +1011,106 @@ Section SchedulerSimulation.
       apply Helse. rewrite Hce. exact Hz.
   Qed.
 
+  (* The round-trip operators.  A stall and a sample both take their validity
+     from the node below them; a join takes the AND of its two arguments, and a
+     drive conjoins its argument with every literal on its path condition. *)
+  Lemma nrv_peel_stall (act: tfs_action sched) a_idx n lat arg pi
+        (ss: sched_sys_state) (input: sched_input_t) :
+    node_op act n = DFG_Stall lat arg ->
+    1 <= arg -> n < length (graph (build_dfg ctx act)) ->
+    rvalid act a_idx pi n ss input = Bits.ones 1 ->
+    rvalid act a_idx pi arg ss input = Bits.ones 1.
+  Proof.
+    intros Hop Ha1 Hnlen Hval.
+    assert (Han : arg < n)
+      by (apply (arg_lt_of_op act n arg Hnlen);
+          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args;
+          rewrite Hop; left; reflexivity).
+    rewrite (compile_stall_valid (build_dfg ctx act)
+               (get_tainted ctx (build_dfg ctx act))
+               (decl_facts ctx (build_dfg ctx act))
+               a_idx n lat arg (sample_bufs act a_idx) pi
+               (length (graph (build_dfg ctx act))) Hop
+               (not_sample_not_in_sample_bufs act a_idx n
+                  ltac:(unfold SchedulerSimulationBase.is_sample_of;
+                        rewrite Hop; reflexivity))
+               ltac:(lia)) in Hval.
+    exact (nrv_peel_refuel act a_idx arg pi ss input Ha1 ltac:(lia) Hval).
+  Qed.
+  Lemma nrv_peel_join (act: tfs_action sched) a_idx n a b pi
+        (ss: sched_sys_state) (input: sched_input_t) :
+    node_op act n = DFG_Join a b ->
+    1 <= a -> 1 <= b -> n < length (graph (build_dfg ctx act)) ->
+    rvalid act a_idx pi n ss input = Bits.ones 1 ->
+    rvalid act a_idx pi a ss input = Bits.ones 1
+    /\ rvalid act a_idx pi b ss input = Bits.ones 1.
+  Proof.
+    intros Hop Ha1 Hb1 Hnlen Hval.
+    assert (Han : a < n)
+      by (apply (arg_lt_of_op act n a Hnlen);
+          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args;
+          rewrite Hop; left; reflexivity).
+    assert (Hbn : b < n)
+      by (apply (arg_lt_of_op act n b Hnlen);
+          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args;
+          rewrite Hop; right; left; reflexivity).
+    rewrite (compile_join_valid (build_dfg ctx act)
+               (get_tainted ctx (build_dfg ctx act))
+               (decl_facts ctx (build_dfg ctx act))
+               a_idx n a b (sample_bufs act a_idx) pi
+               (length (graph (build_dfg ctx act))) Hop
+               (not_sample_not_in_sample_bufs act a_idx n
+                  ltac:(unfold SchedulerSimulationBase.is_sample_of;
+                        rewrite Hop; reflexivity))
+               ltac:(lia)) in Hval.
+    rewrite valid_and_eval in Hval.
+    destruct (bits1_and_split _ _ Hval) as [Hav Hbv].
+    split.
+    - exact (nrv_peel_refuel act a_idx a pi ss input Ha1 ltac:(lia) Hav).
+    - exact (nrv_peel_refuel act a_idx b pi ss input Hb1 ltac:(lia) Hbv).
+  Qed.
+
+  Lemma nrv_peel_drive (act: tfs_action sched) a_idx n p arg en pi
+        (ss: sched_sys_state) (input: sched_input_t) :
+    node_op act n = DFG_Drive p arg en ->
+    1 <= arg -> n < length (graph (build_dfg ctx act)) ->
+    rvalid act a_idx pi n ss input = Bits.ones 1 ->
+    rvalid act a_idx pi arg ss input = Bits.ones 1.
+  Proof.
+    intros Hop Ha1 Hnlen Hval.
+    assert (Han : arg < n)
+      by (apply (arg_lt_of_op act n arg Hnlen);
+          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args;
+          rewrite Hop; left; reflexivity).
+    rewrite (compile_drive_valid (build_dfg ctx act)
+               (get_tainted ctx (build_dfg ctx act))
+               (decl_facts ctx (build_dfg ctx act))
+               a_idx n p arg en (sample_bufs act a_idx) pi
+               (length (graph (build_dfg ctx act))) Hop
+               (not_sample_not_in_sample_bufs act a_idx n
+                  ltac:(unfold SchedulerSimulationBase.is_sample_of;
+                        rewrite Hop; reflexivity))
+               ltac:(lia)) in Hval.
+    (* peel the guard conjuncts off the fold, left to right *)
+    assert (Hfold : forall (gs: list lit)
+                        (base: @tf_expr (tfs_states sched) si_var o_var),
+              eval1 (fold_right (fun l acc =>
+                       valid_expr_and ctx bneeds
+                         (snd (compile_dfg_expr_at ctx bneeds pi
+                                 (pred (length (graph (build_dfg ctx act))))
+                                 a_idx (build_dfg ctx act) (fst l)
+                                 (sample_bufs act a_idx))) acc)
+                       base gs) ss input = Bits.ones 1 ->
+              eval1 base ss input = Bits.ones 1).
+    { induction gs as [| l rest IHgs]; intros base Hb; cbn [fold_right] in Hb;
+        [ exact Hb | ].
+      rewrite valid_and_eval in Hb.
+      destruct (bits1_and_split _ _ Hb) as [_ Hrest].
+      exact (IHgs base Hrest). }
+    exact (nrv_peel_refuel act a_idx arg pi ss input Ha1 ltac:(lia)
+             (Hfold en _ Hval)).
+  Qed.
+
   Section DFGSem.
     Context (act: tfs_action sched)
             (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
