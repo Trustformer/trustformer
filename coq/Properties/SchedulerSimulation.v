@@ -5964,7 +5964,13 @@ Section SchedulerSimulation.
     Bits.to_nat ((fst (run_n t act input resp ss0)).[tf_dfg_b a_idx t_idx]) = 0 ->
     eval1 (buf_gate act a_idx t_idx) (run_n t act input resp ss0)
       (sched_input input (resp t)) = Bits.ones 1 ->
-    eval1 (drive_pulse act a_idx d) (run_n t act input resp ss0)
+    chain_gate ctx (build_dfg ctx act) d = Some (aa, tok)
+    /\ eval1 (snd (compile_dfg_expr ctx bneeds
+            (length (graph (build_dfg ctx act))) a_idx
+            (build_dfg ctx act) aa
+            (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+         (run_n t act input resp ss0) (sched_input input (resp t)) = Bits.ones 1
+    /\ eval1 (drive_pulse act a_idx d) (run_n t act input resp ss0)
       (sched_input input (resp t)) <> Bits.zero
     /\ eval1 (snd (compile_dfg_expr ctx bneeds
             (length (graph (build_dfg ctx act))) a_idx
@@ -6296,7 +6302,7 @@ Section SchedulerSimulation.
                      Hd1 Hdlen (length (graph (build_dfg ctx act)))
                      (pred (length (graph (build_dfg ctx act)))) Hdlen ltac:(lia)).
           exact Hdv. }
-    split; [| exact Hdval ].
+    split; [ exact Hcg | split; [ exact Hvgate | split; [| exact Hdval ]]].
     rewrite (drive_pulse_ones act a_idx d aa tok p arg en
                (run_n t act input resp ss0) (sched_input input (resp t))
                Hd2op Hcg Hen_ones Hvgate Hvfirst).
@@ -6852,7 +6858,49 @@ Section SchedulerSimulation.
     (forall i, 1 <= i <= M -> ~ done_set (run_n i act input resp ss0)) ->
     requests_sent act a_idx input resp ss0 M.
   Proof.
-  Admitted.
+    intros Halign Hlen Hz0 Hpre.
+    intros n_idx p tok en d j Hsamp Hsd Hgd Hjm Hvj HvSj.
+    destruct (sample_wait_window act a_idx input resp ss0 M n_idx p tok en j
+                Halign Hlen Hz0 Hpre Hsamp Hjm Hvj HvSj)
+      as [t [aa [t_idx [m0 [msz [Htok [Htvn [Hta [Htidx
+         [Htj [Htime [Hct [Hgt Hnzc]]]]]]]]]]]]].
+    destruct (drive_fires_at_wait_start act a_idx input resp ss0 M n_idx p tok en d
+                aa t_idx m0 msz t Halign Hlen Hz0 Hpre Hsamp Hsd Hgd Htok Htvn
+                Hta Htidx ltac:(lia) Hct Hgt)
+      as [Hcg [Hvgate [Hpulse Hdval]]].
+    destruct (sample_has_drive act (vreg_nid a_idx n_idx) p tok en Hsamp)
+      as [d2 [arg_d [Hsd2 Hd2op]]].
+    assert (Hd2 : d2 = d).
+    { rewrite Hsd in Hsd2. injection Hsd2 as He. symmetry. exact He. }
+    subst d2.
+    assert (Hstl : stall_lat_of act (vreg_nid a_idx t_idx)
+                   = Some (ip_lat (tfs_spec_ip ctx p))).
+    { unfold SchedulerSimulationBase.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
+    destruct (stall_counter_wide act a_idx t_idx (ip_lat (tfs_spec_ip ctx p))
+                Halign Hstl) as [_ Hwide].
+    exists t.
+    split; [ exact Htj | split; [ exact Hpulse | split; [ exact Hdval | split ]]].
+    - intros mm Hmin Hmd w Hw1 Hw2.
+      destruct (Nat.eq_dec mm d) as [-> | Hne].
+      + assert (Hnzb : (fst (run_n w act input resp ss0)).[tf_dfg_b a_idx t_idx]
+                       <> Bits.zero).
+        { intro Hc. apply (Hnzc w Hw1 Hw2). rewrite Hc.
+          change (@Bits.zero (ss_sz (tf_dfg_b a_idx t_idx)))
+            with (Bits.of_nat (ss_sz (tf_dfg_b a_idx t_idx)) 0).
+          apply Bits.to_nat_of_nat. lia. }
+        exact (drive_pulse_zero_of_counter act a_idx d aa tok m0 msz t_idx
+                 (run_n w act input resp ss0) (sched_input input (resp w))
+                 Halign Hcg Hta Htidx Hnzb).
+      + assert (Hmlt : mm < d) by lia.
+        assert (Hwl : w < t + ip_lat (tfs_spec_ip ctx p)) by lia.
+        assert (HwM : w <= M) by lia.
+        exact (no_earlier_drive act a_idx p (vreg_nid a_idx n_idx) tok en d aa mm arg_d
+                 input resp ss0 M t w Halign Hlen Hz0 Hpre Hsamp Hsd Hd2op Hgd Hcg
+                 Hvgate Hmin Hmlt Hw1 Hwl HwM).
+    - assert (Hbr : ip_lat (tfs_ip sched p) = ip_lat (tfs_spec_ip ctx p))
+        by reflexivity.
+      rewrite Hbr. exact Htime.
+  Qed.
   (* PHASE 3 (correctness at done): once the done flag is set, the mapped
      final states and outputs match the one-shot source evaluation. *)
   Lemma scheduler_done_correct :
