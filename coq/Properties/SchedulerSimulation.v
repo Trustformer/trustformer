@@ -162,6 +162,7 @@ Section SchedulerSimulation.
   Local Notation drive_at_mono := (SchedulerSimulationBase.drive_at_mono ctx).
   Local Notation drive_nodes_complete := (SchedulerSimulationBase.drive_nodes_complete ctx cost_limit).
   Local Notation drive_nodes_desc := (SchedulerSimulationBase.drive_nodes_desc ctx cost_limit).
+  Local Notation drive_has_sample := (SchedulerSimulationBase.drive_has_sample ctx cost_limit).
   Local Notation drive_nodes_spec := (SchedulerSimulationBase.drive_nodes_spec ctx cost_limit).
   Local Notation drive_nodes_split := (SchedulerSimulationBase.drive_nodes_split ctx cost_limit).
   Local Notation drive_payload := (SchedulerSimulationBase.drive_payload ctx cost_limit).
@@ -6453,6 +6454,163 @@ Section SchedulerSimulation.
     exact (stall_saturated_run act a_idx t_idx input resp ss0
              (ip_lat (tfs_spec_ip ctx p)) u'' (w - u'')
              Halign Hstlat ltac:(intros i Hi; apply Hpre; lia) Hcnt).
+  Qed.
+
+  (* NO EARLIER CALL TAKES THE PORT while this one is in flight.  Our own gate
+     waits on the pending set, so that call's answer had already landed, and a
+     finished wait leaves the counter off zero. *)
+  Lemma no_earlier_drive
+        (act: tfs_action sched) a_idx (p: p_var) samp tok en d aa mm arg_d
+        (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) M t w :
+    act_idx_aligned act a_idx ->
+    1 < length (graph (build_dfg ctx act)) ->
+    (forall x, zeroed_at_start x -> (fst ss0).[x] = Bits.zero) ->
+    (forall i, 1 <= i <= M -> ~ done_set (run_n i act input resp ss0)) ->
+    node_op act samp = DFG_Sample p tok en ->
+    sample_drive act samp = Some d ->
+    node_op act d = DFG_Drive p arg_d en ->
+    guard_holds act a_idx (run_n M act input resp ss0)
+      (sched_input input (resp M)) en ->
+    chain_gate ctx (build_dfg ctx act) d = Some (aa, tok) ->
+    eval1 (snd (compile_dfg_expr ctx bneeds
+                  (length (graph (build_dfg ctx act))) a_idx
+                  (build_dfg ctx act) aa
+                  (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+      (run_n t act input resp ss0) (sched_input input (resp t)) = Bits.ones 1 ->
+    In mm (drive_nodes ctx (build_dfg ctx act) p) ->
+    mm < d ->
+    t < w -> w < t + ip_lat (tfs_spec_ip ctx p) -> w <= M ->
+    eval1 (drive_pulse act a_idx mm) (run_n w act input resp ss0)
+      (sched_input input (resp w)) = Bits.zero.
+  Proof.
+    intros Halign Hlen Hz0 Hpre Hsamp Hsd Hdop Hgd Hcg Hvgate Hmin Hmd Htw HwL HwM.
+    assert (Hlen0 : 0 < length (graph (build_dfg ctx act))) by lia.
+    assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
+      by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
+    destruct (drive_nodes_spec act p mm Hmin) as [Hmlen [arg_m [en_m Hmmop]]].
+    destruct (guards_disjoint en_m en) eqn:Hdis.
+    - exact (excl_drive_pulse_zero act a_idx p en mm arg_m en_m input resp ss0 w M
+               Halign Hlen Hzv Hpre HwM Hmmop Hdis Hgd).
+    - (* the earlier call shares a path with ours, so we waited for it *)
+      destruct (drive_has_sample act mm p arg_m en_m Hmmop)
+        as [samp_m [tok_m [Hsm Hsdm]]].
+      assert (Hsmd : samp_m < d)
+        by exact (drive_after_sample act p samp_m tok_m en_m mm d p arg_d en
+                    Hsm Hsdm Hdop Hmd).
+      assert (Hdis' : guards_disjoint en en_m = false)
+        by (rewrite guards_disjoint_sym; exact Hdis).
+      destruct (call_sequenced_join act p d arg_d en samp_m tok_m en_m
+                  Hdop Hsm Hsmd Hdis') as [j2 [prev [Hjop Hcov]]].
+      destruct (chain_gate_is_join act d j2 prev aa tok p arg_d en Hdop Hjop Hcg)
+        as [prev' Haaop].
+      assert (Hpp : prev' = prev).
+      { pose proof (join_nid_succ act j2 d prev p arg_d en Hjop Hdop) as H1.
+        pose proof (join_nid_succ act aa d prev' p arg_d en Haaop Hdop) as H2.
+        assert (Haj : aa = j2) by lia.
+        rewrite Haj in Haaop. rewrite Hjop in Haaop.
+        injection Haaop as Hp. symmetry. exact Hp. }
+      subst prev'.
+      (* the pending tree is valid at [t] *)
+      destruct (join_valid_args act a_idx input resp ss0 M aa d prev t
+                  Halign Hlen Hz0 Hpre Haaop ltac:(lia) Hvgate) as [_ Hprevv].
+      destruct Hcov as [s' [Hpl [Hle Hs'shape]]].
+      assert (Haalen : aa < length (graph (build_dfg ctx act)))
+        by (apply node_op_range; rewrite Haaop; discriminate).
+      assert (Hprevlen : prev < length (graph (build_dfg ctx act))).
+      { pose proof Haaop as Haaop'. unfold SchedulerSimulationBase.node_op in Haaop'.
+        pose proof (args_lt_fwd act _ (nth_In _ _ Haalen) prev
+                      ltac:(unfold get_args; rewrite Haaop'; right; left; reflexivity))
+          as Hlt.
+        rewrite (node_nid_at act aa Haalen) in Hlt. lia. }
+      (* the covering leaf is a sample, and it has latched *)
+      assert (Hs'sam : is_sample_of act s' = true
+                       /\ (s' = samp_m \/ exists tk'' en'',
+                             node_op act s' = DFG_Sample p tk'' en''
+                             /\ guards_disjoint en_m en'' = false)).
+      { destruct Hs'shape as [-> | [nd [tk [en'' [Hin [Hid [Hop Hdj]]]]]]].
+        - split; [| left; reflexivity ].
+          unfold SchedulerSimulationBase.is_sample_of,
+                 SchedulerSimulationBase.node_op in *.
+          rewrite Hsm. reflexivity.
+        - destruct (node_at_nid act nd Hin) as [_ Hnth].
+          assert (Hs'op : node_op act s' = DFG_Sample p tk en'')
+            by (unfold SchedulerSimulationBase.node_op; rewrite <- Hid, Hnth; exact Hop).
+          split; [ unfold SchedulerSimulationBase.is_sample_of;
+                   rewrite Hs'op; reflexivity
+                 | right; exists tk, en''; split; [ exact Hs'op | exact Hdj ]]. }
+      destruct Hs'sam as [Hs'is Hs'alt].
+      destruct (sample_slot act a_idx s' Halign Hs'is)
+        as [q0 [qsz [s'_idx [Hass' [Hidx' Hvn']]]]].
+      assert (Hv_s' : (fst (run_n t act input resp ss0)).[tf_dfg_v a_idx s'_idx]
+                      = Bits.ones 1).
+      { exact (pleaf_valid_ones act a_idx input resp ss0 Halign Hzv t
+                 ltac:(intros i Hi; apply Hpre; lia) prev s' Hpl s'_idx
+                 (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
+                 (length (graph (build_dfg ctx act))) q0 qsz Hs'is Hass' Hidx'
+                 (fun n e H => H) Hprevlen Hprevv). }
+      (* so ours' predecessor has latched too *)
+      assert (Hsm_is : is_sample_of act samp_m = true)
+        by (unfold SchedulerSimulationBase.is_sample_of; rewrite Hsm; reflexivity).
+      destruct (sample_slot act a_idx samp_m Halign Hsm_is)
+        as [q1 [qsz1 [sm_idx [Hass1 [Hidx1 Hvn1]]]]].
+      assert (Hv_sm : (fst (run_n t act input resp ss0)).[tf_dfg_v a_idx sm_idx]
+                      = Bits.ones 1).
+      { destruct Hs'alt as [Heq | [tk'' [en'' [Hs'op Hdj]]]].
+        - assert (Hii : s'_idx = sm_idx).
+          { apply (vreg_nid_inj act a_idx _ _ Halign).
+            rewrite Hvn', Hvn1, Heq. reflexivity. }
+          rewrite <- Hii. exact Hv_s'.
+        - apply (samples_ordered_holds act a_idx input resp ss0 Halign Hz0 Hlen
+                   p sm_idx s'_idx tok_m en_m tk'' en'' t
+                   ltac:(intros i Hi; apply Hpre; lia));
+            [ rewrite Hvn1; exact Hsm
+            | rewrite Hvn'; exact Hs'op
+            | rewrite Hvn1, Hvn'; exact Hle
+            | right; exact Hdj
+            | exact Hv_s' ]. }
+      (* a finished wait leaves the counter off zero *)
+      destruct (stall_token_slot act a_idx p samp_m tok_m en_m Halign Hsm)
+        as [m1 [msz1 [tm_idx [Hta1 [Htidx1 Htvn1]]]]].
+      assert (Hcnt : (fst (run_n w act input resp ss0)).[tf_dfg_b a_idx tm_idx]
+                     = Bits.of_nat (ss_sz (tf_dfg_b a_idx tm_idx))
+                         (pred (ip_lat (tfs_spec_ip ctx p)))).
+      { apply (latched_sample_saturated act a_idx input resp ss0 M sm_idx p tok_m en_m
+                 tm_idx t w Halign Hlen Hz0 Hpre
+                 ltac:(rewrite Hvn1; exact Hsm) Htvn1 Hv_sm ltac:(lia) HwM). }
+      assert (Hnz : (fst (run_n w act input resp ss0)).[tf_dfg_b a_idx tm_idx]
+                    <> Bits.zero).
+      { rewrite Hcnt.
+        assert (Hstl : stall_lat_of act (vreg_nid a_idx tm_idx)
+                       = Some (ip_lat (tfs_spec_ip ctx p))).
+        { destruct (sample_tok_is_stall act samp_m p tok_m en_m Hsm) as [am Htokm].
+          unfold SchedulerSimulationBase.stall_lat_of. rewrite Htvn1, Htokm. reflexivity. }
+        destruct (stall_counter_wide act a_idx tm_idx (ip_lat (tfs_spec_ip ctx p))
+                    Halign Hstl) as [_ Hwide].
+        intro Hc.
+        assert (Hz : Bits.to_nat (Bits.of_nat (ss_sz (tf_dfg_b a_idx tm_idx))
+                       (pred (ip_lat (tfs_spec_ip ctx p)))) = 0).
+        { rewrite Hc.
+          change (@Bits.zero (ss_sz (tf_dfg_b a_idx tm_idx)))
+            with (Bits.of_nat (ss_sz (tf_dfg_b a_idx tm_idx)) 0).
+          apply Bits.to_nat_of_nat. lia. }
+        rewrite (Bits.to_nat_of_nat _ _ Hwide) in Hz. lia. }
+      (* and the pulse reads that counter *)
+      destruct (sample_tok_is_stall act samp_m p tok_m en_m Hsm) as [am Htokm].
+      assert (Hdhm : sample_drive_head act p am = Some mm).
+      { unfold SchedulerSimulationBase.sample_drive in Hsdm.
+        rewrite Hsm, Htokm in Hsdm. exact Hsdm. }
+      assert (HCGm : exists g h, chain_gate ctx (build_dfg ctx act) mm = Some (g, h)).
+      { destruct (sample_drive_head_shape act p am mm Hdhm)
+          as [[Ham _] | [prevm [argm2 [enm2 [Hjm Hdm]]]]].
+        - subst am. exact (chain_gate_some_of_stall act mm tok_m
+                             (ip_lat (tfs_spec_ip ctx p)) Htokm).
+        - exact (chain_gate_some act mm am prevm p argm2 enm2 Hdm Hjm). }
+      destruct HCGm as [gm [hm Hcgm]].
+      pose proof (chain_gate_stall_is_token act p samp_m tok_m en_m mm gm hm
+                    Hsm Hsdm Hcgm) as Hhm. subst hm.
+      exact (drive_pulse_zero_of_counter act a_idx mm gm tok_m m1 msz1 tm_idx
+               (run_n w act input resp ss0) (sched_input input (resp w))
+               Halign Hcgm Hta1 Htidx1 Hnz).
   Qed.
 
   (* THE WAIT A LATCHED SAMPLE ENDS.  Its token is a stall; the cycle that stall
