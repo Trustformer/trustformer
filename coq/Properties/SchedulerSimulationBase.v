@@ -1078,6 +1078,33 @@ Section SchedulerSimulation.
   Definition is_sample_of (act: tfs_action sched) (n: nid_t) : bool :=
     match node_op act n with DFG_Sample _ _ _ => true | _ => false end.
 
+  (* A sample's recorded path condition: its latch is gated on it. *)
+  Definition sample_en_of (act: tfs_action sched) (n: nid_t)
+    : option (list (nid_t * bool)) :=
+    match node_op act n with DFG_Sample _ _ en => Some en | _ => None end.
+
+  Lemma sample_en_of_is_sample (act: tfs_action sched) (n: nid_t) en :
+    sample_en_of act n = Some en -> is_sample_of act n = true.
+  Proof.
+    unfold sample_en_of, is_sample_of.
+    destruct (node_op act n); try discriminate; reflexivity.
+  Qed.
+
+  Lemma is_sample_sample_en (act: tfs_action sched) (n: nid_t) :
+    is_sample_of act n = true -> exists en, sample_en_of act n = Some en.
+  Proof.
+    unfold sample_en_of, is_sample_of.
+    destruct (node_op act n); try discriminate.
+    intros _. eexists. reflexivity.
+  Qed.
+
+  Lemma not_sample_sample_en (act: tfs_action sched) (n: nid_t) :
+    is_sample_of act n = false -> sample_en_of act n = None.
+  Proof.
+    unfold sample_en_of, is_sample_of.
+    destruct (node_op act n); try discriminate; reflexivity.
+  Qed.
+
   (* The node a sample's REQUEST was built from: through its token, through the
      stall when the IP declares a latency, and through the ordering join when
      the call was sequenced behind an earlier one.  This mirrors what
@@ -1533,21 +1560,57 @@ Section SchedulerSimulation.
   (* A plain buffer RECOMPUTES, a sample LATCHES as its validity rises, and a
      stall COUNTS to [lat-1].  The three shapes are why the buffer lemmas below
      cannot treat a buffer as caching the value of its node. *)
-  Definition buf_value_expr (act: tfs_action sched) a_idx n_idx
-      (sz: nat) (expr valid: @tf_expr (tfs_states sched) si_var o_var) (n: nid_t)
+  Definition buf_value_expr (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) n_idx
+      (sz: nat) (expr valid: @tf_expr (tfs_states sched) si_var o_var)
+      (buffers: list (nid_t * (nat * sz_t))) (n: nid_t)
       : @tf_expr (tfs_states sched) si_var o_var :=
+    let dfg := build_dfg ctx act in
     let cnt := tf_svar (tf_dfg_b a_idx n_idx) in
+    let sbufs := filter (fun '(m, _) =>
+                           match op (nth m (graph dfg)
+                                       {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+                           | DFG_Sample _ _ _ => true
+                           | _ => false
+                           end) buffers in
     match stall_lat_of act n with
     | Some l =>
         tf_expr_if (tf_op2 tf_and valid
                       (tf_op1 tf_not (tf_op2 (tf_cmp sz tf_eq) cnt (tf_const (pred l)))))
           (tf_op2 tf_add cnt (tf_const 1)) cnt
     | None =>
-        if is_sample_of act n
-        then tf_expr_if (tf_op2 tf_and valid
-                           (tf_op1 tf_not (tf_svar (tf_dfg_v a_idx n_idx))))
-               expr cnt
-        else expr
+        match sample_en_of act n with
+        | Some en =>
+            tf_expr_if (tf_op2 tf_and
+                          (tf_op2 tf_and valid
+                             (tf_op1 tf_not (tf_svar (tf_dfg_v a_idx n_idx))))
+                          (guard_expr ctx bneeds (get_tainted ctx dfg)
+                             (decl_facts ctx dfg) (length (graph dfg))
+                             a_idx dfg sbufs en))
+              expr cnt
+        | None => expr
+        end
+    end.
+
+  (* Mirrors the guard [compile_dfg_buffers] ANDs into a sample's latch enable.
+     Sample-only buffers, as a drive's guard has, so it reads a call result
+     from that call's latch. *)
+  Definition buf_guard_expr (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (buffers: list (nid_t * (nat * sz_t))) (n: nid_t)
+      : @tf_expr (tfs_states sched) si_var o_var :=
+    let dfg := build_dfg ctx act in
+    let sbufs := filter (fun '(m, _) =>
+                           match op (nth m (graph dfg)
+                                       {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+                           | DFG_Sample _ _ _ => true
+                           | _ => false
+                           end) buffers in
+    match op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+    | DFG_Sample _ _ en =>
+        guard_expr ctx bneeds (get_tainted ctx dfg) (decl_facts ctx dfg)
+          (length (graph dfg)) a_idx dfg sbufs en
+    | _ => tf_const 1
     end.
 
   Definition buf_valid_expr (act: tfs_action sched) a_idx n_idx
@@ -1576,14 +1639,14 @@ Section SchedulerSimulation.
      the increment from wrapping. *)
   Lemma stall_counter_step
         (act: tfs_action sched) a_idx n_idx
-        (ss: sched_sys_state) (input: sched_input_t) l expr valid :
+        (ss: sched_sys_state) (input: sched_input_t) l expr valid buffers :
     stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
     pred l < pow2 (ss_sz (tf_dfg_b a_idx n_idx)) ->
     Bits.to_nat ((fst ss).[tf_dfg_b a_idx n_idx]) <= pred l ->
     Bits.to_nat
       (eval_st (tf_dfg_b a_idx n_idx)
          (buf_value_expr act a_idx n_idx (ss_sz (tf_dfg_b a_idx n_idx))
-            expr valid (vreg_nid a_idx n_idx)) ss input)
+            expr valid buffers (vreg_nid a_idx n_idx)) ss input)
     = (if andb (if beq_dec (eval1 valid ss input) Bits.zero then false else true)
                (negb (Nat.eqb (Bits.to_nat ((fst ss).[tf_dfg_b a_idx n_idx])) (pred l)))
        then S (Bits.to_nat ((fst ss).[tf_dfg_b a_idx n_idx]))
@@ -1655,7 +1718,8 @@ Section SchedulerSimulation.
                       (build_dfg ctx act) n buffers' in
     let sz := snd (snd entry) in
     In (tf_assign (tf_dfg_b a_idx n_idx)
-          (buf_value_expr act a_idx n_idx sz (fst compiled) (snd compiled) n))
+          (buf_value_expr act a_idx n_idx sz (fst compiled) (snd compiled)
+             buffers n))
        (compile_dfg_buffers ctx bneeds (index_to_nat a_idx)
           (build_dfg ctx act) buffers)
     /\
@@ -1870,6 +1934,27 @@ Section SchedulerSimulation.
     destruct Hin as [-> | Hin].
     - rewrite Hz. apply bits1_and_zero_l.
     - rewrite (IH Hin). apply bits1_and_zero_r.
+  Qed.
+
+  (* A conjunction that is up has every conjunct up. *)
+  Lemma guard_expr_split (act: tfs_action sched) a_idx sbufs en
+        (ss: sched_sys_state) (input: sched_input_t) :
+    eval1 (gexpr act a_idx sbufs en) ss input <> Bits.zero ->
+    forall l, In l en -> eval1 (guard_lit act a_idx sbufs l) ss input <> Bits.zero.
+  Proof.
+    rewrite guard_expr_fold.
+    induction en as [| a en IH]; intros Hnz l Hin; [ destruct Hin |].
+    cbn [fold_right tf_eval_expr] in Hnz.
+    destruct (bits1_cases (eval1 (guard_lit act a_idx sbufs a) ss input))
+      as [Ha | Ha];
+      [| exfalso; rewrite Ha, bits1_and_zero_l in Hnz; exact (Hnz eq_refl) ].
+    destruct (bits1_cases
+                (eval1 (fold_right
+                          (fun m acc => tf_op2 tf_and (guard_lit act a_idx sbufs m) acc)
+                          (tf_const 1) en) ss input)) as [Hr | Hr];
+      [| exfalso; rewrite Hr, bits1_and_zero_r in Hnz; exact (Hnz eq_refl) ].
+    destruct Hin as [-> | Hin]; [ rewrite Ha; exact ones1_neq_zero |].
+    exact (IH ltac:(rewrite Hr; exact ones1_neq_zero) l Hin).
   Qed.
 
   (* Guards that disagree on a literal cannot both be up, which is how two
@@ -11084,7 +11169,7 @@ Section SchedulerSimulation.
     let sz := snd (snd entry) in
     (fst (sched_step act ss input)).[tf_dfg_b a_idx n_idx]
       = eval_st (tf_dfg_b a_idx n_idx)
-          (buf_value_expr act a_idx n_idx sz (fst compiled) (snd compiled) n) ss input
+          (buf_value_expr act a_idx n_idx sz (fst compiled) (snd compiled) buffers n) ss input
     /\
     (fst (sched_step act ss input)).[tf_dfg_v a_idx n_idx]
       = eval_st (tf_dfg_v a_idx n_idx)
@@ -11110,7 +11195,8 @@ Section SchedulerSimulation.
                                (buf_value_expr act a_idx n_idx
                                   (snd (snd (nth (index_to_nat n_idx)
                                      (nth (index_to_nat a_idx) bneeds []) (0, (0, 0)))))
-                                  expr valid (vreg_nid a_idx n_idx)))
+                                  expr valid (nth (index_to_nat a_idx) bneeds [])
+                                  (vreg_nid a_idx n_idx)))
               (fst (Contract.tfs_schedule sched act))).
     { rewrite Hops. right. apply in_or_app. left. exact Hvalue. }
     assert (Hvalid_ops : In (tf_assign (tf_dfg_v a_idx n_idx)
@@ -11265,12 +11351,13 @@ Section SchedulerSimulation.
     destruct (stall_lat_of act (vreg_nid a_idx n_idx)) as [l |] eqn:Hst.
     { exfalso. unfold stall_lat_of, is_sample_of in Hst, Hsam.
       destruct (node_op act (vreg_nid a_idx n_idx)); discriminate. }
-    rewrite Hsam. cbn [tf_eval_expr]. rewrite !convert_same.
+    destruct (is_sample_sample_en act (vreg_nid a_idx n_idx) Hsam) as [en Hen].
+    rewrite Hen. cbn [tf_eval_expr]. rewrite !convert_same.
     (* the validity bit comes FROM the goal, and then the guard reads zero *)
     match goal with
     | |- context [ Bits.neg ?x ] => replace x with (Bits.ones 1) by (symmetry; exact Hv)
     end.
-    rewrite bits1_and_not_ones, beq_dec_refl. reflexivity.
+    rewrite bits1_and_not_ones, bits1_and_zero_l, beq_dec_refl. reflexivity.
   Qed.
 
   (* A validity bit that RISES says its gate fired on the cycle before: the
@@ -11294,6 +11381,92 @@ Section SchedulerSimulation.
       [| exact Hv ].
     cbn [tf_eval_expr] in Hv.
     exact (proj1 (bits1_and_split _ _ Hv)).
+  Qed.
+
+  (* And the other way: a validity bit still down says its gate read zero. *)
+  Lemma buffer_gate_zero
+        (act: tfs_action sched) a_idx n_idx (ss: sched_sys_state) (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
+    ~ done_set (sched_step act ss input) ->
+    is_sample_of act (vreg_nid a_idx n_idx) = true ->
+    (fst (sched_step act ss input)).[tf_dfg_v a_idx n_idx] = Bits.zero ->
+    eval1 (buf_gate act a_idx n_idx) ss input = Bits.zero.
+  Proof.
+    intros Halign Hnd Hsam Hv.
+    pose proof (buffer_after_cycle act a_idx n_idx ss input Halign Hnd) as Hba.
+    cbv zeta in Hba. destruct Hba as [_ Hvalid].
+    rewrite Hvalid in Hv.
+    change (fst (nth (index_to_nat n_idx)
+                   (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))
+      with (vreg_nid a_idx n_idx) in Hv.
+    unfold buf_valid_expr in Hv.
+    destruct (stall_lat_of act (vreg_nid a_idx n_idx)) as [l |] eqn:Hst;
+      [ exfalso; unfold stall_lat_of, is_sample_of in Hst, Hsam;
+        destruct (node_op act (vreg_nid a_idx n_idx)); discriminate
+      | exact Hv ].
+  Qed.
+  Lemma sample_buffer_zero_step
+        (act: tfs_action sched) a_idx n_idx (ss: sched_sys_state)
+        (input: sched_input_t) :
+    act_idx_aligned act a_idx ->
+    ~ done_set (sched_step act ss input) ->
+    is_sample_of act (vreg_nid a_idx n_idx) = true ->
+    (fst (sched_step act ss input)).[tf_dfg_v a_idx n_idx] = Bits.zero ->
+    (fst (sched_step act ss input)).[tf_dfg_b a_idx n_idx]
+    = (fst ss).[tf_dfg_b a_idx n_idx].
+  Proof.
+    intros Halign Hnd Hsam HvS.
+    pose proof (buffer_gate_zero act a_idx n_idx ss input Halign Hnd Hsam HvS)
+      as Hgz.
+    pose proof (buffer_after_cycle act a_idx n_idx ss input Halign Hnd) as Hba.
+    cbv zeta in Hba. destruct Hba as [Hvalue _]. rewrite Hvalue.
+    change (fst (nth (index_to_nat n_idx)
+                   (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))
+      with (vreg_nid a_idx n_idx).
+    unfold buf_value_expr.
+    destruct (stall_lat_of act (vreg_nid a_idx n_idx)) as [l |] eqn:Hst.
+    { exfalso. unfold stall_lat_of,
+                      is_sample_of in Hst, Hsam.
+      destruct (node_op act (vreg_nid a_idx n_idx)); discriminate. }
+    destruct (is_sample_sample_en act
+                (vreg_nid a_idx n_idx) Hsam) as [en Hen].
+    rewrite Hen. cbn [tf_eval_expr]. rewrite !convert_same.
+    (* the gate read zero, so the enable is zero whatever the guard says *)
+    rewrite Hgz.
+    rewrite bits1_and_zero_l.
+    rewrite beq_dec_refl. reflexivity.
+  Qed.
+
+  (* The twin that matters for an untaken arm: the guard reads zero, so the
+     latch enable is zero whatever the gate says. *)
+  Lemma sample_buffer_guard_zero_step
+        (act: tfs_action sched) a_idx n_idx (ss: sched_sys_state)
+        (input: sched_input_t) en :
+    act_idx_aligned act a_idx ->
+    ~ done_set (sched_step act ss input) ->
+    sample_en_of act (vreg_nid a_idx n_idx) = Some en ->
+    eval1 (gexpr act a_idx (sample_bufs act a_idx) en) ss input = Bits.zero ->
+    (fst (sched_step act ss input)).[tf_dfg_b a_idx n_idx]
+    = (fst ss).[tf_dfg_b a_idx n_idx].
+  Proof.
+    intros Halign Hnd Hen Hgz.
+    pose proof (buffer_after_cycle act a_idx n_idx ss input Halign Hnd) as Hba.
+    cbv zeta in Hba. destruct Hba as [Hvalue _]. rewrite Hvalue.
+    change (fst (nth (index_to_nat n_idx)
+                   (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))
+      with (vreg_nid a_idx n_idx).
+    unfold buf_value_expr. cbv zeta.
+    destruct (stall_lat_of act (vreg_nid a_idx n_idx)) as [l |] eqn:Hst.
+    { exfalso. unfold stall_lat_of, sample_en_of in Hst, Hen.
+      destruct (node_op act (vreg_nid a_idx n_idx)); discriminate. }
+    rewrite Hen. cbn [tf_eval_expr]. rewrite !convert_same.
+    match goal with
+    | |- context [eval1 (gexpr act a_idx ?sb en) ss input] =>
+        replace (eval1 (gexpr act a_idx sb en) ss input) with (@Bits.zero 1)
+          by (symmetry; exact Hgz)
+    end.
+    rewrite bits1_and_zero_r.
+    rewrite beq_dec_refl. reflexivity.
   Qed.
 
   (* The downward twin, along the run: a validity bit that starts down and
@@ -11380,7 +11553,7 @@ Section SchedulerSimulation.
       assert (Hcnt : Bits.to_nat ((fst ss).[tf_dfg_b a_idx n_idx]) = pred l)
         by (rewrite Hreg; apply Bits.to_nat_of_nat; exact Hwide).
       apply (bits_to_nat_inj (ss_sz (tf_dfg_b a_idx n_idx))).
-      rewrite (stall_counter_step act a_idx n_idx ss input l _ _ Hst Hwide
+      rewrite (stall_counter_step act a_idx n_idx ss input l _ _ _ Hst Hwide
                  ltac:(lia)).
       rewrite (proj2 (Nat.eqb_eq _ _) Hcnt). cbn [negb].
       rewrite Bool.andb_false_r. reflexivity.
@@ -11394,7 +11567,7 @@ Section SchedulerSimulation.
           with (vreg_nid a_idx n_idx) in Hfz.
         exact Hfz.
       + (* a plain buffer: it recomputes the reference it already holds *)
-        unfold buf_value_expr. rewrite Hst, Hsam.
+        unfold buf_value_expr. rewrite Hst, (not_sample_sample_en act _ Hsam).
         rewrite (Hset n_idx Hst Hv). unfold node_ref_expr. symmetry.
         apply (compile_subst_valid act a_idx ss input Halign Hset
                  (filter (fun '(b_nid, _) =>
@@ -11503,7 +11676,7 @@ Section SchedulerSimulation.
                    (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))
       with (vreg_nid a_idx n_idx).
     apply (bits_to_nat_inj (ss_sz (tf_dfg_b a_idx n_idx))).
-    rewrite (stall_counter_step act a_idx n_idx ss input l _ _ Hst Hwide
+    rewrite (stall_counter_step act a_idx n_idx ss input l _ _ _ Hst Hwide
                ltac:(lia)).
     rewrite (proj2 (Nat.eqb_eq _ _) Hcnt). cbn [negb].
     rewrite Bool.andb_false_r, Hcnt. symmetry.
@@ -11795,7 +11968,7 @@ Section SchedulerSimulation.
                     (sched_input input (resp j)) Halign
                     ltac:(apply (Hnd (S j)); lia)) as Hba.
       cbv zeta in Hba. destruct Hba as [Hvalb _]. rewrite Hvalb.
-      apply (stall_counter_step act a_idx n_idx _ _ l _ _ Hst Hwide Hinv).
+      apply (stall_counter_step act a_idx n_idx _ _ l _ _ _ Hst Hwide Hinv).
     - intros j Hj. cbn beta. rewrite (Hadv j Hj).
       destruct (beq_dec (Bits.ones 1) Bits.zero) eqn:E; [| reflexivity].
       exfalso. apply ones1_neq_zero. exact (proj1 (beq_dec_iff _ _ _) E).
@@ -11837,7 +12010,7 @@ Section SchedulerSimulation.
                     (sched_input input (resp jj)) Halign
                     ltac:(apply (Hnd (S jj)); lia)) as Hba.
       cbv zeta in Hba. destruct Hba as [Hvalb _]. rewrite Hvalb.
-      apply (stall_counter_step act a_idx n_idx _ _ l _ _ Hst Hwide Hinv).
+      apply (stall_counter_step act a_idx n_idx _ _ l _ _ _ Hst Hwide Hinv).
   Qed.
 
   (* A stall whose counter has left zero began its wait at some earlier cycle,
@@ -11885,7 +12058,7 @@ Section SchedulerSimulation.
                     (sched_input input (resp j)) Halign
                     ltac:(apply (Hnd (S j)); lia)) as Hba.
       cbv zeta in Hba. destruct Hba as [Hvalb _]. rewrite Hvalb.
-      exact (stall_counter_step act a_idx n_idx _ _ l _ _ Hst Hwide Hinv). }
+      exact (stall_counter_step act a_idx n_idx _ _ l _ _ _ Hst Hwide Hinv). }
     intros k HK Hne.
     destruct (counter_started (ss_sz (tf_dfg_b a_idx n_idx)) (pred l) K b adv
                 Hwide Hz0 Hrec k HK Hne) as [t [Ht1 [Ht2 [Ht3 Ht4]]]].
@@ -12708,7 +12881,7 @@ Section SchedulerSimulation.
              change (fst (nth (index_to_nat m)
                             (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))
                with (vreg_nid a_idx m).
-             unfold buf_value_expr. rewrite Hns, Hsam.
+             unfold buf_value_expr. rewrite Hns, (not_sample_sample_en act _ Hsam).
              rewrite (compile_nobuf_step_stable act a_idx ssk input (resp k) (resp (S k)) Halign Hnd
                         (length (graph (build_dfg ctx act))) (vreg_nid a_idx m)
                         _ Hnlen (Hrk m [] Hsam Hv)).

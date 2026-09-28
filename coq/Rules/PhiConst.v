@@ -19,7 +19,7 @@ Import ListNotations.
 
 (* Distinctness is checked on the evaluated bitvectors: as naturals 0 and 2
    differ, but at width 1 they denote the same value. *)
-Definition phiconst_rule {s i o} : decl_rule s i o :=
+Definition phiconst_rule {s i o p} : decl_rule s i o p :=
   fun dfg =>
     flat_map
       (fun n =>
@@ -57,10 +57,19 @@ Section Soundness.
   Hint Extern 0 (FiniteType (tfs_outputs sched)) => exact (tfs_outputs_fin sched) : typeclass_instances.
 
   Local Notation input_t := (forall x : i_var, type_denote (tf_inputs_type i_sz x)).
+  Local Notation sched_input_t :=
+    (forall x : tfs_inputs sched, type_denote (tf_inputs_type (tfs_inputs_size sched) x)).
   Local Notation a_index := (Vect.index (length (buffer_needs ctx cost_limit))).
+  Local Notation rvalid act a_idx pi n ss input :=
+    (tf_eval_expr (tfs_states_size sched) (tfs_inputs_size sched)
+       (tfs_outputs_size sched) (szB := 1)
+       (snd (compile_dfg_expr_at ctx (buffer_needs ctx cost_limit) pi
+               (length (graph (build_dfg ctx act))) a_idx
+               (build_dfg ctx act) n (sample_bufs ctx cost_limit act a_idx)))
+       ss input) (only parsing).
 
   Theorem phiconst_rule_sound (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (i: decl_instance) :
+      (input: sched_input_t) (i: decl_instance) :
     List.In i (phiconst_rule (build_dfg ctx act)) ->
     instance_sound ctx cost_limit act a_idx input i.
   Proof.
@@ -71,14 +80,14 @@ Section Soundness.
     cbv zeta in Hi.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ] eqn:Hop;
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dp darg den | sp stok sen | ja jb | ] eqn:Hop;
       cbn [List.In] in Hi; try contradiction.
     destruct (op (nth tid (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [kt | | | | | | | | | | ] eqn:Hopt; try contradiction.
+      as [kt | | | | | | | | | | | ] eqn:Hopt; try contradiction.
     destruct (op (nth eid (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [ke | | | | | | | | | | ] eqn:Hope; try contradiction.
+      as [ke | | | | | | | | | | | ] eqn:Hope; try contradiction.
     destruct (beq_dec
                 (Bits.of_nat (sz (nth n (graph (build_dfg ctx act))
                                     {| nid := 0; op := DFG_Empty; sz := 0 |})) kt)
@@ -86,9 +95,9 @@ Section Soundness.
                                     {| nid := 0; op := DFG_Empty; sz := 0 |})) ke))
       eqn:Hdistinct; [ contradiction | ].
     destruct Hi as [Hi | []]. subst i.
-    intros ss ss' input' Hpub _ _ Hsrc.
-    cbn [di_sources di_target] in Hsrc |- *.
-    specialize (Hsrc n (or_introl eq_refl)).
+    intros ss ss' input' pi Hpub _ _ Hsrc Hpi Hpi' Hv Hv'.
+    cbn [di_sources di_target] in Hsrc, Hv, Hv' |- *.
+
 
     (* widths: the condition is one bit, the branches carry the node's width *)
     assert (Hnode_in : List.In (nth n (graph (build_dfg ctx act))
@@ -113,6 +122,23 @@ Section Soundness.
       as Hnret.
     pose proof (nre_const ctx cost_limit act a_idx eid ke He1 ltac:(lia) Hope)
       as Hnree.
+
+    (* the arms carry no validity obligation, so the phi is valid where its
+       condition is *)
+    destruct (node_args_range ctx cost_limit act n Hn1 Hlen cnd
+                ltac:(unfold get_args; rewrite Hop; left; reflexivity))
+      as [Hc1 Hc2].
+    assert (Hopn : node_op ctx cost_limit act n = DFG_Phi cnd tid eid)
+      by (unfold SchedulerSimulationBase.node_op; rewrite Hop; reflexivity).
+    assert (Hoptn : node_op ctx cost_limit act tid = DFG_Const kt)
+      by (unfold SchedulerSimulationBase.node_op; rewrite Hopt; reflexivity).
+    assert (Hopen : node_op ctx cost_limit act eid = DFG_Const ke)
+      by (unfold SchedulerSimulationBase.node_op; rewrite Hope; reflexivity).
+    specialize (Hsrc n pi (or_introl eq_refl) Hpi Hpi'
+                  (nrv_lift_phi_const ctx cost_limit act a_idx n cnd tid eid kt ke
+                     pi ss  input  Hopn Hoptn Hopen Hc1 Ht1 He1 Hlen Hv)
+                  (nrv_lift_phi_const ctx cost_limit act a_idx n cnd tid eid kt ke
+                     pi ss' input' Hopn Hoptn Hopen Hc1 Ht1 He1 Hlen Hv')).
 
     (* evaluate the phi in both states *)
     unfold nval in Hsrc |- *.

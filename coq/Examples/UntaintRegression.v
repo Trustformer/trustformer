@@ -138,6 +138,7 @@ Section Obligation.
       intros i Hi.
       unfold uncond_instances, decl_instances in Hi.
       apply filter_In in Hi. destruct Hi as [Hi _].
+      apply filter_In in Hi. destruct Hi as [Hi _].
       apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
       cbn in Hr. destruct Hr as [Hr | []]. subst r.
       exact (neg_rule_sound ctx_whitebox 10 act a_idx input i Hi).
@@ -152,6 +153,7 @@ Section Obligation.
       apply (decl_sound_of_instances ctx_whitebox 10 whitebox_decls_sound).
       intros i Hi.
       unfold decl_instances in Hi.
+      apply filter_In in Hi. destruct Hi as [Hi _].
       apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
       cbn in Hr. destruct Hr as [Hr | []]. subst r.
       exact (neg_rule_sound ctx_whitebox 10 act a_idx input i Hi).
@@ -266,6 +268,17 @@ End GuardedContrast.
 
 Section GuardedObligation.
 
+    (* No IP attached: nothing ever waits, so every node reads valid -- which is
+       what the phi rule's settledness obligation asks. *)
+    Lemma gopen_phibranch_settled :
+      forall act a_idx, phibranch_settled gctx_open 10 act a_idx.
+    Proof.
+      intros act a_idx n cnd tid eid Hop p ss inp.
+      exact (SchedulerSimulation.nrv_no_ips gctx_open 10 act a_idx
+               ltac:(intro x; destruct x)
+               n p ss inp ltac:(rewrite Hop; discriminate)).
+    Qed.
+
     Theorem gopen_decls_sound :
       forall act a_idx input, uncond_sound gctx_open 10 act a_idx input.
     Proof.
@@ -274,10 +287,12 @@ Section GuardedObligation.
       intros i Hi.
       unfold uncond_instances, decl_instances in Hi.
       apply filter_In in Hi. destruct Hi as [Hi _].
+      apply filter_In in Hi. destruct Hi as [Hi _].
       apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
       cbn in Hr. destruct Hr as [Hr | [Hr | [Hr | []]]]; subst r.
       - exact (neg_rule_sound gctx_open 10 act a_idx input i Hi).
-      - exact (phibranch_rule_sound gctx_open 10 act a_idx input i Hi).
+      - exact (phibranch_rule_sound gctx_open 10 act a_idx input i Hi
+                 (gopen_phibranch_settled act a_idx)).
       - exact (phiconst_rule_sound gctx_open 10 act a_idx input i Hi).
     Qed.
 
@@ -287,10 +302,12 @@ Section GuardedObligation.
       intros act a_idx input.
       apply (decl_sound_of_instances gctx_open 10 gopen_decls_sound).
       intros i Hi. unfold decl_instances in Hi.
+      apply filter_In in Hi. destruct Hi as [Hi _].
       apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
       cbn in Hr. destruct Hr as [Hr | [Hr | [Hr | []]]]; subst r.
       - exact (neg_rule_sound gctx_open 10 act a_idx input i Hi).
-      - exact (phibranch_rule_sound gctx_open 10 act a_idx input i Hi).
+      - exact (phibranch_rule_sound gctx_open 10 act a_idx input i Hi
+                 (gopen_phibranch_settled act a_idx)).
       - exact (phiconst_rule_sound gctx_open 10 act a_idx input i Hi).
     Qed.
 

@@ -19,7 +19,7 @@ Import ListNotations.
 
 (* Nodes are visited by position, so [1 <= n] and [n < length] come for free
    from [in_seq]; position and [nid] coincide in the exported graph. *)
-Definition neg_rule {s i o} : decl_rule s i o :=
+Definition neg_rule {s i o p} : decl_rule s i o p :=
   fun dfg =>
     flat_map
       (fun n =>
@@ -51,10 +51,12 @@ Section Soundness.
   Hint Extern 0 (FiniteType (tfs_outputs sched)) => exact (tfs_outputs_fin sched) : typeclass_instances.
 
   Local Notation input_t := (forall x : i_var, type_denote (tf_inputs_type i_sz x)).
+  Local Notation sched_input_t :=
+    (forall x : tfs_inputs sched, type_denote (tf_inputs_type (tfs_inputs_size sched) x)).
   Local Notation a_index := (Vect.index (length (buffer_needs ctx cost_limit))).
 
   Theorem neg_rule_sound (act: tfs_action sched) (a_idx: a_index)
-      (input: input_t) (i: decl_instance) :
+      (input: sched_input_t) (i: decl_instance) :
     List.In i (neg_rule (build_dfg ctx act)) ->
     instance_sound ctx cost_limit act a_idx input i.
   Proof.
@@ -64,13 +66,22 @@ Section Soundness.
     assert (Hlen : n < length (graph (build_dfg ctx act))) by lia.
     destruct (op (nth n (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dov dn | siv sn | ] eqn:Hop;
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dp darg den | sp stok sen | ja jb | ] eqn:Hop;
       cbn [List.In] in Hi; try (destruct Hi).
     destruct uop as [| source_size]; cbn [List.In] in Hi; [ | destruct Hi ].
     destruct Hi as [Hi | []]. subst i.
-    intros ss ss' input' Hpub _ _ Hsrc.
-    cbn [di_sources di_target] in Hsrc |- *.
-    specialize (Hsrc n (or_introl eq_refl)).
+    intros ss ss' input' pi Hpub _ _ Hsrc Hpi Hpi' Hv Hv'.
+    cbn [di_sources di_target] in Hsrc, Hv, Hv' |- *.
+    assert (Hnlen : n < length (graph (build_dfg ctx act))) by exact Hlen.
+    assert (Hop' : node_op ctx cost_limit act n = DFG_Unary tf_not arg)
+      by (unfold SchedulerSimulationBase.node_op; rewrite Hop; reflexivity).
+    destruct (node_args_range ctx cost_limit act n Hn1 Hlen arg
+                ltac:(unfold get_args; rewrite Hop; left; reflexivity)) as [Harg1 _].
+    specialize (Hsrc n pi (or_introl eq_refl) Hpi Hpi'
+                  (nrv_lift_unary ctx cost_limit act a_idx n tf_not arg pi ss  input
+                     Hop' Harg1 Hnlen Hv)
+                  (nrv_lift_unary ctx cost_limit act a_idx n tf_not arg pi ss' input'
+                     Hop' Harg1 Hnlen Hv')).
     assert (Hnode_in : List.In (nth n (graph (build_dfg ctx act))
                                   {| nid := 0; op := DFG_Empty; sz := 0 |})
                          (graph (build_dfg ctx act)))

@@ -240,6 +240,16 @@ End FigureB.
 
 Section Obligation.
 
+    (* No IP attached: nothing ever waits, so every node reads valid -- which is
+       what the phi rule's settledness obligation asks. *)
+    Lemma ltt_phibranch_settled :
+      forall act a_idx, phibranch_settled ctxB_whitebox 10 act a_idx.
+    Proof.
+      intros act a_idx n cnd tid eid Hop p ss inp.
+      exact (SchedulerSimulation.nrv_no_ips ctxB_whitebox 10 act a_idx ltac:(intro x; destruct x)
+               n p ss inp ltac:(rewrite Hop; discriminate)).
+    Qed.
+
     Theorem lockboxB_uncond_sound :
       forall act a_idx input, uncond_sound ctxB_whitebox 10 act a_idx input.
     Proof.
@@ -248,10 +258,12 @@ Section Obligation.
       intros i Hi.
       unfold uncond_instances, decl_instances in Hi.
       apply filter_In in Hi. destruct Hi as [Hi _].
+      apply filter_In in Hi. destruct Hi as [Hi _].
       apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
       cbn in Hr. destruct Hr as [Hr | [Hr | []]]; subst r.
       - exact (phiconst_rule_sound ctxB_whitebox 10 act a_idx input i Hi).
-      - exact (phibranch_rule_sound ctxB_whitebox 10 act a_idx input i Hi).
+      - exact (phibranch_rule_sound ctxB_whitebox 10 act a_idx input i Hi
+                 (ltt_phibranch_settled act a_idx)).
     Qed.
 
     Theorem lockboxB_decl_guard_sound :
@@ -261,10 +273,12 @@ Section Obligation.
       apply (decl_sound_of_instances ctxB_whitebox 10 lockboxB_uncond_sound).
       intros i Hi.
       unfold decl_instances in Hi.
+      apply filter_In in Hi. destruct Hi as [Hi _].
       apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
       cbn in Hr. destruct Hr as [Hr | [Hr | []]]; subst r.
       - exact (phiconst_rule_sound ctxB_whitebox 10 act a_idx input i Hi).
-      - exact (phibranch_rule_sound ctxB_whitebox 10 act a_idx input i Hi).
+      - exact (phibranch_rule_sound ctxB_whitebox 10 act a_idx input i Hi
+                 (ltt_phibranch_settled act a_idx)).
     Qed.
 
 End Obligation.
@@ -353,7 +367,7 @@ Section ValidSignals.
             /\ e_buf = {[$fsB_out_tries - #1]}
             /\ e_done =
                  tf_expr_if {[$fsB_out_tries !=[tsz] #0]}
-                   (tf_expr_if {[$(tf_dfg_s fsB_st_pin) ==[sz] $fsB_in_pin]}
+                   (tf_expr_if {[$(tf_dfg_s fsB_st_pin) ==[sz] $(inl fsB_in_pin : tfs_inputs (tfs_schedule ctxB_whitebox 4))]}
                       (tf_const 1)
                       (tf_svar v_buf))
                    (tf_const 1)

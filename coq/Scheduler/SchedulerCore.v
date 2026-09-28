@@ -1160,6 +1160,16 @@ Section SchedulerCore.
   Local Notation compile_dfg_expr fuel a_idx dfg n bufs :=
     (compile_dfg_expr_aux (get_tainted dfg) (decl_facts dfg) [] fuel a_idx dfg n bufs).
 
+  (* The path condition: each literal, negated on the else side; empty is [1].
+     Compiled for the cycle the drive fires in, so buffers are substituted only
+     for samples -- every other source is stable across the action. *)
+  Definition guard_expr (tainted: list nid_t) (dfacts: list gfact) (fuel: nat)
+    (a_idx: Vect.index (length bn)) (dfg: dfg_state)
+    (sbufs: list (nid_t * (nat * sz_t))) (en: list (nid_t * bool)) : expr_t :=
+    fold_right (fun (l : nid_t * bool) (acc : expr_t) =>
+      let v := fst (compile_dfg_expr_aux tainted dfacts [] fuel a_idx dfg (fst l) sbufs) in
+      let lv := if snd l then v else tf_op1 tf_not v in
+      tf_op2 tf_and lv acc) (tf_const 1) en.
   Definition compile_dfg_buffers (a_idx: nat) (dfg: dfg_state) (buffers: list (nid_t * (nat * sz_t)))
     : list (@tf_op tf_dfg_states (inputs_var + ips_var) outputs_var Empty_set)
     :=
@@ -1168,10 +1178,17 @@ Section SchedulerCore.
     let tainted := get_tainted dfg in
     let dfacts := decl_facts dfg in
     let fuel := length (graph dfg) in
+    (* a guard reads a call result from its LATCH, as a drive's does *)
+    let sbufs := filter (fun '(n, _) =>
+                           match op (nth n (graph dfg)
+                                       {| nid := 0; op := DFG_Empty; sz := 0 |}) with
+                           | DFG_Sample _ _ _ => true
+                           | _ => false
+                           end) buffers in
     match index_of_nat (length bn) a_idx with
     | None => []
-    | Some a_idx' => 
-      flat_map 
+    | Some a_idx' =>
+      flat_map
         ( fun '(nid, x) => 
           match index_of_nat (length (nth (index_to_nat a_idx') bn [])) (fst x) with
             | Some n_idx' => 
@@ -1180,10 +1197,10 @@ Section SchedulerCore.
               (* A buffer RECOMPUTES every cycle, sound while its sources are
                  stable across the action.  A [DFG_Sample] reads a LIVE wire, so
                  its buffer LATCHES as its validity RISES and holds thereafter. *)
-              let is_sample :=
+              let sample_en :=
                 match op (nth nid (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}) with
-                | DFG_Sample _ _ _ => true
-                | _ => false
+                | DFG_Sample _ _ en => Some en
+                | _ => None
                 end in
               (* A stall's buffer is a COUNTER: it advances while the argument is
                  valid and saturates at [lat-1], so the validity rises exactly
@@ -1201,11 +1218,19 @@ Section SchedulerCore.
                                   (tf_op1 tf_not (tf_op2 (tf_cmp (snd x) tf_eq) cnt (tf_const (pred l)))))
                       (tf_op2 tf_add cnt (tf_const 1)) cnt
                 | None =>
-                  if is_sample
-                  then tf_expr_if (tf_op2 tf_and valid
-                                     (tf_op1 tf_not (tf_svar (tf_dfg_v a_idx' n_idx'))))
-                         expr (tf_svar (tf_dfg_b a_idx' n_idx'))
-                  else expr
+                  match sample_en with
+                  (* The GUARD is in the latch enable: an arm that was not taken
+                     sent no request, so the channel is carrying another call's
+                     cycle and this buffer keeps its reset value.  [vexpr] is
+                     untouched, so the count is unchanged. *)
+                  | Some en =>
+                      tf_expr_if (tf_op2 tf_and
+                                    (tf_op2 tf_and valid
+                                       (tf_op1 tf_not (tf_svar (tf_dfg_v a_idx' n_idx'))))
+                                    (guard_expr tainted dfacts fuel a_idx' dfg sbufs en))
+                        expr (tf_svar (tf_dfg_b a_idx' n_idx'))
+                  | None => expr
+                  end
                 end in
               (* The gate is ANDed in, not implied by the count: at [lat = 1]
                  the counter starts at [pred l] and would validate the token
@@ -1286,16 +1311,6 @@ Section SchedulerCore.
   (* A drive is an ALWAYS-op, so the request is on the wire during the action.
      The port HOLDS its old value until the drive's validity fires, and validity
      is monotone, so it stays stable from there to the response. *)
-  (* The path condition: each literal, negated on the else side; empty is [1].
-     Compiled for the cycle the drive fires in, so buffers are substituted only
-     for samples -- every other source is stable across the action. *)
-  Definition guard_expr (tainted: list nid_t) (dfacts: list gfact) (fuel: nat)
-    (a_idx: Vect.index (length bn)) (dfg: dfg_state)
-    (sbufs: list (nid_t * (nat * sz_t))) (en: list (nid_t * bool)) : expr_t :=
-    fold_right (fun (l : nid_t * bool) (acc : expr_t) =>
-      let v := fst (compile_dfg_expr_aux tainted dfacts [] fuel a_idx dfg (fst l) sbufs) in
-      let lv := if snd l then v else tf_op1 tf_not v in
-      tf_op2 tf_and lv acc) (tf_const 1) en.
 
   Definition compile_dfg_drives (a_idx: nat) (dfg: dfg_state)
     (buffers: list (nid_t * (nat * sz_t)))

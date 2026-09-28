@@ -17,6 +17,7 @@ Require Import Trustformer.Rules.Xor.
 Require Import Trustformer.Rules.Widening.
 
 Require Import Coq.Lists.List.
+Require Import Lia.
 Import ListNotations.
 
 Section Specification.
@@ -118,6 +119,30 @@ End Contrast.
 
 Section Obligations.
 
+    (* No IP attached: nothing ever waits, so every node reads valid -- which is
+       what the xor rule's settledness obligation asks. *)
+    Lemma rw_xor_settled :
+      forall act a_idx, xor_settled rw_whitebox 10 act a_idx.
+    Proof.
+      intros act a_idx n a1 a2 Hop p ss inp.
+      assert (Hn := SchedulerSimulation.node_op_pos rw_whitebox 10 act n
+                      ltac:(rewrite Hop; discriminate)).
+      destruct Hn as [Hn1 Hnlen].
+      pose proof (SchedulerSimulation.nrv_no_ips_range rw_whitebox 10 act a_idx
+                    ltac:(intro x; destruct x)) as Hall.
+      destruct (SchedulerSimulationBase.node_args_range rw_whitebox 10 act n Hn1 Hnlen a1
+                  ltac:(unfold get_args, SchedulerSimulationBase.node_op in *;
+                        rewrite Hop; left; reflexivity)) as [Ha11 Ha1n].
+      destruct (SchedulerSimulationBase.node_args_range rw_whitebox 10 act n Hn1 Hnlen a2
+                  ltac:(unfold get_args, SchedulerSimulationBase.node_op in *;
+                        rewrite Hop; right; left; reflexivity))
+        as [Ha21 Ha2n].
+      split; [| split ];
+        [ exact (Hall n p ss inp Hn1 Hnlen)
+        | exact (Hall a1 p ss inp Ha11 ltac:(lia))
+        | exact (Hall a2 p ss inp Ha21 ltac:(lia)) ].
+    Qed.
+
     Theorem rw_decls_sound :
       forall act a_idx input, uncond_sound rw_whitebox 10 act a_idx input.
     Proof.
@@ -126,9 +151,11 @@ Section Obligations.
       intros i Hi.
       unfold uncond_instances, decl_instances in Hi.
       apply filter_In in Hi. destruct Hi as [Hi _].
+      apply filter_In in Hi. destruct Hi as [Hi _].
       apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
       cbn in Hr. destruct Hr as [Hr | [Hr | []]]; subst r.
-      - exact (xor_rule_sound rw_whitebox 10 act a_idx input i Hi).
+      - exact (xor_rule_sound rw_whitebox 10 act a_idx input i Hi
+                 (rw_xor_settled act a_idx)).
       - exact (widen_rule_sound rw_whitebox 10 act a_idx input i Hi).
     Qed.
 
@@ -138,9 +165,11 @@ Section Obligations.
       intros act a_idx input.
       apply (decl_sound_of_instances rw_whitebox 10 rw_decls_sound).
       intros i Hi. unfold decl_instances in Hi.
+      apply filter_In in Hi. destruct Hi as [Hi _].
       apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
       cbn in Hr. destruct Hr as [Hr | [Hr | []]]; subst r.
-      - exact (xor_rule_sound rw_whitebox 10 act a_idx input i Hi).
+      - exact (xor_rule_sound rw_whitebox 10 act a_idx input i Hi
+                 (rw_xor_settled act a_idx)).
       - exact (widen_rule_sound rw_whitebox 10 act a_idx input i Hi).
     Qed.
 
