@@ -11,7 +11,11 @@ the shape that was expected before a testbench found it in about a second:
   the cycle it fires, so the one-action MARS sent no request at all
   (`tb_mars.sv`);
 - a guard on a call result read the live response wire instead of the sample's
-  latch, and took the else arm whatever the answer was (`tb_guard.sv`).
+  latch, and took the else arm whatever the answer was (`tb_guard.sv`);
+- a drive under a guard fired before its guard's sources had settled, so a
+  branch on a call on ANOTHER port sent the wrong arm's request (`tb_xport.sv`);
+- a sample's latch enable ignored its guard, so a call in an arm that was not
+  taken latched whatever the shared response channel held (`tb_untaken.sv`).
 
 ## What the testbenches assume
 
@@ -35,7 +39,8 @@ the design uses the latched value.
 | `tb_branch.sv` | `Example_BranchCallSpike` | a call under an `if` on an INPUT: both arms drive, mutually exclusive in time |
 | `tb_guard.sv` | `Example_GuardCallSpike` | a branch on a CALL RESULT: the right arm is taken, and the guard reads the sample's latch |
 | `tb_arms.sv` | `Example_ArmsSeqSpike` | a call AFTER an `if` whose arms both call one IP: it waits for whichever arm ran, not just the last one written |
-| `tb_xport.sv` | `Example_XPortGuardSpike` | the same branch with the arms' calls on a DIFFERENT port from the one the condition reads -- **currently FAILS**, and is meant to |
+| `tb_untaken.sv` | `Example_ArmsSeqSpike` | the same design, read the other way: the SKIPPED arm still validates and still counts its cycles, and its buffer holds zero rather than the other arm's answer |
+| `tb_xport.sv` | `Example_XPortGuardSpike` | the same branch with the arms' calls on a DIFFERENT port from the one the condition reads: the drives wait for the condition to arrive before either fires |
 | `tb_mars.sv` | `Example_Mars` | the one-action MARS, 77 checks -- see below |
 
 ## Running them
@@ -48,7 +53,7 @@ PATH -- omit any one and it fails late with a bare `sh: 1: X: not found`.
 `Vtb__ALL.a` and the linker discards it.
 
 ```sh
-scripts/run-sim.sh              # all six
+scripts/run-sim.sh              # all nine
 scripts/run-sim.sh tb_two.sv    # just one
 ```
 
@@ -80,25 +85,41 @@ green before the interface is reviewed.
 
 ## tb_xport.sv: a branch whose condition reads another port
 
-`tb_guard.sv` passes because every call in it is on one port: `last_sample`
-finds the first call's sample -- its guard is not disjoint from either arm's --
-so both arms' drives are sequenced behind it by an ordering join and cannot
-fire until the answer is latched.
+`tb_guard.sv` would pass on the argument alone: every call in it is on one port,
+so `last_sample` finds the first call's sample -- its guard is not disjoint from
+either arm's -- and both arms' drives are sequenced behind it by an ordering
+join, which by itself holds them until the answer is latched.
 
 Move the condition's call to a second port and that join is gone: `last_sample`
-searches the *arm's* port, where nothing precedes. A drive's compiled validity
-is its ARGUMENT's, not its guard's, so the arm's stall starts counting
-immediately and the arm's drive gets its one pulse window while the condition's
-answer is still in flight and its latch still reads zero. The design then takes
-the arm the zeroed latch selects:
+searches the *arm's* port, where nothing precedes. The ordering is no longer
+what holds the drives back, so this is the testbench that pins the mechanism
+that does: a drive's compiled validity ANDs in its guard's sources, so the arm's
+stall starts counting only once the condition's latch is up.
 
-    st_c = 0   (then arm): arm asks for 7, st_r = 7   -- right, by luck
-    st_c != 0  (else arm): arm asks for 7, st_r = 7   -- WRONG, should be 9
+    st_c = 0   (then arm): arm asks for 7, st_r = 7
+    st_c != 0  (else arm): arm asks for 9, st_r = 9
 
-`st_c` itself is correct (`f5`) by the time the action finishes; the branch was
-simply decided before it arrived. This is the same family as the `ip_lat = 0`
-collision: a call that is emitted but can never fire.
+Read the two rows together -- one arm alone would pass on a design that decides
+the branch off a zeroed latch, because `7` is what that design asks for either
+way.
 
-It is excluded from the default run because it fails. Run it by name:
+## tb_untaken.sv: the arm that was not taken
 
-    scripts/run-sim.sh tb_xport.sv
+`Example_ArmsSeqSpike` again, checking the sample side rather than the drive
+side. Both arms of the `if` call the same IP on the same port, and the counters
+of BOTH arms run whichever way the branch goes -- that padding is what makes the
+action's length independent of the condition, so the testbench asserts it.
+
+What the skipped arm must NOT do is capture. Its counter reaches the latch
+cycle while the channel is carrying another call's cycle, where the datasheet
+promises nothing -- `deadbeef` here. A latch enable of `valid AND NOT v` alone
+would copy that in. The enable ANDs in the arm's guard, so the buffer keeps its
+reset value:
+
+    run 0, then arm skipped:  valid at cyc 11, captured 0x00000000
+    run 0, else arm taken:    valid at cyc  9, captured 0x00000007
+
+The captured value is dead -- the phi discards it -- but the ordering join that
+sequences a later call on that port is not gated by the phi, so a capture there
+would be visible in the CYCLE COUNT. That is the leak this testbench holds
+closed.
