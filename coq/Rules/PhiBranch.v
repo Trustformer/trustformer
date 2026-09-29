@@ -32,6 +32,21 @@ Definition phibranch_rule {s i o p} : decl_rule s i o p :=
          end)
       (List.seq 1 (length (graph dfg) - 1)).
 
+(* Every instance carries a selector literal, so none of them seeds the
+   unconditional taint fold: [uncond_instances] keeps only empty guards. *)
+Lemma phibranch_guard_nonempty {s i o p} (dfg: @dfg_state_t s i o p)
+      (inst: decl_instance) :
+  List.In inst (phibranch_rule dfg) -> di_guard inst <> [].
+Proof.
+  unfold phibranch_rule. intro Hin.
+  apply in_flat_map in Hin. destruct Hin as [n [_ Hi]].
+  destruct (op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}))
+    as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa
+       | dp darg den | sp stok sen | ja jb | ];
+    cbn [List.In] in Hi; try contradiction.
+  destruct Hi as [Hi | [Hi | [Hi | [Hi | []]]]]; subst inst; discriminate.
+Qed.
+
 Section Soundness.
   Context (ctx: TFSchedContext).
   Context (cost_limit: nat).
@@ -102,17 +117,17 @@ Section Soundness.
   Qed.
 
 
-  (* A declassification reads its SOURCES, so they have to have settled.  Under
-     V4 a node's reference value moves when a call it feeds on answers, so this
-     is a real obligation and not bookkeeping: a rule that fires on a phi whose
-     condition has not arrived is reading the wire, not the value.  It holds of
-     any phi built from combinational sources, which is what the rule is for. *)
+  (* A rule reads a source where that source is valid.  Two of the four
+     instances read the phi FROM an arm, so they want the phi's validity given
+     an arm's -- the converse of [nrv_peel_phi_crit]. *)
   Definition phibranch_settled (act: tfs_action sched) (a_idx: a_index) : Prop :=
     forall n cnd tid eid,
       node_op ctx cost_limit act n = DFG_Phi cnd tid eid ->
       forall (p: list lit) (ss: sched_sys_state) (inp: sched_input_t),
-
+        rvalid act a_idx p tid ss inp = Bits.ones 1
+        \/ rvalid act a_idx p eid ss inp = Bits.ones 1 ->
         rvalid act a_idx p n ss inp = Bits.ones 1.
+
   Theorem phibranch_rule_sound (act: tfs_action sched) (a_idx: a_index)
       (input: sched_input_t) (i: decl_instance) :
     List.In i (phibranch_rule (build_dfg ctx act)) ->
@@ -210,23 +225,22 @@ Section Soundness.
                (Hpath pi0 true input' ss' Hpi' Hp')
                (Harm pi0 true input  ss  Hp  Hv )
                (Harm pi0 true input' ss' Hp' Hv')).
-    - (* BLOCKED under V4: the phi's validity needs its CONDITION's, which the
-         arm's validity does not give. *)
+    - (* the phi read FROM the then arm *)
       rewrite Htsz, <- (Hsel true input ss Hp), <- (Hsel true input' ss' Hp').
       exact (Hsrc n pi0 (or_introl eq_refl) Hpi Hpi'
-               (Hset n cnd tid eid Hopn pi0 ss  input )
-               (Hset n cnd tid eid Hopn pi0 ss' input')).
+               (Hset n cnd tid eid Hopn pi0 ss  input  (or_introl Hv ))
+               (Hset n cnd tid eid Hopn pi0 ss' input' (or_introl Hv'))).
     - rewrite (Hsel false input ss Hp), (Hsel false input' ss' Hp'), <- Hesz.
       exact (Hsrc eid _ (or_introl eq_refl)
                (Hpath pi0 false input  ss  Hpi  Hp )
                (Hpath pi0 false input' ss' Hpi' Hp')
                (Harm pi0 false input  ss  Hp  Hv )
                (Harm pi0 false input' ss' Hp' Hv')).
-    - (* BLOCKED, as above. *)
+    - (* the phi read FROM the else arm *)
       rewrite Hesz, <- (Hsel false input ss Hp), <- (Hsel false input' ss' Hp').
       exact (Hsrc n pi0 (or_introl eq_refl) Hpi Hpi'
-               (Hset n cnd tid eid Hopn pi0 ss  input )
-               (Hset n cnd tid eid Hopn pi0 ss' input')).
+               (Hset n cnd tid eid Hopn pi0 ss  input  (or_intror Hv ))
+               (Hset n cnd tid eid Hopn pi0 ss' input' (or_intror Hv'))).
   Qed.
 
 End Soundness.

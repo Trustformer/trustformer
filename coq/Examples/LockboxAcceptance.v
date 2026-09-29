@@ -173,7 +173,7 @@ Section Obligations.
     Lemma lb_phibranch_settled :
       forall act a_idx, phibranch_settled ctx_B 10 act a_idx.
     Proof.
-      intros act a_idx n cnd tid eid Hop p ss inp.
+      intros act a_idx n cnd tid eid Hop p ss inp _.
       exact (nrv_no_ips ctx_B 10 act a_idx ltac:(intro x; destruct x)
                n p ss inp ltac:(rewrite Hop; discriminate)).
     Qed.
@@ -185,13 +185,14 @@ Section Obligations.
       apply (uncond_sound_of_instances ctx_B 10).
       intros i Hi.
       unfold uncond_instances, decl_instances in Hi.
-      apply filter_In in Hi. destruct Hi as [Hi _].
+      apply filter_In in Hi. destruct Hi as [Hi Hg].
+      assert (Hnil : di_guard i = [])
+        by (destruct (di_guard i); [ reflexivity | discriminate Hg ]).
       apply filter_In in Hi. destruct Hi as [Hi _].
       apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
       cbn in Hr. destruct Hr as [Hr | [Hr | [Hr | []]]]; subst r.
       - exact (neg_rule_sound ctx_B 10 act a_idx input i Hi).
-      - exact (phibranch_rule_sound ctx_B 10 act a_idx input i Hi
-                 (lb_phibranch_settled act a_idx)).
+      - destruct (phibranch_guard_nonempty (build_dfg ctx_B act) i Hi Hnil).
       - exact (phiconst_rule_sound ctx_B 10 act a_idx input i Hi).
     Qed.
 

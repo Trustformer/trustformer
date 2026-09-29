@@ -98,16 +98,16 @@ Section Soundness.
        ss input) (only parsing).
 
 
-  (* As in PhiBranch: a rule reads its sources, so they have to have settled.
-     Here that is the xor node and BOTH operands -- the rule recovers one from
-     the other two. *)
+  (* A rule reads a source where that source is valid.  These instances read the
+     xor node, so they want its validity given an operand's; [nrv_peel_binary]
+     then returns the other operand. *)
   Definition xor_settled (act: tfs_action sched) (a_idx: a_index) : Prop :=
     forall n a1 a2,
       node_op ctx cost_limit act n = DFG_Binary tf_xor a1 a2 ->
       forall (p: list lit) (ss: sched_sys_state) (inp: sched_input_t),
-        rvalid act a_idx p n  ss inp = Bits.ones 1
-        /\ rvalid act a_idx p a1 ss inp = Bits.ones 1
-        /\ rvalid act a_idx p a2 ss inp = Bits.ones 1.
+        rvalid act a_idx p a1 ss inp = Bits.ones 1
+        \/ rvalid act a_idx p a2 ss inp = Bits.ones 1 ->
+        rvalid act a_idx p n ss inp = Bits.ones 1.
 
   Theorem xor_rule_sound (act: tfs_action sched) (a_idx: a_index)
       (input: sched_input_t) (i: decl_instance) :
@@ -137,22 +137,36 @@ Section Soundness.
       as Hnre.
     assert (Hopn : node_op ctx cost_limit act n = DFG_Binary tf_xor a1 a2)
       by (unfold SchedulerSimulationBase.node_op; rewrite Hop; reflexivity).
+    destruct (node_args_range ctx cost_limit act n Hn1 Hlen a1
+                ltac:(unfold get_args; rewrite Hop; left; reflexivity)) as [Ha11 _].
+    destruct (node_args_range ctx cost_limit act n Hn1 Hlen a2
+                ltac:(unfold get_args; rewrite Hop; right; left; reflexivity))
+      as [Ha21 _].
+
     (* both instances: recover one operand from the node and the other *)
     destruct Hi as [Hi | [Hi | []]]; subst i;
       intros ss ss' input' pi Hpub _ _ Hsrc Hpi Hpi' Hv Hv';
-      cbn [di_sources di_target] in Hsrc, Hv, Hv' |- *;
-      pose proof (Hsrc n pi (or_introl eq_refl) Hpi Hpi'
-                    (proj1 (Hset n a1 a2 Hopn pi ss  input ))
-                    (proj1 (Hset n a1 a2 Hopn pi ss' input'))) as Hn;
-      unfold nval in Hn; rewrite Hnre in Hn; cbn [tf_eval_expr] in Hn.
-    - pose proof (Hsrc a2 pi (or_intror (or_introl eq_refl)) Hpi Hpi'
-                    (proj2 (proj2 (Hset n a1 a2 Hopn pi ss  input )))
-                    (proj2 (proj2 (Hset n a1 a2 Hopn pi ss' input')))) as Ha2.
+      cbn [di_sources di_target] in Hsrc, Hv, Hv' |- *.
+    - pose proof (Hset n a1 a2 Hopn pi ss  input  (or_introl Hv ))  as Hvn.
+      pose proof (Hset n a1 a2 Hopn pi ss' input' (or_introl Hv')) as Hvn'.
+      pose proof (Hsrc n pi (or_introl eq_refl) Hpi Hpi' Hvn Hvn') as Hn.
+      unfold nval in Hn. rewrite Hnre in Hn. cbn [tf_eval_expr] in Hn.
+      pose proof (Hsrc a2 pi (or_intror (or_introl eq_refl)) Hpi Hpi'
+                    (proj2 (nrv_peel_binary ctx cost_limit act a_idx n tf_xor a1 a2
+                              pi ss  input  Hopn Ha11 Ha21 Hlen Hvn ))
+                    (proj2 (nrv_peel_binary ctx cost_limit act a_idx n tf_xor a1 a2
+                              pi ss' input' Hopn Ha11 Ha21 Hlen Hvn'))) as Ha2.
       rewrite H1sz. rewrite H2sz in Ha2. unfold nval in Ha2 |- *.
       rewrite Ha2 in Hn. exact (xor_inj_r _ _ _ Hn).
-    - pose proof (Hsrc a1 pi (or_intror (or_introl eq_refl)) Hpi Hpi'
-                    (proj1 (proj2 (Hset n a1 a2 Hopn pi ss  input )))
-                    (proj1 (proj2 (Hset n a1 a2 Hopn pi ss' input')))) as Ha1.
+    - pose proof (Hset n a1 a2 Hopn pi ss  input  (or_intror Hv ))  as Hvn.
+      pose proof (Hset n a1 a2 Hopn pi ss' input' (or_intror Hv')) as Hvn'.
+      pose proof (Hsrc n pi (or_introl eq_refl) Hpi Hpi' Hvn Hvn') as Hn.
+      unfold nval in Hn. rewrite Hnre in Hn. cbn [tf_eval_expr] in Hn.
+      pose proof (Hsrc a1 pi (or_intror (or_introl eq_refl)) Hpi Hpi'
+                    (proj1 (nrv_peel_binary ctx cost_limit act a_idx n tf_xor a1 a2
+                              pi ss  input  Hopn Ha11 Ha21 Hlen Hvn ))
+                    (proj1 (nrv_peel_binary ctx cost_limit act a_idx n tf_xor a1 a2
+                              pi ss' input' Hopn Ha11 Ha21 Hlen Hvn'))) as Ha1.
       rewrite H2sz. rewrite H1sz in Ha1. unfold nval in Ha1 |- *.
       rewrite Ha1 in Hn. exact (xor_inj_l _ _ _ Hn).
   Qed.
