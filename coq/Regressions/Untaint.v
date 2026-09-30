@@ -17,7 +17,7 @@ Import ListNotations.
 (* Contrast test for whitebox untainting: one specification, two contexts.  Bare,
    the phi on the secret is critical; with the negation rule it is not, the spec
    already publishing `!secret` for the attacker to invert.  Shows what
-   `TaintRegression.v` cannot -- that a rule changes the analysis and the design
+   `Taint.v` cannot -- that a rule changes the analysis and the design
    still meets the IPR obligation. *)
 
 Section FunctionalSpecification.

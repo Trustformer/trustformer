@@ -208,6 +208,12 @@ Notation "x * y" := (tf_op2 tf_mul x y) (in custom trustformer at level 40, left
 Notation "x & y" := (tf_op2 tf_and x y) (in custom trustformer at level 60, left associativity).
 Notation "x | y" := (tf_op2 tf_or x y) (in custom trustformer at level 60, left associativity).
 Notation "x ^ y" := (tf_op2 tf_xor x y) (in custom trustformer at level 60, left associativity).
+(* [hi] and [lo] are the widths the two operands are evaluated at; [x] is the
+   high half, so [#10 ++[4,4] #3] is 0xA3 and the result is [hi + lo] wide. *)
+Notation "x ++[ hi , lo ] y" := (tf_op2 (tf_concat hi lo) x y)
+    (in custom trustformer at level 65, left associativity,
+     hi custom tf_const at level 0, lo custom tf_const at level 0,
+     format "x  ++[ hi , lo ]  y").
 
 (* Comparisons *)
 Notation "x <[ n ] y" := (tf_op2 (tf_cmp n tf_lt) x y) 
@@ -230,8 +236,14 @@ Notation "'let' '$' x := e" := (tf_ops_base (do_assign x e))
     (in custom trustformer at level 80, x custom tf_arg at level 0, only parsing).
 Notation "'let' '$' x := e" := (tf_ops_base (tf_assign x e)) 
     (in custom trustformer at level 80, x custom tf_arg at level 0, format "'let'  $ x  :=  e", only printing).
-Notation "'let' '$' x := e" := (tf_ops_base (tf_output x e)) 
+Notation "'let' '$' x := e" := (tf_ops_base (tf_output x e))
     (in custom trustformer at level 80, x custom tf_arg at level 0, format "'let'  $ x  :=  e", only printing).
+
+(* [p] is the IP, [d] the state variable its response lands in. *)
+Notation "'let' '$' d := 'call' p ( a )" := (tf_ops_base (tf_call p d a))
+    (in custom trustformer at level 80,
+     d custom tf_arg at level 0, p custom tf_arg at level 0,
+     format "'let'  $ d  :=  'call'  p ( a )").
 
 Notation "s1 ; s2" := (tf_ops_cons s1 s2) 
     (in custom trustformer at level 90, right associativity, format "'[v' s1 ; '/' s2 ']'").
@@ -264,6 +276,7 @@ Section NotationExamples.
     Context {ips_var: Type}.
 
     Variables (s_a s_b : states_var) (i_x : inputs_var) (o_y : outputs_var).
+    Variable (p_ip : ips_var).
 
     Definition t1 : @tf_ops states_var inputs_var outputs_var ips_var := {[ 
         let $s_a := $i_x + #1;
@@ -308,6 +321,20 @@ Section NotationExamples.
         let $s_a := if ($i_x ==[32] #0) then #1 else #2 
     ]}.
     Goal True. pose (debug := t6); compute in debug.
+    Abort.
+
+    Definition t7 : @tf_ops states_var inputs_var outputs_var ips_var := {[
+        let $s_a := $i_x ++[16,16] #0;
+        let $s_b := $i_x ++[8,8] $s_a ++[16,16] #0
+    ]}.
+    Goal True. pose (debug := t7); compute in debug.
+    Abort.
+
+    Definition t8 : @tf_ops states_var inputs_var outputs_var ips_var := {[
+        let $s_a := call p_ip ($i_x ++[16,16] #0);
+        if ($s_a ==[32] #0) then let $o_y := #1 else let $o_y := $s_a
+    ]}.
+    Goal True. pose (debug := t8); compute in debug.
     Abort.
 End NotationExamples.
 

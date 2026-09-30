@@ -1,12 +1,12 @@
 (*! Regressions for the diagnostics layer (Scheduler/Show.v, Scheduler/Audit.v).
-    These pin the RENDERING; LockboxTriesTaint.v pins the analysis they reuse.
+    These pin the RENDERING; Examples/LockboxTries/Taint.v pins the analysis they reuse.
     What breaks silently here is the mapping from node ids back to source. !*)
 
 Require Import Koika.Frontend.
 
 Require Import Trustformer.Scheduler.Audit.
-Require Import Trustformer.Examples.LockboxTries.
-Require Import Trustformer.Examples.LockboxTriesTaint.
+Require Import Trustformer.Examples.LockboxTries.Spec.
+Require Import Trustformer.Examples.LockboxTries.Taint.
 
 Require Import Coq.Lists.List.
 Require Import Coq.Strings.String.
@@ -16,7 +16,7 @@ Section Naming.
 
     Definition dfgA := build_dfg ctxA_blackbox fs_act_test.
 
-    (* The two conditions LockboxTriesTaint.v identifies as nodes 3 and 6 are
+    (* The two conditions Examples/LockboxTries/Taint.v identifies as nodes 3 and 6
        the two the specification is written in terms of. *)
     Example nodes_render_as_source_expressions :
       show_node ctxA_blackbox dfgA 3 = "($fs_st_tries !=[2] #0)"

@@ -9,7 +9,7 @@ Require Import Trustformer.Scheduler.VariableScheduler.
 Require Import Trustformer.Properties.IPR.
 Require Import Trustformer.Rules.PhiConst.
 Require Import Trustformer.Rules.PhiBranch.
-Require Import Trustformer.Examples.LockboxTries.
+Require Import Trustformer.Examples.LockboxTries.Spec.
 
 Require Import Coq.Lists.List.
 Import ListNotations.

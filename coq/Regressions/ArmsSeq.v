@@ -109,22 +109,7 @@ Section ArmsSeqSynthesis.
     tf_action_encoding := as_action_encoding;
     tf_action_encoding_inj := as_action_encoding_inj;
   |}.
-  Instance as_ext_fn_names : Show _ := TypedSynthesis.ext_fn_names as_tf_ctx.
-
-  Definition as_package :=
-    {| ip_koika := {| koika_reg_types := TypedSynthesis.R as_tf_ctx;
-                      koika_reg_names := TypedSynthesis.reg_names as_tf_ctx;
-                      koika_reg_init := TypedSynthesis.r as_tf_ctx;
-                      koika_reg_finite := TypedSynthesis._reg_t_finite as_tf_ctx;
-                      koika_ext_fn_types := TypedSynthesis.Sigma as_tf_ctx;
-                      koika_rules := TypedSynthesis.rules as_tf_ctx;
-                      koika_rule_names := TypedSynthesis.rule_names as_tf_ctx;
-                      koika_rule_external := (fun _ => false);
-                      koika_scheduler := TypedSynthesis.system_schedule as_tf_ctx;
-                      koika_module_name := "Example_ArmsSeqSpike" |};
-    ip_sim := {| sp_ext_fn_specs fn := {| efs_name := show fn; efs_method := false |};
-                sp_prelude := None |};
-    ip_verilog := {| vp_ext_fn_specs := TypedSynthesis.ext_fn_specs as_tf_ctx |} |}.
+  Definition as_package := TypedSynthesis.package as_tf_ctx "Example_ArmsSeqSpike".
 
 End ArmsSeqSynthesis.
 

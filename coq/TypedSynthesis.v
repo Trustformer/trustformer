@@ -622,6 +622,25 @@ Section TypedSynthesis.
                     (Read P1 (tf_reg (tfs_drive_reg (tf_sched_ctx tf_ctx) p)))))
       end.
 
+    (* The Kôika package for this context.  [name] is the module name cuttlec
+       emits, and must match the [Extraction] filename and the testbench. *)
+    Definition package (name: string) : interop_package_t :=
+      {| ip_koika := {| koika_reg_types := R;
+                        koika_reg_names := reg_names;
+                        koika_reg_init := r;
+                        koika_reg_finite := _reg_t_finite;
+                        koika_ext_fn_types := Sigma;
+                        koika_rules := rules;
+                        koika_rule_names := rule_names;
+                        koika_rule_external := (fun _ => false);
+                        koika_scheduler := system_schedule;
+                        koika_module_name := name |};
+
+         ip_sim := {| sp_ext_fn_specs fn := {| efs_name := show fn; efs_method := false |};
+                      sp_prelude := None |};
+
+         ip_verilog := {| vp_ext_fn_specs := ext_fn_specs |} |}.
+
 End TypedSynthesis.
 
 (* Graded opacity: these build large dependently-typed Koika terms, so implicit

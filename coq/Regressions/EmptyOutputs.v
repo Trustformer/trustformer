@@ -9,25 +9,28 @@ Require Import Trustformer.TypedSynthesis.
 Require Import Trustformer.Scheduler.Contract.
 Require Import Trustformer.Scheduler.VariableScheduler.
 
-Require Import Coq.Logic.EqdepFacts.
-
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
-(* A simple lockbox: one 32-bit state register and two actions (set, test),
-   triggered through a command register whose first bit marks it valid. *)
+(* A negator with an EMPTY output type: one 32-bit state register, two actions
+   (nop, neg), triggered through a command register whose first bit marks it
+   valid.  The empty [fs_outputs] is what this example pins. *)
 
 Section FunctionalSpecification.
 
     Definition sz := 32.
+    Definition bits_false := Bits.of_nat sz 0.
+    Definition bits_true := Bits.neg (bits_false).
 
     Inductive fs_action :=
-    | fs_act
+    | fs_act_nop
+    | fs_act_neg
     .
 
     Definition fs_action_encoding (a: fs_action) : bits_t 16 :=
     match a with
-    | fs_act => Bits.of_nat 16 10
+    | fs_act_nop => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0
+    | fs_act_neg => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~0~1~0
     end.
 
     Lemma fs_action_encoding_inj :
@@ -40,34 +43,34 @@ Section FunctionalSpecification.
     Qed.
 
     Inductive fs_states :=
-    | x
-    | y
+    | fs_st_val
     .
 
     Inductive fs_inputs :=
-    | in_A
     .
 
     Inductive fs_outputs :=
-    | out_A
     .
 
     Definition fs_states_size (x: fs_states) : nat :=
-    sz.
+    match x with
+    | fs_st_val => sz
+    end.
 
     Definition fs_inputs_size (x: fs_inputs) : nat := 
-    sz.
+    match x with
+    end.
 
     Definition fs_outputs_size (x: fs_outputs) : nat := 
-    sz.
+    match x with
+    end.
 
     Definition fs_states_t := tf_states_type fs_states_size. 
 
     Definition fs_states_init (x: fs_states) : (fs_states_t x) :=
-        match x with
-        | x => Bits.zero
-        | y => Bits.zero
-        end.
+    match x with
+    | fs_st_val => Bits.zero
+    end.
 
     Definition fs_transitions
         (act: fs_action)
@@ -75,23 +78,29 @@ Section FunctionalSpecification.
         (@tf_ops fs_states fs_inputs fs_outputs Empty_set)
         :=
         match act with
-        | fs_act => 
-            {[
-                let $x := $x * $x;
-                (if $in_A then
-                    let $y := $x * $y;
-                    let $x := $x + #1
-                else
-                    pass
-                );
-                let $out_A := $y 
-            ]}
+        | fs_act_nop => tf_ops_base (tf_nop) 
+        | fs_act_neg => tf_ops_base (tf_assign fs_st_val (tf_op1 (tf_not) (tf_svar fs_st_val)))
         end.
 
     Definition fs_step := tf_ops_run fs_states_size fs_inputs_size fs_outputs_size no_ips.
     
     Section Examples.
+
+        Definition s_init := ContextEnv.(create) fs_states_init.
+        Example s_example : ContextEnv.(getenv) s_init fs_st_val = bits_false.
+        Proof. reflexivity. Qed.
+
+        Definition s1_trans := fs_transitions fs_act_nop.
+        Definition s1_state := fst (fs_step s1_trans (s_init, ContextEnv.(create) (fun _ => Bits.zero)) (fun _ => Bits.zero)).
+        Example s1_example : ContextEnv.(getenv) s1_state fs_st_val = bits_false.
+        Proof. ssimpl. Qed.
         
+        Definition s2_trans := fs_transitions fs_act_neg.
+        Definition s2_state := fst (fs_step s2_trans (s_init, ContextEnv.(create) (fun _ => Bits.zero)) (fun _ => Bits.zero)).
+        Example s2_example : ContextEnv.(getenv) s2_state fs_st_val = bits_true.
+        Proof. 
+            cbn -[vect_to_list]. sauto.
+        Qed.
 
     End Examples.
 
@@ -124,7 +133,7 @@ Section TypedSynthesis.
         tfs_spec_decls := []
     |}.
 
-    Definition tf_schedule := tfs_schedule tfs_ctx 5.
+    Definition tf_schedule := tfs_schedule tfs_ctx 10.
 
     Definition tf_ctx : TFSynthContext := {|
         tf_sched_ctx := tf_schedule;
@@ -133,34 +142,7 @@ Section TypedSynthesis.
         tf_action_encoding_inj := fs_action_encoding_inj;
     |}.
 
-    Definition R := TypedSynthesis.R tf_ctx.
-
-    Definition r := TypedSynthesis.r tf_ctx.
-
-    Definition Sigma := TypedSynthesis.Sigma tf_ctx.
-
-    Definition system_schedule := TypedSynthesis.system_schedule tf_ctx.
-    
-    Definition ext_fn_specs := TypedSynthesis.ext_fn_specs tf_ctx.
-
-    Instance ext_fn_names : Show _ := TypedSynthesis.ext_fn_names tf_ctx.
-
-    Definition package :=
-      {| ip_koika := {| koika_reg_types := R;
-                        koika_reg_names := TypedSynthesis.reg_names tf_ctx;
-                        koika_reg_init := r;
-                        koika_reg_finite := TypedSynthesis._reg_t_finite tf_ctx;
-                        koika_ext_fn_types := Sigma;
-                        koika_rules := TypedSynthesis.rules tf_ctx;
-                        koika_rule_names := TypedSynthesis.rule_names tf_ctx;
-                        koika_rule_external := (fun _ => false);
-                        koika_scheduler := system_schedule;
-                        koika_module_name := "Example_Sched" |};
-
-      ip_sim := {| sp_ext_fn_specs fn := {| efs_name := show fn; efs_method := false |};
-                  sp_prelude := None |};
-
-      ip_verilog := {| vp_ext_fn_specs := ext_fn_specs |} |}.
+  Definition package := TypedSynthesis.package tf_ctx "Example_InternalNegator".
     
 
 End TypedSynthesis.
@@ -169,5 +151,5 @@ End TypedSynthesis.
 
 Definition prog := Interop.Backends.register package.
 Set Extraction Output Directory "build".
-Extraction "Example_Sched.ml" prog.
+Extraction "Example_InternalNegator.ml" prog.
 

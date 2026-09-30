@@ -97,7 +97,7 @@ Measured on `secworks/sha256_core` through the glue, one request start to
 | SHA, 64 / 68 / 100 bytes | 2 | 135 |
 | HMAC, 13 / 32 / 42 bytes | 4 | 269 |
 
-So `ip_lat` must be at least 135 for SHA and 269 for HMAC. `coq/Examples/Mars.v`
+So `ip_lat` must be at least 135 for SHA and 269 for HMAC. `coq/Examples/Mars/Spec.v`
 declares 140 and 275.
 
 `agents/mars/oracle/run-stage3-v4.sh` runs the pair against the TCG C reference

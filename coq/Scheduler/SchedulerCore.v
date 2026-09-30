@@ -466,7 +466,7 @@ Section SchedulerCore.
        cost -- see the archive's DEBT-2. *)
     (* [ip_lat] is in CYCLES, so scale by [cost_limit]: a whole multiple shifts
        [calc_target_cycle]'s quotient by exactly that many cycles, whatever the
-       remainder.  Regressions: StallLatencySpike [sep_pad_r0..r5], [sep_lat_0..6]. *)
+       remainder.  Regressions: Regressions/StallLatency.v [sep_pad_r0..r5], [sep_lat_0..6]. *)
     | DFG_Stall lat _ => lat * clim
     (* SPIKE 2b: a drive and a sample are wiring, not logic. *)
     | DFG_Drive _ _ _ => 0

@@ -39,7 +39,7 @@ module tb;
     end
   endfunction
 
-  // ---------------- request framing, rebuilt from coq/Examples/Mars.v ----------------
+  // ---------------- request framing, rebuilt from coq/Examples/Mars/Spec.v ----------------
   // call_sha  : {len[15:0], msg[1023:0]}                   (tf_concat hi lo, hi = high bits)
   // call_hmac : {len[15:0], key[255:0], msg[511:0]}
   function automatic [1039:0] sha_req_of(input [15:0] len, input [1023:0] msg);

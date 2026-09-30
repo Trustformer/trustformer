@@ -45,21 +45,22 @@ the design uses the latched value.
 
 ## Running them
 
-Not wired into `make test`: verilator is not in `flake.nix`. It is in the local
-nix store, so `--offline` works and nothing here needs the network. Verilator
-shells out to `make`, `g++` and `python3`, none of which are on the dev-shell
-PATH -- omit any one and it fails late with a bare `sh: 1: X: not found`.
-`--build-jobs 2` is required: with a single job verilator bundles `main` into
-`Vtb__ALL.a` and the linker discards it.
+`make test` runs these after building whatever is missing. To run them alone:
 
 ```sh
 scripts/run-sim.sh              # all nine
 scripts/run-sim.sh tb_two.sv    # just one
 ```
 
-`build/<design>.v` must be current: `nix develop --offline --command bash -c
-'cp -au _build/default/build/. build/ && make compile'` first. (`make all` fails
-at `copy_build` because `rsync` is absent.)
+`scripts/run-sim.sh` rebuilds nothing, so `build/<design>.v` must be current --
+`make all` first, or just use `make test`.
+
+verilator is NOT in `flake.nix`: the pinned nixpkgs has no substitute for it in
+this environment, so declaring it starts a source bootstrap (bison, perl, glibc)
+rather than a download. `scripts/run-sim.sh` falls back to the copy in
+`/nix/store` when the dev shell carries none. `--build-jobs 2` is required: with
+a single job verilator bundles `main` into `Vtb__ALL.a` and the linker discards
+it.
 
 ## The one-action MARS
 
@@ -67,14 +68,14 @@ at `copy_build` because `rsync` is absent.)
 Quote and _MARS_Init, with both IPs modelled as deterministic functions of the
 whole request word. The expected digests are computed by applying those same
 functions to request payloads the testbench builds independently from the
-framing in `coq/Examples/Mars.v`, so a wrong field order, length or key fails
+framing in `coq/Examples/Mars/Spec.v`, so a wrong field order, length or key fails
 even though the digest itself is arbitrary. It also checks the guards, the
 response codes, that an error arm drives no request at all, that the request
 carries the LATCHED input, and that both arms of a branch take the same number
 of cycles.
 
 `LSHA`/`LHMAC` at the top of the file must match `fs_ip`'s `ip_lat` in
-`coq/Examples/Mars.v` -- currently the real 140 and 275.
+`coq/Examples/Mars/Spec.v` -- currently the real 140 and 275.
 
 ## Not the same thing as the oracle
 

@@ -1,8 +1,15 @@
-
 default: all
 
+# --------------------------------------------------------------------- Rocq
+
 coq:
-	dune build
+	dune build coq/
+
+copy_build: coq
+	@mkdir -p build
+	@cp -au _build/default/build/. build/
+
+# ------------------------------------------------------------------ Verilog
 
 ML_FILES := $(wildcard build/*.ml)
 
@@ -11,30 +18,24 @@ VERILOG_FILES := $(patsubst build/%.ml,build/%.v,$(ML_FILES))
 build/%.v: build/%.ml
 	cuttlec -T verilog $<
 
-compile: $(VERILOG_FILES)
-	$(MAKE) check
+compile: copy_build
+	@$(MAKE) --no-print-directory $(VERILOG_FILES)
 
-# Refuses generated Verilog in which one net has two *different* drivers -- see
-# agents/verilog-issues/ and the header of the script.
-check:
-	@scripts/check-drivers.sh $(VERILOG_FILES)
+all: compile
 
-copy_build:
-	@if [ -d _build/default/build/. ]; then \
-		mkdir -p build; \
-		rsync -aru _build/default/build/. build; \
-	fi
+# -------------------------------------------------------------------- Tests
 
-# --
+check: all
+	@scripts/check-drivers.sh build/*.v
 
-all: coq copy_build 
-	$(MAKE) compile
+sim: all
+	@scripts/run-sim.sh
 
-test: copy_build 
-	$(MAKE) compile
-# For now test just builds & compiles
+test: all
+	@scripts/check-drivers.sh build/*.v
+	@scripts/run-sim.sh
 
 clean:
 	rm -rf build/*
 
-.PHONY: coq all test clean copy_build compile check
+.PHONY: coq copy_build compile all check sim test clean default

@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
-# Simulate the IP round-trip spikes and the one-action MARS.  See sim/README.md.
-#
 #   scripts/run-sim.sh [testbench.sv ...]     (default: all of them)
 set -uo pipefail
 cd "$(dirname "$0")/.."
+
+if ! command -v verilator >/dev/null 2>&1; then
+    for d in /nix/store/*-verilator-*/bin; do
+        [ -x "$d/verilator" ] && { PATH="$d:$PATH"; export PATH; break; }
+    done
+fi
+if ! command -v verilator >/dev/null 2>&1; then
+    echo "verilator not found -- install it, or put its bin/ on PATH" >&2
+    exit 1
+fi
 
 declare -A DESIGN=(
   [tb_call.sv]=Example_CallSpike

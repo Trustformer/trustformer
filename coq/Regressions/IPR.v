@@ -92,7 +92,7 @@ Section Context.
 
 End Context.
 
-Section TaintRegression.
+Section TaintPins.
 
   (* The secret reaches the branch, so the roots are not all untainted: a
      latency-noninterference claim here is not free. *)
@@ -101,7 +101,7 @@ Section TaintRegression.
   Goal tainted_nodes <> [].
   Proof. vm_compute. discriminate. Qed.
 
-End TaintRegression.
+End TaintPins.
 
 Section TheoremInstantiation.
 

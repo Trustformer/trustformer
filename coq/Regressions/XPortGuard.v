@@ -131,22 +131,7 @@ Section XPortGuardSynthesis.
     tf_action_encoding := xp_action_encoding;
     tf_action_encoding_inj := xp_action_encoding_inj;
   |}.
-  Instance xp_ext_fn_names : Show _ := TypedSynthesis.ext_fn_names xp_tf_ctx.
-
-  Definition xp_package :=
-    {| ip_koika := {| koika_reg_types := TypedSynthesis.R xp_tf_ctx;
-                      koika_reg_names := TypedSynthesis.reg_names xp_tf_ctx;
-                      koika_reg_init := TypedSynthesis.r xp_tf_ctx;
-                      koika_reg_finite := TypedSynthesis._reg_t_finite xp_tf_ctx;
-                      koika_ext_fn_types := TypedSynthesis.Sigma xp_tf_ctx;
-                      koika_rules := TypedSynthesis.rules xp_tf_ctx;
-                      koika_rule_names := TypedSynthesis.rule_names xp_tf_ctx;
-                      koika_rule_external := (fun _ => false);
-                      koika_scheduler := TypedSynthesis.system_schedule xp_tf_ctx;
-                      koika_module_name := "Example_XPortGuardSpike" |};
-    ip_sim := {| sp_ext_fn_specs fn := {| efs_name := show fn; efs_method := false |};
-                sp_prelude := None |};
-    ip_verilog := {| vp_ext_fn_specs := TypedSynthesis.ext_fn_specs xp_tf_ctx |} |}.
+  Definition xp_package := TypedSynthesis.package xp_tf_ctx "Example_XPortGuardSpike".
 
 End XPortGuardSynthesis.
 

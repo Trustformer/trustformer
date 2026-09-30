@@ -14,8 +14,8 @@ Require Import Coq.Logic.EqdepFacts.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
-(* A simple lockbox: one 32-bit state register and two actions (set, test),
-   triggered through a command register whose first bit marks it valid. *)
+(* A lockbox: a pin and a secret in state, set from inputs; [test] publishes
+   the secret and a status when the pin matches. *)
 
 Section FunctionalSpecification.
 
@@ -91,15 +91,18 @@ Section FunctionalSpecification.
         :=
         match act with
         | fs_act_set => 
-            tf_ops_cons
-                (tf_ops_base (tf_assign fs_st_pin (tf_ivar fs_in_pin)))
-                (tf_ops_base (tf_assign fs_st_secret (tf_ivar fs_in_secret)))
-        | fs_act_test => tf_ops_if 
-            (tf_op2 (tf_cmp sz tf_eq) (tf_svar fs_st_pin) (tf_ivar fs_in_pin)) 
-                (tf_ops_cons 
-                    (tf_ops_base (tf_output fs_out_secret (tf_svar fs_st_secret))) 
-                    (tf_ops_base (tf_output fs_out_status (tf_const 1))))
-                (tf_ops_base (tf_output fs_out_status (tf_const 0)))
+            {[
+                let $fs_st_pin := $fs_in_pin;
+                let $fs_st_secret := $fs_in_secret
+            ]}
+        | fs_act_test => 
+            {[
+                if ($fs_st_pin ==[sz] $fs_in_pin) then 
+                    let $fs_out_secret := $fs_st_secret;
+                    let $fs_out_status := #1
+                else 
+                    let $fs_out_status := #0
+            ]}
         end.
 
 
@@ -211,34 +214,7 @@ Section TypedSynthesis.
         tf_action_encoding_inj := fs_action_encoding_inj;
     |}.
 
-    Definition R := TypedSynthesis.R tf_ctx.
-
-    Definition r := TypedSynthesis.r tf_ctx.
-
-    Definition Sigma := TypedSynthesis.Sigma tf_ctx.
-
-    Definition system_schedule := TypedSynthesis.system_schedule tf_ctx.
-    
-    Definition ext_fn_specs := TypedSynthesis.ext_fn_specs tf_ctx.
-
-    Instance ext_fn_names : Show _ := TypedSynthesis.ext_fn_names tf_ctx.
-
-    Definition package :=
-      {| ip_koika := {| koika_reg_types := R;
-                        koika_reg_names := TypedSynthesis.reg_names tf_ctx;
-                        koika_reg_init := r;
-                        koika_reg_finite := TypedSynthesis._reg_t_finite tf_ctx;
-                        koika_ext_fn_types := Sigma;
-                        koika_rules := TypedSynthesis.rules tf_ctx;
-                        koika_rule_names := TypedSynthesis.rule_names tf_ctx;
-                        koika_rule_external := (fun _ => false);
-                        koika_scheduler := system_schedule;
-                        koika_module_name := "Example_Lockbox" |};
-
-      ip_sim := {| sp_ext_fn_specs fn := {| efs_name := show fn; efs_method := false |};
-                  sp_prelude := None |};
-
-      ip_verilog := {| vp_ext_fn_specs := ext_fn_specs |} |}.
+  Definition package := TypedSynthesis.package tf_ctx "Example_Lockbox".
     
 
 End TypedSynthesis.

@@ -22,10 +22,14 @@ expected on the ambient `PATH`.
 ```sh
 nix develop --command dune build coq/     # the library and all proofs (~90 s)
 nix develop --command make all            # the above, then Verilog into build/
+nix develop --command make test           # the above, then every check we have
 ```
 
-`make all` extracts each extraction target under `coq/Examples/` to OCaml and
-runs `cuttlec -T verilog` on it. The resulting `build/*.v` files are **Verilog**.
+`make all` extracts each extraction target under `coq/Examples/` and
+`coq/Regressions/` to OCaml and runs `cuttlec -T verilog` on it. The
+resulting `build/*.v` files are **Verilog**. `make test` adds the duplicate-driver
+scan (`scripts/check-drivers.sh`) and the nine verilator testbenches
+(`scripts/run-sim.sh`, see `sim/README.md`).
 
 ## What is in here
 
@@ -39,7 +43,8 @@ runs `cuttlec -T verilog` on it. The resulting `build/*.v` files are **Verilog**
 | `coq/TypedSynthesis.v`                          | the Kôika register file, rules and scheduler for a `TFSchedule`                               |
 | `coq/Properties/`                               | the proofs: `Synthesis.v`, `SchedulerSimulation.v`, `IPR.v`                                   |
 | `coq/Rules/`                                    | the declassification rule library                                                             |
-| `coq/Examples/`                                 | worked designs, regressions, and extraction targets                                           |
+| `coq/Examples/`                                 | the worked designs, one folder each: a `Spec.v` and any proofs about it                       |
+| `coq/Regressions/`                              | toolchain tests: the analyses, the lowering, and the designs the testbenches drive             |
 
 ## Writing a module
 
@@ -47,7 +52,7 @@ runs `cuttlec -T verilog` on it. The resulting `build/*.v` files are **Verilog**
    and an action type. State variables are secret; output variables are what
    the attacker may see.
 2. Give the action semantics as `tf_ops` — see the notation in
-   `coq/Examples/LockboxTries.v` (`let $x := ...`, `if ... then ... else ...`).
+   `coq/Examples/LockboxTries/Spec.v` (`let $x := ...`, `if ... then ... else ...`).
 3. Pack it into a `TFSchedContext`. Leave `tfs_spec_decls := []` for a
    blackbox attacker, or list declassification rules from `coq/Rules/` for a whitebox attacker.
 4. `tfs_schedule ctx cost_limit` produces the `TFSchedule`; feeding it to
@@ -55,5 +60,5 @@ runs `cuttlec -T verilog` on it. The resulting `build/*.v` files are **Verilog**
    `Interop.Backends.register package` plus `Extraction` produce the Verilog
    generator.
 
-`coq/Examples/SimpleLockbox.v` is the shortest complete instance;
-`coq/Examples/LockboxTries.v` is the paper's running example.
+`coq/Examples/SimpleLockbox/Spec.v` is the shortest complete instance;
+`coq/Examples/LockboxTries/Spec.v` is the paper's running example.

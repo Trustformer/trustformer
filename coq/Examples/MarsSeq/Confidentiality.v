@@ -3,7 +3,7 @@ Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Scheduler.Contract.
 Require Import Trustformer.Properties.Confidentiality.
-Require Import Trustformer.Examples.MarsSeq.
+Require Import Trustformer.Examples.MarsSeq.Spec.
 
 Require Import Coq.Lists.List.
 Import ListNotations.
