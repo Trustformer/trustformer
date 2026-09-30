@@ -62,12 +62,12 @@ scripts/run-sim.py tb_two         # just one
 `scripts/run-sim.py` rebuilds nothing, so `build/<design>.v` must be current --
 `make all` first, or just use `make test`.
 
-verilator is NOT in `flake.nix`: the pinned nixpkgs has no substitute for it in
-this environment, so declaring it starts a source bootstrap (bison, perl, glibc)
-rather than a download. `scripts/run-sim.py` falls back to the copy in
-`/nix/store` when the dev shell carries none. `--build-jobs 2` is required: with
-a single job verilator bundles `main` into `Vtb__ALL.a` and the linker discards
-it.
+verilator comes from `flake.nix`, so run these inside `nix develop`. Do not
+pass `--offline` on a machine that has not fetched it yet: nix then builds it
+from source rather than failing, which looks like a hang.
+
+`--build-jobs 2` is required: with a single job verilator bundles `main` into
+`Vtb__ALL.a` and the linker discards it.
 
 ## The one-action MARS
 

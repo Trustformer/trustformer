@@ -7,7 +7,7 @@ coq:
 
 copy_build: coq
 	@mkdir -p build
-	@cp -au _build/default/build/. build/
+	@rsync -aru _build/default/build/. build
 
 # ------------------------------------------------------------------ Verilog
 

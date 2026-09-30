@@ -19,3 +19,7 @@ agents/
 paper/
 .claude
 .github/skills
+
+# Python
+__pycache__/
+*.pyc

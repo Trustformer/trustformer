@@ -42,6 +42,8 @@
 
             pkgs.yosys
             pkgs.python3
+            pkgs.verilator
+            pkgs.rsync
           ];
 
         buildInputs = [

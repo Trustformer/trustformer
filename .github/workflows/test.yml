@@ -22,5 +22,14 @@ jobs:
             experimental-features = nix-command flakes
             allow-import-from-derivation = true
 
-      - name: Build Trustformer Library and Example Modules
-        run: nix develop -c make
+      - name: Build the library, the proofs and the Verilog
+        run: nix develop -c make all
+
+      - name: Headline theorems are proved, axiom-free
+        run: nix develop -c make theorems
+
+      - name: No generated net has two different drivers
+        run: nix develop -c make check
+
+      - name: Testbenches
+        run: nix develop -c make sim

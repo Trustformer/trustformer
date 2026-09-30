@@ -52,15 +52,11 @@ BENCHES = {
 
 
 def find_verilator():
-    """verilator is not in flake.nix -- the pinned nixpkgs would build it from
-    source here.  Fall back to a copy in the store."""
+    """flake.nix pins verilator; taking any other copy would test a different
+    simulator than CI does."""
     if shutil.which("verilator"):
         return "verilator"
-    for d in sorted(glob.glob("/nix/store/*-verilator-*/bin")):
-        if os.access(os.path.join(d, "verilator"), os.X_OK):
-            os.environ["PATH"] = d + os.pathsep + os.environ["PATH"]
-            return "verilator"
-    sys.exit("verilator not found -- install it, or put its bin/ on PATH")
+    sys.exit("verilator not found -- run inside 'nix develop'")
 
 
 def run_one(name, bench, verilator, work):
