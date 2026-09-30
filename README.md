@@ -27,9 +27,16 @@ nix develop --command make test           # the above, then every check we have
 
 `make all` extracts each extraction target under `coq/Examples/` and
 `coq/Regressions/` to OCaml and runs `cuttlec -T verilog` on it. The
-resulting `build/*.v` files are **Verilog**. `make test` adds the duplicate-driver
-scan (`scripts/check-drivers.py`) and the eleven verilator testbenches
-(`scripts/run-sim.py`, see `sim/README.md`).
+resulting `build/*.v` files are **Verilog**.
+
+`make test` adds three checks: that every headline theorem is proved and
+axiom-free (`scripts/check-theorems.py`), that no generated net has two
+different drivers (`scripts/check-drivers.py`), and the eleven verilator
+testbenches (`scripts/run-sim.py`, see `sim/README.md`).
+
+`scripts/check-theorems.py --list` prints the theorems the project stands on.
+They are listed in that script: Rocq checks the proofs, so what needs a human
+is whether the list is the right one.
 
 ## What is in here
 

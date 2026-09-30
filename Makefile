@@ -25,6 +25,9 @@ all: compile
 
 # -------------------------------------------------------------------- Tests
 
+theorems: coq
+	@python3 scripts/check-theorems.py
+
 check: all
 	@python3 scripts/check-drivers.py build/*.v
 
@@ -32,10 +35,11 @@ sim: all
 	@python3 scripts/run-sim.py
 
 test: all
+	@python3 scripts/check-theorems.py
 	@python3 scripts/check-drivers.py build/*.v
 	@python3 scripts/run-sim.py
 
 clean:
 	rm -rf build/*
 
-.PHONY: coq copy_build compile all check sim test clean default
+.PHONY: coq copy_build compile all theorems check sim test clean default
