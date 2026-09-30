@@ -41,6 +41,7 @@
             z3_tptp
 
             pkgs.yosys
+            pkgs.python3
           ];
 
         buildInputs = [

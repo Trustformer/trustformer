@@ -11,7 +11,7 @@
 //
 // Both IPs are identity, latency 3, not pipelined, and present their answer
 // for exactly one cycle (garbage otherwise).
-module tb;
+module tb_xport;
   localparam LAT = 3;
   localparam [255:0] GARBAGE = 256'hdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef;
   localparam [255:0] NONZERO = 256'h00000000000000000000000000000000000000000000000000000000000000f5;

@@ -4,7 +4,7 @@
 // request strobe, and drives GARBAGE on the response wire at every other
 // cycle.  A design that samples on the wrong cycle therefore latches garbage
 // and fails, rather than accidentally passing.
-module tb;
+module tb_call;
   localparam LAT = 3;
   localparam [255:0] MSG     = 256'h00112233445566778899aabbccddeeff_0f1e2d3c4b5a69788796a5b4c3d2e1f0;
   localparam [255:0] GARBAGE = 256'hdeadbeefdeadbeefdeadbeefdeadbeef_deadbeefdeadbeefdeadbeefdeadbeef;

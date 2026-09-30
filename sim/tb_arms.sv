@@ -12,7 +12,7 @@
 // The taken arm here is the DEEP one, so it is several cycles behind the arm
 // that is not taken -- which is what removes the one-cycle margin that hides
 // this in a symmetric branch.
-module tb;
+module tb_arms;
   localparam LAT = 3;
   localparam [31:0] GARBAGE = 32'hdeadbeef;
   localparam [31:0] XV = 32'd3;              // x

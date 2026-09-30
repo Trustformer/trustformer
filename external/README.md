@@ -1,9 +1,9 @@
 # `external/` — IP blocks and glue for a generated Trustformer module
 
 A Trustformer module is only half a device: its `Trusted` ports face crypto IP
-that lives outside the verified boundary. This directory holds those blocks, the
-thin adapters that speak the module's handshake, and the simulation harness that
-checks the pair against a reference.
+that lives outside the verified boundary. This directory holds those blocks and
+the thin adapters that speak the module's handshake. The testbenches that drive
+the pair live in `sim/` with every other testbench.
 
 Nothing here is generated. `build/*.v` is generated; this is what it is wired to.
 
@@ -12,7 +12,6 @@ external/
   sha256/   vendored upstream IP, unmodified — secworks/sha256 (BSD-2)
   glue/     thin adapters between an IP's native interface and a module's
             Trusted port group.  This is TCB: secrets cross it.
-  tb/       simulation harnesses
 ```
 
 ## `sha256/`
@@ -44,13 +43,6 @@ of it.
 Build it with `+define+GLUE_OMIT_DEASSERT` to get a deliberately misbehaving
 adapter — one that never drops `crypt_valid`. The module must remain safe under
 it. `agents/mars/oracle/run-stage3.sh` asserts exactly that.
-
-## `tb/`
-
-`tb_mars_pcrextend.v` drives the generated module through the MMIO handshake,
-with the glue and the core attached. Run it via
-`agents/mars/oracle/run-stage3.sh`, which also diffs the result against the TCG
-reference emulator.
 
 ## What each adapter is responsible for
 

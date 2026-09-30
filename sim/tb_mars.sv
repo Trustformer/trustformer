@@ -4,7 +4,7 @@
 // wrong length, field order or key fails though the digest itself is arbitrary.
 // Each IP answers for exactly ONE cycle, drives garbage otherwise, and rejects
 // a request while one is in flight.
-module tb;
+module tb_mars;
   localparam int LSHA  = 140;        // must match fs_ip ip_sha  ip_lat
   localparam int LHMAC = 275;        // must match fs_ip ip_hmac ip_lat
 

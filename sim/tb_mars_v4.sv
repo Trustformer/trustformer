@@ -144,6 +144,37 @@ module tb_mars_v4;
     end
   endtask
 
+  // ---- expected values ------------------------------------------------
+  // The TCG C reference emulator's output for this exact stimulus.
+  // Regenerate with scripts/regen-golden.py.
+  localparam logic [255:0] E_ZERO = 256'h0;
+  localparam logic [255:0] E_EXT1 = 256'h90f4b39548df55ad6187a1d20d731ecee78c545b94afd16f42ef7592d99cd365;
+  localparam logic [255:0] E_EXT2 = 256'h9dea5804aca8b476cf8f1efb4fe41abae758ccb238d6656dbc4ca5d40803dc74;
+  localparam logic [255:0] E_EXT3 = 256'h05937d0339976abf003ab9e1247e5e6e3e06c07b11dceb9c6e333c7569ed0f33;
+  localparam logic [255:0] E_PCR1 = 256'h17eaf835d8496ed16d40454b53344de18ffac7e5fbbb87860889922e51f47d70;
+  localparam logic [255:0] E_SIG  = 256'h335d2b4259e5011ff8fc5584037939b3a751ce2c842432029f3c00174062ab4f;
+
+  int checks = 0, fails = 0;
+
+  task automatic chk(input string what, input logic [255:0] got,
+                     input logic [255:0] want);
+    checks++;
+    if (got !== want) begin
+      fails++;
+      $display("  FAIL  %s", what);
+      $display("        got  %064x", got);
+      $display("        want %064x", want);
+    end
+  endtask
+
+  task automatic chk_rc(input string what, input logic [15:0] got);
+    checks++;
+    if (got !== 16'd0) begin
+      fails++;
+      $display("  FAIL  %s: rc=%0d", what, got);
+    end
+  endtask
+
   // ---- the run -------------------------------------------------------
 
   integer i;
@@ -163,22 +194,31 @@ module tb_mars_v4;
     // A fresh device: both PCRs zero, as after _MARS_Init.
     reg_read(16'd0);
     $display("RegRead      i =0  rc=%0d dig=%064x", rc, dout);
+    chk_rc("fresh PCR0 read", rc);
+    chk("fresh PCR0 is zero", dout, E_ZERO);
     reg_read(16'd1);
     $display("RegRead      i =1  rc=%0d dig=%064x", rc, dout);
+    chk_rc("fresh PCR1 read", rc);
+    chk("fresh PCR1 is zero", dout, E_ZERO);
 
     for (i = 1; i <= 3; i = i + 1) begin
       pcr_extend(16'd0, {248'd0, i[7:0]});
       $display("PcrExtend    i =0  rc=%0d", rc);
       reg_read(16'd0);
       $display("RegRead      i =0  rc=%0d dig=%064x", rc, dout);
+      chk_rc("PCR0 read after extend", rc);
+      chk($sformatf("PCR0 after extend %0d", i), dout,
+          i == 1 ? E_EXT1 : i == 2 ? E_EXT2 : E_EXT3);
     end
 
     // PCR1 is independent and must still be zero until its own extend.
     pcr_extend(16'd1, {248'd0, 8'hAA});
     reg_read(16'd1);
     $display("RegRead      i =1  rc=%0d dig=%064x", rc, dout);
+    chk("PCR1 after its own extend", dout, E_PCR1);
     reg_read(16'd0);
     $display("RegRead      i =0  rc=%0d dig=%064x", rc, dout);
+    chk("PCR0 unchanged by the PCR1 extend", dout, E_EXT3);
 
     // MARS_Quote over both PCRs.  The signature is HMAC(AK, snapshot) with AK
     // derived from DP, so one value exercises the whole key hierarchy: the KDF
@@ -187,9 +227,18 @@ module tb_mars_v4;
           256'h0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20,
           256'h2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40);
     $display("Quote        rsel=3 rc=%0d sig=%064x", rc, dout);
+    chk_rc("Quote", rc);
+    chk("Quote signature", dout, E_SIG);
     $display("Snapshot           snap=%064x", snap);
 
     $display("FINAL        failure=%0d st=%0d", failure, st);
+
+    $display("");
+    if (fails == 0) $display("PASS  (%0d checks)", checks);
+    else begin
+      $display("FAIL  (%0d of %0d checks failed)", fails, checks);
+      $fatal(1);
+    end
     $finish;
   end
 

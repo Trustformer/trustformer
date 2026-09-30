@@ -2,7 +2,7 @@
 // The lowering sequences the two drives rather than making them exclusive, so
 // the IP sees TWO requests and a phi picks the answer.  This checks that the
 // phi picks the RIGHT one, and reports what the IP was actually asked.
-module tb;
+module tb_branch;
   localparam LAT = 3;
   localparam [255:0] A       = 256'h00112233445566778899aabbccddeeff_0f1e2d3c4b5a69788796a5b4c3d2e1f0;
   localparam [255:0] GARBAGE = 256'hdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef;

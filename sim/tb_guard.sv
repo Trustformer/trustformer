@@ -7,7 +7,7 @@
 // -- it presents its answer for EXACTLY ONE cycle and drives garbage otherwise.
 // A guard that reads the response wire instead of the sample's latch therefore
 // sees garbage at the cycle the second drive fires, and picks the wrong arm.
-module tb;
+module tb_guard;
   localparam LAT = 3;
   localparam [255:0] GARBAGE = 256'hdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef;
   localparam [255:0] NONZERO = 256'h00000000000000000000000000000000000000000000000000000000000000f5;

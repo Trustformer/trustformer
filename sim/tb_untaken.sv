@@ -20,7 +20,7 @@
 //
 // Both arms are run as the skipped one.  The buffers are zeroed when the
 // action retires, so everything is sampled DURING the action.
-module tb;
+module tb_untaken;
   localparam LAT = 3;
   localparam [31:0] GARBAGE = 32'hdeadbeef;
   localparam [31:0] XV = 32'd3;

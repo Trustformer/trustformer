@@ -2,7 +2,7 @@
 //   st_a := ip(in_msg)        st_b := ip(~in_msg)
 // The IP is identity, latency 3, and NOT pipelined -- so a second request
 // arriving while one is in flight is a design error and is reported as such.
-module tb;
+module tb_chain;
   localparam LAT = 3;
   localparam [255:0] MSG     = 256'h00112233445566778899aabbccddeeff_0f1e2d3c4b5a69788796a5b4c3d2e1f0;
   localparam [255:0] GARBAGE = 256'hdeadbeefdeadbeefdeadbeefdeadbeef_deadbeefdeadbeefdeadbeefdeadbeef;

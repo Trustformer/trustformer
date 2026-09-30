@@ -26,14 +26,14 @@ all: compile
 # -------------------------------------------------------------------- Tests
 
 check: all
-	@scripts/check-drivers.sh build/*.v
+	@python3 scripts/check-drivers.py build/*.v
 
 sim: all
-	@scripts/run-sim.sh
+	@python3 scripts/run-sim.py
 
 test: all
-	@scripts/check-drivers.sh build/*.v
-	@scripts/run-sim.sh
+	@python3 scripts/check-drivers.py build/*.v
+	@python3 scripts/run-sim.py
 
 clean:
 	rm -rf build/*

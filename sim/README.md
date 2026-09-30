@@ -1,4 +1,11 @@
-# Simulating the IP round trip
+# Testbenches
+
+Every testbench in the project lives here and every one decides its own
+verdict: it prints `PASS` or `FAIL` and exits non-zero on failure.
+`scripts/run-sim.py` builds and runs them; it judges nothing itself.
+
+Nine drive the generated Verilog against a MODEL of the attached IP, two
+against the real SHA-256 core -- see "Two families" below.
 
 Reading the generated Verilog is not running it. Every bug in the drive/sample
 path so far was invisible at the Coq level -- the cycle assignment was correct
@@ -48,16 +55,16 @@ the design uses the latched value.
 `make test` runs these after building whatever is missing. To run them alone:
 
 ```sh
-scripts/run-sim.sh              # all nine
-scripts/run-sim.sh tb_two.sv    # just one
+scripts/run-sim.py              # all eleven
+scripts/run-sim.py tb_two         # just one
 ```
 
-`scripts/run-sim.sh` rebuilds nothing, so `build/<design>.v` must be current --
+`scripts/run-sim.py` rebuilds nothing, so `build/<design>.v` must be current --
 `make all` first, or just use `make test`.
 
 verilator is NOT in `flake.nix`: the pinned nixpkgs has no substitute for it in
 this environment, so declaring it starts a source bootstrap (bison, perl, glibc)
-rather than a download. `scripts/run-sim.sh` falls back to the copy in
+rather than a download. `scripts/run-sim.py` falls back to the copy in
 `/nix/store` when the dev shell carries none. `--build-jobs 2` is required: with
 a single job verilator bundles `main` into `Vtb__ALL.a` and the linker discards
 it.
@@ -77,12 +84,28 @@ of cycles.
 `LSHA`/`LHMAC` at the top of the file must match `fs_ip`'s `ip_lat` in
 `coq/Examples/Mars/Spec.v` -- currently the real 140 and 275.
 
-## Not the same thing as the oracle
+## Two families, and what separates them
 
-These check the module against a model of the IP. The campaign's acceptance test
-checks it against the REAL SHA-256 and the TCG reference emulator:
-`agents/mars/oracle/run-stage3-v4.sh` (agents/ is gitignored). Both should be
-green before the interface is reviewed.
+Everything above models the IP: identity or `+1`, latency 3, not pipelined.
+That is what makes the checks sharp and fast, and it is also the limit -- a
+design can pass every one of them and still be wrong about a real digest.
+
+Two testbenches close that gap by attaching the REAL `secworks/sha256` core
+through `external/glue/`:
+
+| testbench | design | what it pins |
+| --- | --- | --- |
+| `tb_mars_v4.sv` | `Example_Mars` | the one-action design's PCRs and Quote signature |
+| `tb_mars_pcrextend.sv` | `Example_MarsSeq` | the same values through the sequential protocol |
+
+Both carry the expected digests as `localparam`s, so they need nothing at run
+time that the other nine do not. Those values are the TCG C reference
+emulator's output for this stimulus; `scripts/regen-golden.py` rebuilds the
+emulator and reprints them, which is how you check they are still the
+reference's or produce new ones when the Profile or the stimulus changes.
+
+The two designs agreeing on all six values is the "`Mars.v` is checked against
+`MarsSeq`" claim in `coq/Examples/MarsSeq/Spec.v`, discharged in simulation.
 
 ## tb_xport.sv: a branch whose condition reads another port
 
