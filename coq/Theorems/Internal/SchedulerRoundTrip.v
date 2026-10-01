@@ -388,7 +388,7 @@ Section SchedulerRoundTrip.
   Local Notation node_rank_mono_le := (SchedulerSimulationLemmas.node_rank_mono_le ctx cost_limit).
   Local Notation node_rank_stall := (SchedulerSimulationLemmas.node_rank_stall ctx cost_limit).
   Local Notation node_ref_expr := (Definitions.node_ref_expr ctx cost_limit).
-  Local Notation node_ref_valid := (SchedulerSimulationLemmas.node_ref_valid ctx cost_limit).
+  Local Notation node_ref_valid := (Definitions.node_ref_valid ctx cost_limit).
   Local Notation not_sample_not_in_sample_bufs := (SchedulerSimulationLemmas.not_sample_not_in_sample_bufs ctx cost_limit).
   Local Notation nre_binary := (SchedulerSimulationLemmas.nre_binary ctx cost_limit).
   Local Notation nre_const := (SchedulerSimulationLemmas.nre_const ctx cost_limit).
@@ -485,8 +485,8 @@ Section SchedulerRoundTrip.
   Local Notation sample_chain_between := (SchedulerSimulationLemmas.sample_chain_between ctx cost_limit).
   Local Notation sample_chain_no_drive := (SchedulerSimulationLemmas.sample_chain_no_drive ctx cost_limit).
   Local Notation sample_chain_no_sample := (SchedulerSimulationLemmas.sample_chain_no_sample ctx cost_limit).
-  Local Notation sample_drive := (SchedulerSimulationLemmas.sample_drive ctx cost_limit).
-  Local Notation sample_drive_head := (SchedulerSimulationLemmas.sample_drive_head ctx cost_limit).
+  Local Notation sample_drive := (Definitions.sample_drive ctx cost_limit).
+  Local Notation sample_drive_head := (Definitions.sample_drive_head ctx cost_limit).
   Local Notation sample_drive_head_op := (SchedulerSimulationLemmas.sample_drive_head_op ctx cost_limit).
   Local Notation sample_drive_head_shape := (SchedulerSimulationLemmas.sample_drive_head_shape ctx cost_limit).
   Local Notation sample_drive_in_drive_nodes := (SchedulerSimulationLemmas.sample_drive_in_drive_nodes ctx cost_limit).
@@ -583,7 +583,7 @@ Section SchedulerRoundTrip.
   Local Notation var_map_snd_is_graph_nid := (SchedulerSimulationLemmas.var_map_snd_is_graph_nid ctx cost_limit).
   Local Notation var_node_at := (SchedulerSimulationLemmas.var_node_at ctx cost_limit).
   Local Notation vmg := (SchedulerSimulationLemmas.vmg ctx).
-  Local Notation vreg_nid := (SchedulerSimulationLemmas.vreg_nid ctx cost_limit).
+  Local Notation vreg_nid := (Definitions.vreg_nid ctx cost_limit).
   Local Notation vreg_nid_in_require_buffer := (SchedulerSimulationLemmas.vreg_nid_in_require_buffer ctx cost_limit).
   Local Notation vreg_nid_inj := (SchedulerSimulationLemmas.vreg_nid_inj ctx cost_limit).
   Local Notation vreg_nid_node_range := (SchedulerSimulationLemmas.vreg_nid_node_range ctx cost_limit).
@@ -3563,15 +3563,15 @@ Section SchedulerRoundTrip.
             - intro E.
               destruct (emitted_node_at act F sd sh (DFG_Join drive_id prev) 1
                           head_id HF Hned E GhF) as [_ [_ [MjnOp2 _]]].
-              unfold SchedulerSimulationLemmas.sample_drive_head, Definitions.node_op. rewrite MjnOp2, MdrOp.
+              unfold Definitions.sample_drive_head, Definitions.node_op. rewrite MjnOp2, MdrOp.
               destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) ip ip) as [_ | Hnp];
                 [ reflexivity | exfalso; exact (Hnp eq_refl) ].
             - unfold ret. intro E. injection E as <- _.
-              unfold SchedulerSimulationLemmas.sample_drive_head, Definitions.node_op. rewrite MdrOp.
+              unfold Definitions.sample_drive_head, Definitions.node_op. rewrite MdrOp.
               destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) ip ip) as [_ | Hnp];
                 [ reflexivity | exfalso; exact (Hnp eq_refl) ]. }
           assert (Hdrv : sample_drive act samp_id = Some drive_id).
-          { unfold SchedulerSimulationLemmas.sample_drive, Definitions.node_op. rewrite MsmOp.
+          { unfold Definitions.sample_drive, Definitions.node_op. rewrite MsmOp.
             revert Es1. unfold stall_chain.
             destruct (ip_lat (tfs_spec_ip ctx ip)) as [| l].
             - unfold ret. intro E. injection E as <- _.
@@ -4840,7 +4840,7 @@ Section SchedulerRoundTrip.
       by (unfold Definitions.node_op; rewrite <- Htid, Hnth; exact Htop).
     pose proof (stall_nid_succ act tok lt aa Htok) as Htoks.
     assert (Hsdh : sample_drive_head act p aa = Some d)
-      by (unfold SchedulerSimulationLemmas.sample_drive in Hsd; rewrite Hsamp, Htok in Hsd; exact Hsd).
+      by (unfold Definitions.sample_drive in Hsd; rewrite Hsamp, Htok in Hsd; exact Hsd).
     (* both heads are [d] itself or the ordering join above it *)
     destruct (sample_drive_head_shape act p aa d Hsdh)
       as [[Hdaa [ar1 [e1 Haadr]]] | [prev' [ar2 [e2 [Haaj Hd2dr]]]]];
@@ -4861,7 +4861,7 @@ Section SchedulerRoundTrip.
     snd (compile_dfg_expr ctx bneeds f a_idx (build_dfg ctx act) x (sample_bufs act a_idx))
     = node_ref_valid act a_idx x.
   Proof.
-    intros H1 H2 H3. unfold SchedulerSimulationLemmas.node_ref_valid.
+    intros H1 H2 H3. unfold Definitions.node_ref_valid.
     rewrite (compile_fuel_irrel act a_idx (sample_bufs act a_idx) x H1 H2 f
                (length (graph (build_dfg ctx act))) H3 H2).
     reflexivity.
@@ -4948,7 +4948,7 @@ Section SchedulerRoundTrip.
     assert (Hnref : eval1 (node_ref_valid act a_idx n) ss input = Bits.ones 1).
     { destruct Hmshape as [-> | [prev Hj]]; [ exact Hmref |].
       pose proof (join_nid_succ act m n prev p arg en Hj Hop) as Hms.
-      unfold SchedulerSimulationLemmas.node_ref_valid in Hmref.
+      unfold Definitions.node_ref_valid in Hmref.
       rewrite (compile_join_valid (build_dfg ctx act) _ _ a_idx m n prev
                  (sample_bufs act a_idx) [] (length (graph (build_dfg ctx act)))
                  Hj
@@ -4961,7 +4961,7 @@ Section SchedulerRoundTrip.
                  Hn1 Hnlen ltac:(lia)) in Hnv.
       exact Hnv. }
     (* and on to the literal's own source *)
-    unfold SchedulerSimulationLemmas.node_ref_valid in Hnref.
+    unfold Definitions.node_ref_valid in Hnref.
     pose proof (compile_guard_sources_valid act a_idx n p arg en
                   (sample_bufs act a_idx) [] (length (graph (build_dfg ctx act)))
                   ss input Hop
@@ -5212,7 +5212,7 @@ Section SchedulerRoundTrip.
   Proof.
     intros Halign Hsam.
     destruct (vreg_nid_node_range act a_idx n_idx Halign) as [_ Hnlen].
-    unfold SchedulerSimulationLemmas.node_ref_valid.
+    unfold Definitions.node_ref_valid.
     rewrite (sample_ref_is_register act a_idx n_idx Halign Hsam []
                (length (graph (build_dfg ctx act))) Hnlen).
     reflexivity.
@@ -5547,7 +5547,7 @@ Section SchedulerRoundTrip.
       assert (Htok2 : node_op act tok2 = DFG_Stall l aa)
         by (unfold Definitions.node_op; rewrite <- Htid, Hnth; exact Htop).
       assert (Hsdh : sample_drive_head act p aa = Some d2).
-      { unfold SchedulerSimulationLemmas.sample_drive in Hsd2. rewrite Hs2, Htok2 in Hsd2. exact Hsd2. }
+      { unfold Definitions.sample_drive in Hsd2. rewrite Hs2, Htok2 in Hsd2. exact Hsd2. }
       assert (Htoklt : tok2 < vreg_nid a_idx s2).
       { pose proof (args_lt_fwd act _ Hs2in tok2) as Hal.
         rewrite (node_nid_at act (vreg_nid a_idx s2) Hs2len) in Hal.
@@ -6548,7 +6548,7 @@ Section SchedulerRoundTrip.
     { rewrite Hsd in Hsd2. injection Hsd2 as He. symmetry. exact He. }
     subst d2.
     assert (Hdh : sample_drive_head act p aa = Some d).
-    { unfold SchedulerSimulationLemmas.sample_drive in Hsd.
+    { unfold Definitions.sample_drive in Hsd.
       rewrite Hsamp, Htok in Hsd. exact Hsd. }
     assert (HCG : exists g h, chain_gate ctx (build_dfg ctx act) d = Some (g, h)).
     { destruct (sample_drive_head_shape act p aa d Hdh)
@@ -6644,7 +6644,7 @@ Section SchedulerRoundTrip.
     assert (Hd_ref : eval1 (node_ref_valid act a_idx d)
                        (run_n t act input resp ss0) (sched_input input (resp t))
                      = Bits.ones 1).
-    { unfold SchedulerSimulationLemmas.node_ref_valid.
+    { unfold Definitions.node_ref_valid.
       destruct (sample_drive_head_shape act p aa d Hdh)
         as [[Hda _] | [prev [arg2 [en2 [Hjop Hdop2]]]]].
       - subst aa.
@@ -6714,7 +6714,7 @@ Section SchedulerRoundTrip.
                     (length (graph (build_dfg ctx act)))
                     (run_n t act input resp ss0) (sched_input input (resp t))
                     Hd2op Hnad ltac:(lia) Hd_ref l Hin) as Hl.
-      unfold SchedulerSimulationLemmas.node_ref_valid.
+      unfold Definitions.node_ref_valid.
       rewrite (compile_fuel_irrel act a_idx (sample_bufs act a_idx) (fst l)
                  Hl1 Hllen (length (graph (build_dfg ctx act)))
                  (pred (length (graph (build_dfg ctx act)))) Hllen Hlpred).
@@ -6971,7 +6971,7 @@ Section SchedulerRoundTrip.
     (* down to the drive *)
     destruct (node_op_pos act d ltac:(rewrite Hdop; discriminate)) as [Hd1 Hdlen].
     assert (Hdh : sample_drive_head act p aa = Some d).
-    { unfold SchedulerSimulationLemmas.sample_drive in Hsd.
+    { unfold Definitions.sample_drive in Hsd.
       rewrite Hsamp, Htok in Hsd. exact Hsd. }
     assert (Hdfull : eval1 (snd (compile_dfg_expr ctx bneeds
                        (length (graph (build_dfg ctx act))) a_idx
@@ -7052,7 +7052,7 @@ Section SchedulerRoundTrip.
                Hav1 Havlen (pred (length (graph (build_dfg ctx act))))
                (length (graph (build_dfg ctx act))) ltac:(lia) Havlen) in Hav.
     (* and validity does not fall *)
-    unfold SchedulerSimulationLemmas.node_ref_valid.
+    unfold Definitions.node_ref_valid.
     replace (S (S M'')) with (M'' + 2) by lia.
     apply (compile_valid_mono_run act a_idx input resp ss0 (sample_bufs act a_idx)
              (length (graph (build_dfg ctx act))) av [] M'' 2 Halign Hzv);
@@ -7335,7 +7335,7 @@ Section SchedulerRoundTrip.
       (* and the pulse reads that counter *)
       destruct (sample_tok_is_stall act samp_m p tok_m en_m Hsm) as [am Htokm].
       assert (Hdhm : sample_drive_head act p am = Some mm).
-      { unfold SchedulerSimulationLemmas.sample_drive in Hsdm.
+      { unfold Definitions.sample_drive in Hsdm.
         rewrite Hsm, Htokm in Hsdm. exact Hsdm. }
       assert (HCGm : exists g h, chain_gate ctx (build_dfg ctx act) mm = Some (g, h)).
       { destruct (sample_drive_head_shape act p am mm Hdhm)
@@ -7669,7 +7669,7 @@ Section SchedulerRoundTrip.
         { intros l Hin.
           destruct (Hlrange l Hin) as [_ Hld].
           assert (Hllen : fst l < length (graph (build_dfg ctx act))) by lia.
-          unfold SchedulerSimulationLemmas.node_ref_valid.
+          unfold Definitions.node_ref_valid.
           replace j with (t + (j - t)) by lia.
           apply (compile_valid_mono_run act a_idx input resp ss0
                    (sample_bufs act a_idx)
@@ -7755,7 +7755,7 @@ Section SchedulerRoundTrip.
         exact (slot_keys_nodup act a_idx Halign).
       - unfold Definitions.sample_bufs. apply filter_In.
         split; [ exact (wla_in _ _ _ Hx) | exact Hsx ]. }
-    unfold SchedulerSimulationLemmas.node_ref_valid.
+    unfold Definitions.node_ref_valid.
     replace m with (t + (m - t)) by lia.
     apply (compile_valid_mono_run act a_idx input resp ss0
              (sample_bufs act a_idx)

@@ -1,5 +1,9 @@
-(*! Information-Preserving Refinement: an action's latency is a function of
-    attacker-visible data only.  Campaign: agents/ipr-proof/PLAN.md !*)
+(*! The proofs behind Theorems/IPR.v, and the intermediate results they are
+    built from: that taint over-approximates what an attacker can derive, that
+    each declassification rule instance composes into a sound whole, and that
+    two runs agreeing on public data step their validity and done bits in
+    lockstep.  The latency guarantees themselves are stated in
+    Theorems/IPR.v. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.
@@ -106,9 +110,21 @@ Section FirstTrue.
   Qed.
 End FirstTrue.
 
-Section IPR.
+Section IPRProof.
   Context (ctx: TFSchedContext).
   Context (cost_limit: nat).
+
+  (* Stated in Theorems/Definitions.v; bound at this section's context. *)
+  Local Notation base_sound := (Definitions.base_sound ctx cost_limit).
+  Local Notation decl_sound := (Definitions.decl_sound ctx cost_limit).
+  Local Notation derivable := (Definitions.derivable ctx cost_limit).
+  Local Notation gderivable := (Definitions.gderivable ctx cost_limit).
+  Local Notation sample_args_settled := (Definitions.sample_args_settled ctx cost_limit).
+  Local Notation sample_guards_settled := (Definitions.sample_guards_settled ctx cost_limit).
+  Local Notation samples_answered := (Definitions.samples_answered ctx cost_limit).
+  Local Notation samples_zeroed := (Definitions.samples_zeroed ctx cost_limit).
+  Local Notation settled := (Definitions.settled ctx cost_limit).
+  Local Notation uncond_sound := (Definitions.uncond_sound ctx cost_limit).
 
   (* Stated in Theorems/Definitions.v; bound here at this section's context. *)
   Local Notation L := (Definitions.L ctx cost_limit).
@@ -198,7 +214,7 @@ Section IPR.
     d <= h.
   Proof.
     intros Hlen Hsd.
-    unfold SchedulerSimulationLemmas.sample_drive_head,
+    unfold Definitions.sample_drive_head,
            Definitions.node_op in Hsd.
     destruct (op (nth h (graph (build_dfg ctx act))
                    {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hh;
@@ -224,7 +240,7 @@ Section IPR.
     d < n.
   Proof.
     intros Hlen Hsd.
-    unfold SchedulerSimulationLemmas.sample_drive,
+    unfold Definitions.sample_drive,
            Definitions.node_op in Hsd.
     destruct (op (nth n (graph (build_dfg ctx act))
                    {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hn;
@@ -332,7 +348,7 @@ Section IPR.
     ~ List.In d (get_tainted ctx (build_dfg ctx act)).
   Proof.
     intros Hpl Hlen Hsd Hht.
-    unfold SchedulerSimulationLemmas.sample_drive_head,
+    unfold Definitions.sample_drive_head,
            Definitions.node_op in Hsd.
     destruct (op (nth h (graph (build_dfg ctx act))
                    {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hh;
@@ -361,7 +377,7 @@ Section IPR.
     ~ List.In d (get_tainted ctx (build_dfg ctx act)).
   Proof.
     intros Hpl Hlen Hsd Hnt Hnr.
-    unfold SchedulerSimulationLemmas.sample_drive,
+    unfold Definitions.sample_drive,
            Definitions.node_op in Hsd.
     destruct (op (nth n (graph (build_dfg ctx act))
                    {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hn;
@@ -545,73 +561,6 @@ Section IPR.
     - exact (Hf eq_refl).
   Qed.
 
-  (* THE ROUND TRIP, as a property of one state: a sample that LATCHED UNDER
-     ITS GUARD holds [ip_fn] of the request its own drive sent.  [round_trip]
-     discharges it at any pre-done cycle, from [ip_contract] and
-     [requests_sent]. *)
-  Definition samples_answered (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t) : Prop :=
-    forall n_idx p tok en d av en',
-      node_op ctx cost_limit act (vreg_nid ctx cost_limit a_idx n_idx)
-        = DFG_Sample p tok en ->
-      sample_drive ctx cost_limit act (vreg_nid ctx cost_limit a_idx n_idx)
-        = Some d ->
-      node_op ctx cost_limit act d = DFG_Drive p av en' ->
-      sz (nth d (graph (build_dfg ctx act))
-           {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p) ->
-      (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-      pi_holds act a_idx input en ss ->
-      (fst ss).[tf_dfg_b a_idx n_idx]
-      = convert (ip_fn (tfs_spec_ip ctx p)
-          (tf_eval_expr ss_sz si_sz oo_sz
-             (szB := ip_req_sz (tfs_spec_ip ctx p))
-             (node_ref_expr ctx cost_limit act a_idx av) ss input)).
-
-  (* The other arm: an arm that was not taken sent no request, so its latch
-     enable stayed down and its buffer holds the value it was reset to. *)
-  Definition samples_zeroed (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t) : Prop :=
-    forall n_idx p tok en,
-      node_op ctx cost_limit act (vreg_nid ctx cost_limit a_idx n_idx)
-        = DFG_Sample p tok en ->
-      (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-      ~ pi_holds act a_idx input en ss ->
-      (fst ss).[tf_dfg_b a_idx n_idx] = Bits.zero.
-
-  (* Its companion: a latched sample's request carried a SETTLED argument.
-     [sample_arg_settled] discharges it at any pre-done cycle. *)
-  Definition sample_args_settled (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t) : Prop :=
-    forall n_idx p tok en d av en',
-      node_op ctx cost_limit act (vreg_nid ctx cost_limit a_idx n_idx)
-        = DFG_Sample p tok en ->
-      sample_drive ctx cost_limit act (vreg_nid ctx cost_limit a_idx n_idx)
-        = Some d ->
-      node_op ctx cost_limit act d = DFG_Drive p av en' ->
-      (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-      eval1 (node_ref_valid ctx cost_limit act a_idx av) ss input = Bits.ones 1.
-
-  (* And the guard's own sources: a latched sample read its guard from nodes
-     that had settled, which is what makes the two runs agree on whether the
-     guard held. *)
-  Definition sample_guards_settled (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t) : Prop :=
-    forall n_idx p tok en,
-      node_op ctx cost_limit act (vreg_nid ctx cost_limit a_idx n_idx)
-        = DFG_Sample p tok en ->
-      (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-      forall l, List.In l en ->
-        eval1 (node_ref_valid ctx cost_limit act a_idx (fst l)) ss input
-        = Bits.ones 1.
-
-  (* What a state owes the round trip, as one hypothesis. *)
-  Definition settled (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t) : Prop :=
-    samples_answered act a_idx ss input
-    /\ samples_zeroed act a_idx ss input
-    /\ sample_args_settled act a_idx ss input
-    /\ sample_guards_settled act a_idx ss input.
-
   (* ------------------------------------------------------------------- *)
   (* PHASE 0: the public view, and what it means for a node to be         *)
   (* derivable from it.                                                    *)
@@ -628,24 +577,6 @@ Section IPR.
   Local Notation nsz act n :=
     (sz (nth n (graph (build_dfg ctx act))
            {| nid := 0; op := DFG_Empty; sz := 0 |})).
-
-  (* Derivability carries the PATH its gate is read at, because a phi compiles
-     each arm under an extended path and that is where an arm's validity lives.
-     The value itself is path-free ([compile_fst_pi_irrel]).  The path must be
-     one the run TOOK: validity read off an arm the condition did not select
-     says nothing about that arm's value. *)
-  Definition derivable (act: tfs_action sched) (a_idx: a_index) (input: sched_input_t)
-      (n: nid_t) : Prop :=
-    forall ss ss' input' (pi: list lit),
-      pub_eq act a_idx input input' ss ss' ->
-      settled act a_idx ss  input  ->
-      settled act a_idx ss' input' ->
-      pi_holds act a_idx input  pi ss  ->
-      pi_holds act a_idx input' pi ss' ->
-      rvalid act a_idx pi n ss  input  = Bits.ones 1 ->
-      rvalid act a_idx pi n ss' input' = Bits.ones 1 ->
-      nval ctx cost_limit act a_idx ss input (nsz act n) n
-      = nval ctx cost_limit act a_idx ss' input' (nsz act n) n.
 
   (* ------------------------------------------------------------------- *)
   (* (D1) for the blackbox instantiation: the seed of the taint fold is    *)
@@ -688,13 +619,6 @@ Section IPR.
   (* target.  [instance_sound] below is its guarded form, which implies    *)
   (* this one because [pi_holds []] is trivial.                            *)
   (* ------------------------------------------------------------------- *)
-
-  Definition uncond_sound (act: tfs_action sched) (a_idx: a_index)
-      (input: sched_input_t) : Prop :=
-    forall i,
-      List.In i (uncond_instances ctx (build_dfg ctx act)) ->
-      (forall s, List.In s (di_sources i) -> derivable act a_idx input s) ->
-      derivable act a_idx input (di_target i).
 
   (* Discharged by the user, per context; the rule library in coq/Rules/ proves
      it for the rules it ships. *)
@@ -1366,24 +1290,6 @@ Section IPR.
       [ left | right ]; exact Hin.
   Qed.
 
-  (* Guarded derivability, same shape as [derivable]: the second run's input is
-     quantified inside, and each run's guard is evaluated against its OWN
-     input. *)
-  Definition gderivable (act: tfs_action sched) (a_idx: a_index)
-      (input: sched_input_t) (g: list lit) (n: nid_t) : Prop :=
-    forall ss ss' input' (pi: list lit),
-      pub_eq act a_idx input input' ss ss' ->
-      settled act a_idx ss  input  ->
-      settled act a_idx ss' input' ->
-      pi_holds act a_idx input  g ss ->
-      pi_holds act a_idx input' g ss' ->
-      pi_holds act a_idx input  pi ss  ->
-      pi_holds act a_idx input' pi ss' ->
-      rvalid act a_idx pi n ss  input  = Bits.ones 1 ->
-      rvalid act a_idx pi n ss' input' = Bits.ones 1 ->
-      nval ctx cost_limit act a_idx ss  input  (nsz act n) n
-      = nval ctx cost_limit act a_idx ss' input' (nsz act n) n.
-
   (* A fact learned under fewer conditions still holds under more. *)
   Lemma gderivable_weaken (act: tfs_action sched) (a_idx: a_index)
       (input: sched_input_t) (g g': list lit) (n: nid_t) :
@@ -1466,17 +1372,6 @@ Section IPR.
     intros s Hs. destruct (Hsrc s Hs) as [Hs1 [Hs2 Hs3]].
     exact (untainted_gderivable act a_idx input [] s Halign Hpl Hdsz Hgsz Hs1 Hs2 Hs3).
   Qed.
-
-  (* What the compiler's producer owes the proof: every fact it records is a
-     guarded derivability.  [gderivable] stays conjunctive, so a node derivable
-     on several paths gets one entry per path. *)
-  Definition base_sound (act: tfs_action sched) (a_idx: a_index)
-      (input: sched_input_t) (base: list gfact) : Prop :=
-    forall c g, List.In (c, g) base -> gderivable act a_idx input g c.
-
-  Definition decl_sound (act: tfs_action sched) (a_idx: a_index)
-      (input: sched_input_t) : Prop :=
-    base_sound act a_idx input (decl_facts ctx (build_dfg ctx act)).
 
   (* Bridge to the unconditional obligation, so the rules in coq/Rules/ can
      discharge [Hdecls] from the same [instance_sound] proof. *)
@@ -2349,7 +2244,7 @@ Section IPR.
                         (nth (index_to_nat a_idx) bneeds []) (0, (0, 0)))))
       as [l |] eqn:Hst.
     - assert (Hcnt := proj2 (IH Hndk Hndk' n_idx)
-                        ltac:(unfold SchedulerSimulationLemmas.vreg_nid;
+                        ltac:(unfold Definitions.vreg_nid;
                               rewrite Hst; discriminate)).
       split.
       + cbn [tf_eval_expr]. rewrite !convert_same.
@@ -2774,5 +2669,5 @@ Section IPR.
     exact (emulator_correct act sp0 ss0 input resp (L act input resp ss0)
              Hstart Hipc (L_first_done act sp0 ss0 input resp Hstart)).
   Qed.
-End IPR.
+End IPRProof.
 

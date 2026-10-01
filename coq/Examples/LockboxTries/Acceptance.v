@@ -15,6 +15,7 @@ Require Import Trustformer.Scheduler.Show.
 Require Import Trustformer.Theorems.SchedulerSimulation.
 Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Theorems.IPR.
+Require Import Trustformer.Theorems.Internal.IPRProof.
 Require Import Trustformer.Declassification.Negation.
 Require Import Trustformer.Declassification.PhiBranch.
 Require Import Trustformer.Declassification.PhiConst.

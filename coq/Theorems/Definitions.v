@@ -352,6 +352,174 @@ Section SchedulerWorld.
       (resp: nat -> resp_val) (ss0: sched_sys_state) : nat :=
     first_true (done_test act input resp ss0) (S (settle_bound act)) 0.
 
+  (* ---- what the attacker can derive, and the soundness obligation the
+         declassification rules carry (the hypotheses of the timing
+         guarantees in Theorems/IPR.v) ---- *)
+
+  (* The DRIVE a sample.s request came from: [sample_req].s walk, stopped one
+     node earlier and checked to be on the sample.s own port. *)
+  Definition sample_drive_head (act: tfs_action sched) (p: p_var) (h: nid_t)
+    : option nid_t :=
+    match node_op act h with
+    | DFG_Drive p' _ _ => if (tfs_spec_ips_eq_dec ctx).(eq_dec) p' p then Some h else None
+    | DFG_Join d _ =>
+        match node_op act d with
+        | DFG_Drive p' _ _ => if (tfs_spec_ips_eq_dec ctx).(eq_dec) p' p then Some d else None
+        | _ => None
+        end
+    | _ => None
+    end.
+
+  Definition sample_drive (act: tfs_action sched) (n: nid_t) : option nid_t :=
+    match node_op act n with
+    | DFG_Sample p tok _ =>
+        match node_op act tok with
+        | DFG_Stall _ h => sample_drive_head act p h
+        | _ => sample_drive_head act p tok
+        end
+    | _ => None
+    end.
+
+  (* nid of the DFG node cached by validity/value register (a_idx, n_idx). *)
+  Definition vreg_nid
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (n_idx : Vect.index (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+    : nat :=
+    fst (nth (index_to_nat n_idx)
+             (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
+             (0, (0, 0))).
+
+  (* The validity that goes with [node_ref_expr]: ones exactly when every sample
+     buffer the reference reads has already latched. *)
+  Definition node_ref_valid
+      (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (n: nat) : @tf_expr (tfs_states sched) si_var o_var :=
+    snd (compile_dfg_expr ctx bneeds
+           (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n
+           (sample_bufs act a_idx)).
+
+  (* THE ROUND TRIP, as a property of one state: a sample that LATCHED UNDER
+     ITS GUARD holds [ip_fn] of the request its own drive sent.  [round_trip]
+     discharges it at any pre-done cycle, from [ip_contract] and
+     [requests_sent]. *)
+  Definition samples_answered (act: tfs_action sched) (a_idx: a_index)
+      (ss: sched_sys_state) (input: sched_input_t) : Prop :=
+    forall n_idx p tok en d av en',
+      node_op act (vreg_nid a_idx n_idx)
+        = DFG_Sample p tok en ->
+      sample_drive act (vreg_nid a_idx n_idx)
+        = Some d ->
+      node_op act d = DFG_Drive p av en' ->
+      sz (nth d (graph (build_dfg ctx act))
+           {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p) ->
+      (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
+      pi_holds act a_idx input en ss ->
+      (fst ss).[tf_dfg_b a_idx n_idx]
+      = convert (ip_fn (tfs_spec_ip ctx p)
+          (tf_eval_expr ss_sz si_sz oo_sz
+             (szB := ip_req_sz (tfs_spec_ip ctx p))
+             (node_ref_expr act a_idx av) ss input)).
+
+  (* The other arm: an arm that was not taken sent no request, so its latch
+     enable stayed down and its buffer holds the value it was reset to. *)
+  Definition samples_zeroed (act: tfs_action sched) (a_idx: a_index)
+      (ss: sched_sys_state) (input: sched_input_t) : Prop :=
+    forall n_idx p tok en,
+      node_op act (vreg_nid a_idx n_idx)
+        = DFG_Sample p tok en ->
+      (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
+      ~ pi_holds act a_idx input en ss ->
+      (fst ss).[tf_dfg_b a_idx n_idx] = Bits.zero.
+
+  (* Its companion: a latched sample's request carried a SETTLED argument.
+     [sample_arg_settled] discharges it at any pre-done cycle. *)
+  Definition sample_args_settled (act: tfs_action sched) (a_idx: a_index)
+      (ss: sched_sys_state) (input: sched_input_t) : Prop :=
+    forall n_idx p tok en d av en',
+      node_op act (vreg_nid a_idx n_idx)
+        = DFG_Sample p tok en ->
+      sample_drive act (vreg_nid a_idx n_idx)
+        = Some d ->
+      node_op act d = DFG_Drive p av en' ->
+      (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
+      eval1 (node_ref_valid act a_idx av) ss input = Bits.ones 1.
+
+  (* And the guard's own sources: a latched sample read its guard from nodes
+     that had settled, which is what makes the two runs agree on whether the
+     guard held. *)
+  Definition sample_guards_settled (act: tfs_action sched) (a_idx: a_index)
+      (ss: sched_sys_state) (input: sched_input_t) : Prop :=
+    forall n_idx p tok en,
+      node_op act (vreg_nid a_idx n_idx)
+        = DFG_Sample p tok en ->
+      (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
+      forall l, List.In l en ->
+        eval1 (node_ref_valid act a_idx (fst l)) ss input
+        = Bits.ones 1.
+
+  (* What a state owes the round trip, as one hypothesis. *)
+  Definition settled (act: tfs_action sched) (a_idx: a_index)
+      (ss: sched_sys_state) (input: sched_input_t) : Prop :=
+    samples_answered act a_idx ss input
+    /\ samples_zeroed act a_idx ss input
+    /\ sample_args_settled act a_idx ss input
+    /\ sample_guards_settled act a_idx ss input.
+
+  (* Derivability carries the PATH its gate is read at, because a phi compiles
+     each arm under an extended path and that is where an arm's validity lives.
+     The value itself is path-free ([compile_fst_pi_irrel]).  The path must be
+     one the run TOOK: validity read off an arm the condition did not select
+     says nothing about that arm's value. *)
+  Definition derivable (act: tfs_action sched) (a_idx: a_index) (input: sched_input_t)
+      (n: nid_t) : Prop :=
+    forall ss ss' input' (pi: list lit),
+      pub_eq act a_idx input input' ss ss' ->
+      settled act a_idx ss  input  ->
+      settled act a_idx ss' input' ->
+      pi_holds act a_idx input  pi ss  ->
+      pi_holds act a_idx input' pi ss' ->
+      rvalid act a_idx pi n ss  input  = Bits.ones 1 ->
+      rvalid act a_idx pi n ss' input' = Bits.ones 1 ->
+      nval act a_idx ss input (nsz act n) n
+      = nval act a_idx ss' input' (nsz act n) n.
+
+  Definition uncond_sound (act: tfs_action sched) (a_idx: a_index)
+      (input: sched_input_t) : Prop :=
+    forall i,
+      List.In i (uncond_instances ctx (build_dfg ctx act)) ->
+      (forall s, List.In s (di_sources i) -> derivable act a_idx input s) ->
+      derivable act a_idx input (di_target i).
+
+  (* Guarded derivability, same shape as [derivable]: the second run's input is
+     quantified inside, and each run's guard is evaluated against its OWN
+     input. *)
+  Definition gderivable (act: tfs_action sched) (a_idx: a_index)
+      (input: sched_input_t) (g: list lit) (n: nid_t) : Prop :=
+    forall ss ss' input' (pi: list lit),
+      pub_eq act a_idx input input' ss ss' ->
+      settled act a_idx ss  input  ->
+      settled act a_idx ss' input' ->
+      pi_holds act a_idx input  g ss ->
+      pi_holds act a_idx input' g ss' ->
+      pi_holds act a_idx input  pi ss  ->
+      pi_holds act a_idx input' pi ss' ->
+      rvalid act a_idx pi n ss  input  = Bits.ones 1 ->
+      rvalid act a_idx pi n ss' input' = Bits.ones 1 ->
+      nval act a_idx ss  input  (nsz act n) n
+      = nval act a_idx ss' input' (nsz act n) n.
+
+  (* What the compiler's producer owes the proof: every fact it records is a
+     guarded derivability.  [gderivable] stays conjunctive, so a node derivable
+     on several paths gets one entry per path. *)
+  Definition base_sound (act: tfs_action sched) (a_idx: a_index)
+      (input: sched_input_t) (base: list gfact) : Prop :=
+    forall c g, List.In (c, g) base -> gderivable act a_idx input g c.
+
+  Definition decl_sound (act: tfs_action sched) (a_idx: a_index)
+      (input: sched_input_t) : Prop :=
+    base_sound act a_idx input (decl_facts ctx (build_dfg ctx act)).
+
   (* ================================================================ *)
   (* The confidentiality criterion, over the spec alone.                *)
   (* ================================================================ *)

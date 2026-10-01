@@ -7,6 +7,7 @@ Require Import Trustformer.DFG.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Show.
 Require Import Trustformer.Theorems.IPR.
+Require Import Trustformer.Theorems.Internal.IPRProof.
 Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Declassification.Negation.
 Require Import Trustformer.Declassification.PhiBranch.

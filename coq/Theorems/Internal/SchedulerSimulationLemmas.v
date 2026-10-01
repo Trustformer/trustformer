@@ -73,6 +73,12 @@ Section SchedulerSimulation.
   Context (ctx: TFSchedContext).
   Context (cost_limit: nat).
 
+  (* Stated in Theorems/Definitions.v; bound at this section's context. *)
+  Local Notation node_ref_valid := (Definitions.node_ref_valid ctx cost_limit).
+  Local Notation sample_drive := (Definitions.sample_drive ctx cost_limit).
+  Local Notation sample_drive_head := (Definitions.sample_drive_head ctx cost_limit).
+  Local Notation vreg_nid := (Definitions.vreg_nid ctx cost_limit).
+
   (* The vocabulary the guarantees are stated in lives in Theorems/Definitions.v;
      these bind it at this section's [ctx] and [cost_limit]. *)
   Local Notation act_idx_aligned := (Definitions.act_idx_aligned ctx cost_limit).
@@ -1067,30 +1073,6 @@ Section SchedulerSimulation.
     | _ => None
     end.
 
-  (* The DRIVE a sample.s request came from: [sample_req].s walk, stopped one
-     node earlier and checked to be on the sample.s own port. *)
-  Definition sample_drive_head (act: tfs_action sched) (p: p_var) (h: nid_t)
-    : option nid_t :=
-    match node_op act h with
-    | DFG_Drive p' _ _ => if (tfs_spec_ips_eq_dec ctx).(eq_dec) p' p then Some h else None
-    | DFG_Join d _ =>
-        match node_op act d with
-        | DFG_Drive p' _ _ => if (tfs_spec_ips_eq_dec ctx).(eq_dec) p' p then Some d else None
-        | _ => None
-        end
-    | _ => None
-    end.
-
-  Definition sample_drive (act: tfs_action sched) (n: nid_t) : option nid_t :=
-    match node_op act n with
-    | DFG_Sample p tok _ =>
-        match node_op act tok with
-        | DFG_Stall _ h => sample_drive_head act p h
-        | _ => sample_drive_head act p tok
-        end
-    | _ => None
-    end.
-
   Lemma sample_drive_head_op (act: tfs_action sched) p h d :
     sample_drive_head act p h = Some d ->
     exists a en, node_op act d = DFG_Drive p a en.
@@ -1181,25 +1163,6 @@ Section SchedulerSimulation.
     cbn [node_rank]. unfold stall_weight. rewrite Hst.
     pose proof (node_rank_mono_le act arg m ltac:(lia)). lia.
   Qed.
-
-  (* nid of the DFG node cached by validity/value register (a_idx, n_idx). *)
-  Definition vreg_nid
-      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
-      (n_idx : Vect.index (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
-    : nat :=
-    fst (nth (index_to_nat n_idx)
-             (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
-             (0, (0, 0))).
-
-  (* The validity that goes with [node_ref_expr]: ones exactly when every sample
-     buffer the reference reads has already latched. *)
-  Definition node_ref_valid
-      (act: tfs_action sched)
-      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
-      (n: nat) : @tf_expr (tfs_states sched) si_var o_var :=
-    snd (compile_dfg_expr ctx bneeds
-           (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n
-           (sample_bufs act a_idx)).
 
   (* The GATE a buffer's validity register is assigned from: its own slot is
      removed from the table, since the register is what that slot feeds. *)
