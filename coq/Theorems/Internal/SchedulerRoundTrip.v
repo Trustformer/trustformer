@@ -1,12 +1,13 @@
 (* ==================================================================== *)
-(* Variable-scheduler simulation / correctness                          *)
+(* The round trip: one source step of an action equals iterating the    *)
+(* scheduled per-cycle transition until the done flag fires, modulo     *)
+(* maps_to / maps_from.  The statement a reader audits is in            *)
+(* Theorems/SchedulerSimulation.v; this file proves it.                 *)
 (*                                                                      *)
-(* One top-level SOURCE step of an action (tf_ops_run over the whole    *)
-(* program) equals iterating the scheduled per-cycle transition         *)
-(* (tfs_next_cycle) until the tf_dfg_done flag is set, modulo the state *)
-(* mapping maps_to / maps_from.                                         *)
-(*                                                                      *)
-(* See agents/scheduler-simulation/PLAN.md for the campaign plan.       *)
+(* Kept apart from SchedulerSimulationLemmas.v so that work on the round *)
+(* trip does not recompile 13,000 lines of builder invariants.  The     *)
+(* shims below re-bind that file's discharged names at this section's   *)
+(* [ctx] and [cost_limit].                                             *)
 (* ==================================================================== *)
 
 Require Import Koika.Frontend.
@@ -25,10 +26,7 @@ Require Import Lia.
 Import ListNotations.
 Require Export Trustformer.Theorems.Internal.SchedulerSimulationLemmas.
 
-(* Split from Internal/SchedulerSimulationLemmas.v so that work on the round
-   trip does not recompile 13,000 lines of builder invariants.  The shims below
-   re-bind that file's discharged names at this section's [ctx] and [cost_limit]. *)
-Section SchedulerSimulation.
+Section SchedulerRoundTrip.
 
   Context (ctx: TFSchedContext).
   Context (cost_limit: nat).
@@ -8130,5 +8128,5 @@ Section SchedulerSimulation.
     apply (scheduler_done_correct act sp0 ss0 input resp N Hstart Hipc Hbefore Hdone).
   Qed.
 
-End SchedulerSimulation.
+End SchedulerRoundTrip.
 

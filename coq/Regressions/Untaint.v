@@ -7,6 +7,7 @@ Require Import Trustformer.DFG.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Show.
 Require Import Trustformer.Theorems.IPR.
+Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Declassification.Negation.
 Require Import Trustformer.Declassification.PhiBranch.
 Require Import Trustformer.Declassification.PhiConst.
@@ -272,7 +273,7 @@ Section GuardedObligation.
       forall act a_idx, phibranch_settled gctx_open 10 act a_idx.
     Proof.
       intros act a_idx n cnd tid eid Hop p ss inp _.
-      exact (SchedulerSimulation.nrv_no_ips gctx_open 10 act a_idx
+      exact (SchedulerRoundTrip.nrv_no_ips gctx_open 10 act a_idx
                ltac:(intro x; destruct x)
                n p ss inp ltac:(rewrite Hop; discriminate)).
     Qed.

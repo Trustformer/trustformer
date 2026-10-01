@@ -13,6 +13,7 @@ Require Import Trustformer.DFG.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Show.
 Require Import Trustformer.Theorems.IPR.
+Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Declassification.Xor.
 Require Import Trustformer.Declassification.Widening.
 
@@ -125,9 +126,9 @@ Section Obligations.
       forall act a_idx, xor_settled rw_whitebox 10 act a_idx.
     Proof.
       intros act a_idx n a1 a2 Hop p ss inp _.
-      destruct (SchedulerSimulation.node_op_pos rw_whitebox 10 act n
+      destruct (SchedulerRoundTrip.node_op_pos rw_whitebox 10 act n
                   ltac:(rewrite Hop; discriminate)) as [Hn1 Hnlen].
-      exact (SchedulerSimulation.nrv_no_ips_range rw_whitebox 10 act a_idx
+      exact (SchedulerRoundTrip.nrv_no_ips_range rw_whitebox 10 act a_idx
                ltac:(intro x; destruct x) n p ss inp Hn1 Hnlen).
     Qed.
 

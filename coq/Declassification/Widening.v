@@ -13,6 +13,7 @@ Require Import Trustformer.DFG.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
 Require Import Trustformer.Theorems.SchedulerSimulation.
+Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Theorems.IPR.
 
 Require Import Coq.Lists.List.

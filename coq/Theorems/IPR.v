@@ -10,6 +10,7 @@ Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
 Require Import Trustformer.Theorems.SchedulerSimulation.
+Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 
 Require Import Coq.Lists.List.
 Require Import Coq.Arith.PeanoNat.
@@ -524,7 +525,7 @@ Section IPR.
   Lemma pi_holds_guard (act: tfs_action sched) (a_idx: a_index)
       (input: sched_input_t) (en: list lit) (ss: sched_sys_state) :
     pi_holds act a_idx input en ss ->
-    SchedulerSimulation.guard_holds ctx cost_limit act a_idx ss input en.
+    SchedulerRoundTrip.guard_holds ctx cost_limit act a_idx ss input en.
   Proof.
     intros H c b Hin. specialize (H c b Hin).
     unfold Definitions.nval, bit_of in H. split.
@@ -534,7 +535,7 @@ Section IPR.
 
   Lemma guard_pi_holds (act: tfs_action sched) (a_idx: a_index)
       (input: sched_input_t) (en: list lit) (ss: sched_sys_state) :
-    SchedulerSimulation.guard_holds ctx cost_limit act a_idx ss input en ->
+    SchedulerRoundTrip.guard_holds ctx cost_limit act a_idx ss input en ->
     pi_holds act a_idx input en ss.
   Proof.
     intros H c b Hin. destruct (H c b Hin) as [Ht Hf].
@@ -1712,23 +1713,23 @@ Section IPR.
       (sched_input ctx cost_limit input (resp k)).
   Proof.
     intros Halign Hlen Hz0 Hpre Hipc.
-    pose proof (SchedulerSimulation.requests_sent_holds ctx cost_limit act a_idx
+    pose proof (SchedulerRoundTrip.requests_sent_holds ctx cost_limit act a_idx
                   input resp ss0 k Halign Hlen Hz0 Hpre) as Hrs.
     split; [| split; [| split ]].
     - intros n_idx p tok en d av en' Hsamp Hsd Hdop Hdsz Hvk Hpi.
-      exact (SchedulerSimulation.round_trip ctx cost_limit act a_idx input resp ss0 k
+      exact (SchedulerRoundTrip.round_trip ctx cost_limit act a_idx input resp ss0 k
                n_idx p tok en d av en' Halign Hlen Hz0 Hpre Hvk Hipc Hrs
                Hsamp Hsd Hdop Hdsz (pi_holds_guard act a_idx _ en _ Hpi)).
     - intros n_idx p tok en Hsamp Hvk Hnpi.
-      exact (SchedulerSimulation.sample_buffer_zero_run ctx cost_limit act a_idx
+      exact (SchedulerRoundTrip.sample_buffer_zero_run ctx cost_limit act a_idx
                input resp ss0 k n_idx p tok en Halign Hlen Hz0 Hpre Hsamp Hvk
                (fun Hg => Hnpi (guard_pi_holds act a_idx _ en _ Hg))).
     - intros n_idx p tok en d av en' Hsamp Hsd Hdop Hvk.
-      exact (SchedulerSimulation.sample_arg_settled ctx cost_limit act a_idx
+      exact (SchedulerRoundTrip.sample_arg_settled ctx cost_limit act a_idx
                input resp ss0 k n_idx p tok en d av en' Halign Hlen Hz0 Hpre
                Hsamp Hsd Hdop Hvk).
     - intros n_idx p tok en Hsamp Hvk l Hin.
-      exact (SchedulerSimulation.sample_guards_valid_run ctx cost_limit act a_idx
+      exact (SchedulerRoundTrip.sample_guards_valid_run ctx cost_limit act a_idx
                input resp ss0 k n_idx p tok en Halign Hlen Hz0 Hpre Hsamp Hvk l Hin).
   Qed.
 
@@ -2303,7 +2304,7 @@ Section IPR.
     destruct (vreg_nid_node_range ctx cost_limit act a_idx n_idx Halign)
       as [Hn1 Hnlen].
     unfold vreg_nid in Hn1, Hnlen.
-    destruct (SchedulerSimulation.gate_table_sample_bufs ctx cost_limit act a_idx
+    destruct (SchedulerRoundTrip.gate_table_sample_bufs ctx cost_limit act a_idx
                 (fst (nth (index_to_nat n_idx)
                         (nth (index_to_nat a_idx) bneeds []) (0, (0, 0)))) Halign)
       as [Hsam_sub Hsam_same].
@@ -2456,7 +2457,7 @@ Section IPR.
     = (fst (ss_step act ss' input')).[tfs_done_signal sched].
   Proof.
     intros Halign Hpl Hdsz Hgsz Hrf Hrf' Hst Hst' Hvs Hvs' Hpub Hveq.
-    destruct (SchedulerSimulation.full_table_sample_bufs ctx cost_limit act a_idx
+    destruct (SchedulerRoundTrip.full_table_sample_bufs ctx cost_limit act a_idx
                 Halign) as [Hsam_sub Hsam_same].
     rewrite (done_val_concrete act a_idx ss  input  Halign).
     rewrite (done_val_concrete act a_idx ss' input' Halign).
