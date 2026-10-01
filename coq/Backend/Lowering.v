@@ -11,7 +11,6 @@ Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Utils.
 Require Import Trustformer.Contract.
-Require Trustformer.Backend.KoikaLemmas.
 From Koika.Utils Require Import Tactics.
 
 Require Import Streams.

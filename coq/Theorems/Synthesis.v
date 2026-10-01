@@ -11,7 +11,7 @@ Require Import Trustformer.Semantics.
 Require Import Trustformer.Utils.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Backend.Lowering.
-Require Trustformer.Backend.KoikaLemmas.
+Require Trustformer.Theorems.Internal.KoikaLemmas.
 From Koika.Utils Require Import Tactics.
 Require Import Koika.IRR.Tactics.
 
