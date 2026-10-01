@@ -61,6 +61,115 @@ Definition show_unop (o: tf_unary_ops) : string :=
   end.
 
 (* ================================================================= *)
+(* Criticality: why a phi stayed critical.  Staying critical is a      *)
+(* silent pessimisation, so the compiler reports, per phi occurrence,  *)
+(* which declassification it could not use.                            *)
+(* ================================================================= *)
+
+Inductive crit_reason :=
+(* the condition is tainted and no rule instance targets it *)
+| CR_no_rule (c: nid_t)
+(* an instance targets it, but these of its sources have no fact at all, so
+   the composition could not fire *)
+| CR_sources_unknown (c: nid_t) (unknown_sources: list nid_t)
+(* it IS declassified, but no recorded guard is implied by this occurrence's
+   path; one entry per recorded guard, listing the literals the path lacks *)
+| CR_guard_unmet (c: nid_t) (missing: list (list lit)).
+
+Definition guard_missing (g pi: list lit) : list lit :=
+  filter (fun a => negb (existsb (lit_eqb a) pi)) g.
+
+Section Criticality.
+
+  Context (ctx: TFSchedContext).
+
+  Local Notation states_var := (tfs_spec_states ctx).
+  Local Notation inputs_var := (tfs_spec_inputs ctx).
+  Local Notation outputs_var := (tfs_spec_outputs ctx).
+  Local Notation ips_var := (tfs_spec_ips ctx).
+  Local Notation dfg_state := (@dfg_state_t states_var inputs_var outputs_var ips_var).
+  Local Notation get_args := (Build.get_args ctx).
+  Local Notation node_op_at := (Taint.node_op_at ctx).
+  Local Notation decl_instances := (Taint.decl_instances ctx).
+  Local Notation get_tainted := (Taint.get_tainted ctx).
+  Local Notation decl_facts := (Taint.decl_facts ctx).
+
+
+  Definition phi_crit_reason (dfg: dfg_state) (tainted: list nid_t) (base: list gfact)
+      (c: nid_t) (pi: list lit)
+    : option crit_reason :=
+    if negb (mem_nid c tainted) then None
+    else
+      match gfacts_of base c with
+      | [] =>
+          match find (fun i => Nat.eqb (di_target i) c) (decl_instances dfg) with
+          | Some i =>
+              Some (CR_sources_unknown c
+                      (filter (fun s => match gfacts_of base s with
+                                        | [] => true
+                                        | _ => false
+                                        end)
+                              (di_sources i)))
+          | None => Some (CR_no_rule c)
+          end
+      | gs =>
+          if declassified_at base c pi then None
+          else Some (CR_guard_unmet c (map (fun g => guard_missing g pi) gs))
+      end.
+
+  (* The diagnostic never disagrees with the compiler about WHETHER a phi
+     occurrence is critical; it only adds the reason. *)
+
+  (* Walks the same cone [compile_dfg_expr_aux] does, under the same paths.
+     [tainted] and [dfacts] are threaded for the same reason they are there. *)
+  Fixpoint crit_report_aux (dfg: dfg_state) (tainted: list nid_t) (dfacts: list gfact)
+      (pi: list lit) (fuel: nat)
+      (n: nid_t) (bufs: list (nid_t * (nat * sz_t))) : list crit_reason :=
+    match fuel with
+    | 0 => []
+    | S fuel' =>
+        match BitsToLists.list_assoc bufs n with
+        | Some _ => []
+        | None =>
+            let node := nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |} in
+            match op node with
+            | DFG_Unary _ a => crit_report_aux dfg tainted dfacts pi fuel' a bufs
+            | DFG_Resize a => crit_report_aux dfg tainted dfacts pi fuel' a bufs
+            | DFG_Binary _ a1 a2 =>
+                crit_report_aux dfg tainted dfacts pi fuel' a1 bufs
+                ++ crit_report_aux dfg tainted dfacts pi fuel' a2 bufs
+            | DFG_Phi c t e =>
+                let crit := phi_crit tainted dfacts c pi in
+                (match phi_crit_reason dfg tainted dfacts c pi with Some r => [r] | None => [] end)
+                ++ crit_report_aux dfg tainted dfacts pi fuel' c bufs
+                ++ crit_report_aux dfg tainted dfacts (phi_path crit c true pi) fuel' t bufs
+                ++ crit_report_aux dfg tainted dfacts (phi_path crit c false pi) fuel' e bufs
+            (* Explicit, not falling through to [_]: the archive's DEBT-3 was a
+               silently under-reporting diagnostic caused by exactly that. *)
+            | DFG_Stall _ a => crit_report_aux dfg tainted dfacts pi fuel' a bufs
+            | DFG_Drive _ a _ => crit_report_aux dfg tainted dfacts pi fuel' a bufs
+            | DFG_Sample _ t _ => crit_report_aux dfg tainted dfacts pi fuel' t bufs
+            | DFG_Join a b =>
+                crit_report_aux dfg tainted dfacts pi fuel' a bufs
+                ++ crit_report_aux dfg tainted dfacts pi fuel' b bufs
+            | _ => []
+            end
+        end
+    end.
+
+  (* Entry point mirroring [compile_dfg_expr]: empty path, no buffer cuts. *)
+  Definition crit_report (dfg: dfg_state) (n: nid_t) : list crit_reason :=
+    crit_report_aux dfg (get_tainted dfg) (decl_facts dfg) [] (List.length (graph dfg)) n [].
+
+  (* Everything the scheduler compiles for an action, in one list. *)
+  Definition crit_report_all (dfg: dfg_state) : list crit_reason :=
+    let tainted := get_tainted dfg in
+    let dfacts := decl_facts dfg in
+    flat_map (fun v => crit_report_aux dfg tainted dfacts [] (List.length (graph dfg)) (snd v) [])
+             (var_map dfg).
+End Criticality.
+
+(* ================================================================= *)
 (* Criticality reasons carry only node ids, so grouping them needs no *)
 (* context either.  [crit_report_all] reports one entry per phi        *)
 (* OCCURRENCE, and the same cause typically shows up several times.    *)

@@ -5,7 +5,7 @@ Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.DFG.
 Require Import Trustformer.Contract.
-Require Import Trustformer.Scheduler.Schedule.
+Require Import Trustformer.Scheduler.Show.
 
 Require Import Coq.Lists.List.
 Import ListNotations.

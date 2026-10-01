@@ -2,7 +2,7 @@ Require Import Koika.Frontend.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
-Require Import Trustformer.Scheduler.Schedule.
+Require Import Trustformer.Scheduler.Audit.
 Require Import Trustformer.Examples.MarsSeq.Spec.
 Require Import Coq.Lists.List.
 Import ListNotations.

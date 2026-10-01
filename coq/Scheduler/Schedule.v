@@ -15,7 +15,7 @@ Require Export Trustformer.Scheduler.Cost.
 Require Export Trustformer.Scheduler.Buffers.
 Require Export Trustformer.Scheduler.States.
 Require Export Trustformer.Scheduler.Taint.
-Require Export Trustformer.Scheduler.Passes.
+Require Export Trustformer.Scheduler.Codegen.
 Require Import Trustformer.Contract.
 
 Require Import Coq.Lists.List.
@@ -28,7 +28,7 @@ Import ListNotations.
 
 (* The record obligations: the schedule writes each tag once, assigns [done] in
    the always half, and resets a duplicate-free list of registers to zero.
-   Passes.v holds the lowering these are proved about. *)
+   Build.v through Codegen.v hold the lowering these are proved about. *)
 
 Section Schedule.
 
@@ -82,14 +82,14 @@ Section Schedule.
   Local Notation decl_facts := (Taint.decl_facts ctx).
   Hint Extern 0 (EqDec dfg_vars) => exact (Build.dfg_vars_eq_dec ctx) : typeclass_instances.
 
-  (* [Passes]'s section variables are discharged, so bind them back. *)
+  (* The upstream sections are discharged, so bind their names back here. *)
   Local Notation M := (Build.M ctx).
   Local Notation bind := (Build.bind ctx).
   Local Notation build_dfg := (Build.build_dfg ctx).
   Local Notation dataflow_expr := (Build.dataflow_expr ctx).
   Local Notation dataflow_ops := (Build.dataflow_ops ctx).
   Local Notation dfg_var_size := (Build.dfg_var_size ctx).
-  Local Notation driven_ports := (Passes.driven_ports ctx).
+  Local Notation driven_ports := (Codegen.driven_ports ctx).
   Local Notation emit := (Build.emit ctx).
   Local Notation ensure_var := (Build.ensure_var ctx).
   Local Notation get_sizes_and_idx := (Buffers.get_sizes_and_idx ctx).
@@ -115,18 +115,18 @@ Section Schedule.
   Hint Extern 0 (FiniteType2 tf_dfg_states) => exact (States.tf_dfg_states_fin2 ctx bn) : typeclass_instances.
   Hint Extern 0 (FiniteType tf_dfg_states) => exact (States.tf_dfg_states_fin ctx bn) : typeclass_instances.
 
-  Local Notation compile_dfg_expr_aux := (Passes.compile_dfg_expr_aux ctx bn).
+  Local Notation compile_dfg_expr_aux := (Codegen.compile_dfg_expr_aux ctx bn).
   Local Notation compile_dfg_expr fuel a_idx dfg n bufs :=
     (compile_dfg_expr_aux (get_tainted dfg) (decl_facts dfg) [] fuel a_idx dfg n bufs).
-  Local Notation compile_dfg_aux := (Passes.compile_dfg_aux ctx bn).
-  Local Notation compile_dfg_buffers := (Passes.compile_dfg_buffers ctx bn).
-  Local Notation compile_dfg_drives := (Passes.compile_dfg_drives ctx bn).
-  Local Notation compile_dfg_valid := (Passes.compile_dfg_valid ctx bn).
+  Local Notation compile_dfg_aux := (Codegen.compile_dfg_aux ctx bn).
+  Local Notation compile_dfg_buffers := (Codegen.compile_dfg_buffers ctx bn).
+  Local Notation compile_dfg_drives := (Codegen.compile_dfg_drives ctx bn).
+  Local Notation compile_dfg_valid := (Codegen.compile_dfg_valid ctx bn).
   Local Notation done_signal := (States.done_signal ctx bn).
   Local Notation maps_from := (States.maps_from ctx bn).
   Local Notation maps_to := (States.maps_to ctx bn).
   Local Notation reset_states := (States.reset_states ctx bn).
-  Local Notation schedule := (Passes.schedule ctx cost_limit bn).
+  Local Notation schedule := (Codegen.schedule ctx cost_limit bn).
   Local Notation tf_dfg_states_init := (States.tf_dfg_states_init ctx bn).
   Local Notation tf_dfg_states_size := (States.tf_dfg_states_size ctx bn).
 
