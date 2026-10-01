@@ -1,0 +1,645 @@
+(*! The vocabulary the guarantees are stated in.  Everything a theorem in
+    coq/Theorems/ mentions is defined here or in the compiler it talks about, so
+    this file plus the four statement files are the whole proof-layer audit.
+    The proofs themselves live under Internal/. !*)
+
+Require Import Koika.Frontend.
+Require Import Koika.Std.
+Require Import Koika.Utils.Common.
+Require Import Koika.Utils.Environments.
+
+Require Import Trustformer.Syntax.
+Require Import Trustformer.Semantics.
+Require Import Trustformer.Contract.
+Require Export Trustformer.Scheduler.Schedule.
+Require Import Trustformer.Backend.Lowering.
+
+Require Import Coq.Lists.List.
+Require Import Coq.Arith.PeanoNat.
+Require Import Lia.
+Import ListNotations.
+
+(* The scheduler record is huge; deprioritise unfolding it during conversion. *)
+Strategy 1000 [tfs_schedule].
+
+(* [first_true f fuel k] is the least [n >= k] with [f n], or [k + fuel]. *)
+Section FirstTrue.
+  Variable f : nat -> bool.
+
+  Fixpoint first_true (fuel k: nat) : nat :=
+    match fuel with
+    | 0 => k
+    | S fuel' => if f k then k else first_true fuel' (S k)
+    end.
+End FirstTrue.
+
+Section SchedulerWorld.
+
+  (* The variable scheduler is parameterised by a source scheduling context and
+     a per-cycle cost limit; every name below is relative to those. *)
+  Context (ctx: TFSchedContext).
+  Context (cost_limit: nat).
+
+  Local Notation sched := (tfs_schedule ctx cost_limit).
+
+  (* ---- Source (spec) world ---- *)
+  Local Notation s_var := (tfs_spec_states ctx).
+  Local Notation i_var := (tfs_spec_inputs ctx).
+  Local Notation o_var := (tfs_spec_outputs ctx).
+  Local Notation s_sz  := (tfs_spec_states_size ctx).
+  Local Notation i_sz  := (tfs_spec_inputs_size ctx).
+  Local Notation o_sz  := (tfs_spec_outputs_size ctx).
+
+  Local Notation src_st_env  := (ContextEnv.(env_t) (tf_states_type s_sz)).
+  Local Notation src_out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).
+  Local Notation src_sys_state := (src_st_env * src_out_env)%type.
+
+  (* ---- Scheduled (target) world ---- *)
+  Local Notation sched_st_env  := (ContextEnv.(env_t) (tf_states_type (tfs_states_size sched))).
+  Local Notation sched_out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).
+  Local Notation sched_sys_state := (sched_st_env * sched_out_env)%type.
+
+  Local Notation p_var  := (tfs_spec_ips ctx).
+  Local Notation bneeds := (buffer_needs ctx cost_limit).
+  Local Notation si_var := (tfs_inputs sched).
+  Local Notation si_sz  := (tfs_inputs_size sched).
+  Local Notation ss_sz  := (tfs_states_size sched).
+  Local Notation oo_sz  := (tfs_outputs_size sched).
+
+  Local Notation input_t := (forall x : i_var, type_denote (tf_inputs_type i_sz x)).
+  Local Notation sched_input_t :=
+    (forall x : tfs_inputs sched, type_denote (tf_inputs_type (tfs_inputs_size sched) x)).
+
+  (* What each IP presents on its response channel during one cycle. *)
+  Local Notation resp_val :=
+    (forall p : tfs_ips sched, bits_t (ip_resp_sz (tfs_ip sched p))).
+
+
+  (* [tf_dfg_ov p] carries {strobe, payload} with the payload in the low bits,
+     and holds a request's payload from its pulse until the next one. *)
+  Definition drive_payload (ss: sched_sys_state) (p: tfs_ips sched)
+    : bits_t (ip_req_sz (tfs_ip sched p)) :=
+    Bits.slice 0 (ip_req_sz (tfs_ip sched p))
+      ((fst ss).[tfs_drive_reg sched p]).
+
+  (* The request strobe the IP sees on the port: one cycle per pulse. *)
+  Definition port_strobe (ss: sched_sys_state) (p: tfs_ips sched) : bits_t 1 :=
+    Bits.slice (ip_req_sz (tfs_ip sched p)) 1
+      ((fst ss).[tfs_drive_reg sched p]).
+
+  (* A [DFG_Sample] reads the response channel LIVE, so a cycle's inputs are the
+     action's own plus whatever each IP is presenting that cycle. *)
+  Definition sched_input (input: input_t) (r: resp_val) : sched_input_t :=
+    fun x => match x with
+             | inl v => input v
+             | inr p => r p
+             end.
+
+  (* ---- One scheduled cycle and its bounded iteration ---- *)
+  Definition sched_step (act: tfs_action sched) (ss: sched_sys_state) (input: sched_input_t)
+    : sched_sys_state :=
+    tfs_next_cycle sched act ss input.
+
+  (* [resp k] is what the IPs present during cycle [k]. *)
+  Fixpoint run_n (n: nat) (act: tfs_action sched) (input: input_t) (resp: nat -> resp_val) (ss: sched_sys_state) : sched_sys_state :=
+    match n with
+    | 0 => ss
+    | S k => let ss1 := run_n k act input resp ss in
+             sched_step act ss1 (sched_input input (resp k))
+    end.
+
+  (* THE IP's DATASHEET.  A request strobed on the port and left undisturbed for
+     the IP's flight time is answered [ip_lat] cycles after the pulse that sent
+     it; at every other cycle the channel promises nothing. *)
+  Definition ip_contract (act: tfs_action sched) (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) : Prop :=
+    forall (p: tfs_ips sched) (s: nat),
+      port_strobe (run_n s act input resp ss0) p = Bits.ones 1 ->
+      (forall w, s < w -> w < s + pred (ip_lat (tfs_ip sched p)) ->
+         port_strobe (run_n w act input resp ss0) p = Bits.zero) ->
+      resp (s + pred (ip_lat (tfs_ip sched p))) p
+      = ip_fn (tfs_ip sched p) (drive_payload (run_n s act input resp ss0) p).
+
+  (* The done flag is set when the tf_dfg_done register is non-zero. *)
+  Definition done_set (ss: sched_sys_state) : Prop :=
+    (fst ss).[tfs_done_signal sched] <> Bits.zero.
+
+  (* done_set is decidable (a size-1 register is zero or all-ones). *)
+  Lemma done_set_dec (ss: sched_sys_state) : {done_set ss} + {~ done_set ss}.
+  Proof.
+    unfold done_set.
+    destruct (eq_dec ((fst ss).[tfs_done_signal sched]) Bits.zero) as [H | H].
+    - right. intro Hc. apply Hc. exact H.
+    - left. exact H.
+  Qed.
+
+  (* Registers that must start zeroed: the done flag and every validity bit.
+     (Buffer value registers tf_dfg_b may hold arbitrary data, since their
+     validity bit is 0.) *)
+  (* A stall's buffer is a COUNTER, so its start value is observable: the
+     validity it publishes is "counter = lat-1".  The hardware resets it --
+     [reset_states] lists [tf_dfg_b] beside [tf_dfg_v] and [maps_to] zeroes it
+     -- so saying so here is reading the design, not strengthening it. *)
+  Definition zeroed_at_start (x: tfs_states sched) : Prop :=
+    match x with
+    | tf_dfg_b _ _ => True
+    | tf_dfg_v _ _ => True
+    | tf_dfg_done  => True
+    | _            => False
+    end.
+
+  (* Starting relation between a spec state and a scheduled state. *)
+  Definition start_rel (sp: src_sys_state) (ss: sched_sys_state) : Prop :=
+    snd ss = snd sp                                     (* outputs coincide *)
+    /\ maps_from ctx bneeds (fst ss) = fst sp       (* tf_dfg_s slots = spec state *)
+    /\ (forall x, zeroed_at_start x -> (fst ss).[x] = Bits.zero).
+
+  Definition node_op (act: tfs_action sched) (n: nid_t) :=
+    op (nth n (graph (build_dfg ctx act)) {| nid := 0; op := DFG_Empty; sz := 0 |}).
+
+  Definition stall_lat_of (act: tfs_action sched) (n: nid_t) : option nat :=
+    match node_op act n with DFG_Stall l _ => Some l | _ => None end.
+
+  Definition is_sample_of (act: tfs_action sched) (n: nid_t) : bool :=
+    match node_op act n with DFG_Sample _ _ _ => true | _ => false end.
+
+  (* SATURATION RANK.  Ranking by node id alone is unsound in V4: a stall makes
+     its consumer wait [lat] cycles, not one.  The rank is the id plus the extra
+     cycles every stall UP TO AND INCLUDING it costs -- including its own, so a
+     stall's rank already covers its wait and everything above it sits past it. *)
+  Definition stall_weight (act: tfs_action sched) (n: nid_t) : nat :=
+    match stall_lat_of act n with Some l => pred l | None => 0 end.
+
+  Fixpoint node_rank (act: tfs_action sched) (n: nat) : nat :=
+    match n with
+    | 0 => stall_weight act 0
+    | S m => S (node_rank act m) + stall_weight act (S m)
+    end.
+
+  (* SETTLE BOUND.  Buffers rank by NODE ID (args_lt_fwd), so a buffer caching
+     node [n] settles by cycle [n] and the run is bounded by the graph size.
+     The target cycle is NOT a rank: two buffers can share one. *)
+  Definition settle_bound (act: tfs_action sched) : nat :=
+    node_rank act (length (graph (build_dfg ctx act))).
+
+  (* The buffers a reference expression KEEPS: exactly the sample ones.  This
+     is [guard_expr]'s [sbufs] -- "buffers are substituted only for samples,
+     every other source is stable across the action".  A sample reads a LIVE
+     wire and its buffer LATCHES, so inlining through one would compare a
+     latched answer against whatever the port carries now; with two calls on a
+     port those differ, and MARS's Quote has eight samples on one. *)
+  Definition sample_bufs
+      (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+    : list (nid_t * (nat * sz_t)) :=
+    filter (fun '(n, _) => is_sample_of act n)
+           (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []).
+
+  (* Reference expression for DFG node n of act: inlined down to the sample
+     buffers, which stand for the answers already received. *)
+  Definition node_ref_expr
+      (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (n: nat) : @tf_expr (tfs_states sched) si_var o_var :=
+    fst (compile_dfg_expr ctx bneeds
+           (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n
+           (sample_bufs act a_idx)).
+
+  (* The buffer-free value of forward-graph node [n], demanded at width [szB],
+     in scheduler state [ss].  This is what [dfg_action_semantics] talks about. *)
+  Definition nval (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (ss: sched_sys_state) (input: sched_input_t) (szB: nat) (n: nid_t) : bits_t szB :=
+    tf_eval_expr ss_sz si_sz oo_sz (szB := szB) (node_ref_expr act a_idx n) ss input.
+
+  (* [a_idx] indexes the SAME action as [act]: buffer_needs is built by mapping
+     over spec_all_actions, so length (buffer_needs …) = length spec_all_actions
+     and act's slot is finite_index act. *)
+  Definition act_idx_aligned
+      (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) : Prop :=
+    index_to_nat a_idx = @finite_index _ (tfs_action_fin sched) act.
+
+
+  (* ================================================================ *)
+  (* The attacker model: what the timing guarantees are stated over.     *)
+  (* ================================================================ *)
+
+  (* ---- what the attacker model and the latency function are stated over ---- *)
+  Local Notation node_t  := (@dfg_node_t s_var i_var o_var p_var).
+  Local Notation a_index := (Vect.index (length (buffer_needs ctx cost_limit))).
+  Local Notation o_cls   := (tfs_spec_outputs_class ctx).
+  Local Notation ips     := (tfs_spec_ip ctx).
+  Local Notation eval1 e ss input :=
+    (tf_eval_expr ss_sz si_sz oo_sz (szB := 1) e ss input).
+  Local Notation rvalid act a_idx pi n ss input :=
+    (eval1 (snd (compile_dfg_expr_at ctx bneeds pi
+                   (length (graph (build_dfg ctx act))) a_idx
+                   (build_dfg ctx act) n (sample_bufs act a_idx)))
+       ss input) (only parsing).
+  Local Notation nsz act n :=
+    (sz (nth n (graph (build_dfg ctx act))
+           {| nid := 0; op := DFG_Empty; sz := 0 |})).
+  Local Notation ss_run  := run_n.
+  Local Notation ss_done := done_set.
+  Local Notation spec_run act sp input :=
+    (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act)
+       sp input).
+  Local Notation sys_state :=
+    (ContextEnv.(env_t) (tf_states_type s_sz)
+     * ContextEnv.(env_t) (tf_outputs_type o_sz))%type.
+  Local Notation run ops sys input :=
+    (tf_ops_run s_sz i_sz o_sz ips ops sys input).
+  Local Notation ev w e sys input :=
+    (tf_eval_expr s_sz i_sz o_sz (szB := w) e sys input).
+
+  Definition is_plumbing (act: tfs_action sched) (n: nid_t) : bool :=
+    match node_op act n with
+    | DFG_Stall _ _ | DFG_Drive _ _ _ | DFG_Join _ _ => true
+    | _ => false
+    end.
+
+  (* [decl_instances] drops a rule that names one of these, and the builder
+     puts none of them in [var_map], so none is ever declassified. *)
+  Definition plumbing_not_root (act: tfs_action sched) : Prop :=
+    forall n, is_plumbing act n = true ->
+      ~ List.In n (untainted_roots ctx (build_dfg ctx act)).
+
+  (* [dataflow_ops] emits a drive at its IP's request width. *)
+  Definition drives_sized (act: tfs_action sched) : Prop :=
+    forall n (p: p_var) av en,
+      node_op act n = DFG_Drive p av en ->
+      sz (nth n (graph (build_dfg ctx act))
+           {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p).
+
+  (* [dataflow_ops] compiles a branch condition at width 1, so every literal a
+     drive records for its path condition is a one-bit node. *)
+  Definition guards_sized (act: tfs_action sched) : Prop :=
+    forall n (p: p_var) av en,
+      node_op act n = DFG_Drive p av en ->
+      forall l, List.In l en ->
+        sz (nth (fst l) (graph (build_dfg ctx act))
+             {| nid := 0; op := DFG_Empty; sz := 0 |}) = 1.
+
+  (* A path condition's literals, as the run reads them.  Needed here because
+     a sample's latch is gated on its own. *)
+  Definition bit_of (b: bool) : bits_t 1 := if b then Bits.ones 1 else Bits.zero.
+
+  Definition pi_holds (act: tfs_action sched) (a_idx: a_index) (input: sched_input_t)
+      (pi: list lit) (ss: sched_sys_state) : Prop :=
+    forall c b, List.In (c, b) pi ->
+      nval act a_idx ss input 1 c = bit_of b.
+
+  (* Widths are the nodes' own declared widths throughout ([node_args_sz]), so
+     this is as strong as quantifying over all widths and follows from plain
+     equality of the observable outputs. *)
+  (* The public view over TWO runs: they agree on what an attacker drives or
+     observes and may differ in secret state AND inputs.  The value clauses are
+     gated on the node being VALID at the path it is read under, in both runs:
+     a sample reads a latch, and before that latch there is nothing to compare. *)
+  Definition pub_eq (act: tfs_action sched) (a_idx: a_index)
+      (input input': sched_input_t) (ss ss': sched_sys_state) : Prop :=
+    (forall v : i_var, tfs_spec_inputs_class ctx v = Public -> input (inl v) = input' (inl v))
+    /\ (forall o : o_var, tfs_spec_outputs_class ctx o = Public ->
+        (snd ss).[o] = (snd ss').[o])
+    /\ (forall (o: o_var) (r: nid_t) (pi: list lit),
+          tfs_spec_outputs_class ctx o = Public ->
+          List.In (DFG_OVar o, r) (var_map (build_dfg ctx act)) ->
+          pi_holds act a_idx input  pi ss  ->
+          pi_holds act a_idx input' pi ss' ->
+          rvalid act a_idx pi r ss  input  = Bits.ones 1 ->
+          rvalid act a_idx pi r ss' input' = Bits.ones 1 ->
+          nval act a_idx ss input (nsz act r) r
+          = nval act a_idx ss' input' (nsz act r) r).
+
+  (* The uniform user obligation on a single declassification instance: it is
+     [uncond_sound]'s premise plus the instance's own guard. *)
+  Definition instance_sound (act: tfs_action sched) (a_idx: a_index)
+      (input: sched_input_t) (i: decl_instance) : Prop :=
+    forall ss ss' input' (pi: list lit),
+      pub_eq act a_idx input input' ss ss' ->
+      pi_holds act a_idx input  (di_guard i) ss ->
+      pi_holds act a_idx input' (di_guard i) ss' ->
+      (* a source's value is given where the source is VALID, at the path it is
+         read under; the rule derives that from its own target's validity *)
+      (forall s (ps: list lit), List.In s (di_sources i) ->
+         pi_holds act a_idx input  ps ss  ->
+         pi_holds act a_idx input' ps ss' ->
+         rvalid act a_idx ps s ss  input  = Bits.ones 1 ->
+         rvalid act a_idx ps s ss' input' = Bits.ones 1 ->
+         nval act a_idx ss  input  (nsz act s) s
+         = nval act a_idx ss' input' (nsz act s) s) ->
+      pi_holds act a_idx input  pi ss  ->
+      pi_holds act a_idx input' pi ss' ->
+      rvalid act a_idx pi (di_target i) ss  input  = Bits.ones 1 ->
+      rvalid act a_idx pi (di_target i) ss' input' = Bits.ones 1 ->
+      nval act a_idx ss  input  (nsz act (di_target i)) (di_target i)
+      = nval act a_idx ss' input' (nsz act (di_target i)) (di_target i).
+
+  Definition first_done (act: tfs_action sched) (input: input_t)
+      (resp: nat -> resp_val) (ss0: sched_sys_state) (N: nat) : Prop :=
+    ss_done (ss_run N act input resp ss0)
+    /\ forall i, i < N -> ~ ss_done (ss_run i act input resp ss0).
+
+  Definition emulate (act: tfs_action sched) (input: input_t)
+      (sp0: src_sys_state) (N k: nat) (ov: o_var) :=
+    if Nat.ltb k N then (snd sp0).[ov] else (snd (spec_run act sp0 input)).[ov].
+
+  Definition done_test (act: tfs_action sched) (input: input_t)
+      (resp: nat -> resp_val) (ss0: sched_sys_state) (k: nat) : bool :=
+    if done_set_dec (ss_run k act input resp ss0) then true else false.
+
+  Definition L (act: tfs_action sched) (input: input_t)
+      (resp: nat -> resp_val) (ss0: sched_sys_state) : nat :=
+    first_true (done_test act input resp ss0) (S (settle_bound act)) 0.
+
+  (* ---- what the attacker can derive, and the soundness obligation the
+         declassification rules carry (the hypotheses of the timing
+         guarantees in Theorems/IPR.v) ---- *)
+
+  (* The DRIVE a sample.s request came from: [sample_req].s walk, stopped one
+     node earlier and checked to be on the sample.s own port. *)
+  Definition sample_drive_head (act: tfs_action sched) (p: p_var) (h: nid_t)
+    : option nid_t :=
+    match node_op act h with
+    | DFG_Drive p' _ _ => if (tfs_spec_ips_eq_dec ctx).(eq_dec) p' p then Some h else None
+    | DFG_Join d _ =>
+        match node_op act d with
+        | DFG_Drive p' _ _ => if (tfs_spec_ips_eq_dec ctx).(eq_dec) p' p then Some d else None
+        | _ => None
+        end
+    | _ => None
+    end.
+
+  Definition sample_drive (act: tfs_action sched) (n: nid_t) : option nid_t :=
+    match node_op act n with
+    | DFG_Sample p tok _ =>
+        match node_op act tok with
+        | DFG_Stall _ h => sample_drive_head act p h
+        | _ => sample_drive_head act p tok
+        end
+    | _ => None
+    end.
+
+  (* nid of the DFG node cached by validity/value register (a_idx, n_idx). *)
+  Definition vreg_nid
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (n_idx : Vect.index (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+    : nat :=
+    fst (nth (index_to_nat n_idx)
+             (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
+             (0, (0, 0))).
+
+  (* The validity that goes with [node_ref_expr]: ones exactly when every sample
+     buffer the reference reads has already latched. *)
+  Definition node_ref_valid
+      (act: tfs_action sched)
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (n: nat) : @tf_expr (tfs_states sched) si_var o_var :=
+    snd (compile_dfg_expr ctx bneeds
+           (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n
+           (sample_bufs act a_idx)).
+
+  (* THE ROUND TRIP, as a property of one state: a sample that LATCHED UNDER
+     ITS GUARD holds [ip_fn] of the request its own drive sent.  [round_trip]
+     discharges it at any pre-done cycle, from [ip_contract] and
+     [requests_sent]. *)
+  Definition samples_answered (act: tfs_action sched) (a_idx: a_index)
+      (ss: sched_sys_state) (input: sched_input_t) : Prop :=
+    forall n_idx p tok en d av en',
+      node_op act (vreg_nid a_idx n_idx)
+        = DFG_Sample p tok en ->
+      sample_drive act (vreg_nid a_idx n_idx)
+        = Some d ->
+      node_op act d = DFG_Drive p av en' ->
+      sz (nth d (graph (build_dfg ctx act))
+           {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p) ->
+      (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
+      pi_holds act a_idx input en ss ->
+      (fst ss).[tf_dfg_b a_idx n_idx]
+      = convert (ip_fn (tfs_spec_ip ctx p)
+          (tf_eval_expr ss_sz si_sz oo_sz
+             (szB := ip_req_sz (tfs_spec_ip ctx p))
+             (node_ref_expr act a_idx av) ss input)).
+
+  (* The other arm: an arm that was not taken sent no request, so its latch
+     enable stayed down and its buffer holds the value it was reset to. *)
+  Definition samples_zeroed (act: tfs_action sched) (a_idx: a_index)
+      (ss: sched_sys_state) (input: sched_input_t) : Prop :=
+    forall n_idx p tok en,
+      node_op act (vreg_nid a_idx n_idx)
+        = DFG_Sample p tok en ->
+      (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
+      ~ pi_holds act a_idx input en ss ->
+      (fst ss).[tf_dfg_b a_idx n_idx] = Bits.zero.
+
+  (* Its companion: a latched sample's request carried a SETTLED argument.
+     [sample_arg_settled] discharges it at any pre-done cycle. *)
+  Definition sample_args_settled (act: tfs_action sched) (a_idx: a_index)
+      (ss: sched_sys_state) (input: sched_input_t) : Prop :=
+    forall n_idx p tok en d av en',
+      node_op act (vreg_nid a_idx n_idx)
+        = DFG_Sample p tok en ->
+      sample_drive act (vreg_nid a_idx n_idx)
+        = Some d ->
+      node_op act d = DFG_Drive p av en' ->
+      (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
+      eval1 (node_ref_valid act a_idx av) ss input = Bits.ones 1.
+
+  (* And the guard's own sources: a latched sample read its guard from nodes
+     that had settled, which is what makes the two runs agree on whether the
+     guard held. *)
+  Definition sample_guards_settled (act: tfs_action sched) (a_idx: a_index)
+      (ss: sched_sys_state) (input: sched_input_t) : Prop :=
+    forall n_idx p tok en,
+      node_op act (vreg_nid a_idx n_idx)
+        = DFG_Sample p tok en ->
+      (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
+      forall l, List.In l en ->
+        eval1 (node_ref_valid act a_idx (fst l)) ss input
+        = Bits.ones 1.
+
+  (* What a state owes the round trip, as one hypothesis. *)
+  Definition settled (act: tfs_action sched) (a_idx: a_index)
+      (ss: sched_sys_state) (input: sched_input_t) : Prop :=
+    samples_answered act a_idx ss input
+    /\ samples_zeroed act a_idx ss input
+    /\ sample_args_settled act a_idx ss input
+    /\ sample_guards_settled act a_idx ss input.
+
+  (* Derivability carries the PATH its gate is read at, because a phi compiles
+     each arm under an extended path and that is where an arm's validity lives.
+     The value itself is path-free ([compile_fst_pi_irrel]).  The path must be
+     one the run TOOK: validity read off an arm the condition did not select
+     says nothing about that arm's value. *)
+  Definition derivable (act: tfs_action sched) (a_idx: a_index) (input: sched_input_t)
+      (n: nid_t) : Prop :=
+    forall ss ss' input' (pi: list lit),
+      pub_eq act a_idx input input' ss ss' ->
+      settled act a_idx ss  input  ->
+      settled act a_idx ss' input' ->
+      pi_holds act a_idx input  pi ss  ->
+      pi_holds act a_idx input' pi ss' ->
+      rvalid act a_idx pi n ss  input  = Bits.ones 1 ->
+      rvalid act a_idx pi n ss' input' = Bits.ones 1 ->
+      nval act a_idx ss input (nsz act n) n
+      = nval act a_idx ss' input' (nsz act n) n.
+
+  Definition uncond_sound (act: tfs_action sched) (a_idx: a_index)
+      (input: sched_input_t) : Prop :=
+    forall i,
+      List.In i (uncond_instances ctx (build_dfg ctx act)) ->
+      (forall s, List.In s (di_sources i) -> derivable act a_idx input s) ->
+      derivable act a_idx input (di_target i).
+
+  (* Guarded derivability, same shape as [derivable]: the second run's input is
+     quantified inside, and each run's guard is evaluated against its OWN
+     input. *)
+  Definition gderivable (act: tfs_action sched) (a_idx: a_index)
+      (input: sched_input_t) (g: list lit) (n: nid_t) : Prop :=
+    forall ss ss' input' (pi: list lit),
+      pub_eq act a_idx input input' ss ss' ->
+      settled act a_idx ss  input  ->
+      settled act a_idx ss' input' ->
+      pi_holds act a_idx input  g ss ->
+      pi_holds act a_idx input' g ss' ->
+      pi_holds act a_idx input  pi ss  ->
+      pi_holds act a_idx input' pi ss' ->
+      rvalid act a_idx pi n ss  input  = Bits.ones 1 ->
+      rvalid act a_idx pi n ss' input' = Bits.ones 1 ->
+      nval act a_idx ss  input  (nsz act n) n
+      = nval act a_idx ss' input' (nsz act n) n.
+
+  (* What the compiler's producer owes the proof: every fact it records is a
+     guarded derivability.  [gderivable] stays conjunctive, so a node derivable
+     on several paths gets one entry per path. *)
+  Definition base_sound (act: tfs_action sched) (a_idx: a_index)
+      (input: sched_input_t) (base: list gfact) : Prop :=
+    forall c g, List.In (c, g) base -> gderivable act a_idx input g c.
+
+  Definition decl_sound (act: tfs_action sched) (a_idx: a_index)
+      (input: sched_input_t) : Prop :=
+    base_sound act a_idx input (decl_facts ctx (build_dfg ctx act)).
+
+  (* ================================================================ *)
+  (* The confidentiality criterion, over the spec alone.                *)
+  (* ================================================================ *)
+
+  Definition pub_agree (sys sys': sys_state) : Prop :=
+    forall o : o_var, o_cls o = Public -> (snd sys).[o] = (snd sys').[o].
+
+  (* "Secret-free": mentions no secret register and no read of a Secret output.
+     Inputs are free at any class, since the theorem shares them between the two
+     runs.  The Secret-output clause is REVIEW.md 2.4. *)
+  Fixpoint sf_expr (e: @tf_expr s_var i_var o_var) : bool :=
+    match e with
+    | tf_const _ => true
+    | tf_svar _  => false
+    | tf_ivar _  => true
+    | tf_ovar o  => match o_cls o with Public => true | Secret => false end
+    | tf_op1 _ a => sf_expr a
+    | tf_op2 _ a b => sf_expr a && sf_expr b
+    | tf_expr_if c t f => sf_expr c && (sf_expr t && sf_expr f)
+    end.
+
+  (* [g] records a secret-dependent enclosing branch condition.  Under such a
+     guard every Public output stays unwritten: assigning even a CONSTANT to one
+     inside a branch on [dp] leaks [dp]. *)
+  Fixpoint sf_ops (g: bool) (ops: @tf_ops s_var i_var o_var p_var) : bool :=
+    match ops with
+    | tf_ops_base tf_nop => true
+    | tf_ops_base (tf_assign _ _) => true    (* a secret register may hold anything *)
+    (* V4 denotes a call as [dst := ip_fn arg], a STATE update: the request port
+       is the scheduler's own and is no declared output, so no [o_cls] applies
+       and the case coincides with [tf_assign].  The IP bus is outside this
+       theorem's attacker view -- see THEOREM-AUDIT.md B5. *)
+    | tf_ops_base (tf_call _ _ _) => true
+    | tf_ops_base (tf_output o e) =>
+        match o_cls o with
+        | Secret => true                     (* Secret outputs may be arbitrary *)
+        | Public => negb g && sf_expr e
+        end
+    | tf_ops_cons a b => sf_ops g a && sf_ops g b
+    | tf_ops_if c t f =>
+        let g' := (g || negb (sf_expr c))%bool in
+        sf_ops g' t && sf_ops g' f
+    end.
+
+  Definition sf_action (a: tfs_spec_action ctx) : bool :=
+    sf_ops false (tfs_spec_action_ops ctx a).
+
+  Fixpoint run_seq (acts: list (tfs_spec_action ctx))
+      (sys: sys_state) (input: input_t) : sys_state :=
+    match acts with
+    | [] => sys
+    | a :: rest =>
+        run_seq rest (run (tfs_spec_action_ops ctx a) sys input) input
+    end.
+
+End SchedulerWorld.
+
+
+(* ==================================================================== *)
+(* The synthesis relations: what it means for the Kôika circuit to      *)
+(* implement a scheduled design.                                        *)
+(* ==================================================================== *)
+
+Section SynthWorld.
+
+  Context (tf_ctx: TFSynthContext).
+
+  Local Notation sched_ctx := (tf_sched_ctx tf_ctx).
+  Local Notation spec_states := (tfs_states sched_ctx).
+  Local Notation spec_states_size := (tfs_states_size sched_ctx).
+  Local Notation spec_inputs := (tfs_inputs sched_ctx).
+  Local Notation spec_inputs_size := (tfs_inputs_size sched_ctx).
+  Local Notation spec_outputs := (tfs_outputs sched_ctx).
+  Local Notation spec_outputs_size := (tfs_outputs_size sched_ctx).
+  Local Notation spec_action := (tfs_action sched_ctx).
+  Local Notation spec_states_init := (tfs_states_init sched_ctx).
+  Local Notation spec_action_encoding := (tf_action_encoding tf_ctx).
+  Local Notation st_env  := (ContextEnv.(env_t) (tf_states_type spec_states_size)).
+  Local Notation out_env := (ContextEnv.(env_t) (tf_outputs_type spec_outputs_size)).
+  Local Notation sys_state_t := (st_env * out_env)%type.
+  Local Notation input_t :=
+    (forall x : spec_inputs, type_denote (tf_inputs_type spec_inputs_size x)).
+  Local Notation R := (R tf_ctx).
+  Local Notation r := (r tf_ctx).
+  Local Notation Sigma := (Sigma tf_ctx).
+  Local Notation spec_ips := (tfs_ips sched_ctx).
+  Local Notation reg_t := (@_reg_t spec_states spec_inputs spec_outputs spec_ips).
+
+  Hint Extern 0 (FiniteType reg_t) => exact (_reg_t_finite tf_ctx) : typeclass_instances.
+
+  Definition state_matches (sys: sys_state_t) (r: ContextEnv.(env_t) R) : Prop :=
+    (* State variables map cleanly *)
+    (forall (x: spec_states), r.[tf_reg x] = (fst sys).[x]) /\
+    (* Output variables map cleanly *)
+    (forall (x: spec_outputs), r.[tf_out x] = (snd sys).[x]).
+
+  Definition env_matches (act: spec_action) (input: input_t) (r: ContextEnv.(env_t) R) : Prop :=
+    (* action variable maps cleanly *)
+    (r.[tf_cmd] = spec_action_encoding act) /\
+    (* input variables map cleanly *)
+    (forall (x: spec_inputs), r.[tf_in x] = input x).
+
+  Definition state_env_matches (sys: sys_state_t) (act: spec_action) (input: input_t) (r: ContextEnv.(env_t) R) : Prop :=
+    state_matches sys r /\
+    env_matches act input r.
+
+  Definition input_matches (act: spec_action) (input: input_t) (sigma: forall f, Sig_denote (Sigma f)) : Prop :=
+    let cmd_res := sigma ext_in_cmd Ob~1 in      
+    (fst cmd_res) = Ob~1 /\ (* TODO: implicit params should be given explicitly once known *)
+    (@fst (vect bool (tf_action_reg_size tf_ctx)) unit
+      (@snd (vect_cons_t bool (vect_nil_t bool)) (prod (vect bool (tf_action_reg_size tf_ctx)) unit) cmd_res) = spec_action_encoding act) /\
+    (forall (x: spec_inputs), sigma (ext_input x) (Ob~1) = input x).
+
+  Definition abstract_init_state (sys: sys_state_t) : Prop :=
+    (forall x, (fst sys).[x] = spec_states_init x) /\
+    (forall x, (snd sys).[x] = Bits.zero).
+
+  (* A response input is sampled off the wire, so its value comes from [sigma]
+     in EVERY cycle -- [env_matches] covers the latched inputs only. *)
+  Definition live_inputs_match (input: input_t) (sigma: forall f, Sig_denote (Sigma f)) : Prop :=
+    forall v p, tfs_inputs_resp (tf_sched_ctx tf_ctx) v = Some p ->
+                sigma (ext_input v) Ob~1 = input v.
+End SynthWorld.

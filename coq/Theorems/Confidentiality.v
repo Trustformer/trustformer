@@ -1,0 +1,251 @@
+Require Import Koika.Frontend.
+Require Import Koika.Std.
+Require Import Koika.Utils.Common.
+Require Import Koika.Utils.Environments.
+
+Require Import Trustformer.Syntax.
+Require Import Trustformer.Semantics.
+Require Export Trustformer.Theorems.Definitions.
+Require Import Trustformer.Contract.
+
+Require Import Coq.Lists.List.
+Import ListNotations.
+
+(* VALUE-level confidentiality over action SEQUENCES: the Public outputs are a
+   function of the public data and the IP's responses, with the secret registers
+   outside that set.  Per-action is unsound, hence the sequence (REVIEW.md 2.4). *)
+
+Section Confidentiality.
+
+  Context (ctx: TFSchedContext).
+
+  (* Stated in Theorems/Definitions.v; bound here at this section's context. *)
+  Local Notation pub_agree := (Definitions.pub_agree ctx).
+  Local Notation run_seq := (Definitions.run_seq ctx).
+  Local Notation sf_action := (Definitions.sf_action ctx).
+  Local Notation sf_expr := (Definitions.sf_expr ctx).
+  Local Notation sf_ops := (Definitions.sf_ops ctx).
+
+  Local Notation s_var := (tfs_spec_states ctx).
+  Local Notation i_var := (tfs_spec_inputs ctx).
+  Local Notation o_var := (tfs_spec_outputs ctx).
+  Local Notation s_sz  := (tfs_spec_states_size ctx).
+  Local Notation i_sz  := (tfs_spec_inputs_size ctx).
+  Local Notation o_sz  := (tfs_spec_outputs_size ctx).
+  Local Notation o_cls := (tfs_spec_outputs_class ctx).
+  Local Notation p_var := (tfs_spec_ips ctx).
+  Local Notation ips   := (tfs_spec_ip ctx).
+
+  Existing Instance tfs_spec_states_fin.
+  Existing Instance tfs_spec_inputs_fin.
+  Existing Instance tfs_spec_outputs_fin.
+
+  Local Notation sys_state :=
+    (ContextEnv.(env_t) (tf_states_type s_sz)
+     * ContextEnv.(env_t) (tf_outputs_type o_sz))%type.
+  Local Notation input_t :=
+    (forall x : i_var, type_denote (tf_inputs_type i_sz x)).
+
+  Local Notation run ops sys input :=
+    (tf_ops_run s_sz i_sz o_sz ips ops sys input).
+  Local Notation ev w e sys input :=
+    (tf_eval_expr s_sz i_sz o_sz (szB := w) e sys input).
+
+  (* ------------------------------------------------------------------- *)
+  (* The attacker's view: the Public outputs, and nothing else.  Secret    *)
+  (* state is deliberately unconstrained -- that is the content.           *)
+  (* ------------------------------------------------------------------- *)
+
+  Lemma pub_agree_refl sys : pub_agree sys sys.
+  Proof. intros o _; reflexivity. Qed.
+
+  (* ------------------------------------------------------------------- *)
+  (* The criterion, decidable and syntactic.                              *)
+  (* ------------------------------------------------------------------- *)
+
+  (* Two reduction lemmas, so every proof below can stay in terms of [run]
+     instead of unfolding the update machinery and losing the abbreviation. *)
+  Lemma run_cons (a b: @tf_ops s_var i_var o_var p_var) sys input :
+    run (tf_ops_cons a b) sys input = run b (run a sys input) input.
+  Proof.
+    unfold tf_ops_run. cbn [tf_ops_updates].
+    destruct (tf_ops_updates _ _ _ _ a sys input) as [u1 s1]. cbn [snd].
+    destruct (tf_ops_updates _ _ _ _ b s1 input) as [u2 s2]. reflexivity.
+  Qed.
+
+  Lemma run_if (c: @tf_expr s_var i_var o_var) (t f: @tf_ops s_var i_var o_var p_var)
+      sys input :
+    run (tf_ops_if c t f) sys input
+    = if beq_dec (ev 1 c sys input) Bits.zero
+      then run f sys input else run t sys input.
+  Proof.
+    unfold tf_ops_run. cbn [tf_ops_updates].
+    destruct (beq_dec (ev 1 c sys input) Bits.zero); reflexivity.
+  Qed.
+
+  (* ------------------------------------------------------------------- *)
+  (* Soundness of the expression criterion.                               *)
+  (* ------------------------------------------------------------------- *)
+
+  Lemma sf_expr_sound (e: @tf_expr s_var i_var o_var) :
+    sf_expr e = true ->
+    forall (sys sys': sys_state) (input: input_t) (szB: nat),
+      pub_agree sys sys' ->
+      ev szB e sys input = ev szB e sys' input.
+  Proof.
+    induction e; intros Hsf sys sys' input szB Hpub; cbn [sf_expr] in Hsf.
+    - reflexivity.
+    - discriminate.
+    - reflexivity.
+    - cbn [tf_eval_expr].
+      destruct (o_cls v) eqn:Hc; [ | discriminate ].
+      rewrite (Hpub v Hc). reflexivity.
+    - cbn [tf_eval_expr]. destruct op.
+      + rewrite (IHe Hsf sys sys' input szB Hpub). reflexivity.
+      + rewrite (IHe Hsf sys sys' input source_size Hpub). reflexivity.
+    - apply andb_prop in Hsf. destruct Hsf as [H1 H2].
+      cbn [tf_eval_expr]. destruct op;
+        try (rewrite (IHe1 H1 sys sys' input szB Hpub),
+                     (IHe2 H2 sys sys' input szB Hpub); reflexivity).
+      + (* comparison: operands are evaluated at their own width *)
+        rewrite (IHe1 H1 sys sys' input cmp_sz Hpub),
+                (IHe2 H2 sys sys' input cmp_sz Hpub); reflexivity.
+      + (* concatenation: likewise, each side at its own width *)
+        rewrite (IHe1 H1 sys sys' input hi_sz Hpub),
+                (IHe2 H2 sys sys' input lo_sz Hpub); reflexivity.
+    - apply andb_prop in Hsf. destruct Hsf as [Hc Htf].
+      apply andb_prop in Htf. destruct Htf as [Ht Hf].
+      cbn [tf_eval_expr].
+      rewrite (IHe1 Hc sys sys' input 1 Hpub).
+      destruct (beq_dec (ev 1 e1 sys' input) Bits.zero).
+      + exact (IHe3 Hf sys sys' input szB Hpub).
+      + exact (IHe2 Ht sys sys' input szB Hpub).
+  Qed.
+
+  (* ------------------------------------------------------------------- *)
+  (* Under a non-secret-free guard, nothing Public moves at all.          *)
+  (* ------------------------------------------------------------------- *)
+
+  Lemma sf_ops_guarded_frozen (ops: @tf_ops s_var i_var o_var p_var) :
+    sf_ops true ops = true ->
+    forall (sys: sys_state) (input: input_t) (o: o_var),
+      o_cls o = Public ->
+      (snd (run ops sys input)).[o] = (snd sys).[o].
+  Proof.
+    induction ops; intros Hsf sys input o Hc; cbn [sf_ops] in Hsf.
+    - destruct op as [| d e | d e | p d e]; cbn [tf_ops_run tf_ops_updates
+        tf_op_step_updates tf_op_step_commit tf_op_step_commit_output snd].
+      + reflexivity.
+      + reflexivity.
+      + destruct (o_cls d) eqn:Hd; [ discriminate | ].
+        destruct (eq_dec d o) as [Heq | Hne].
+        * subst d. rewrite Hc in Hd. discriminate.
+        * rewrite get_put_neq; [ reflexivity | exact Hne ].
+      + (* a call updates a state register, so the output env is untouched *)
+        reflexivity.
+    - apply andb_prop in Hsf. destruct Hsf as [H1 H2].
+      rewrite run_cons, (IHops2 H2 _ input o Hc), (IHops1 H1 sys input o Hc).
+      reflexivity.
+    - apply andb_prop in Hsf. destruct Hsf as [Ht Hf].
+      rewrite run_if. destruct (beq_dec (ev 1 cond sys input) Bits.zero).
+      + exact (IHops2 Hf sys input o Hc).
+      + exact (IHops1 Ht sys input o Hc).
+  Qed.
+
+  (* ------------------------------------------------------------------- *)
+  (* Soundness of the statement criterion: one action.                    *)
+  (* ------------------------------------------------------------------- *)
+
+  Lemma sf_ops_sound (ops: @tf_ops s_var i_var o_var p_var) (g: bool) :
+    sf_ops g ops = true ->
+    forall (sys sys': sys_state) (input: input_t),
+      pub_agree sys sys' ->
+      pub_agree (run ops sys input) (run ops sys' input).
+  Proof.
+    revert g. induction ops; intros g Hsf sys sys' input Hpub;
+      cbn [sf_ops] in Hsf.
+    - destruct op as [| d e | d e | p d e]; intros o Hc;
+        cbn [tf_ops_run tf_ops_updates tf_op_step_updates tf_op_step_commit
+             tf_op_step_commit_output snd].
+      + exact (Hpub o Hc).
+      + exact (Hpub o Hc).
+      + destruct (o_cls d) eqn:Hd.
+        * (* Public destination: the criterion forces a secret-free RHS *)
+          destruct g; [ discriminate | ]. cbn [negb andb] in Hsf.
+          destruct (eq_dec d o) as [Heq | Hne].
+          -- subst d. rewrite !get_put_eq.
+             exact (sf_expr_sound e Hsf sys sys' input (o_sz o) Hpub).
+          -- rewrite !get_put_neq by exact Hne. exact (Hpub o Hc).
+        * (* Secret destination: nothing Public moves *)
+          destruct (eq_dec d o) as [Heq | Hne].
+          -- subst d. rewrite Hc in Hd. discriminate.
+          -- rewrite !get_put_neq by exact Hne. exact (Hpub o Hc).
+      + (* a call updates a state register, so the output env is untouched *)
+        exact (Hpub o Hc).
+    - apply andb_prop in Hsf. destruct Hsf as [H1 H2].
+      rewrite !run_cons.
+      exact (IHops2 g H2 _ _ input (IHops1 g H1 sys sys' input Hpub)).
+    - apply andb_prop in Hsf. destruct Hsf as [Ht Hf].
+      rewrite !run_if.
+      destruct (sf_expr cond) eqn:Hc.
+      + (* the condition is public, so both runs take the SAME branch *)
+        rewrite <- (sf_expr_sound cond Hc sys sys' input 1 Hpub).
+        destruct (beq_dec (ev 1 cond sys input) Bits.zero).
+        * exact (IHops2 _ Hf sys sys' input Hpub).
+        * exact (IHops1 _ Ht sys sys' input Hpub).
+      + (* the condition may be secret, so the runs may take DIFFERENT branches.
+           Under [g' = true] neither branch touches a Public output, so the
+           agreement carries through regardless of which is taken. *)
+        rewrite Bool.orb_true_r in Ht, Hf.
+        intros o Hco.
+        destruct (beq_dec (ev 1 cond sys  input) Bits.zero);
+        destruct (beq_dec (ev 1 cond sys' input) Bits.zero).
+        * rewrite (sf_ops_guarded_frozen ops2 Hf sys input o Hco),
+                  (sf_ops_guarded_frozen ops2 Hf sys' input o Hco).
+          exact (Hpub o Hco).
+        * rewrite (sf_ops_guarded_frozen ops2 Hf sys input o Hco),
+                  (sf_ops_guarded_frozen ops1 Ht sys' input o Hco).
+          exact (Hpub o Hco).
+        * rewrite (sf_ops_guarded_frozen ops1 Ht sys input o Hco),
+                  (sf_ops_guarded_frozen ops2 Hf sys' input o Hco).
+          exact (Hpub o Hco).
+        * rewrite (sf_ops_guarded_frozen ops1 Ht sys input o Hco),
+                  (sf_ops_guarded_frozen ops1 Ht sys' input o Hco).
+          exact (Hpub o Hco).
+  Qed.
+
+  (* ------------------------------------------------------------------- *)
+  (* THE THEOREM, over sequences.                                          *)
+  (* ------------------------------------------------------------------- *)
+
+  Theorem seq_confidential (acts: list (tfs_spec_action ctx)) :
+    (forall a, sf_action a = true) ->
+    forall (sys sys': sys_state) (input: input_t),
+      pub_agree sys sys' ->
+      pub_agree (run_seq acts sys input) (run_seq acts sys' input).
+  Proof.
+    intro Hall. induction acts as [| a rest IH]; intros sys sys' input Hpub.
+    - exact Hpub.
+    - cbn [run_seq]. apply IH.
+      exact (sf_ops_sound _ false (Hall a) sys sys' input Hpub).
+  Qed.
+
+  (* With the IP's responses held fixed, the secret registers contribute NOTHING
+     to any Public port, for any command sequence.  Named for the direct flow it
+     rules out, the shared-response hypothesis being MVP.md 9 A1. *)
+  Corollary no_direct_secret_flow
+      (acts: list (tfs_spec_action ctx)) (input: input_t)
+      (secrets secrets': ContextEnv.(env_t) (tf_states_type s_sz))
+      (pub: ContextEnv.(env_t) (tf_outputs_type o_sz)) :
+    (forall a, sf_action a = true) ->
+    forall o, o_cls o = Public ->
+      (snd (run_seq acts (secrets, pub) input)).[o]
+      = (snd (run_seq acts (secrets', pub) input)).[o].
+  Proof.
+    intro Hall.
+    exact (seq_confidential acts Hall (secrets, pub) (secrets', pub) input
+             (fun o _ => eq_refl)).
+  Qed.
+
+End Confidentiality.
+

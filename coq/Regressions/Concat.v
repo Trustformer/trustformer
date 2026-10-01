@@ -1,0 +1,99 @@
+Require Import Koika.Frontend.
+Require Import Koika.Std.
+Require Koika.KoikaForm.Untyped.UntypedSemantics.
+Require Import Koika.KoikaForm.SimpleVal.
+
+Require Import Trustformer.Syntax.
+Require Import Trustformer.Semantics.
+Require Import Trustformer.Backend.Lowering.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
+
+Require Import Coq.Logic.EqdepFacts.
+
+(* [tf_concat] end to end, in the shape MARS needs: CryptSnapshot (spec v1r14
+   5.6.9) hashes regSelect || REG# || ... || ctx, i.e. fields of DIFFERENT
+   widths in a fixed order.  [tf_const] carries a unary [nat], so "a * 2^m + b"
+   costs 2.19 s at 2^24 and tf_concat exists instead.  This carries a 32-bit
+   selector concatenated with a 256-bit register to Verilog. *)
+
+Section FunctionalSpecification.
+
+    Inductive fs_action := | fs_act_snap.
+
+    Definition fs_action_encoding (a: fs_action) : bits_t 16 :=
+      match a with fs_act_snap => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0 end.
+
+    Lemma fs_action_encoding_inj :
+      forall a1 a2, fs_action_encoding a1 = fs_action_encoding a2 -> a1 = a2.
+    Proof. intros. destruct a1; destruct a2; reflexivity. Qed.
+
+    Inductive fs_states := | fs_st_pcr.
+    Inductive fs_inputs := | fs_in_regsel.
+    Inductive fs_outputs := | fs_out_msg.
+
+    Definition fs_states_size (x: fs_states) : nat :=
+      match x with fs_st_pcr => 256 end.
+    Definition fs_inputs_size (x: fs_inputs) : nat :=
+      match x with fs_in_regsel => 32 end.
+    (* 32 + 256: the snapshot prefix *)
+    Definition fs_outputs_size (x: fs_outputs) : nat :=
+      match x with fs_out_msg => 288 end.
+
+    Definition fs_states_t := tf_states_type fs_states_size.
+    Definition fs_states_init (x: fs_states) : (fs_states_t x) :=
+      match x with fs_st_pcr => Bits.zero end.
+
+    (* regSelect in the HIGH bits, PCR in the low bits -- the order the spec's
+       concatenation demands, pinned by [concat_hi_first] in WideDeep/Probe.v. *)
+    Definition fs_transitions (act: fs_action)
+        : (@tf_ops fs_states fs_inputs fs_outputs Empty_set) :=
+      match act with
+      | fs_act_snap =>
+          tf_ops_base (tf_output fs_out_msg
+            (tf_op2 (tf_concat 32 256) (tf_ivar fs_in_regsel) (tf_svar fs_st_pcr)))
+      end.
+
+End FunctionalSpecification.
+
+Section Instance.
+
+    Definition tfs_ctx : TFSchedContext := {|
+        tfs_spec_states := fs_states;
+        tfs_spec_states_fin := _;
+        tfs_spec_states_size := fs_states_size;
+        tfs_spec_states_init := fs_states_init;
+
+        tfs_spec_inputs := fs_inputs;
+        tfs_spec_inputs_fin := _;
+        tfs_spec_inputs_size := fs_inputs_size;
+        tfs_spec_inputs_class := fun _ => Public;
+        tfs_spec_outputs := fs_outputs;
+        tfs_spec_outputs_fin := _;
+        tfs_spec_outputs_size := fs_outputs_size;
+        tfs_spec_outputs_class := fun _ => Public;
+        tfs_spec_action := fs_action;
+        tfs_spec_action_fin := _;
+        tfs_spec_action_ops := fs_transitions;
+        (* no attached IP: no call names a response port here *)
+        (* no IP drives any port here, so nothing can conflict with one *)
+        tfs_spec_ips := Empty_set;
+        tfs_spec_ip := no_ips;
+        tfs_spec_decls := []
+    |}.
+
+    Definition tf_schedule := tfs_schedule tfs_ctx 10.
+
+    Definition tf_ctx : TFSynthContext := {|
+        tf_sched_ctx := tf_schedule;
+        tf_action_encoding := fs_action_encoding;
+        tf_action_encoding_inj := fs_action_encoding_inj;
+    |}.
+
+  Definition package := Lowering.package tf_ctx "Regression_Concat".
+
+End Instance.
+
+Definition prog := Interop.Backends.register package.
+Set Extraction Output Directory "build".
+Extraction "Regression_Concat.ml" prog.

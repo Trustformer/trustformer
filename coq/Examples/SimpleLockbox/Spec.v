@@ -5,20 +5,17 @@ Require Import Koika.KoikaForm.SimpleVal.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.Synthesis.
+Require Import Trustformer.Backend.Lowering.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
 
 Require Import Coq.Logic.EqdepFacts.
 
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
-(*
-    An example specification and synthesis of a simple lockbox.
-    The hardware module has a single internal state register (32 bits) and supports two actions (set, test).
-    Actions are triggered through a command register, where the first 1 bit indicates if the command is valid,
-    and the remaining bits indicate the action to perform.
-
- *)
+(* A simple lockbox: one 32-bit state register and two actions (set, test),
+   triggered through a command register whose first bit marks it valid. *)
 
 Section FunctionalSpecification.
 
@@ -83,17 +80,17 @@ Section FunctionalSpecification.
     Definition fs_transitions
         (act: fs_action)
         :
-        (@tf_ops fs_states fs_inputs fs_outputs)
+        (@tf_ops fs_states fs_inputs fs_outputs Empty_set)
         :=
         match act with
-        | fs_act_set => tf_ops_base (tf_assign fs_st_val (tf_input fs_in_val))
+        | fs_act_set => tf_ops_base (tf_assign fs_st_val (tf_ivar fs_in_val))
         | fs_act_test => tf_ops_if 
-            (tf_op2 (tf_cmp sz tf_eq) (tf_var fs_st_val) (tf_input fs_in_val)) 
+            (tf_op2 (tf_cmp sz tf_eq) (tf_svar fs_st_val) (tf_ivar fs_in_val)) 
                 (tf_ops_base (tf_output fs_out_val (tf_const 1)))
                 (tf_ops_base (tf_output fs_out_val (tf_const 0)))
         end.
 
-    Definition fs_step := tf_ops_run fs_states_size fs_inputs_size fs_outputs_size.
+    Definition fs_step := tf_ops_run fs_states_size fs_inputs_size fs_outputs_size no_ips.
     
     Section Examples.
         Definition bits_10 := Bits.of_nat sz 10.
@@ -140,63 +137,45 @@ Section FunctionalSpecification.
 End FunctionalSpecification.
 
 
-Section Synthesis.
+Section Instance.
 
-    Definition tf_ctx : TFSynthContext := {|
-        tf_spec_states := fs_states;
-        tf_spec_states_fin := _; 
-        tf_spec_states_size := fs_states_size;
-        tf_spec_states_init := fs_states_init;
+    Definition tfs_ctx : TFSchedContext := {|
+        tfs_spec_states := fs_states;
+        tfs_spec_states_fin := _;
+        tfs_spec_states_size := fs_states_size;
+        tfs_spec_states_init := fs_states_init;
 
-        tf_spec_inputs := fs_inputs;
-        tf_spec_inputs_fin := _;
-        tf_spec_inputs_size := fs_inputs_size;
-
-        tf_spec_outputs := fs_outputs;
-        tf_spec_outputs_fin := _;
-        tf_spec_outputs_size := fs_outputs_size;
-
-        tf_spec_action := fs_action;
-        tf_spec_action_fin := _; 
-        tf_spec_action_encoding := fs_action_encoding;
-        tf_spec_action_encoding_inj := fs_action_encoding_inj;
-        tf_spec_action_ops := fs_transitions
+        tfs_spec_inputs := fs_inputs;
+        tfs_spec_inputs_fin := _;
+        tfs_spec_inputs_size := fs_inputs_size;
+        tfs_spec_inputs_class := fun _ => Public;
+        tfs_spec_outputs := fs_outputs;
+        tfs_spec_outputs_fin := _;
+        tfs_spec_outputs_size := fs_outputs_size;
+        tfs_spec_outputs_class := fun _ => Public;
+        tfs_spec_action := fs_action;
+        tfs_spec_action_fin := _;
+        tfs_spec_action_ops := fs_transitions;
+        (* no attached IP: no call names a response port here *)
+        (* no IP drives any port here, so nothing can conflict with one *)
+        tfs_spec_ips := Empty_set;
+        tfs_spec_ip := no_ips;
+        tfs_spec_decls := []
     |}.
 
-    Definition R := Synthesis.R tf_ctx.
+    Definition tf_schedule := tfs_schedule tfs_ctx 10.
 
-    Definition r := Synthesis.r tf_ctx.
+    Definition tf_ctx : TFSynthContext := {|
+        tf_sched_ctx := tf_schedule;
 
-    Definition Sigma := Synthesis.Sigma tf_ctx.
+        tf_action_encoding := fs_action_encoding;
+        tf_action_encoding_inj := fs_action_encoding_inj;
+    |}.
 
-    Definition rules := Synthesis.rules tf_ctx.
-
-    Definition system_schedule := Synthesis.system_schedule tf_ctx.
-    
-    Definition ext_fn_specs := Synthesis.ext_fn_specs tf_ctx.
-
-    Instance ext_fn_names : Show (ext_fn_t tf_ctx) := Synthesis.ext_fn_names tf_ctx.
-
-    Definition checked_rules := tc_rules R Sigma rules.
-
-    Definition package :=
-      {| ip_koika := {| koika_reg_types := R;
-                        koika_reg_names := Synthesis.reg_names tf_ctx;
-                        koika_reg_init := r;
-                        koika_ext_fn_types := Sigma;
-                        koika_rules := checked_rules;
-                        koika_rule_names := Synthesis.rule_names tf_ctx;
-                        koika_rule_external := (fun _ => false);
-                        koika_scheduler := system_schedule;
-                        koika_module_name := "Example_SimpleLockbox" |};
-
-      ip_sim := {| sp_ext_fn_specs fn := {| efs_name := show fn; efs_method := false |};
-                  sp_prelude := None |};
-
-      ip_verilog := {| vp_ext_fn_specs := ext_fn_specs |} |}.
+  Definition package := Lowering.package tf_ctx "Example_SimpleLockbox".
     
 
-End Synthesis.
+End Instance.
 
 (* Extraction *)
 

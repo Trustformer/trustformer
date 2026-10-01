@@ -9,3 +9,17 @@ build/
 .local/
 .nia.cache
 .lia.cache
+
+# Vendored 
+vendor/
+firesim/
+
+# Long-term agent memory (untracked)
+agents/
+paper/
+.claude
+.github/skills
+
+# Python
+__pycache__/
+*.pyc

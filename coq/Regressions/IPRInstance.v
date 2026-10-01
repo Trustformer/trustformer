@@ -1,0 +1,200 @@
+(* Regression for the IPR / latency-noninterference results over the classic
+   timing side channel: a password check branching on a secret register.  Pins,
+   at a concrete context, that the taint analysis marks the branch condition
+   secret-dependent, that [L] is computable, and that the theorems instantiate
+   for real -- the last catching signature drift at the [Definition]s below. *)
+
+Require Import Koika.Frontend.
+Require Import Koika.Std.
+
+Require Import Trustformer.Theorems.Definitions.
+Require Import Trustformer.Syntax.
+Require Import Trustformer.Semantics.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
+Require Import Trustformer.Theorems.SchedulerSimulation.
+Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
+Require Import Trustformer.Theorems.IPR.
+Require Import Trustformer.Theorems.Internal.IPRProof.
+
+Require Import Coq.Lists.List.
+Require Import Lia.
+Import ListNotations.
+
+Section FunctionalSpecification.
+
+  Definition sz := 32.
+
+  Inductive fs_action := fs_check.
+
+  Definition fs_action_encoding (a: fs_action) : bits_t 16 :=
+    match a with fs_check => Bits.of_nat 16 1 end.
+
+  Lemma fs_action_encoding_inj :
+    forall a1 a2, fs_action_encoding a1 = fs_action_encoding a2 -> a1 = a2.
+  Proof. intros a1 a2 _. destruct a1; destruct a2; reflexivity. Qed.
+
+  Inductive fs_states := fs_secret | fs_count.
+  Inductive fs_inputs := fs_guess.
+  Inductive fs_outputs := fs_ok.
+
+  Definition fs_states_size  (_: fs_states)  : nat := sz.
+  Definition fs_inputs_size  (_: fs_inputs)  : nat := sz.
+  Definition fs_outputs_size (_: fs_outputs) : nat := sz.
+
+  Definition fs_states_t := tf_states_type fs_states_size.
+
+  Definition fs_states_init (x: fs_states) : fs_states_t x :=
+    match x with fs_secret => Bits.zero | fs_count => Bits.zero end.
+
+  (* The branch condition reads [fs_secret], so a naive compilation would take a
+     different number of cycles for a correct and an incorrect guess. *)
+  Definition fs_transitions (act: fs_action)
+      : @tf_ops fs_states fs_inputs fs_outputs Empty_set :=
+    match act with
+    | fs_check =>
+        {[
+          (if $fs_secret ==[sz] $fs_guess then
+             let $fs_count := $fs_count + #1;
+             let $fs_ok := #1
+           else
+             let $fs_ok := #0)
+        ]}
+    end.
+
+End FunctionalSpecification.
+
+Section Context.
+
+  Definition tfs_ctx : TFSchedContext := {|
+    tfs_spec_states      := fs_states;
+    tfs_spec_states_fin  := _;
+    tfs_spec_states_size := fs_states_size;
+    tfs_spec_states_init := fs_states_init;
+
+    tfs_spec_inputs      := fs_inputs;
+    tfs_spec_inputs_fin  := _;
+    tfs_spec_inputs_size := fs_inputs_size;
+    tfs_spec_inputs_class := fun _ => Public;
+    tfs_spec_outputs      := fs_outputs;
+    tfs_spec_outputs_fin  := _;
+    tfs_spec_outputs_size := fs_outputs_size;
+    tfs_spec_outputs_class := fun _ => Public;
+    tfs_spec_action     := fs_action;
+    tfs_spec_action_fin := _;
+    tfs_spec_action_ops := fs_transitions;
+    (* no attached IP: no call names a response port here *)
+    tfs_spec_ips := Empty_set;
+    tfs_spec_ip := no_ips;
+    tfs_spec_decls := []
+  |}.
+
+  Definition cost := 5.
+
+  Definition check_dfg := build_dfg tfs_ctx fs_check.
+
+End Context.
+
+Section TaintPins.
+
+  (* The secret reaches the branch, so the roots are not all untainted: a
+     latency-noninterference claim here is not free. *)
+  Definition tainted_nodes := get_tainted tfs_ctx check_dfg.
+
+  Goal tainted_nodes <> [].
+  Proof. vm_compute. discriminate. Qed.
+
+End TaintPins.
+
+Section TheoremInstantiation.
+
+  Local Notation sched := (tfs_schedule tfs_ctx cost).
+
+  (* [L] is a total function into [nat] rather than a relation, which is what
+     lets the paper write [L act input pre post].  It is *not* practically
+     reducible: [vm_compute] on this 2-register/32-bit context exceeds 300s,
+     because each of the [settle_bound] candidate cycles interprets the whole
+     schedule.  Symbolic reasoning via [L_first_done] is the usable route. *)
+  Definition check_latency := L tfs_ctx cost.
+
+  (* Signature regression.  Each of these fails to type check if the
+     corresponding theorem's hypotheses change. *)
+
+  Definition reg_L_first_done := L_first_done tfs_ctx cost.
+
+  Definition reg_L_public := L_public tfs_ctx cost.
+
+  Definition reg_emulator := emulator_correct_L tfs_ctx cost.
+
+  Definition reg_latency_from_outputs := latency_from_outputs tfs_ctx cost.
+
+  Definition reg_obs_eq_pub_eq := obs_eq_pub_eq tfs_ctx cost.
+
+  (* This context attaches no IP, so the response stream is a function out of
+     [Empty_set] and its datasheet obligation is vacuous. *)
+  Definition no_resp : nat -> forall p : tfs_ips sched,
+      bits_t (ip_resp_sz (tfs_ip sched p)) :=
+    fun _ p => match p with end.
+
+  (* The headline, fully instantiated: for this context, two runs of [fs_check]
+     that agree on the outputs before and after finish on the same cycle, no
+     matter what [fs_secret] holds. *)
+  Theorem check_latency_is_public :
+    forall a_idx input sp0 sp0' ss0 ss0',
+      act_idx_aligned tfs_ctx cost fs_check a_idx ->
+      start_rel tfs_ctx cost sp0  ss0  ->
+      start_rel tfs_ctx cost sp0' ss0' ->
+      (forall ov, (snd sp0).[ov] = (snd sp0').[ov]) ->
+      (forall ov, (snd (tf_ops_run (tfs_spec_states_size tfs_ctx)
+                          (tfs_spec_inputs_size tfs_ctx)
+                          (tfs_spec_outputs_size tfs_ctx)
+                          (tfs_spec_ip tfs_ctx)
+                          (tfs_spec_action_ops tfs_ctx fs_check) sp0 input)).[ov]
+                = (snd (tf_ops_run (tfs_spec_states_size tfs_ctx)
+                          (tfs_spec_inputs_size tfs_ctx)
+                          (tfs_spec_outputs_size tfs_ctx)
+                          (tfs_spec_ip tfs_ctx)
+                          (tfs_spec_action_ops tfs_ctx fs_check) sp0' input)).[ov]) ->
+      check_latency fs_check input no_resp ss0
+      = check_latency fs_check input no_resp ss0'.
+  Proof.
+    intros a_idx input sp0 sp0' ss0 ss0' Halign Hst Hst' Hpre Hpost.
+    (* this context supplies no declassification rules *)
+    assert (Hdecls : forall act a_idx' input',
+              uncond_sound tfs_ctx cost act a_idx' input').
+    { intros act a_idx' input' i Hi. cbn in Hi. destruct Hi. }
+    assert (Hdguard : forall act a_idx' input',
+              decl_sound tfs_ctx cost act a_idx' input').
+    { intros act a_idx' input'.
+      apply (decl_sound_of_instances tfs_ctx cost Hdecls).
+      intros i Hi. cbn in Hi. destruct Hi. }
+    (* the three V4 side conditions, at this context: no IP means no drive and
+       no guard, and no root is plumbing *)
+    assert (Hpl : plumbing_not_root tfs_ctx cost fs_check).
+    { intros n Hp Hin.
+      assert (Hall : forallb (fun m => negb (is_plumbing tfs_ctx cost fs_check m))
+                       (untainted_roots tfs_ctx (build_dfg tfs_ctx fs_check)) = true)
+        by (vm_compute; reflexivity).
+      rewrite forallb_forall in Hall.
+      pose proof (Hall n Hin) as H. rewrite Hp in H. discriminate. }
+    assert (Hdsz : drives_sized tfs_ctx cost fs_check)
+      by (intros n p; destruct p).
+    assert (Hgsz : guards_sized tfs_ctx cost fs_check)
+      by (intros n p; destruct p).
+    assert (Hlen : 1 < length (graph (build_dfg tfs_ctx fs_check)))
+      by (vm_compute; lia).
+    assert (Hipc : forall ss, Definitions.ip_contract tfs_ctx cost
+                     fs_check input no_resp ss)
+      by (intros ss p; destruct p).
+    (* Every input and output here is [Public], so these hypotheses are stronger
+       than [L_public] asks for.  Instantiating input' := input and weakening at
+       the use site keeps the regression's statement fixed. *)
+    exact (L_public tfs_ctx cost Hdecls Hdguard fs_check a_idx input input
+             no_resp no_resp sp0 sp0' ss0 ss0' Halign Hlen Hpl Hdsz Hgsz Hst Hst'
+             (Hipc ss0) (Hipc ss0')
+             (fun v _ => eq_refl)
+             (fun ov _ => Hpre ov) (fun ov _ => Hpost ov)).
+  Qed.
+
+End TheoremInstantiation.
+
