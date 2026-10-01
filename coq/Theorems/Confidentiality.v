@@ -5,6 +5,7 @@ Require Import Koika.Utils.Environments.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
+Require Export Trustformer.Theorems.Definitions.
 Require Import Trustformer.Contract.
 
 Require Import Coq.Lists.List.
@@ -17,6 +18,13 @@ Import ListNotations.
 Section Confidentiality.
 
   Context (ctx: TFSchedContext).
+
+  (* Stated in Theorems/Definitions.v; bound here at this section's context. *)
+  Local Notation pub_agree := (Definitions.pub_agree ctx).
+  Local Notation run_seq := (Definitions.run_seq ctx).
+  Local Notation sf_action := (Definitions.sf_action ctx).
+  Local Notation sf_expr := (Definitions.sf_expr ctx).
+  Local Notation sf_ops := (Definitions.sf_ops ctx).
 
   Local Notation s_var := (tfs_spec_states ctx).
   Local Notation i_var := (tfs_spec_inputs ctx).
@@ -48,55 +56,12 @@ Section Confidentiality.
   (* state is deliberately unconstrained -- that is the content.           *)
   (* ------------------------------------------------------------------- *)
 
-  Definition pub_agree (sys sys': sys_state) : Prop :=
-    forall o : o_var, o_cls o = Public -> (snd sys).[o] = (snd sys').[o].
-
   Lemma pub_agree_refl sys : pub_agree sys sys.
   Proof. intros o _; reflexivity. Qed.
 
   (* ------------------------------------------------------------------- *)
   (* The criterion, decidable and syntactic.                              *)
   (* ------------------------------------------------------------------- *)
-
-  (* "Secret-free": mentions no secret register and no read of a Secret output.
-     Inputs are free at any class, since the theorem shares them between the two
-     runs.  The Secret-output clause is REVIEW.md 2.4. *)
-  Fixpoint sf_expr (e: @tf_expr s_var i_var o_var) : bool :=
-    match e with
-    | tf_const _ => true
-    | tf_svar _  => false
-    | tf_ivar _  => true
-    | tf_ovar o  => match o_cls o with Public => true | Secret => false end
-    | tf_op1 _ a => sf_expr a
-    | tf_op2 _ a b => sf_expr a && sf_expr b
-    | tf_expr_if c t f => sf_expr c && (sf_expr t && sf_expr f)
-    end.
-
-  (* [g] records a secret-dependent enclosing branch condition.  Under such a
-     guard every Public output stays unwritten: assigning even a CONSTANT to one
-     inside a branch on [dp] leaks [dp]. *)
-  Fixpoint sf_ops (g: bool) (ops: @tf_ops s_var i_var o_var p_var) : bool :=
-    match ops with
-    | tf_ops_base tf_nop => true
-    | tf_ops_base (tf_assign _ _) => true    (* a secret register may hold anything *)
-    (* V4 denotes a call as [dst := ip_fn arg], a STATE update: the request port
-       is the scheduler's own and is no declared output, so no [o_cls] applies
-       and the case coincides with [tf_assign].  The IP bus is outside this
-       theorem's attacker view -- see THEOREM-AUDIT.md B5. *)
-    | tf_ops_base (tf_call _ _ _) => true
-    | tf_ops_base (tf_output o e) =>
-        match o_cls o with
-        | Secret => true                     (* Secret outputs may be arbitrary *)
-        | Public => negb g && sf_expr e
-        end
-    | tf_ops_cons a b => sf_ops g a && sf_ops g b
-    | tf_ops_if c t f =>
-        let g' := (g || negb (sf_expr c))%bool in
-        sf_ops g' t && sf_ops g' f
-    end.
-
-  Definition sf_action (a: tfs_spec_action ctx) : bool :=
-    sf_ops false (tfs_spec_action_ops ctx a).
 
   (* Two reduction lemmas, so every proof below can stay in terms of [run]
      instead of unfolding the update machinery and losing the abbreviation. *)
@@ -252,14 +217,6 @@ Section Confidentiality.
   (* ------------------------------------------------------------------- *)
   (* THE THEOREM, over sequences.                                          *)
   (* ------------------------------------------------------------------- *)
-
-  Fixpoint run_seq (acts: list (tfs_spec_action ctx))
-      (sys: sys_state) (input: input_t) : sys_state :=
-    match acts with
-    | [] => sys
-    | a :: rest =>
-        run_seq rest (run (tfs_spec_action_ops ctx a) sys input) input
-    end.
 
   Theorem seq_confidential (acts: list (tfs_spec_action ctx)) :
     (forall a, sf_action a = true) ->

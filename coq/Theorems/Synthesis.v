@@ -9,6 +9,7 @@ Require Koika.Properties.SemanticProperties.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Utils.
+Require Export Trustformer.Theorems.Definitions.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Backend.Lowering.
 Require Trustformer.Theorems.Internal.KoikaLemmas.
@@ -34,6 +35,14 @@ Set Hammer GSMode 63.
 Section SynthesisCorrectness.
 
   Context (tf_ctx: TFSynthContext).
+
+  (* Stated in Theorems/Definitions.v; bound here at this section's context. *)
+  Local Notation abstract_init_state := (Definitions.abstract_init_state tf_ctx).
+  Local Notation env_matches := (Definitions.env_matches tf_ctx).
+  Local Notation input_matches := (Definitions.input_matches tf_ctx).
+  Local Notation live_inputs_match := (Definitions.live_inputs_match tf_ctx).
+  Local Notation state_env_matches := (Definitions.state_env_matches tf_ctx).
+  Local Notation state_matches := (Definitions.state_matches tf_ctx).
 
   (* ====== Abbreviations ====== *)
   Local Notation sched_ctx := (tf_sched_ctx tf_ctx).
@@ -389,36 +398,13 @@ Section SynthesisCorrectness.
 
   (* ====== State and Environment Relations ====== *)
 
-  Definition state_matches (sys: sys_state_t) (r: ContextEnv.(env_t) R) : Prop :=
-    (* State variables map cleanly *)
-    (forall (x: spec_states), r.[tf_reg x] = (fst sys).[x]) /\
-    (* Output variables map cleanly *)
-    (forall (x: spec_outputs), r.[tf_out x] = (snd sys).[x]).
-
   Definition state_equal (r1 r2: ContextEnv.(env_t) R): Prop :=
     (forall (x: spec_states), r1.[tf_reg x] = r2.[tf_reg x]) /\
     (forall (x: spec_outputs), r1.[tf_out x] = r2.[tf_out x]).
 
-  Definition env_matches (act: spec_action) (input: input_t) (r: ContextEnv.(env_t) R) : Prop :=
-    (* action variable maps cleanly *)
-    (r.[tf_cmd] = spec_action_encoding act) /\
-    (* input variables map cleanly *)
-    (forall (x: spec_inputs), r.[tf_in x] = input x).
-
   Definition env_equal (r1 r2: ContextEnv.(env_t) R): Prop :=
     (r1.[tf_cmd] = r2.[tf_cmd]) /\
     (forall (x: spec_inputs), r1.[tf_in x] = r2.[tf_in x]).
-
-  Definition state_env_matches (sys: sys_state_t) (act: spec_action) (input: input_t) (r: ContextEnv.(env_t) R) : Prop :=
-    state_matches sys r /\
-    env_matches act input r.
-
-  Definition input_matches (act: spec_action) (input: input_t) (sigma: forall f, Sig_denote (Sigma f)) : Prop :=
-    let cmd_res := sigma ext_in_cmd Ob~1 in      
-    (fst cmd_res) = Ob~1 /\ (* TODO: implicit params should be given explicitly once known *)
-    (@fst (vect bool (tf_action_reg_size tf_ctx)) unit
-      (@snd (vect_cons_t bool (vect_nil_t bool)) (prod (vect bool (tf_action_reg_size tf_ctx)) unit) cmd_res) = spec_action_encoding act) /\
-    (forall (x: spec_inputs), sigma (ext_input x) (Ob~1) = input x).
 
   Lemma state_env_matches_comp :
     forall sys act input r1 r2,
@@ -434,10 +420,6 @@ Section SynthesisCorrectness.
   Qed.
 
   (* ====== Initial State Correctness ====== *)
-
-  Definition abstract_init_state (sys: sys_state_t) : Prop :=
-    (forall x, (fst sys).[x] = spec_states_init x) /\
-    (forall x, (snd sys).[x] = Bits.zero).
 
   Theorem initial_state_matches :
     forall (sys: sys_state_t),
@@ -1051,12 +1033,6 @@ Section SynthesisCorrectness.
       latest_write0 (REnv:=REnv) (R:=R) log (tf_in v) = Some (input v) 
       \/ 
       latest_write0 (REnv:=REnv) (R:=R) log (tf_in v) = None /\ r.[tf_in v] = input v.
-
-  (* A response input is sampled off the wire, so its value comes from [sigma]
-     in EVERY cycle -- [env_matches] covers the latched inputs only. *)
-  Definition live_inputs_match (input: input_t) (sigma: forall f, Sig_denote (Sigma f)) : Prop :=
-    forall v p, tfs_inputs_resp (tf_sched_ctx tf_ctx) v = Some p ->
-                sigma (ext_input v) Ob~1 = input v.
 
   Fixpoint eval_expr_aux {szB}
       (expr: tf_expr) log
