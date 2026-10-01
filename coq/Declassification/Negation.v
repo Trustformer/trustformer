@@ -5,6 +5,7 @@
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.
 
+Require Import Trustformer.Theorems.Definitions.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.DFG.
@@ -69,7 +70,7 @@ Section Soundness.
     cbn [di_sources di_target] in Hsrc, Hv, Hv' |- *.
     assert (Hnlen : n < length (graph (build_dfg ctx act))) by exact Hlen.
     assert (Hop' : node_op ctx cost_limit act n = DFG_Unary tf_not arg)
-      by (unfold SchedulerSimulationLemmas.node_op; rewrite Hop; reflexivity).
+      by (unfold Definitions.node_op; rewrite Hop; reflexivity).
     destruct (node_args_range ctx cost_limit act n Hn1 Hlen arg
                 ltac:(unfold get_args; rewrite Hop; left; reflexivity)) as [Harg1 _].
     specialize (Hsrc n pi (or_introl eq_refl) Hpi Hpi'

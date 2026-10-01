@@ -6,6 +6,7 @@ Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.
 Require Import Koika.BitsToLists.
 
+Require Import Trustformer.Theorems.Definitions.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.DFG.
@@ -171,7 +172,7 @@ Section Soundness.
                       ltac:(unfold get_args; rewrite Hop; left; reflexivity))
             as [Harg1 _].
           exact (nrv_lift_unary ctx cost_limit act a_idx n (tf_resize src) arg pi
-                   s inp ltac:(unfold SchedulerSimulationLemmas.node_op;
+                   s inp ltac:(unfold Definitions.node_op;
                                rewrite Hop; reflexivity) Harg1 Hlen Hva).
       - (* DFG_Resize: the source width is the argument node's own width *)
         destruct (Nat.leb (sz (nth arg (graph (build_dfg ctx act))
@@ -192,7 +193,7 @@ Section Soundness.
                       ltac:(unfold get_args; rewrite Hop; left; reflexivity))
             as [Harg1 _].
           exact (nrv_lift_resize ctx cost_limit act a_idx n arg pi s inp
-                   ltac:(unfold SchedulerSimulationLemmas.node_op;
+                   ltac:(unfold Definitions.node_op;
                          rewrite Hop; reflexivity) Harg1 Hlen Hva). }
 
     destruct Hcase as [arg [src [Hnre [Hsz [Hle [Hieq Hlift]]]]]]. subst i.

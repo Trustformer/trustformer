@@ -4,6 +4,7 @@
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.
 
+Require Import Trustformer.Theorems.Definitions.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
@@ -186,7 +187,7 @@ Section IPR.
   Proof.
     intros Hlen Hsd.
     unfold SchedulerSimulationLemmas.sample_drive_head,
-           SchedulerSimulationLemmas.node_op in Hsd.
+           Definitions.node_op in Hsd.
     destruct (op (nth h (graph (build_dfg ctx act))
                    {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hh;
       try discriminate.
@@ -212,7 +213,7 @@ Section IPR.
   Proof.
     intros Hlen Hsd.
     unfold SchedulerSimulationLemmas.sample_drive,
-           SchedulerSimulationLemmas.node_op in Hsd.
+           Definitions.node_op in Hsd.
     destruct (op (nth n (graph (build_dfg ctx act))
                    {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hn;
       try discriminate.
@@ -348,7 +349,7 @@ Section IPR.
   Proof.
     intros Hpl Hlen Hsd Hht.
     unfold SchedulerSimulationLemmas.sample_drive_head,
-           SchedulerSimulationLemmas.node_op in Hsd.
+           Definitions.node_op in Hsd.
     destruct (op (nth h (graph (build_dfg ctx act))
                    {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hh;
       try discriminate.
@@ -360,7 +361,7 @@ Section IPR.
       destruct (eq_dec p0 p); [ | discriminate ].
       injection Hsd as Heq. rewrite <- Heq.
       apply (arg_untainted act h a Hlen Hht).
-      + apply Hpl. unfold is_plumbing, SchedulerSimulationLemmas.node_op.
+      + apply Hpl. unfold is_plumbing, Definitions.node_op.
         rewrite Hh. reflexivity.
       + unfold get_args. rewrite Hh. left. reflexivity.
   Qed.
@@ -377,7 +378,7 @@ Section IPR.
   Proof.
     intros Hpl Hlen Hsd Hnt Hnr.
     unfold SchedulerSimulationLemmas.sample_drive,
-           SchedulerSimulationLemmas.node_op in Hsd.
+           Definitions.node_op in Hsd.
     destruct (op (nth n (graph (build_dfg ctx act))
                    {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hn;
       try discriminate.
@@ -399,7 +400,7 @@ Section IPR.
         pose proof (arg_lt_of_op ctx cost_limit act tok hh Htlen Hinh) as Hah;
         assert (Halen : hh < length (graph (build_dfg ctx act))) by lia;
         assert (Hhnr : ~ List.In tok (untainted_roots ctx (build_dfg ctx act)))
-          by (apply Hpl; unfold is_plumbing, SchedulerSimulationLemmas.node_op;
+          by (apply Hpl; unfold is_plumbing, Definitions.node_op;
               rewrite H; reflexivity);
         pose proof (arg_untainted act tok hh Htlen Htokt Hhnr Hinh) as Hht;
         exact (sample_drive_head_untainted act p hh d Hpl Halen Hsd Hht)
@@ -551,7 +552,7 @@ Section IPR.
     SchedulerSimulation.guard_holds ctx cost_limit act a_idx ss input en.
   Proof.
     intros H c b Hin. specialize (H c b Hin).
-    unfold SchedulerSimulationLemmas.nval, bit_of in H. split.
+    unfold Definitions.nval, bit_of in H. split.
     - intro Hb. subst b. rewrite H. exact ones1_neq_zero.
     - intro Hb. subst b. exact H.
   Qed.
@@ -562,7 +563,7 @@ Section IPR.
     pi_holds act a_idx input en ss.
   Proof.
     intros H c b Hin. destruct (H c b Hin) as [Ht Hf].
-    unfold SchedulerSimulationLemmas.nval, bit_of. destruct b.
+    unfold Definitions.nval, bit_of. destruct b.
     - destruct (bits1_cases (eval1 (node_ref_expr ctx cost_limit act a_idx c) ss input))
         as [Ho | Hz]; [ exact Ho | exfalso; exact (Ht eq_refl Hz) ].
     - exact (Hf eq_refl).
@@ -1196,10 +1197,10 @@ Section IPR.
                      = Bits.zero) by (apply beq_dec_iff in Hb; exact Hb).
         rewrite (Hder_at eid _ ((cnd, false) :: pi) He Hge
                    (pi_holds_cons act a_idx input cnd false pi ss Hpin
-                      ltac:(unfold SchedulerSimulationLemmas.nval, bit_of;
+                      ltac:(unfold Definitions.nval, bit_of;
                             rewrite Hcc; exact Hz))
                    (pi_holds_cons act a_idx input' cnd false pi ss' Hpin'
-                      ltac:(unfold SchedulerSimulationLemmas.nval, bit_of; exact Hz))
+                      ltac:(unfold Definitions.nval, bit_of; exact Hz))
                    (Hev ltac:(rewrite Hcc; exact Hz)) (Hev' Hz)).
         reflexivity.
       + (* the then arm is selected in both runs *)
@@ -1208,11 +1209,11 @@ Section IPR.
         { intro Hc0. rewrite Hc0, beq_dec_refl in Hb. discriminate. }
         rewrite (Hder_at tid _ ((cnd, true) :: pi) Ht Hgt
                    (pi_holds_cons act a_idx input cnd true pi ss Hpin
-                      ltac:(unfold SchedulerSimulationLemmas.nval, bit_of;
+                      ltac:(unfold Definitions.nval, bit_of;
                             apply (proj1 (bits1_nonzero_ones _));
                             rewrite Hcc; exact Hz))
                    (pi_holds_cons act a_idx input' cnd true pi ss' Hpin'
-                      ltac:(unfold SchedulerSimulationLemmas.nval, bit_of;
+                      ltac:(unfold Definitions.nval, bit_of;
                             apply (proj1 (bits1_nonzero_ones _)); exact Hz))
                    (Htv ltac:(rewrite Hcc; exact Hz)) (Htv' Hz)).
         reflexivity.
@@ -1239,11 +1240,11 @@ Section IPR.
          untainted, so both runs send the same payload and the pure IP hands
          back the same answer. *)
       assert (Hsam : is_sample_of ctx cost_limit act n = true)
-        by (unfold SchedulerSimulationLemmas.is_sample_of,
-                   SchedulerSimulationLemmas.node_op; rewrite Eop; reflexivity).
+        by (unfold Definitions.is_sample_of,
+                   Definitions.node_op; rewrite Eop; reflexivity).
       destruct (sample_index ctx cost_limit act a_idx n Halign Hsam) as [n_idx Hvid].
       assert (Hop' : node_op ctx cost_limit act n = DFG_Sample sp stok sen)
-        by (unfold SchedulerSimulationLemmas.node_op; exact Eop).
+        by (unfold Definitions.node_op; exact Eop).
       destruct (sample_has_drive ctx cost_limit act n sp stok sen Hop')
         as [d [av [Hsd Hdop]]].
 
@@ -1269,7 +1270,7 @@ Section IPR.
                   ltac:(rewrite Hdop; discriminate)) as [Hd1 _].
       assert (Hain : List.In av (get_args ctx (nth d (graph (build_dfg ctx act))
                                                 {| nid := 0; op := DFG_Empty; sz := 0 |})))
-        by (unfold get_args, SchedulerSimulationLemmas.node_op in Hdop |- *;
+        by (unfold get_args, Definitions.node_op in Hdop |- *;
             rewrite Hdop; left; reflexivity).
       assert (Hdnr : ~ List.In d (untainted_roots ctx (build_dfg ctx act)))
         by (apply Hpl; unfold is_plumbing; rewrite Hdop; reflexivity).
@@ -1282,7 +1283,7 @@ Section IPR.
                        {| nid := 0; op := DFG_Empty; sz := 0 |})
                     (nth_In _ _ Hdlen)) as Hfgd.
       unfold node_args_sz in Hfgd.
-      unfold SchedulerSimulationLemmas.node_op in Hdop.
+      unfold Definitions.node_op in Hdop.
       rewrite Hdop in Hfgd.
       destruct (wsz_node_sz ctx cost_limit act av _ Hfgd) as [_ Havsz].
 
@@ -1316,7 +1317,7 @@ Section IPR.
                       (pi_holds_nil act a_idx input' ss')
                       (Hgrd  n_idx sp stok sen Hop' Hreg  l Hl)
                       (Hgrd' n_idx sp stok sen Hop' Hreg' l Hl)) as Hl_eq.
-        unfold SchedulerSimulationLemmas.nval in Hl_eq |- *.
+        unfold Definitions.nval in Hl_eq |- *.
         rewrite (Hgsz d sp av sen Hdop l Hl) in Hl_eq. exact Hl_eq. }
       assert (Hiff : pi_holds act a_idx input  sen ss
                      <-> pi_holds act a_idx input' sen ss').
@@ -1325,7 +1326,7 @@ Section IPR.
         - rewrite <- He. exact (H c b Hin0).
         - rewrite He. exact (H c b Hin0). }
 
-      unfold SchedulerSimulationLemmas.nval. rewrite <- Hvid.
+      unfold Definitions.nval. rewrite <- Hvid.
       rewrite (nre_sample ctx cost_limit act a_idx n_idx Halign
                  ltac:(rewrite Hvid; exact Hsam)).
       rewrite <- (buffer_register_node_size ctx cost_limit act a_idx n_idx Halign).
@@ -1342,7 +1343,7 @@ Section IPR.
         pose proof (IH av ltac:(lia) Hav1 ltac:(lia) Havt ss ss' input' []
                       Hpub Hsa Hsa' (pi_holds_nil act a_idx input ss)
                       (pi_holds_nil act a_idx input' ss') Hvav Hvav') as Hav.
-        unfold SchedulerSimulationLemmas.nval in Hav.
+        unfold Definitions.nval in Hav.
         rewrite Havsz, Hdz in Hav.
         rewrite Hb, Hb'. rewrite Hav. reflexivity.
       + (* it held in neither: both arms were skipped, so both buffers are 0 *)
@@ -1774,10 +1775,10 @@ Section IPR.
       (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) k :
     act_idx_aligned ctx cost_limit act a_idx ->
     1 < length (graph (build_dfg ctx act)) ->
-    (forall x, SchedulerSimulationLemmas.zeroed_at_start ctx cost_limit x ->
+    (forall x, Definitions.zeroed_at_start ctx cost_limit x ->
        (fst ss0).[x] = Bits.zero) ->
     (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input resp ss0)) ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input resp ss0 ->
+    Definitions.ip_contract ctx cost_limit act input resp ss0 ->
     settled act a_idx (ss_run k act input resp ss0)
       (sched_input ctx cost_limit input (resp k)).
   Proof.
@@ -2269,8 +2270,8 @@ Section IPR.
     1 < length (graph (build_dfg ctx act)) ->
     start_rel ctx cost_limit sp0  ss0  ->
     start_rel ctx cost_limit sp0' ss0' ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input  resp  ss0  ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input' resp' ss0' ->
+    Definitions.ip_contract ctx cost_limit act input  resp  ss0  ->
+    Definitions.ip_contract ctx cost_limit act input' resp' ss0' ->
     (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input  resp  ss0 )) ->
     (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input' resp' ss0')) ->
     (forall v, tfs_spec_inputs_class ctx v = Public -> input v = input' v) ->
@@ -2326,8 +2327,8 @@ Section IPR.
     guards_sized act ->
     start_rel ctx cost_limit sp0  ss0  ->
     start_rel ctx cost_limit sp0' ss0' ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input  resp  ss0  ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input' resp' ss0' ->
+    Definitions.ip_contract ctx cost_limit act input  resp  ss0  ->
+    Definitions.ip_contract ctx cost_limit act input' resp' ss0' ->
     (forall v, tfs_spec_inputs_class ctx v = Public -> input v = input' v) ->
     (forall ov, tfs_spec_outputs_class ctx ov = Public ->
                 (snd sp0).[ov] = (snd sp0').[ov]) ->
@@ -2456,8 +2457,8 @@ Section IPR.
     guards_sized act ->
     start_rel ctx cost_limit sp0  ss0  ->
     start_rel ctx cost_limit sp0' ss0' ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input  resp  ss0  ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input' resp' ss0' ->
+    Definitions.ip_contract ctx cost_limit act input  resp  ss0  ->
+    Definitions.ip_contract ctx cost_limit act input' resp' ss0' ->
     (forall v, tfs_spec_inputs_class ctx v = Public -> input v = input' v) ->
     (forall ov, tfs_spec_outputs_class ctx ov = Public ->
                 (snd sp0).[ov] = (snd sp0').[ov]) ->
@@ -2550,8 +2551,8 @@ Section IPR.
     guards_sized act ->
     start_rel ctx cost_limit sp0  ss0  ->
     start_rel ctx cost_limit sp0' ss0' ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input  resp  ss0  ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input' resp' ss0' ->
+    Definitions.ip_contract ctx cost_limit act input  resp  ss0  ->
+    Definitions.ip_contract ctx cost_limit act input' resp' ss0' ->
     (forall v, tfs_spec_inputs_class ctx v = Public -> input v = input' v) ->
     (forall ov, tfs_spec_outputs_class ctx ov = Public ->
                 (snd sp0).[ov] = (snd sp0').[ov]) ->
@@ -2636,8 +2637,8 @@ Section IPR.
     guards_sized act ->
     start_rel ctx cost_limit sp0  ss0  ->
     start_rel ctx cost_limit sp0' ss0' ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input  resp  ss0  ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input' resp' ss0' ->
+    Definitions.ip_contract ctx cost_limit act input  resp  ss0  ->
+    Definitions.ip_contract ctx cost_limit act input' resp' ss0' ->
     (* PUBLIC data only: the two runs may differ in secret state AND secret
        inputs, so everything constrained here is something the attacker already
        drives or observes. *)
@@ -2680,8 +2681,8 @@ Section IPR.
     guards_sized act ->
     start_rel ctx cost_limit sp0  ss0  ->
     start_rel ctx cost_limit sp0' ss0' ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input  resp  ss0  ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input' resp' ss0' ->
+    Definitions.ip_contract ctx cost_limit act input  resp  ss0  ->
+    Definitions.ip_contract ctx cost_limit act input' resp' ss0' ->
     (forall v,  tfs_spec_inputs_class  ctx v  = Public -> input v = input' v) ->
     (forall ov, tfs_spec_outputs_class ctx ov = Public ->
                 (snd sp0).[ov] = (snd sp0').[ov]) ->
@@ -2710,8 +2711,8 @@ Section IPR.
     guards_sized act ->
     start_rel ctx cost_limit sp0  ss0  ->
     start_rel ctx cost_limit sp0' ss0' ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input  resp  ss0  ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input' resp' ss0' ->
+    Definitions.ip_contract ctx cost_limit act input  resp  ss0  ->
+    Definitions.ip_contract ctx cost_limit act input' resp' ss0' ->
     (forall v,  tfs_spec_inputs_class  ctx v  = Public -> input v = input' v) ->
     (forall ov, tfs_spec_outputs_class ctx ov = Public ->
                 (snd sp0).[ov] = (snd sp0').[ov]) ->
@@ -2738,7 +2739,7 @@ Section IPR.
   Lemma first_done_exists (act: tfs_action sched) (sp0: src_sys_state)
       (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val) :
     start_rel ctx cost_limit sp0 ss0 ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input resp ss0 ->
+    Definitions.ip_contract ctx cost_limit act input resp ss0 ->
     exists N, first_done act input resp ss0 N.
   Proof.
     intros Hstart Hipc.
@@ -2754,7 +2755,7 @@ Section IPR.
   Theorem emulator_correct (act: tfs_action sched) (sp0: src_sys_state)
       (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val) (N: nat) :
     start_rel ctx cost_limit sp0 ss0 ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input resp ss0 ->
+    Definitions.ip_contract ctx cost_limit act input resp ss0 ->
     first_done act input resp ss0 N ->
     forall k, k <= N ->
       forall ov, (snd (ss_run k act input resp ss0)).[ov]
@@ -2829,8 +2830,8 @@ Section IPR.
     guards_sized act ->
     start_rel ctx cost_limit sp0  ss0  ->
     start_rel ctx cost_limit sp0' ss0' ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input  resp  ss0  ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input' resp' ss0' ->
+    Definitions.ip_contract ctx cost_limit act input  resp  ss0  ->
+    Definitions.ip_contract ctx cost_limit act input' resp' ss0' ->
     (* Public data only -- see [obs_eq_pub_eq]. *)
     (forall v,  tfs_spec_inputs_class  ctx v  = Public -> input v = input' v) ->
     (forall ov, tfs_spec_outputs_class ctx ov = Public ->
@@ -2851,7 +2852,7 @@ Section IPR.
   Corollary emulator_correct_L (act: tfs_action sched) (sp0: src_sys_state)
       (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val) :
     start_rel ctx cost_limit sp0 ss0 ->
-    SchedulerSimulationLemmas.ip_contract ctx cost_limit act input resp ss0 ->
+    Definitions.ip_contract ctx cost_limit act input resp ss0 ->
     forall k, k <= L act input resp ss0 ->
       forall ov, (snd (ss_run k act input resp ss0)).[ov]
                = emulate act input sp0 (L act input resp ss0) k ov.

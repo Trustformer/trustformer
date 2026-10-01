@@ -18,6 +18,7 @@ Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
+Require Import Trustformer.Theorems.Definitions.
 
 Require Import Coq.Lists.List.
 Require Import Coq.Arith.PeanoNat.
@@ -72,6 +73,29 @@ Section SchedulerSimulation.
   Context (ctx: TFSchedContext).
   Context (cost_limit: nat).
 
+  (* The vocabulary the guarantees are stated in lives in Theorems/Definitions.v;
+     these bind it at this section's [ctx] and [cost_limit]. *)
+  Local Notation act_idx_aligned := (Definitions.act_idx_aligned ctx cost_limit).
+  Local Notation done_set := (Definitions.done_set ctx cost_limit).
+  Local Notation done_set_dec := (Definitions.done_set_dec ctx cost_limit).
+  Local Notation drive_payload := (Definitions.drive_payload ctx cost_limit).
+  Local Notation ip_contract := (Definitions.ip_contract ctx cost_limit).
+  Local Notation is_sample_of := (Definitions.is_sample_of ctx cost_limit).
+  Local Notation node_op := (Definitions.node_op ctx cost_limit).
+  Local Notation node_rank := (Definitions.node_rank ctx cost_limit).
+  Local Notation node_ref_expr := (Definitions.node_ref_expr ctx cost_limit).
+  Local Notation nval := (Definitions.nval ctx cost_limit).
+  Local Notation port_strobe := (Definitions.port_strobe ctx cost_limit).
+  Local Notation run_n := (Definitions.run_n ctx cost_limit).
+  Local Notation sample_bufs := (Definitions.sample_bufs ctx cost_limit).
+  Local Notation sched_input := (Definitions.sched_input ctx cost_limit).
+  Local Notation sched_step := (Definitions.sched_step ctx cost_limit).
+  Local Notation settle_bound := (Definitions.settle_bound ctx cost_limit).
+  Local Notation stall_lat_of := (Definitions.stall_lat_of ctx cost_limit).
+  Local Notation stall_weight := (Definitions.stall_weight ctx cost_limit).
+  Local Notation start_rel := (Definitions.start_rel ctx cost_limit).
+  Local Notation zeroed_at_start := (Definitions.zeroed_at_start ctx cost_limit).
+
   (* The concrete TFSchedule instance built by the variable scheduler. *)
   Local Notation sched := (tfs_schedule ctx cost_limit).
 
@@ -109,53 +133,9 @@ Section SchedulerSimulation.
 
   (* ---- The attached IP, as the scheduled model sees it ---- *)
 
-  (* [tf_dfg_ov p] carries {strobe, payload} with the payload in the low bits,
-     and holds a request's payload from its pulse until the next one. *)
-  Definition drive_payload (ss: sched_sys_state) (p: tfs_ips sched)
-    : bits_t (ip_req_sz (tfs_ip sched p)) :=
-    Bits.slice 0 (ip_req_sz (tfs_ip sched p))
-      ((fst ss).[tfs_drive_reg sched p]).
-
-  (* The request strobe the IP sees on the port: one cycle per pulse. *)
-  Definition port_strobe (ss: sched_sys_state) (p: tfs_ips sched) : bits_t 1 :=
-    Bits.slice (ip_req_sz (tfs_ip sched p)) 1
-      ((fst ss).[tfs_drive_reg sched p]).
-
   (* What each IP presents on its response channel during one cycle. *)
   Local Notation resp_val :=
     (forall p : tfs_ips sched, bits_t (ip_resp_sz (tfs_ip sched p))).
-
-  (* A [DFG_Sample] reads the response channel LIVE, so a cycle's inputs are the
-     action's own plus whatever each IP is presenting that cycle. *)
-  Definition sched_input (input: input_t) (r: resp_val) : sched_input_t :=
-    fun x => match x with
-             | inl v => input v
-             | inr p => r p
-             end.
-
-  (* ---- One scheduled cycle and its bounded iteration ---- *)
-  Definition sched_step (act: tfs_action sched) (ss: sched_sys_state) (input: sched_input_t)
-    : sched_sys_state :=
-    tfs_next_cycle sched act ss input.
-
-  (* [resp k] is what the IPs present during cycle [k]. *)
-  Fixpoint run_n (n: nat) (act: tfs_action sched) (input: input_t) (resp: nat -> resp_val) (ss: sched_sys_state) : sched_sys_state :=
-    match n with
-    | 0 => ss
-    | S k => let ss1 := run_n k act input resp ss in
-             sched_step act ss1 (sched_input input (resp k))
-    end.
-
-  (* THE IP's DATASHEET.  A request strobed on the port and left undisturbed for
-     the IP's flight time is answered [ip_lat] cycles after the pulse that sent
-     it; at every other cycle the channel promises nothing. *)
-  Definition ip_contract (act: tfs_action sched) (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) : Prop :=
-    forall (p: tfs_ips sched) (s: nat),
-      port_strobe (run_n s act input resp ss0) p = Bits.ones 1 ->
-      (forall w, s < w -> w < s + pred (ip_lat (tfs_ip sched p)) ->
-         port_strobe (run_n w act input resp ss0) p = Bits.zero) ->
-      resp (s + pred (ip_lat (tfs_ip sched p))) p
-      = ip_fn (tfs_ip sched p) (drive_payload (run_n s act input resp ss0) p).
 
 
   (* ==================================================================== *)
@@ -978,10 +958,6 @@ Section SchedulerSimulation.
     rewrite find_st_update_assign_head. apply combine_valid_eval.
   Qed.
 
-  (* The done flag is set when the tf_dfg_done register is non-zero. *)
-  Definition done_set (ss: sched_sys_state) : Prop :=
-    (fst ss).[tfs_done_signal sched] <> Bits.zero.
-
   (* CHARACTERIZATION: one cycle sets the done flag iff every per-node validity
      expression (the same list that the compiled done-signal ANDs together)
      evaluates to true on the pre-cycle state. *)
@@ -998,27 +974,6 @@ Section SchedulerSimulation.
     - rewrite in_map_iff in Hin. destruct Hin as [e [He Hin]]. subst b.
       apply Hall, Hin.
   Qed.
-
-  (* Registers that must start zeroed: the done flag and every validity bit.
-     (Buffer value registers tf_dfg_b may hold arbitrary data, since their
-     validity bit is 0.) *)
-  (* A stall's buffer is a COUNTER, so its start value is observable: the
-     validity it publishes is "counter = lat-1".  The hardware resets it --
-     [reset_states] lists [tf_dfg_b] beside [tf_dfg_v] and [maps_to] zeroes it
-     -- so saying so here is reading the design, not strengthening it. *)
-  Definition zeroed_at_start (x: tfs_states sched) : Prop :=
-    match x with
-    | tf_dfg_b _ _ => True
-    | tf_dfg_v _ _ => True
-    | tf_dfg_done  => True
-    | _            => False
-    end.
-
-  (* Starting relation between a spec state and a scheduled state. *)
-  Definition start_rel (sp: src_sys_state) (ss: sched_sys_state) : Prop :=
-    snd ss = snd sp                                     (* outputs coincide *)
-    /\ maps_from ctx bneeds (fst ss) = fst sp       (* tf_dfg_s slots = spec state *)
-    /\ (forall x, zeroed_at_start x -> (fst ss).[x] = Bits.zero).
 
   (* ==================================================================== *)
   (* Phase 2 machinery: per-node target cycles + the run's cycle bound.   *)
@@ -1059,15 +1014,6 @@ Section SchedulerSimulation.
   (* ==================================================================== *)
 
   (* ---- What a DFG node is, as the buffer compiler asks ---- *)
-
-  Definition node_op (act: tfs_action sched) (n: nid_t) :=
-    op (nth n (graph (build_dfg ctx act)) {| nid := 0; op := DFG_Empty; sz := 0 |}).
-
-  Definition stall_lat_of (act: tfs_action sched) (n: nid_t) : option nat :=
-    match node_op act n with DFG_Stall l _ => Some l | _ => None end.
-
-  Definition is_sample_of (act: tfs_action sched) (n: nid_t) : bool :=
-    match node_op act n with DFG_Sample _ _ _ => true | _ => false end.
 
   (* A sample's recorded path condition: its latch is gated on it. *)
   Definition sample_en_of (act: tfs_action sched) (n: nid_t)
@@ -1203,19 +1149,6 @@ Section SchedulerSimulation.
     apply Hne. reflexivity.
   Qed.
 
-  (* SATURATION RANK.  Ranking by node id alone is unsound in V4: a stall makes
-     its consumer wait [lat] cycles, not one.  The rank is the id plus the extra
-     cycles every stall UP TO AND INCLUDING it costs -- including its own, so a
-     stall's rank already covers its wait and everything above it sits past it. *)
-  Definition stall_weight (act: tfs_action sched) (n: nid_t) : nat :=
-    match stall_lat_of act n with Some l => pred l | None => 0 end.
-
-  Fixpoint node_rank (act: tfs_action sched) (n: nat) : nat :=
-    match n with
-    | 0 => stall_weight act 0
-    | S m => S (node_rank act m) + stall_weight act (S m)
-    end.
-
   Lemma node_rank_le act n : n <= node_rank act n.
   Proof. induction n as [| n IH]; cbn [node_rank]; lia. Qed.
 
@@ -1258,29 +1191,6 @@ Section SchedulerSimulation.
              (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
              (0, (0, 0))).
 
-  (* The buffers a reference expression KEEPS: exactly the sample ones.  This
-     is [guard_expr]'s [sbufs] -- "buffers are substituted only for samples,
-     every other source is stable across the action".  A sample reads a LIVE
-     wire and its buffer LATCHES, so inlining through one would compare a
-     latched answer against whatever the port carries now; with two calls on a
-     port those differ, and MARS's Quote has eight samples on one. *)
-  Definition sample_bufs
-      (act: tfs_action sched)
-      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
-    : list (nid_t * (nat * sz_t)) :=
-    filter (fun '(n, _) => is_sample_of act n)
-           (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []).
-
-  (* Reference expression for DFG node n of act: inlined down to the sample
-     buffers, which stand for the answers already received. *)
-  Definition node_ref_expr
-      (act: tfs_action sched)
-      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
-      (n: nat) : @tf_expr (tfs_states sched) si_var o_var :=
-    fst (compile_dfg_expr ctx bneeds
-           (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n
-           (sample_bufs act a_idx)).
-
   (* The validity that goes with [node_ref_expr]: ones exactly when every sample
      buffer the reference reads has already latched. *)
   Definition node_ref_valid
@@ -1299,14 +1209,6 @@ Section SchedulerSimulation.
             (vreg_nid a_idx n_idx)
             (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (vreg_nid a_idx n_idx)))
                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))).
-
-  (* [a_idx] indexes the SAME action as [act]: buffer_needs is built by mapping
-     over spec_all_actions, so length (buffer_needs …) = length spec_all_actions
-     and act's slot is finite_index act. *)
-  Definition act_idx_aligned
-      (act: tfs_action sched)
-      (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) : Prop :=
-    index_to_nat a_idx = @finite_index _ (tfs_action_fin sched) act.
 
   (* map fst over get_sizes_and_idx recovers the input node list unchanged
      (the indices/sizes it attaches are dropped by fst). *)
@@ -10917,12 +10819,6 @@ Section SchedulerSimulation.
       + exact IH.
   Qed.
 
-  (* SETTLE BOUND.  Buffers rank by NODE ID (args_lt_fwd), so a buffer caching
-     node [n] settles by cycle [n] and the run is bounded by the graph size.
-     The target cycle is NOT a rank: two buffers can share one. *)
-  Definition settle_bound (act: tfs_action sched) : nat :=
-    node_rank act (length (graph (build_dfg ctx act))).
-
   (* ==================================================================== *)
   (* Phase 2/3 decomposition of the top-level theorem.                    *)
   (*                                                                      *)
@@ -10992,15 +10888,6 @@ Section SchedulerSimulation.
           -- exact HP.
           -- exfalso. apply (Hno n); [ lia | exact HP ].
         * intros k Hk. apply Hno. lia.
-  Qed.
-
-  (* done_set is decidable (a size-1 register is zero or all-ones). *)
-  Lemma done_set_dec (ss: sched_sys_state) : {done_set ss} + {~ done_set ss}.
-  Proof.
-    unfold done_set.
-    destruct (eq_dec ((fst ss).[tfs_done_signal sched]) Bits.zero) as [H | H].
-    - right. intro Hc. apply Hc. exact H.
-    - left. exact H.
   Qed.
 
   (* --- pure list lemma: every node's target cycle is <= max_cycle. --- *)
@@ -14252,13 +14139,6 @@ Section SchedulerSimulation.
   (* PHASE 3d, STEP 2: the DENOTATION of a graph node, and the bridge from  *)
   (* a node EMITTED by the builder to its position in the exported graph.   *)
   (* ==================================================================== *)
-
-  (* The buffer-free value of forward-graph node [n], demanded at width [szB],
-     in scheduler state [ss].  This is what [dfg_action_semantics] talks about. *)
-  Definition nval (act: tfs_action sched)
-      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
-      (ss: sched_sys_state) (input: sched_input_t) (szB: nat) (n: nid_t) : bits_t szB :=
-    tf_eval_expr ss_sz si_sz oo_sz (szB := szB) (node_ref_expr act a_idx n) ss input.
 
   (* [F] is a builder state whose graph exports to [act]'s forward graph. *)
   Definition exports (act: tfs_action sched) (F: wst) : Prop :=

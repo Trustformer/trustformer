@@ -5,6 +5,7 @@
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.
 
+Require Import Trustformer.Theorems.Definitions.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.DFG.
@@ -171,7 +172,7 @@ Section Soundness.
                 ltac:(unfold get_args; rewrite Hop; right; right; left; reflexivity))
       as [He1 _].
     assert (Hopn : node_op ctx cost_limit act n = DFG_Phi cnd tid eid)
-      by (unfold SchedulerSimulationLemmas.node_op; rewrite Hop; reflexivity).
+      by (unfold Definitions.node_op; rewrite Hop; reflexivity).
 
     (* An arm's validity, from the phi's: the critical shape waits on both arms
        at the unextended path, the selecting one on the arm it picks. *)
@@ -191,7 +192,7 @@ Section Soundness.
       - destruct (nrv_peel_phi_sel ctx cost_limit act a_idx n cnd tid eid p s inp
                     Hopn Hcrit Hc1 Ht1 He1 Hlen Hvn) as [_ [Htv Hev]].
         pose proof (Hp cnd b (or_introl eq_refl)) as Hcv.
-        unfold SchedulerSimulationLemmas.nval, bit_of in Hcv.
+        unfold Definitions.nval, bit_of in Hcv.
         destruct b.
         + apply Htv. rewrite Hcv. exact ones1_neq_zero.
         + apply Hev. exact Hcv. }

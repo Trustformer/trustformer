@@ -7,6 +7,7 @@
 Require Import Koika.Frontend.
 Require Import Koika.Std.
 
+Require Import Trustformer.Theorems.Definitions.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
@@ -180,7 +181,7 @@ Section TheoremInstantiation.
       by (intros n p; destruct p).
     assert (Hlen : 1 < length (graph (build_dfg tfs_ctx fs_check)))
       by (vm_compute; lia).
-    assert (Hipc : forall ss, SchedulerSimulationLemmas.ip_contract tfs_ctx cost
+    assert (Hipc : forall ss, Definitions.ip_contract tfs_ctx cost
                      fs_check input no_resp ss)
       by (intros ss p; destruct p).
     (* Every input and output here is [Public], so these hypotheses are stronger
