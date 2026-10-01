@@ -10,6 +10,9 @@ Require Import Trustformer.Utils.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Export Trustformer.DFG.
+Require Export Trustformer.Scheduler.Build.
+Require Export Trustformer.Scheduler.Cost.
+Require Export Trustformer.Scheduler.Buffers.
 Require Export Trustformer.Scheduler.Passes.
 Require Import Trustformer.Contract.
 
@@ -75,32 +78,32 @@ Section Schedule.
   Local Notation dfg_state := (@dfg_state_t states_var inputs_var outputs_var ips_var).
   Local Notation get_tainted := (Passes.get_tainted ctx).
   Local Notation decl_facts := (Passes.decl_facts ctx).
-  Hint Extern 0 (EqDec dfg_vars) => exact (Passes.dfg_vars_eq_dec ctx) : typeclass_instances.
+  Hint Extern 0 (EqDec dfg_vars) => exact (Build.dfg_vars_eq_dec ctx) : typeclass_instances.
 
   (* [Passes]'s section variables are discharged, so bind them back. *)
-  Local Notation M := (Passes.M ctx).
-  Local Notation bind := (Passes.bind ctx).
-  Local Notation build_dfg := (Passes.build_dfg ctx).
-  Local Notation dataflow_expr := (Passes.dataflow_expr ctx).
-  Local Notation dataflow_ops := (Passes.dataflow_ops ctx).
-  Local Notation dfg_var_size := (Passes.dfg_var_size ctx).
+  Local Notation M := (Build.M ctx).
+  Local Notation bind := (Build.bind ctx).
+  Local Notation build_dfg := (Build.build_dfg ctx).
+  Local Notation dataflow_expr := (Build.dataflow_expr ctx).
+  Local Notation dataflow_ops := (Build.dataflow_ops ctx).
+  Local Notation dfg_var_size := (Build.dfg_var_size ctx).
   Local Notation driven_ports := (Passes.driven_ports ctx).
-  Local Notation emit := (Passes.emit ctx).
-  Local Notation ensure_var := (Passes.ensure_var ctx).
-  Local Notation get_sizes_and_idx := (Passes.get_sizes_and_idx ctx).
-  Local Notation get_state := (Passes.get_state ctx).
-  Local Notation get_var := (Passes.get_var ctx).
-  Local Notation last_sample := (Passes.last_sample ctx).
-  Local Notation pending_samples := (Passes.pending_samples ctx).
-  Local Notation join_pendings := (Passes.join_pendings ctx).
-  Local Notation merge_key := (Passes.merge_key ctx).
-  Local Notation merge_loop := (Passes.merge_loop ctx).
-  Local Notation merge_maps := (Passes.merge_maps ctx).
-  Local Notation put_state := (Passes.put_state ctx).
-  Local Notation read_var := (Passes.read_var ctx).
-  Local Notation ret := (Passes.ret ctx).
-  Local Notation set_var := (Passes.set_var ctx).
-  Local Notation stall_chain := (Passes.stall_chain ctx).
+  Local Notation emit := (Build.emit ctx).
+  Local Notation ensure_var := (Build.ensure_var ctx).
+  Local Notation get_sizes_and_idx := (Buffers.get_sizes_and_idx ctx).
+  Local Notation get_state := (Build.get_state ctx).
+  Local Notation get_var := (Build.get_var ctx).
+  Local Notation last_sample := (Build.last_sample ctx).
+  Local Notation pending_samples := (Build.pending_samples ctx).
+  Local Notation join_pendings := (Build.join_pendings ctx).
+  Local Notation merge_key := (Build.merge_key ctx).
+  Local Notation merge_loop := (Build.merge_loop ctx).
+  Local Notation merge_maps := (Build.merge_maps ctx).
+  Local Notation put_state := (Build.put_state ctx).
+  Local Notation read_var := (Build.read_var ctx).
+  Local Notation ret := (Build.ret ctx).
+  Local Notation set_var := (Build.set_var ctx).
+  Local Notation stall_chain := (Build.stall_chain ctx).
 
   Context (bn : list (list (nid_t * (nat * sz_t)))).
 
