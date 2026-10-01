@@ -222,10 +222,6 @@ Section Rendering.
   Local Notation ips_var := (tfs_spec_ips ctx).
   Local Notation outputs_var := (tfs_spec_outputs ctx).
 
-  Hint Extern 0 (Show states_var) => exact (tfs_spec_states_names ctx) : typeclass_instances.
-  Hint Extern 0 (Show inputs_var) => exact (tfs_spec_inputs_names ctx) : typeclass_instances.
-  Hint Extern 0 (Show ips_var) => exact (tfs_spec_ips_names ctx) : typeclass_instances.
-  Hint Extern 0 (Show outputs_var) => exact (tfs_spec_outputs_names ctx) : typeclass_instances.
 
   Local Notation dfg_node := (@dfg_node_t states_var inputs_var outputs_var ips_var).
   Local Notation dfg_state := (@dfg_state_t states_var inputs_var outputs_var ips_var).

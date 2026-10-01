@@ -44,11 +44,6 @@ Section Soundness.
 
   (* Required: without these, elaborating any [ContextEnv.(env_t)] statement
      diverges instead of failing. *)
-  Hint Extern 0 (FiniteType s_var) => exact (tfs_spec_states_fin ctx)  : typeclass_instances.
-  Hint Extern 0 (FiniteType i_var) => exact (tfs_spec_inputs_fin ctx)  : typeclass_instances.
-  Hint Extern 0 (FiniteType o_var) => exact (tfs_spec_outputs_fin ctx) : typeclass_instances.
-  Hint Extern 0 (FiniteType (tfs_states sched))  => exact (tfs_states_fin sched)  : typeclass_instances.
-  Hint Extern 0 (FiniteType (tfs_outputs sched)) => exact (tfs_outputs_fin sched) : typeclass_instances.
 
   Local Notation input_t := (forall x : i_var, type_denote (tf_inputs_type i_sz x)).
   Local Notation sched_input_t :=

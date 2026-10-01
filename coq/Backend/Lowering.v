@@ -121,17 +121,8 @@ Section Lowering.
 
     (* ====== Instances ====== *)
 
-    Hint Extern 0 (FiniteType spec_states) => exact (tfs_states_fin (tf_sched_ctx tf_ctx)) : typeclass_instances.
-    Hint Extern 0 (FiniteType spec_inputs) => exact (tfs_inputs_fin (tf_sched_ctx tf_ctx)) : typeclass_instances.
-    Hint Extern 0 (FiniteType spec_outputs) => exact (tfs_outputs_fin (tf_sched_ctx tf_ctx)) : typeclass_instances.
-    Hint Extern 0 (FiniteType spec_action) => exact (tfs_action_fin (tf_sched_ctx tf_ctx)) : typeclass_instances.
 
-    Hint Extern 0 (Show spec_states) => exact (tfs_states_names (tf_sched_ctx tf_ctx)) : typeclass_instances.
-    Hint Extern 0 (Show spec_inputs) => exact (tfs_inputs_names (tf_sched_ctx tf_ctx)) : typeclass_instances.
-    Hint Extern 0 (Show spec_outputs) => exact (tfs_outputs_names (tf_sched_ctx tf_ctx)) : typeclass_instances.
     Hint Extern 0 (Show spec_action) => exact (tf_action_names tf_ctx) : typeclass_instances.
-    Hint Extern 0 (FiniteType spec_ips) => exact (tfs_ips_fin (tf_sched_ctx tf_ctx)) : typeclass_instances.
-    Hint Extern 0 (Show spec_ips) => exact (tfs_ips_names (tf_sched_ctx tf_ctx)) : typeclass_instances.
 
 
     Instance _eq_dec_states : EqDec spec_states.

@@ -147,6 +147,36 @@ Record TFSchedule := {
   tfs_reset_states_init_zero: forall v, In v tfs_reset_states -> tfs_states_init v = Bits.zero;
 }.
 
+(* The two records carry their own [FiniteType], [Show] and [EqDec] evidence,
+   and resolution cannot see through a projection on its own.  Matching on the
+   projection fires for any context, so each file that opens one needs no hints
+   of its own. *)
+
+#[export] Hint Extern 0 (FiniteType (tfs_spec_states ?c))  => exact (tfs_spec_states_fin c)  : typeclass_instances.
+#[export] Hint Extern 0 (FiniteType (tfs_spec_inputs ?c))  => exact (tfs_spec_inputs_fin c)  : typeclass_instances.
+#[export] Hint Extern 0 (FiniteType (tfs_spec_outputs ?c)) => exact (tfs_spec_outputs_fin c) : typeclass_instances.
+#[export] Hint Extern 0 (FiniteType (tfs_spec_ips ?c))     => exact (tfs_spec_ips_fin c)     : typeclass_instances.
+#[export] Hint Extern 0 (FiniteType (tfs_spec_action ?c))  => exact (tfs_spec_action_fin c)  : typeclass_instances.
+#[export] Hint Extern 0 (Show (tfs_spec_states ?c))        => exact (tfs_spec_states_names c)  : typeclass_instances.
+#[export] Hint Extern 0 (Show (tfs_spec_inputs ?c))        => exact (tfs_spec_inputs_names c)  : typeclass_instances.
+#[export] Hint Extern 0 (Show (tfs_spec_outputs ?c))       => exact (tfs_spec_outputs_names c) : typeclass_instances.
+#[export] Hint Extern 0 (Show (tfs_spec_ips ?c))           => exact (tfs_spec_ips_names c)     : typeclass_instances.
+#[export] Hint Extern 0 (EqDec (tfs_spec_states ?c))       => exact (tfs_spec_states_eq_dec c)  : typeclass_instances.
+#[export] Hint Extern 0 (EqDec (tfs_spec_inputs ?c))       => exact (tfs_spec_inputs_eq_dec c)  : typeclass_instances.
+#[export] Hint Extern 0 (EqDec (tfs_spec_outputs ?c))      => exact (tfs_spec_outputs_eq_dec c) : typeclass_instances.
+#[export] Hint Extern 0 (EqDec (tfs_spec_ips ?c))          => exact (tfs_spec_ips_eq_dec c)     : typeclass_instances.
+#[export] Hint Extern 0 (EqDec (tfs_spec_action ?c))       => exact (tfs_spec_action_eq_dec c)  : typeclass_instances.
+
+#[export] Hint Extern 0 (FiniteType (tfs_states ?s))   => exact (tfs_states_fin s)   : typeclass_instances.
+#[export] Hint Extern 0 (FiniteType (tfs_inputs ?s))   => exact (tfs_inputs_fin s)   : typeclass_instances.
+#[export] Hint Extern 0 (FiniteType (tfs_outputs ?s))  => exact (tfs_outputs_fin s)  : typeclass_instances.
+#[export] Hint Extern 0 (FiniteType (tfs_ips ?s))      => exact (tfs_ips_fin s)      : typeclass_instances.
+#[export] Hint Extern 0 (FiniteType (tfs_action ?s))   => exact (tfs_action_fin s)   : typeclass_instances.
+#[export] Hint Extern 0 (Show (tfs_states ?s))         => exact (tfs_states_names s)  : typeclass_instances.
+#[export] Hint Extern 0 (Show (tfs_inputs ?s))         => exact (tfs_inputs_names s)  : typeclass_instances.
+#[export] Hint Extern 0 (Show (tfs_outputs ?s))        => exact (tfs_outputs_names s) : typeclass_instances.
+#[export] Hint Extern 0 (Show (tfs_ips ?s))            => exact (tfs_ips_names s)     : typeclass_instances.
+
 Section SchedulerSpec.
 
   Context (tf_sched_ctx : TFSchedule).

@@ -30,10 +30,6 @@ Import ListNotations.
 Section FindUpdateAppend.
   Context (SCH: TFSchedule).
 
-  Hint Extern 0 (FiniteType (tfs_states SCH)) => exact (tfs_states_fin SCH)
-    : typeclass_instances.
-  Hint Extern 0 (FiniteType (tfs_outputs SCH)) => exact (tfs_outputs_fin SCH)
-    : typeclass_instances.
 
   Local Notation upd :=
     (tf_update (tfs_states_size SCH) (tfs_outputs_size SCH)).
@@ -87,9 +83,6 @@ Section SchedulerSimulation.
   Local Notation i_sz  := (tfs_spec_inputs_size ctx).
   Local Notation o_sz  := (tfs_spec_outputs_size ctx).
 
-  Hint Extern 0 (FiniteType s_var) => exact (tfs_spec_states_fin ctx)  : typeclass_instances.
-  Hint Extern 0 (FiniteType i_var) => exact (tfs_spec_inputs_fin ctx)  : typeclass_instances.
-  Hint Extern 0 (FiniteType o_var) => exact (tfs_spec_outputs_fin ctx) : typeclass_instances.
 
   Local Notation src_st_env  := (ContextEnv.(env_t) (tf_states_type s_sz)).
   Local Notation src_out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).
@@ -98,8 +91,6 @@ Section SchedulerSimulation.
   (* ---- Scheduled (target) world ---- *)
   (* Scheduled states are tf_dfg_states; outputs coincide with the spec's, and
      the inputs are the spec's PLUS one response channel per IP. *)
-  Hint Extern 0 (FiniteType (tfs_states sched))  => exact (tfs_states_fin sched)  : typeclass_instances.
-  Hint Extern 0 (FiniteType (tfs_outputs sched)) => exact (tfs_outputs_fin sched) : typeclass_instances.
 
   Local Notation sched_st_env  := (ContextEnv.(env_t) (tf_states_type (tfs_states_size sched))).
   Local Notation sched_out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).

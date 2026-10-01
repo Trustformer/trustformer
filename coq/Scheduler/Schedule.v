@@ -36,47 +36,31 @@ Section Schedule.
   Context (cost_limit: nat).
 
   Local Notation states_var := (tfs_spec_states ctx).
-  Local Notation states_var_eq_dec := (tfs_spec_states_eq_dec ctx).
-  Local Notation states_var_fin := (tfs_spec_states_fin ctx).
-  Local Notation states_var_names := (tfs_spec_states_names ctx).
-  Local Notation states_var_size := (tfs_spec_states_size ctx).
-  Local Notation states_var_init := (tfs_spec_states_init ctx).
 
   Local Notation inputs_var := (tfs_spec_inputs ctx).
-  Local Notation inputs_var_eq_dec := (tfs_spec_inputs_eq_dec ctx).
   Local Notation inputs_var_fin := (tfs_spec_inputs_fin ctx).
   Local Notation inputs_var_size := (tfs_spec_inputs_size ctx).
   Local Notation inputs_var_class := (tfs_spec_inputs_class ctx).
 
   Local Notation outputs_var := (tfs_spec_outputs ctx).
-  Local Notation outputs_var_eq_dec := (tfs_spec_outputs_eq_dec ctx).
   Local Notation outputs_var_fin := (tfs_spec_outputs_fin ctx).
   Local Notation outputs_var_size := (tfs_spec_outputs_size ctx).
   Local Notation outputs_var_class := (tfs_spec_outputs_class ctx).
 
   Local Notation ips_var := (tfs_spec_ips ctx).
-  Local Notation ips_var_eq_dec := (tfs_spec_ips_eq_dec ctx).
   Local Notation ips_var_fin := (tfs_spec_ips_fin ctx).
   Local Notation ip_of := (tfs_spec_ip ctx).
 
   Local Notation spec_action := (tfs_spec_action ctx).
-  Local Notation spec_action_eq_dec := (tfs_spec_action_eq_dec ctx).
   Local Notation spec_action_fin := (tfs_spec_action_fin ctx).
   Local Notation spec_action_ops := (tfs_spec_action_ops ctx).
   Local Notation spec_all_actions := (@finite_elements spec_action spec_action_fin).
   Local Notation spec_action_index := (@finite_index spec_action spec_action_fin).
 
-  Hint Extern 0 (FiniteType states_var) => exact (tfs_spec_states_fin ctx) : typeclass_instances.
   
-  Hint Extern 0 (Show states_var) => exact (tfs_spec_states_names ctx) : typeclass_instances.
-  Hint Extern 0 (Show inputs_var) => exact (tfs_spec_inputs_names ctx) : typeclass_instances.
-  Hint Extern 0 (Show outputs_var) => exact (tfs_spec_outputs_names ctx) : typeclass_instances.
-  Hint Extern 0 (Show ips_var) => exact (tfs_spec_ips_names ctx) : typeclass_instances.
 
 
   Local Notation dfg_vars := (@dfg_vars_t states_var outputs_var).
-  Local Notation dfg_op := (@dfg_op_t states_var inputs_var outputs_var ips_var).
-  Local Notation dfg_node := (@dfg_node_t states_var inputs_var outputs_var ips_var).
   Local Notation dfg_state := (@dfg_state_t states_var inputs_var outputs_var ips_var).
   Local Notation get_tainted := (Taint.get_tainted ctx).
   Local Notation decl_facts := (Taint.decl_facts ctx).
@@ -110,7 +94,6 @@ Section Schedule.
   Context (bn : list (list (nid_t * (nat * sz_t)))).
 
   Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (ips_var:=ips_var) (buffer_needs:=bn)).
-  Local Notation expr_t := (@tf_expr tf_dfg_states (inputs_var + ips_var) outputs_var).
   Hint Extern 0 (Show tf_dfg_states) => exact (States.show_tf_dfg_states ctx bn) : typeclass_instances.
   Hint Extern 0 (FiniteType2 tf_dfg_states) => exact (States.tf_dfg_states_fin2 ctx bn) : typeclass_instances.
   Hint Extern 0 (FiniteType tf_dfg_states) => exact (States.tf_dfg_states_fin ctx bn) : typeclass_instances.

@@ -615,14 +615,9 @@ Section SchedulerSimulation.
   Local Notation s_sz  := (tfs_spec_states_size ctx).
   Local Notation i_sz  := (tfs_spec_inputs_size ctx).
   Local Notation o_sz  := (tfs_spec_outputs_size ctx).
-  Hint Extern 0 (FiniteType s_var) => exact (tfs_spec_states_fin ctx)  : typeclass_instances.
-  Hint Extern 0 (FiniteType i_var) => exact (tfs_spec_inputs_fin ctx)  : typeclass_instances.
-  Hint Extern 0 (FiniteType o_var) => exact (tfs_spec_outputs_fin ctx) : typeclass_instances.
   Local Notation src_st_env  := (ContextEnv.(env_t) (tf_states_type s_sz)).
   Local Notation src_out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).
   Local Notation src_sys_state := (src_st_env * src_out_env)%type.
-  Hint Extern 0 (FiniteType (tfs_states sched))  => exact (tfs_states_fin sched)  : typeclass_instances.
-  Hint Extern 0 (FiniteType (tfs_outputs sched)) => exact (tfs_outputs_fin sched) : typeclass_instances.
   Local Notation sched_st_env  := (ContextEnv.(env_t) (tf_states_type (tfs_states_size sched))).
   Local Notation sched_out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).
   Local Notation sched_sys_state := (sched_st_env * sched_out_env)%type.
