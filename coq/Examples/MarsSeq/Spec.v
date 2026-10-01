@@ -11,9 +11,6 @@ Require Import Trustformer.Scheduler.Schedule.
 
 Require Import Coq.Logic.EqdepFacts.
 
-Require Import Hammer.Plugin.Hammer.
-Set Hammer GSMode 63.
-
 (* MARS_SEQ: a minimal TCG MARS device, Profile [TF-MARS-S256-P2], over two
    PCRs, with each crypto round trip split across MARS_Continue.  Examples/Mars/Spec.v
    is the one-action form and is checked against this one.  Every MARS_CC code
@@ -1465,7 +1462,7 @@ Section Vectors.
 
 End Vectors.
 
-Section Lowering.
+Section Instance.
 
     Definition tfs_ctx : TFSchedContext := {|
         tfs_spec_states := fs_states;
@@ -1506,7 +1503,7 @@ Section Lowering.
 
   Definition package := Lowering.package tf_ctx "Example_MarsSeq".
 
-End Lowering.
+End Instance.
 
 (* Extraction *)
 

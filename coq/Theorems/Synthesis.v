@@ -458,8 +458,6 @@ Section SynthesisCorrectness.
 
   (* ====== Translation Validation ====== *)
 
-  (* Arguments log_empty : simpl never.
-  Arguments log_cons : simpl never. *)
   Opaque log_empty.
   Opaque log_cons.
   Opaque finite_elements.
@@ -3841,10 +3839,5 @@ Section SynthesisCorrectness.
         * sauto.
         * sauto.
   Qed.
-
-  (* Tracks which axioms / Admitted lemmas `synthesis_correct` still depends on.
-     Goal: shrink this to "Closed under the global context" (no admits). *)
-  Print Assumptions synthesis_correct.
-  Print Assumptions initial_state_matches.
 
 End SynthesisCorrectness.

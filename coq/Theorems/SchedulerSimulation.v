@@ -8137,6 +8137,3 @@ Section SchedulerSimulation.
 
 End SchedulerSimulation.
 
-(* Sanity check: the top-level theorem must depend on no axioms and no
-   admitted lemmas. *)
-Print Assumptions variable_scheduler_correct.

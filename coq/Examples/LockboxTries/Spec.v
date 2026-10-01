@@ -213,7 +213,7 @@ Section Examples.
 
 End Examples.
 
-Section Lowering.
+Section Instance.
 
     (* Blackbox: no declassification rules, so every phi on a secret is
        critical.  The whitebox variants live in Taint.v. *)
@@ -252,7 +252,7 @@ Section Lowering.
 
   Definition package := Lowering.package tf_ctx "Example_LockboxTries".
 
-End Lowering.
+End Instance.
 
 (* Extraction *)
 

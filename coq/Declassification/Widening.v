@@ -210,4 +210,3 @@ Section Soundness.
 
 End Soundness.
 
-Print Assumptions widen_rule_sound.

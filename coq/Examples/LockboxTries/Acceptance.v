@@ -213,5 +213,3 @@ Section Obligations.
 
 End Obligations.
 
-Print Assumptions lb_public_tries_none_critical.
-Print Assumptions lb_decl_guard_sound.

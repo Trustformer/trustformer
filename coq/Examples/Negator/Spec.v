@@ -152,7 +152,7 @@ Section FunctionalSpecification.
 End FunctionalSpecification.
 
 
-Section Lowering.
+Section Instance.
 
     Definition tfs_ctx : TFSchedContext := {|
         tfs_spec_states := fs_states;
@@ -190,7 +190,7 @@ Section Lowering.
   Definition package := Lowering.package tf_ctx "Example_Negator".
     
 
-End Lowering.
+End Instance.
 
 (* Extraction *)
 

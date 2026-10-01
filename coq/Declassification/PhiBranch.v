@@ -245,4 +245,3 @@ Section Soundness.
 
 End Soundness.
 
-Print Assumptions phibranch_rule_sound.

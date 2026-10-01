@@ -173,4 +173,3 @@ Section Soundness.
 
 End Soundness.
 
-Print Assumptions xor_rule_sound.

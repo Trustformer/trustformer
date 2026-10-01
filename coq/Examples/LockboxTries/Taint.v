@@ -284,8 +284,6 @@ Section Obligation.
 
 End Obligation.
 
-Print Assumptions lockboxB_uncond_sound.
-Print Assumptions lockboxB_decl_guard_sound.
 
 (* Cycle bounds: [action_bounds] reports a CIRCUIT's best and worst case, where
    [L] in Theorems/IPR.v gives one concrete input's latency for the proofs.

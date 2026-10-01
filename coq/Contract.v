@@ -6,8 +6,6 @@ Require Import Koika.Utils.Environments.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Export Trustformer.DFG.
-Require Import Hammer.Plugin.Hammer.
-Set Hammer GSMode 63.
 
 (* Confidentiality classification of a spec variable's port: [Public] is
    attacker-visible and memory-mappable, [Secret] is everything else, and

@@ -13,9 +13,6 @@ Require Import Coq.Logic.EqdepFacts.
 Require Import Coq.Lists.List.
 Import ListNotations.
 
-Require Import Hammer.Plugin.Hammer.
-Set Hammer GSMode 63.
-
 (* A minimal TCG MARS device, Profile [TF-MARS-S256-P2], over two PCRs.  One
    command = one action: a crypto round trip is a [tf_call] inside the command
    that needs it.  Every MARS_CC code has an arm, so [out_rc] is always written
@@ -535,7 +532,7 @@ Section FunctionalSpecification.
 
 End FunctionalSpecification.
 
-Section Lowering.
+Section Instance.
 
     Definition tfs_ctx : TFSchedContext := {|
         tfs_spec_states := fs_states;
@@ -611,7 +608,7 @@ Section Lowering.
 
   Definition package := Lowering.package tf_ctx "Example_Mars".
 
-End Lowering.
+End Instance.
 
 (* Extraction *)
 

@@ -100,4 +100,3 @@ Section Soundness.
 
 End Soundness.
 
-Print Assumptions neg_rule_sound.

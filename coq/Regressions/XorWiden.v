@@ -163,5 +163,3 @@ Section Obligations.
 
 End Obligations.
 
-Print Assumptions whitebox_is_not_critical.
-Print Assumptions rw_decl_guard_sound.

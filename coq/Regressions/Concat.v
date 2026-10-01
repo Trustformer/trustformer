@@ -11,9 +11,6 @@ Require Import Trustformer.Scheduler.Schedule.
 
 Require Import Coq.Logic.EqdepFacts.
 
-Require Import Hammer.Plugin.Hammer.
-Set Hammer GSMode 63.
-
 (* [tf_concat] end to end, in the shape MARS needs: CryptSnapshot (spec v1r14
    5.6.9) hashes regSelect || REG# || ... || ctx, i.e. fields of DIFFERENT
    widths in a fixed order.  [tf_const] carries a unary [nat], so "a * 2^m + b"
@@ -59,7 +56,7 @@ Section FunctionalSpecification.
 
 End FunctionalSpecification.
 
-Section Lowering.
+Section Instance.
 
     Definition tfs_ctx : TFSchedContext := {|
         tfs_spec_states := fs_states;
@@ -95,7 +92,7 @@ Section Lowering.
 
   Definition package := Lowering.package tf_ctx "Regression_Concat".
 
-End Lowering.
+End Instance.
 
 Definition prog := Interop.Backends.register package.
 Set Extraction Output Directory "build".

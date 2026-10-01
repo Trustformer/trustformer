@@ -195,4 +195,3 @@ Section TheoremInstantiation.
 
 End TheoremInstantiation.
 
-Print Assumptions check_latency_is_public.

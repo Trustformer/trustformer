@@ -292,8 +292,3 @@ Section Confidentiality.
 
 End Confidentiality.
 
-Print Assumptions sf_expr_sound.
-Print Assumptions sf_ops_guarded_frozen.
-Print Assumptions sf_ops_sound.
-Print Assumptions seq_confidential.
-Print Assumptions no_direct_secret_flow.

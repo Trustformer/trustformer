@@ -11,9 +11,6 @@ Require Import Trustformer.Scheduler.Schedule.
 
 Require Import Coq.Logic.EqdepFacts.
 
-Require Import Hammer.Plugin.Hammer.
-Set Hammer GSMode 63.
-
 (* A scheduling demo: one action over two 32-bit registers whose multiplies and
    conditional spread across several stages at cost limit 5. *)
 
@@ -98,7 +95,7 @@ Section FunctionalSpecification.
 End FunctionalSpecification.
 
 
-Section Lowering.
+Section Instance.
 
     Definition tfs_ctx : TFSchedContext := {|
         tfs_spec_states := fs_states;
@@ -136,7 +133,7 @@ Section Lowering.
   Definition package := Lowering.package tf_ctx "Regression_Sched".
     
 
-End Lowering.
+End Instance.
 
 (* Extraction *)
 

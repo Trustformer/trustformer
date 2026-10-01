@@ -11,9 +11,6 @@ Require Import Trustformer.Scheduler.Schedule.
 
 Require Import Coq.Logic.EqdepFacts.
 
-Require Import Hammer.Plugin.Hammer.
-Set Hammer GSMode 63.
-
 (* The cheapest module that is both WIDE (256-bit datapath) and DEEP (a low cost
    limit splits the operator chain across many buffered stages), exercising the
    buffering machinery -- [valid_settled_run], [buffers_settled_run] -- at MARS
@@ -84,7 +81,7 @@ Section FunctionalSpecification.
 
 End FunctionalSpecification.
 
-Section Lowering.
+Section Instance.
 
     Definition tfs_ctx : TFSchedContext := {|
         tfs_spec_states := fs_states;
@@ -121,7 +118,7 @@ Section Lowering.
 
   Definition package := Lowering.package tf_ctx "Regression_WideDeep".
 
-End Lowering.
+End Instance.
 
 (* Extraction *)
 

@@ -4,9 +4,6 @@ Require Import Koika.Std.
 Require Import Koika.Utils.Common.
 Require Import Koika.Utils.Environments.
 
-Require Import Hammer.Plugin.Hammer.
-Set Hammer GSMode 63.
-
 (* An attached IP block.  Both ports are the scheduler's own -- the request a
    drive register routed to [ext_ip_req], the response a live read from
    [ext_ip_resp] -- so an action names neither and neither is declared. *)

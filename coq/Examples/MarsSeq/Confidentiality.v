@@ -123,5 +123,3 @@ Section NotVacuous.
 
 End NotVacuous.
 
-Print Assumptions mars_secret_free.
-Print Assumptions mars_no_direct_secret_flow.

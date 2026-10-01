@@ -22,10 +22,6 @@ Require Import Coq.Init.Tactics.
 Require Import Coq.Setoids.Setoid.
 Require Import Coq.micromega.Lia.
 
-Require Import Hammer.Plugin.Hammer.
-Set Hammer ATPLimit 5.
-Set Hammer GSMode 63.
-
 Record TFSynthContext := {
   tf_sched_ctx : TFSchedule;
 
@@ -650,38 +646,3 @@ Arguments _reg_t_finite _ : simpl never.
 Arguments system_schedule _ : simpl never.
 Arguments Sigma _ _ : simpl never.
 Arguments r _ _ : simpl never.
-(* `Arguments R _ _ : simpl never` waits on Synthesis.v ~1773, which relies on
-   `simpl` reducing R; enable it together with the R_* lemmas below. *)
-
-(* Per-branch rewrite lemmas for R: once R is `simpl never`, proofs use these to
-   reduce it at the leaves Koika typing needs a concrete `bits_t` at. *)
-Section R_branches.
-  Context (tf_ctx: TFSynthContext).
-  Local Notation sctx := (tf_sched_ctx tf_ctx).
-
-  Lemma R_tf_reg : forall x,
-    R tf_ctx (tf_reg x) = bits_t (tfs_states_size sctx x).
-  Proof. reflexivity. Qed.
-
-  Lemma R_tf_in : forall x,
-    R tf_ctx (tf_in x) = bits_t (tfs_inputs_size sctx x).
-  Proof. reflexivity. Qed.
-
-  Lemma R_tf_out : forall x,
-    R tf_ctx (tf_out x) = bits_t (tfs_outputs_size sctx x).
-  Proof. reflexivity. Qed.
-
-  Lemma R_tf_cmd : R tf_ctx tf_cmd = bits_t (tf_action_reg_size tf_ctx).
-  Proof. reflexivity. Qed.
-
-  Lemma R_tf_ready : R tf_ctx tf_ready = bits_t 1.
-  Proof. reflexivity. Qed.
-
-  Lemma R_tf_cmd_ack : R tf_ctx tf_cmd_ack = bits_t 1.
-  Proof. reflexivity. Qed.
-
-  Lemma R_tf_out_ack : forall x, R tf_ctx (tf_out_ack x) = bits_t 1.
-  Proof. reflexivity. Qed.
-End R_branches.
-
-

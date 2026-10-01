@@ -163,4 +163,3 @@ Section Soundness.
 
 End Soundness.
 
-Print Assumptions phiconst_rule_sound.

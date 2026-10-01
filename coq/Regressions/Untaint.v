@@ -161,8 +161,6 @@ Section Obligation.
 
 End Obligation.
 
-Print Assumptions whitebox_decls_sound.
-Print Assumptions whitebox_decl_guard_sound.
 
 (* ==================================================================== *)
 (* A GUARDED declassification.  The inner selector is recoverable only    *)
@@ -314,4 +312,3 @@ Section GuardedObligation.
 
 End GuardedObligation.
 
-Print Assumptions gopen_decl_guard_sound.

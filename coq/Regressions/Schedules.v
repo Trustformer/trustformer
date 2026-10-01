@@ -1,5 +1,6 @@
-(* Worked schedules for two small contexts, used to eyeball the scheduler's
-   output and to pin the [tc_compute] precomputation. *)
+(* Six vm_compute probes over three small contexts, printing the DFG, the cost
+   map, the target cycles, the buffer table and the finished schedule for
+   inspection.  A probe holds when the computation terminates. *)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.

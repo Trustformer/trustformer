@@ -510,9 +510,6 @@ Section Passes.
   Definition calc_target_cycle (cost_map: list (nid_t * cost_t)) : list (nid_t * cycle_t) :=
     map (fun '(nid, c) => (nid, c / clim)) cost_map.
 
-  (* Definition calc_max_cycle (cost_map: list (nid_t * cycle_t)) : cycle_t :=
-    fold_left (fun amax '(_, c) => Nat.max amax c) cost_map 0. *)
-
   (* ============================== *)
   (* = Step 4: Buffer Allocation  = *)
   (* ============================== *)
@@ -582,7 +579,6 @@ Section Passes.
   Context (bn : list (list (nid_t * (nat * sz_t)))).
 
   Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (ips_var:=ips_var) (buffer_needs:=bn)).
-  Definition test := tf_dfg_states.
 
   Instance show_tf_dfg_states : Show tf_dfg_states :=
     { show := fun dfg_s =>

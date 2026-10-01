@@ -12,8 +12,6 @@ Require Import Trustformer.Semantics.
 Require Export Trustformer.DFG.
 Require Export Trustformer.Scheduler.Passes.
 Require Import Trustformer.Contract.
-Require Import Hammer.Plugin.Hammer.
-Set Hammer GSMode 63.
 
 Require Import Coq.Lists.List.
 Require Import Coq.Arith.Arith.
