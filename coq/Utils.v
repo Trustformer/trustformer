@@ -40,31 +40,6 @@ Definition string_id_of_nat (n : nat) : string :=
 
 Section Properties.
   
-  Lemma increment_changes_list (b : list bool) :
-    b <> increment b.
-  Proof.
-    intros H.
-    induction b as [| b b']; intros.
-    {
-      simpl in H. sauto.
-    }
-    {
-      simpl in H. destruct b.
-      - inversion H.
-      - inversion H.
-    }
-  Qed.
-
-  Lemma increment_ge_length (b : list bool) :
-    length (increment b) >= length b.
-  Proof.
-    induction b as [| b b']; intros.
-    - simpl. lia.
-    - simpl. destruct b.
-      + simpl. lia.
-      + simpl. lia.
-  Qed.
-
   Lemma increment_inj (b1 b2 : list bool) :
     increment b1 = increment b2 -> (b1 = b2 \/ b1 = [] \/ b2 = []).
   Proof.
