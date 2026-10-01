@@ -5,7 +5,7 @@ Require Import Koika.Utils.Environments.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.Scheduler.Contract.
+Require Import Trustformer.Contract.
 
 Require Import Coq.Lists.List.
 Import ListNotations.

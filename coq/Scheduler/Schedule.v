@@ -9,9 +9,9 @@ Require Import Coq.Logic.FunctionalExtensionality.
 Require Import Trustformer.Utils.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Export Trustformer.Scheduler.DFG.
-Require Export Trustformer.Scheduler.SchedulerCore.
-Require Import Trustformer.Scheduler.Contract.
+Require Export Trustformer.DFG.
+Require Export Trustformer.Scheduler.Passes.
+Require Import Trustformer.Contract.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
@@ -25,9 +25,9 @@ Import ListNotations.
 
 (* The record obligations: the schedule writes each tag once, assigns [done] in
    the always half, and resets a duplicate-free list of registers to zero.
-   SchedulerCore.v holds the lowering these are proved about. *)
+   Passes.v holds the lowering these are proved about. *)
 
-Section VariableScheduler.
+Section Schedule.
 
   Context (ctx: TFSchedContext).
   Context (cost_limit: nat).
@@ -75,57 +75,57 @@ Section VariableScheduler.
   Local Notation dfg_op := (@dfg_op_t states_var inputs_var outputs_var ips_var).
   Local Notation dfg_node := (@dfg_node_t states_var inputs_var outputs_var ips_var).
   Local Notation dfg_state := (@dfg_state_t states_var inputs_var outputs_var ips_var).
-  Local Notation get_tainted := (SchedulerCore.get_tainted ctx).
-  Local Notation decl_facts := (SchedulerCore.decl_facts ctx).
-  Hint Extern 0 (EqDec dfg_vars) => exact (SchedulerCore.dfg_vars_eq_dec ctx) : typeclass_instances.
+  Local Notation get_tainted := (Passes.get_tainted ctx).
+  Local Notation decl_facts := (Passes.decl_facts ctx).
+  Hint Extern 0 (EqDec dfg_vars) => exact (Passes.dfg_vars_eq_dec ctx) : typeclass_instances.
 
-  (* [SchedulerCore]'s section variables are discharged, so bind them back. *)
-  Local Notation M := (SchedulerCore.M ctx).
-  Local Notation bind := (SchedulerCore.bind ctx).
-  Local Notation build_dfg := (SchedulerCore.build_dfg ctx).
-  Local Notation dataflow_expr := (SchedulerCore.dataflow_expr ctx).
-  Local Notation dataflow_ops := (SchedulerCore.dataflow_ops ctx).
-  Local Notation dfg_var_size := (SchedulerCore.dfg_var_size ctx).
-  Local Notation driven_ports := (SchedulerCore.driven_ports ctx).
-  Local Notation emit := (SchedulerCore.emit ctx).
-  Local Notation ensure_var := (SchedulerCore.ensure_var ctx).
-  Local Notation get_sizes_and_idx := (SchedulerCore.get_sizes_and_idx ctx).
-  Local Notation get_state := (SchedulerCore.get_state ctx).
-  Local Notation get_var := (SchedulerCore.get_var ctx).
-  Local Notation last_sample := (SchedulerCore.last_sample ctx).
-  Local Notation pending_samples := (SchedulerCore.pending_samples ctx).
-  Local Notation join_pendings := (SchedulerCore.join_pendings ctx).
-  Local Notation merge_key := (SchedulerCore.merge_key ctx).
-  Local Notation merge_loop := (SchedulerCore.merge_loop ctx).
-  Local Notation merge_maps := (SchedulerCore.merge_maps ctx).
-  Local Notation put_state := (SchedulerCore.put_state ctx).
-  Local Notation read_var := (SchedulerCore.read_var ctx).
-  Local Notation ret := (SchedulerCore.ret ctx).
-  Local Notation set_var := (SchedulerCore.set_var ctx).
-  Local Notation stall_chain := (SchedulerCore.stall_chain ctx).
+  (* [Passes]'s section variables are discharged, so bind them back. *)
+  Local Notation M := (Passes.M ctx).
+  Local Notation bind := (Passes.bind ctx).
+  Local Notation build_dfg := (Passes.build_dfg ctx).
+  Local Notation dataflow_expr := (Passes.dataflow_expr ctx).
+  Local Notation dataflow_ops := (Passes.dataflow_ops ctx).
+  Local Notation dfg_var_size := (Passes.dfg_var_size ctx).
+  Local Notation driven_ports := (Passes.driven_ports ctx).
+  Local Notation emit := (Passes.emit ctx).
+  Local Notation ensure_var := (Passes.ensure_var ctx).
+  Local Notation get_sizes_and_idx := (Passes.get_sizes_and_idx ctx).
+  Local Notation get_state := (Passes.get_state ctx).
+  Local Notation get_var := (Passes.get_var ctx).
+  Local Notation last_sample := (Passes.last_sample ctx).
+  Local Notation pending_samples := (Passes.pending_samples ctx).
+  Local Notation join_pendings := (Passes.join_pendings ctx).
+  Local Notation merge_key := (Passes.merge_key ctx).
+  Local Notation merge_loop := (Passes.merge_loop ctx).
+  Local Notation merge_maps := (Passes.merge_maps ctx).
+  Local Notation put_state := (Passes.put_state ctx).
+  Local Notation read_var := (Passes.read_var ctx).
+  Local Notation ret := (Passes.ret ctx).
+  Local Notation set_var := (Passes.set_var ctx).
+  Local Notation stall_chain := (Passes.stall_chain ctx).
 
   Context (bn : list (list (nid_t * (nat * sz_t)))).
 
   Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (ips_var:=ips_var) (buffer_needs:=bn)).
   Local Notation expr_t := (@tf_expr tf_dfg_states (inputs_var + ips_var) outputs_var).
-  Hint Extern 0 (Show tf_dfg_states) => exact (SchedulerCore.show_tf_dfg_states ctx bn) : typeclass_instances.
-  Hint Extern 0 (FiniteType2 tf_dfg_states) => exact (SchedulerCore.tf_dfg_states_fin2 ctx bn) : typeclass_instances.
-  Hint Extern 0 (FiniteType tf_dfg_states) => exact (SchedulerCore.tf_dfg_states_fin ctx bn) : typeclass_instances.
+  Hint Extern 0 (Show tf_dfg_states) => exact (Passes.show_tf_dfg_states ctx bn) : typeclass_instances.
+  Hint Extern 0 (FiniteType2 tf_dfg_states) => exact (Passes.tf_dfg_states_fin2 ctx bn) : typeclass_instances.
+  Hint Extern 0 (FiniteType tf_dfg_states) => exact (Passes.tf_dfg_states_fin ctx bn) : typeclass_instances.
 
-  Local Notation compile_dfg_expr_aux := (SchedulerCore.compile_dfg_expr_aux ctx bn).
+  Local Notation compile_dfg_expr_aux := (Passes.compile_dfg_expr_aux ctx bn).
   Local Notation compile_dfg_expr fuel a_idx dfg n bufs :=
     (compile_dfg_expr_aux (get_tainted dfg) (decl_facts dfg) [] fuel a_idx dfg n bufs).
-  Local Notation compile_dfg_aux := (SchedulerCore.compile_dfg_aux ctx bn).
-  Local Notation compile_dfg_buffers := (SchedulerCore.compile_dfg_buffers ctx bn).
-  Local Notation compile_dfg_drives := (SchedulerCore.compile_dfg_drives ctx bn).
-  Local Notation compile_dfg_valid := (SchedulerCore.compile_dfg_valid ctx bn).
-  Local Notation done_signal := (SchedulerCore.done_signal ctx bn).
-  Local Notation maps_from := (SchedulerCore.maps_from ctx bn).
-  Local Notation maps_to := (SchedulerCore.maps_to ctx bn).
-  Local Notation reset_states := (SchedulerCore.reset_states ctx bn).
-  Local Notation schedule := (SchedulerCore.schedule ctx cost_limit bn).
-  Local Notation tf_dfg_states_init := (SchedulerCore.tf_dfg_states_init ctx bn).
-  Local Notation tf_dfg_states_size := (SchedulerCore.tf_dfg_states_size ctx bn).
+  Local Notation compile_dfg_aux := (Passes.compile_dfg_aux ctx bn).
+  Local Notation compile_dfg_buffers := (Passes.compile_dfg_buffers ctx bn).
+  Local Notation compile_dfg_drives := (Passes.compile_dfg_drives ctx bn).
+  Local Notation compile_dfg_valid := (Passes.compile_dfg_valid ctx bn).
+  Local Notation done_signal := (Passes.done_signal ctx bn).
+  Local Notation maps_from := (Passes.maps_from ctx bn).
+  Local Notation maps_to := (Passes.maps_to ctx bn).
+  Local Notation reset_states := (Passes.reset_states ctx bn).
+  Local Notation schedule := (Passes.schedule ctx cost_limit bn).
+  Local Notation tf_dfg_states_init := (Passes.tf_dfg_states_init ctx bn).
+  Local Notation tf_dfg_states_size := (Passes.tf_dfg_states_size ctx bn).
 
   (* ==================================================================== *)
   (* Helper infrastructure for schedule_no_dup                            *)
@@ -801,7 +801,7 @@ Section VariableScheduler.
       tfs_reset_states_init_zero := reset_states_init_zero;
     |}.
 
-End VariableScheduler.
+End Schedule.
 
 (* The buffer table is computed once here; every function of the record closes over it. *)
 Definition tfs_schedule (ctx: TFSchedContext) (cost_limit: nat) : TFSchedule :=

@@ -5,9 +5,9 @@ Require Import Koika.KoikaForm.SimpleVal.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.TypedSynthesis.
-Require Import Trustformer.Scheduler.Contract.
-Require Import Trustformer.Scheduler.VariableScheduler.
+Require Import Trustformer.Backend.Lowering.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
 
 Require Import Coq.Logic.EqdepFacts.
 
@@ -15,7 +15,7 @@ Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
 (* MARS_SEQ: a minimal TCG MARS device, Profile [TF-MARS-S256-P2], over two
-   PCRs, with each crypto round trip split across MARS_Continue.  Examples/Mars.v
+   PCRs, with each crypto round trip split across MARS_Continue.  Examples/Mars/Spec.v
    is the one-action form and is checked against this one.  Every MARS_CC code
    has an arm, so [out_rc] is always written (REVIEW.md 3.4).  Sources:
    spec/mars-library-v1r14.md 5.3.1, 8.1.2, 8.3.2; reference-emulator/c/mars.c. *)
@@ -1465,7 +1465,7 @@ Section Vectors.
 
 End Vectors.
 
-Section TypedSynthesis.
+Section Lowering.
 
     Definition tfs_ctx : TFSchedContext := {|
         tfs_spec_states := fs_states;
@@ -1504,9 +1504,9 @@ Section TypedSynthesis.
         tf_action_encoding_inj := fs_action_encoding_inj;
     |}.
 
-  Definition package := TypedSynthesis.package tf_ctx "Example_MarsSeq".
+  Definition package := Lowering.package tf_ctx "Example_MarsSeq".
 
-End TypedSynthesis.
+End Lowering.
 
 (* Extraction *)
 

@@ -1,4 +1,4 @@
-// Example_GuardCallSpike: an [if] whose condition is a CALL RESULT.
+// Regression_GuardCall: an [if] whose condition is a CALL RESULT.
 //
 //   st_a := ip(in_msg);
 //   if st_a = 0 then st_b := ip(7) else st_b := ip(9)
@@ -20,7 +20,7 @@ module tb_guard;
   wire         ready, resp_ack, msg_ack;
   wire [255:0] resp_wire;
 
-  Example_GuardCallSpike dut(
+  Regression_GuardCall dut(
     .CLK(clk), .RST_N(rst_n),
     .ip_resp_sec_cs_crypto_out(resp_wire),
     .in_param_pub_in_msg_out(msg),

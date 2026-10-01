@@ -1,4 +1,4 @@
-// Example_ArmsSeqSpike: what an UNTAKEN arm's call does while it is skipped.
+// Regression_ArmsSeq: what an UNTAKEN arm's call does while it is skipped.
 //
 //   if sel = 0 then st_t := ip(x*x*x*x) else st_e := ip(y);
 //   st_z := ip(1)
@@ -35,7 +35,7 @@ module tb_untaken;
   wire        ready, resp_ack, sel_ack, x_ack, y_ack;
   wire [31:0] resp_wire;
 
-  Example_ArmsSeqSpike dut(
+  Regression_ArmsSeq dut(
     .CLK(clk), .RST_N(rst_n),
     .ip_resp_sec_as_ip_out(resp_wire),
     .in_param_pub_in_sel_out(sel),

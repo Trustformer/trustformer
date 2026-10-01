@@ -17,7 +17,7 @@ module tb_branch;
   wire         ready, resp_ack, sel_ack, a_ack;
   logic [255:0] resp_wire;
 
-  Example_BranchCallSpike dut(
+  Regression_BranchCall dut(
     .CLK(clk), .RST_N(rst_n),
     .ip_resp_sec_cs_crypto_out(resp_wire),
     .ip_resp_sec_cs_crypto_arg(resp_ack),

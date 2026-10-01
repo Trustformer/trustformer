@@ -8,8 +8,8 @@ Require Import Koika.Utils.Common.
 Require Import Trustformer.Utils.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.Scheduler.Contract.
-Require Import Trustformer.Scheduler.VariableScheduler.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
 
 Require Import Coq.Lists.List.
 Import ListNotations.

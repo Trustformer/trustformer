@@ -40,14 +40,14 @@ the design uses the latched value.
 
 | testbench | design | checks |
 | --- | --- | --- |
-| `tb_call.sv` | `Example_CallSpike` | one call: one strobe, right payload out, right answer in, latched input used |
-| `tb_two.sv` | `Example_TwoCallSpike` | two calls, independent arguments: two pulses, program order, both results |
-| `tb_chain.sv` | `Example_ChainedCallSpike` | two calls where the second's argument is the first's result |
-| `tb_branch.sv` | `Example_BranchCallSpike` | a call under an `if` on an INPUT: both arms drive, mutually exclusive in time |
-| `tb_guard.sv` | `Example_GuardCallSpike` | a branch on a CALL RESULT: the right arm is taken, and the guard reads the sample's latch |
-| `tb_arms.sv` | `Example_ArmsSeqSpike` | a call AFTER an `if` whose arms both call one IP: it waits for whichever arm ran, not just the last one written |
-| `tb_untaken.sv` | `Example_ArmsSeqSpike` | the same design, read the other way: the SKIPPED arm still validates and still counts its cycles, and its buffer holds zero rather than the other arm's answer |
-| `tb_xport.sv` | `Example_XPortGuardSpike` | the same branch with the arms' calls on a DIFFERENT port from the one the condition reads: the drives wait for the condition to arrive before either fires |
+| `tb_call.sv` | `Regression_Call` | one call: one strobe, right payload out, right answer in, latched input used |
+| `tb_two.sv` | `Regression_TwoCall` | two calls, independent arguments: two pulses, program order, both results |
+| `tb_chain.sv` | `Regression_ChainedCall` | two calls where the second's argument is the first's result |
+| `tb_branch.sv` | `Regression_BranchCall` | a call under an `if` on an INPUT: both arms drive, mutually exclusive in time |
+| `tb_guard.sv` | `Regression_GuardCall` | a branch on a CALL RESULT: the right arm is taken, and the guard reads the sample's latch |
+| `tb_arms.sv` | `Regression_ArmsSeq` | a call AFTER an `if` whose arms both call one IP: it waits for whichever arm ran, not just the last one written |
+| `tb_untaken.sv` | `Regression_ArmsSeq` | the same design, read the other way: the SKIPPED arm still validates and still counts its cycles, and its buffer holds zero rather than the other arm's answer |
+| `tb_xport.sv` | `Regression_XPortGuard` | the same branch with the arms' calls on a DIFFERENT port from the one the condition reads: the drives wait for the condition to arrive before either fires |
 | `tb_mars.sv` | `Example_Mars` | the one-action MARS, 77 checks -- see below |
 
 ## Running them
@@ -129,7 +129,7 @@ way.
 
 ## tb_untaken.sv: the arm that was not taken
 
-`Example_ArmsSeqSpike` again, checking the sample side rather than the drive
+`Regression_ArmsSeq` again, checking the sample side rather than the drive
 side. Both arms of the `if` call the same IP on the same port, and the counters
 of BOTH arms run whichever way the branch goes -- that padding is what makes the
 action's length independent of the condition, so the testbench asserts it.

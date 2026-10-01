@@ -16,597 +16,597 @@ Require Import Koika.Utils.Environments.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.Scheduler.Contract.
-Require Import Trustformer.Scheduler.VariableScheduler.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
 
 Require Import Coq.Lists.List.
 Require Import Coq.Arith.PeanoNat.
 Require Import Lia.
 Import ListNotations.
-Require Export Trustformer.Properties.SchedulerSimulationBase.
+Require Export Trustformer.Theorems.Internal.SchedulerSimulationLemmas.
 
-(* Split from SchedulerSimulationBase so that work on the round trip does not
-   recompile 13,000 lines of builder invariants.  The shims below re-bind that
-   file's discharged names at this section's [ctx] and [cost_limit]. *)
+(* Split from Internal/SchedulerSimulationLemmas.v so that work on the round
+   trip does not recompile 13,000 lines of builder invariants.  The shims below
+   re-bind that file's discharged names at this section's [ctx] and [cost_limit]. *)
 Section SchedulerSimulation.
 
   Context (ctx: TFSchedContext).
   Context (cost_limit: nat).
 
-  Local Notation P_emit_expr := (SchedulerSimulationBase.P_emit_expr ctx).
-  Local Notation P_emit_expr_calls := (SchedulerSimulationBase.P_emit_expr_calls ctx).
-  Local Notation P_emit_expr_jst := (SchedulerSimulationBase.P_emit_expr_jst ctx).
-  Local Notation P_emit_expr_samples := (SchedulerSimulationBase.P_emit_expr_samples ctx).
-  Local Notation P_emit_expr_sdr := (SchedulerSimulationBase.P_emit_expr_sdr ctx).
-  Local Notation P_emit_expr_sst := (SchedulerSimulationBase.P_emit_expr_sst ctx).
-  Local Notation P_emit_expr_ssucc := (SchedulerSimulationBase.P_emit_expr_ssucc ctx).
-  Local Notation Q_plain := (SchedulerSimulationBase.Q_plain ctx).
-  Local Notation Q_plain_succ := (SchedulerSimulationBase.Q_plain_succ ctx).
-  Local Notation act_idx_aligned := (SchedulerSimulationBase.act_idx_aligned ctx cost_limit).
-  Local Notation all_bind_at := (SchedulerSimulationBase.all_bind_at ctx).
-  Local Notation all_nodes := (SchedulerSimulationBase.all_nodes ctx).
-  Local Notation all_nodes_emit := (SchedulerSimulationBase.all_nodes_emit ctx).
-  Local Notation all_nodes_rev := (SchedulerSimulationBase.all_nodes_rev ctx).
-  Local Notation always_ops_cons := (SchedulerSimulationBase.always_ops_cons ctx cost_limit).
-  Local Notation always_ops_no_out := (SchedulerSimulationBase.always_ops_no_out ctx cost_limit).
-  Local Notation always_ops_no_svar := (SchedulerSimulationBase.always_ops_no_svar ctx cost_limit).
-  Local Notation arg_buffer_cycle_gt := (SchedulerSimulationBase.arg_buffer_cycle_gt ctx cost_limit).
-  Local Notation arg_same_cycle_or_buffer := (SchedulerSimulationBase.arg_same_cycle_or_buffer ctx cost_limit).
-  Local Notation args_lt := (SchedulerSimulationBase.args_lt ctx).
-  Local Notation args_lt_fwd := (SchedulerSimulationBase.args_lt_fwd ctx cost_limit).
-  Local Notation backward_cost_monotone := (SchedulerSimulationBase.backward_cost_monotone ctx cost_limit).
-  Local Notation backward_cycle_monotone := (SchedulerSimulationBase.backward_cycle_monotone ctx cost_limit).
-  Local Notation bind_pair := (SchedulerSimulationBase.bind_pair ctx).
-  Local Notation bind_red := (SchedulerSimulationBase.bind_red ctx).
-  Local Notation buf_valid_expr := (SchedulerSimulationBase.buf_valid_expr ctx cost_limit).
-  Local Notation buf_value_expr := (SchedulerSimulationBase.buf_value_expr ctx cost_limit).
-  Local Notation buffer_after_cycle := (SchedulerSimulationBase.buffer_after_cycle ctx cost_limit).
-  Local Notation buffer_entry_at := (SchedulerSimulationBase.buffer_entry_at ctx cost_limit).
-  Local Notation buffer_frozen_step := (SchedulerSimulationBase.buffer_frozen_step ctx cost_limit).
-  Local Notation buffer_needs_eq := (SchedulerSimulationBase.buffer_needs_eq ctx cost_limit).
-  Local Notation buffer_ops_concrete := (SchedulerSimulationBase.buffer_ops_concrete ctx cost_limit).
-  Local Notation buffer_register_node_size := (SchedulerSimulationBase.buffer_register_node_size ctx cost_limit).
-  Local Notation buffer_slot_eq := (SchedulerSimulationBase.buffer_slot_eq ctx cost_limit).
-  Local Notation buffer_slot_of := (SchedulerSimulationBase.buffer_slot_of ctx cost_limit).
-  Local Notation buffer_slot_size := (SchedulerSimulationBase.buffer_slot_size ctx cost_limit).
-  Local Notation buffer_valid_gate := (SchedulerSimulationBase.buffer_valid_gate ctx cost_limit).
-  Local Notation buffer_gate_zero := (SchedulerSimulationBase.buffer_gate_zero ctx cost_limit).
-  Local Notation sample_buffer_zero_step := (SchedulerSimulationBase.sample_buffer_zero_step ctx cost_limit).
-  Local Notation sample_buffer_guard_zero_step := (SchedulerSimulationBase.sample_buffer_guard_zero_step ctx cost_limit).
-  Local Notation build_dfg_args_pos := (SchedulerSimulationBase.build_dfg_args_pos ctx cost_limit).
-  Local Notation build_dfg_nids := (SchedulerSimulationBase.build_dfg_nids ctx cost_limit).
-  Local Notation build_dfg_suffix_frozen := (SchedulerSimulationBase.build_dfg_suffix_frozen ctx cost_limit).
-  Local Notation build_dfg_wf := (SchedulerSimulationBase.build_dfg_wf ctx cost_limit).
-  Local Notation calc_backward_cost_fold := (SchedulerSimulationBase.calc_backward_cost_fold ctx cost_limit).
-  Local Notation call_sequenced_join := (SchedulerSimulationBase.call_sequenced_join ctx cost_limit).
-  Local Notation calls_main := (SchedulerSimulationBase.calls_main ctx).
-  Local Notation calls_main_build_dfg := (SchedulerSimulationBase.calls_main_build_dfg ctx cost_limit).
-  Local Notation calls_main_rev := (SchedulerSimulationBase.calls_main_rev ctx).
-  Local Notation calls_sequenced := (SchedulerSimulationBase.calls_sequenced ctx).
-  Local Notation calls_sequenced_cons_join := (SchedulerSimulationBase.calls_sequenced_cons_join ctx).
-  Local Notation calls_sequenced_cons_sample := (SchedulerSimulationBase.calls_sequenced_cons_sample ctx).
-  Local Notation calls_sequenced_head := (SchedulerSimulationBase.calls_sequenced_head ctx).
-  Local Notation chain_gate_is_join := (SchedulerSimulationBase.chain_gate_is_join ctx cost_limit).
-  Local Notation chain_gate_some_of_stall := (SchedulerSimulationBase.chain_gate_some_of_stall ctx cost_limit).
-  Local Notation chain_gate_some := (SchedulerSimulationBase.chain_gate_some ctx cost_limit).
-  Local Notation combine_valid_eval := (SchedulerSimulationBase.combine_valid_eval ctx cost_limit).
-  Local Notation compile_buffered_valid := (SchedulerSimulationBase.compile_buffered_valid ctx cost_limit).
-  Local Notation compile_buffered_value := (SchedulerSimulationBase.compile_buffered_value ctx cost_limit).
-  Local Notation compile_dfg_buffers_entry := (SchedulerSimulationBase.compile_dfg_buffers_entry ctx cost_limit).
-  Local Notation compile_dfg_buffers_no_out := (SchedulerSimulationBase.compile_dfg_buffers_no_out ctx cost_limit).
-  Local Notation compile_dfg_buffers_no_svar := (SchedulerSimulationBase.compile_dfg_buffers_no_svar ctx cost_limit).
-  Local Notation compile_dfg_drives_entry := (SchedulerSimulationBase.compile_dfg_drives_entry ctx cost_limit).
-  Local Notation compile_dfg_drives_no_out := (SchedulerSimulationBase.compile_dfg_drives_no_out ctx cost_limit).
-  Local Notation compile_dfg_drives_no_svar := (SchedulerSimulationBase.compile_dfg_drives_no_svar ctx cost_limit).
-  Local Notation compile_drive_valid := (SchedulerSimulationBase.compile_drive_valid ctx cost_limit).
-  Local Notation compile_fst_phi := (SchedulerSimulationBase.compile_fst_phi ctx cost_limit).
-  Local Notation compile_fst_phi_gen := (SchedulerSimulationBase.compile_fst_phi_gen ctx cost_limit).
-  Local Notation compile_fst_pi_irrel := (SchedulerSimulationBase.compile_fst_pi_irrel ctx cost_limit).
-  Local Notation compile_fuel_irrel := (SchedulerSimulationBase.compile_fuel_irrel ctx cost_limit).
-  Local Notation compile_fuel_irrel_gen := (SchedulerSimulationBase.compile_fuel_irrel_gen ctx cost_limit).
-  Local Notation compile_join_valid := (SchedulerSimulationBase.compile_join_valid ctx cost_limit).
-  Local Notation compile_nobuf_state_indep := (SchedulerSimulationBase.compile_nobuf_state_indep ctx cost_limit).
-  Local Notation compile_nobuf_state_indep_gen := (SchedulerSimulationBase.compile_nobuf_state_indep_gen ctx cost_limit).
-  Local Notation compile_nobuf_step_stable := (SchedulerSimulationBase.compile_nobuf_step_stable ctx cost_limit).
-  Local Notation compile_sample_valid := (SchedulerSimulationBase.compile_sample_valid ctx cost_limit).
-  Local Notation compile_stall_valid := (SchedulerSimulationBase.compile_stall_valid ctx cost_limit).
-  Local Notation compile_stall_value := (SchedulerSimulationBase.compile_stall_value ctx cost_limit).
-  Local Notation compile_subst_ref_valid_gen := (SchedulerSimulationBase.compile_subst_ref_valid_gen ctx cost_limit).
-  Local Notation compile_subst_valid := (SchedulerSimulationBase.compile_subst_valid ctx cost_limit).
-  Local Notation compile_subst_valid_gen := (SchedulerSimulationBase.compile_subst_valid_gen ctx cost_limit).
-  Local Notation compile_valid_ones := (SchedulerSimulationBase.compile_valid_ones ctx cost_limit).
-  Local Notation compile_valid_ones_gen := (SchedulerSimulationBase.compile_valid_ones_gen ctx cost_limit).
-  Local Notation compile_valid_path_mono := (SchedulerSimulationBase.compile_valid_path_mono ctx cost_limit).
-  Local Notation compile_table_irrel_gen := (SchedulerSimulationBase.compile_table_irrel_gen ctx cost_limit).
-  Local Notation compile_valid_state_indep_gen := (SchedulerSimulationBase.compile_valid_state_indep_gen ctx cost_limit).
-  Local Notation cost_frozen_fold := (SchedulerSimulationBase.cost_frozen_fold ctx cost_limit).
-  Local Notation cost_ge_after_fold := (SchedulerSimulationBase.cost_ge_after_fold ctx cost_limit).
-  Local Notation cost_mono_fold := (SchedulerSimulationBase.cost_mono_fold ctx cost_limit).
-  Local Notation covers := (SchedulerSimulationBase.covers ctx).
-  Local Notation covers_cons := (SchedulerSimulationBase.covers_cons ctx).
-  Local Notation covers_mono := (SchedulerSimulationBase.covers_mono ctx).
-  Local Notation cycle_done_val := (SchedulerSimulationBase.cycle_done_val ctx cost_limit).
-  Local Notation cycle_updates := (SchedulerSimulationBase.cycle_updates ctx cost_limit).
-  Local Notation cycle_updates_done := (SchedulerSimulationBase.cycle_updates_done ctx cost_limit).
-  Local Notation cycle_updates_not_done := (SchedulerSimulationBase.cycle_updates_not_done ctx cost_limit).
-  Local Notation dataflow_expr_all := (SchedulerSimulationBase.dataflow_expr_all ctx).
-  Local Notation dataflow_expr_fg := (SchedulerSimulationBase.dataflow_expr_fg ctx).
-  Local Notation dataflow_expr_full := (SchedulerSimulationBase.dataflow_expr_full ctx).
-  Local Notation dataflow_expr_g := (SchedulerSimulationBase.dataflow_expr_g ctx).
-  Local Notation dataflow_expr_grows := (SchedulerSimulationBase.dataflow_expr_grows ctx).
-  Local Notation dataflow_expr_joins := (SchedulerSimulationBase.dataflow_expr_joins ctx).
-  Local Notation dataflow_expr_pos := (SchedulerSimulationBase.dataflow_expr_pos ctx).
-  Local Notation dataflow_expr_spec := (SchedulerSimulationBase.dataflow_expr_spec ctx).
-  Local Notation dataflow_expr_sz := (SchedulerSimulationBase.dataflow_expr_sz ctx).
-  Local Notation dataflow_ops_calls := (SchedulerSimulationBase.dataflow_ops_calls ctx).
-  Local Notation dataflow_ops_fg := (SchedulerSimulationBase.dataflow_ops_fg ctx).
-  Local Notation dataflow_ops_full := (SchedulerSimulationBase.dataflow_ops_full ctx).
-  Local Notation dataflow_ops_joins := (SchedulerSimulationBase.dataflow_ops_joins ctx).
-  Local Notation dataflow_ops_jst := (SchedulerSimulationBase.dataflow_ops_jst ctx).
-  Local Notation dataflow_ops_pos := (SchedulerSimulationBase.dataflow_ops_pos ctx).
-  Local Notation dataflow_ops_preserves_vmg := (SchedulerSimulationBase.dataflow_ops_preserves_vmg ctx).
-  Local Notation dataflow_ops_sdr := (SchedulerSimulationBase.dataflow_ops_sdr ctx).
-  Local Notation dataflow_ops_spec := (SchedulerSimulationBase.dataflow_ops_spec ctx).
-  Local Notation dataflow_ops_sst := (SchedulerSimulationBase.dataflow_ops_sst ctx).
-  Local Notation dataflow_ops_ssucc := (SchedulerSimulationBase.dataflow_ops_ssucc ctx).
-  Local Notation dataflow_ops_succ := (SchedulerSimulationBase.dataflow_ops_succ ctx).
-  Local Notation dataflow_var_fg := (SchedulerSimulationBase.dataflow_var_fg ctx).
-  Local Notation dataflow_var_sz := (SchedulerSimulationBase.dataflow_var_sz ctx).
-  Local Notation done_by_settle_bound := (SchedulerSimulationBase.done_by_settle_bound ctx cost_limit).
-  Local Notation done_exprs_concrete := (SchedulerSimulationBase.done_exprs_concrete ctx cost_limit).
-  Local Notation done_ops_no_done := (SchedulerSimulationBase.done_ops_no_done ctx cost_limit).
-  Local Notation done_ops_no_dup := (SchedulerSimulationBase.done_ops_no_dup ctx cost_limit).
-  Local Notation done_set := (SchedulerSimulationBase.done_set ctx cost_limit).
-  Local Notation done_set_dec := (SchedulerSimulationBase.done_set_dec ctx cost_limit).
-  Local Notation done_val_eval := (SchedulerSimulationBase.done_val_eval ctx cost_limit).
-  Local Notation drive_after_cycle := (SchedulerSimulationBase.drive_after_cycle ctx cost_limit).
-  Local Notation drive_after_sample := (SchedulerSimulationBase.drive_after_sample ctx cost_limit).
-  Local Notation drive_at := (SchedulerSimulationBase.drive_at ctx).
-  Local Notation drive_at_mono := (SchedulerSimulationBase.drive_at_mono ctx).
-  Local Notation drive_nodes_complete := (SchedulerSimulationBase.drive_nodes_complete ctx cost_limit).
-  Local Notation drive_nodes_desc := (SchedulerSimulationBase.drive_nodes_desc ctx cost_limit).
-  Local Notation drive_has_sample := (SchedulerSimulationBase.drive_has_sample ctx cost_limit).
-  Local Notation drive_nodes_spec := (SchedulerSimulationBase.drive_nodes_spec ctx cost_limit).
-  Local Notation drive_nodes_split := (SchedulerSimulationBase.drive_nodes_split ctx cost_limit).
-  Local Notation drive_payload := (SchedulerSimulationBase.drive_payload ctx cost_limit).
-  Local Notation drive_payload_eval := (SchedulerSimulationBase.drive_payload_eval ctx cost_limit).
-  Local Notation drive_payload_expr := (SchedulerSimulationBase.drive_payload_expr ctx cost_limit).
-  Local Notation drive_payload_expr_hold := (SchedulerSimulationBase.drive_payload_expr_hold ctx cost_limit).
-  Local Notation drive_payload_hold := (SchedulerSimulationBase.drive_payload_hold ctx cost_limit).
-  Local Notation ip_contract := (SchedulerSimulationBase.ip_contract ctx cost_limit).
-  Local Notation port_strobe_after := (SchedulerSimulationBase.port_strobe_after ctx cost_limit).
-  Local Notation port_strobe_quiet := (SchedulerSimulationBase.port_strobe_quiet ctx cost_limit).
-  Local Notation port_strobe_take_later := (SchedulerSimulationBase.port_strobe_take_later ctx cost_limit).
-  Local Notation slice_app_hi := (SchedulerSimulationBase.slice_app_hi ctx cost_limit).
-  Local Notation port_strobe := (SchedulerSimulationBase.port_strobe ctx cost_limit).
-  Local Notation drive_payload_slice := (SchedulerSimulationBase.drive_payload_slice ctx cost_limit).
-  Local Notation drive_payload_take := (SchedulerSimulationBase.drive_payload_take ctx cost_limit).
-  Local Notation drive_payload_take_later := (SchedulerSimulationBase.drive_payload_take_later ctx cost_limit).
-  Local Notation drive_pulse := (SchedulerSimulationBase.drive_pulse ctx cost_limit).
-  Local Notation drive_pulse_excl := (SchedulerSimulationBase.drive_pulse_excl ctx cost_limit).
-  Local Notation drive_pulse_zero_of_counter := (SchedulerSimulationBase.drive_pulse_zero_of_counter ctx cost_limit).
-  Local Notation drive_pulse_zero_of_en := (SchedulerSimulationBase.drive_pulse_zero_of_en ctx cost_limit).
-  Local Notation drive_pulse_zero_of_gate_reg := (SchedulerSimulationBase.drive_pulse_zero_of_gate_reg ctx cost_limit).
-  Local Notation drive_pulse_zero_of_join := (SchedulerSimulationBase.drive_pulse_zero_of_join ctx cost_limit).
-  Local Notation drive_pulse_zero_of_vfirst := (SchedulerSimulationBase.drive_pulse_zero_of_vfirst ctx cost_limit).
-  Local Notation drive_pulse_zero_of_vgate := (SchedulerSimulationBase.drive_pulse_zero_of_vgate ctx cost_limit).
-  Local Notation drive_sbufs := (SchedulerSimulationBase.drive_sbufs ctx cost_limit).
-  Local Notation drive_strobe_expr := (SchedulerSimulationBase.drive_strobe_expr ctx cost_limit).
-  Local Notation drive_value_expr := (SchedulerSimulationBase.drive_value_expr ctx cost_limit).
-  Local Notation drive_value_expr_split := (SchedulerSimulationBase.drive_value_expr_split ctx cost_limit).
-  Local Notation drive_vfirst := (SchedulerSimulationBase.drive_vfirst ctx cost_limit).
-  Local Notation emit_eq := (SchedulerSimulationBase.emit_eq ctx).
-  Local Notation emit_eval := (SchedulerSimulationBase.emit_eval ctx).
-  Local Notation emit_fg := (SchedulerSimulationBase.emit_fg ctx).
-  Local Notation emit_fspec := (SchedulerSimulationBase.emit_fspec ctx).
-  Local Notation emit_full := (SchedulerSimulationBase.emit_full ctx).
-  Local Notation emit_gmono := (SchedulerSimulationBase.emit_gmono ctx).
-  Local Notation emit_pos := (SchedulerSimulationBase.emit_pos ctx).
-  Local Notation emit_red := (SchedulerSimulationBase.emit_red ctx).
-  Local Notation emit_spec := (SchedulerSimulationBase.emit_spec ctx).
-  Local Notation emit_sz := (SchedulerSimulationBase.emit_sz ctx).
-  Local Notation emit_var_node_at := (SchedulerSimulationBase.emit_var_node_at ctx cost_limit).
-  Local Notation emit_vm := (SchedulerSimulationBase.emit_vm ctx).
-  Local Notation emitted_node_at := (SchedulerSimulationBase.emitted_node_at ctx cost_limit).
-  Local Notation ensure_var_eq := (SchedulerSimulationBase.ensure_var_eq ctx).
-  Local Notation ensure_var_fg := (SchedulerSimulationBase.ensure_var_fg ctx).
-  Local Notation ensure_var_full := (SchedulerSimulationBase.ensure_var_full ctx).
-  Local Notation ensure_var_gmono := (SchedulerSimulationBase.ensure_var_gmono ctx).
-  Local Notation ensure_var_graph := (SchedulerSimulationBase.ensure_var_graph ctx).
-  Local Notation ensure_var_node_at := (SchedulerSimulationBase.ensure_var_node_at ctx cost_limit).
-  Local Notation ensure_var_pos := (SchedulerSimulationBase.ensure_var_pos ctx).
-  Local Notation ensure_var_spec := (SchedulerSimulationBase.ensure_var_spec ctx).
-  Local Notation ensure_var_sz := (SchedulerSimulationBase.ensure_var_sz ctx).
-  Local Notation ensure_var_vm_head := (SchedulerSimulationBase.ensure_var_vm_head ctx).
-  Local Notation ensure_var_vm_inv := (SchedulerSimulationBase.ensure_var_vm_inv ctx).
-  Local Notation ensure_var_vm_keep := (SchedulerSimulationBase.ensure_var_vm_keep ctx).
-  Local Notation ensure_var_vmap := (SchedulerSimulationBase.ensure_var_vmap ctx).
-  Local Notation espec := (SchedulerSimulationBase.espec ctx).
-  Local Notation espec_ospec := (SchedulerSimulationBase.espec_ospec ctx).
-  Local Notation espec_trans := (SchedulerSimulationBase.espec_trans ctx).
-  Local Notation eval1_const1 := (SchedulerSimulationBase.eval1_const1 ctx cost_limit).
-  Local Notation eval1_svar_v := (SchedulerSimulationBase.eval1_svar_v ctx cost_limit).
-  Local Notation eval_convert_ivar := (SchedulerSimulationBase.eval_convert_ivar ctx cost_limit).
-  Local Notation eval_convert_ovar := (SchedulerSimulationBase.eval_convert_ovar ctx cost_limit).
-  Local Notation eval_convert_svar := (SchedulerSimulationBase.eval_convert_svar ctx cost_limit).
-  Local Notation eval_pulse_fold_hold := (SchedulerSimulationBase.eval_pulse_fold_hold ctx cost_limit).
-  Local Notation eval_pulse_fold_take := (SchedulerSimulationBase.eval_pulse_fold_take ctx cost_limit).
-  Local Notation eval_stall_start_zero := (SchedulerSimulationBase.eval_stall_start_zero ctx cost_limit).
-  Local Notation eval_svar_same := (SchedulerSimulationBase.eval_svar_same ctx cost_limit).
-  Local Notation exists_act_idx := (SchedulerSimulationBase.exists_act_idx ctx cost_limit).
-  Local Notation exports := (SchedulerSimulationBase.exports ctx cost_limit).
-  Local Notation final_ops_concrete := (SchedulerSimulationBase.final_ops_concrete ctx cost_limit).
-  Local Notation final_ops_no_ovar := (SchedulerSimulationBase.final_ops_no_ovar ctx cost_limit).
-  Local Notation final_ops_no_svar := (SchedulerSimulationBase.final_ops_no_svar ctx cost_limit).
-  Local Notation final_ops_ovar_in := (SchedulerSimulationBase.final_ops_ovar_in ctx cost_limit).
-  Local Notation final_ops_svar_in := (SchedulerSimulationBase.final_ops_svar_in ctx cost_limit).
-  Local Notation find_ge_desc := (SchedulerSimulationBase.find_ge_desc ctx).
-  Local Notation find_out_update_app_None := (SchedulerSimulationBase.find_out_update_app_None ctx cost_limit).
-  Local Notation find_out_update_app_r_None := (SchedulerSimulationBase.find_out_update_app_r_None ctx cost_limit).
-  Local Notation find_out_update_not_in := (SchedulerSimulationBase.find_out_update_not_in ctx cost_limit).
-  Local Notation find_out_update_not_in_raw := (SchedulerSimulationBase.find_out_update_not_in_raw ctx cost_limit).
-  Local Notation find_out_update_output_head := (SchedulerSimulationBase.find_out_update_output_head ctx cost_limit).
-  Local Notation find_out_update_skip_cons := (SchedulerSimulationBase.find_out_update_skip_cons ctx cost_limit).
-  Local Notation find_out_update_skip_head := (SchedulerSimulationBase.find_out_update_skip_head ctx cost_limit).
-  Local Notation find_out_update_unique_output := (SchedulerSimulationBase.find_out_update_unique_output ctx cost_limit).
-  Local Notation find_st_update_app_r_None := (SchedulerSimulationBase.find_st_update_app_r_None ctx cost_limit).
-  Local Notation find_st_update_assign_head := (SchedulerSimulationBase.find_st_update_assign_head ctx cost_limit).
-  Local Notation find_st_update_map_init := (SchedulerSimulationBase.find_st_update_map_init ctx cost_limit).
-  Local Notation find_st_update_not_in := (SchedulerSimulationBase.find_st_update_not_in ctx cost_limit).
-  Local Notation find_st_update_not_in_raw := (SchedulerSimulationBase.find_st_update_not_in_raw ctx cost_limit).
-  Local Notation find_st_update_skip_cons := (SchedulerSimulationBase.find_st_update_skip_cons ctx cost_limit).
-  Local Notation find_st_update_skip_head := (SchedulerSimulationBase.find_st_update_skip_head ctx cost_limit).
-  Local Notation find_st_update_unique_assign := (SchedulerSimulationBase.find_st_update_unique_assign ctx cost_limit).
-  Local Notation fold_valid_and_ext := (SchedulerSimulationBase.fold_valid_and_ext ctx cost_limit).
-  Local Notation fold_valid_and_ones := (SchedulerSimulationBase.fold_valid_and_ones ctx cost_limit).
-  Local Notation fspec := (SchedulerSimulationBase.fspec ctx).
-  Local Notation fspec_seq := (SchedulerSimulationBase.fspec_seq ctx).
-  Local Notation g_bind_at := (SchedulerSimulationBase.g_bind_at ctx).
-  Local Notation get_state_red := (SchedulerSimulationBase.get_state_red ctx).
-  Local Notation get_var_cases := (SchedulerSimulationBase.get_var_cases ctx).
-  Local Notation get_var_fg := (SchedulerSimulationBase.get_var_fg ctx).
-  Local Notation get_var_fspec := (SchedulerSimulationBase.get_var_fspec ctx).
-  Local Notation get_var_full := (SchedulerSimulationBase.get_var_full ctx).
-  Local Notation get_var_pos := (SchedulerSimulationBase.get_var_pos ctx).
-  Local Notation get_var_spec := (SchedulerSimulationBase.get_var_spec ctx).
-  Local Notation get_var_sz := (SchedulerSimulationBase.get_var_sz ctx).
-  Local Notation getenv_maps_from := (SchedulerSimulationBase.getenv_maps_from ctx cost_limit).
-  Local Notation gmono := (SchedulerSimulationBase.gmono ctx).
-  Local Notation gmono_refl := (SchedulerSimulationBase.gmono_refl ctx).
-  Local Notation gmono_trans := (SchedulerSimulationBase.gmono_trans ctx).
-  Local Notation gne_gmono := (SchedulerSimulationBase.gne_gmono ctx).
-  Local Notation gpos := (SchedulerSimulationBase.gpos ctx).
-  Local Notation graph_nid_has_cost := (SchedulerSimulationBase.graph_nid_has_cost ctx cost_limit).
-  Local Notation graph_position_has_target_cycle := (SchedulerSimulationBase.graph_position_has_target_cycle ctx cost_limit).
-  Local Notation grows := (SchedulerSimulationBase.grows ctx).
-  Local Notation grows_bind := (SchedulerSimulationBase.grows_bind ctx).
-  Local Notation grows_emit := (SchedulerSimulationBase.grows_emit ctx).
-  Local Notation grows_get_var := (SchedulerSimulationBase.grows_get_var ctx).
-  Local Notation grows_ret := (SchedulerSimulationBase.grows_ret ctx).
-  Local Notation gsi_entry_at := (SchedulerSimulationBase.gsi_entry_at ctx).
-  Local Notation gsi_idx_at := (SchedulerSimulationBase.gsi_idx_at ctx).
-  Local Notation gsi_idx_bound := (SchedulerSimulationBase.gsi_idx_bound ctx).
-  Local Notation gsi_length := (SchedulerSimulationBase.gsi_length ctx).
-  Local Notation gsi_map_fst := (SchedulerSimulationBase.gsi_map_fst ctx).
-  Local Notation gsi_size := (SchedulerSimulationBase.gsi_size ctx).
-  Local Notation guard_expr_fold := (SchedulerSimulationBase.guard_expr_fold ctx cost_limit).
-  Local Notation guard_expr_zero := (SchedulerSimulationBase.guard_expr_zero ctx cost_limit).
-  Local Notation guard_lit := (SchedulerSimulationBase.guard_lit ctx cost_limit).
-  Local Notation guards_disjoint_excl := (SchedulerSimulationBase.guards_disjoint_excl ctx cost_limit).
-  Local Notation head_drives := (SchedulerSimulationBase.head_drives ctx).
-  Local Notation head_drives_cons := (SchedulerSimulationBase.head_drives_cons ctx).
-  Local Notation head_drives_emit := (SchedulerSimulationBase.head_drives_emit ctx).
-  Local Notation head_drives_mono := (SchedulerSimulationBase.head_drives_mono ctx).
-  Local Notation ids_desc := (SchedulerSimulationBase.ids_desc ctx).
-  Local Notation ids_desc_cons := (SchedulerSimulationBase.ids_desc_cons ctx).
-  Local Notation ids_desc_hd := (SchedulerSimulationBase.ids_desc_hd ctx).
-  Local Notation ids_desc_tl := (SchedulerSimulationBase.ids_desc_tl ctx).
-  Local Notation in_graph_fwd := (SchedulerSimulationBase.in_graph_fwd ctx cost_limit).
-  Local Notation in_var_node_at := (SchedulerSimulationBase.in_var_node_at ctx cost_limit).
-  Local Notation is_sample_of := (SchedulerSimulationBase.is_sample_of ctx cost_limit).
-  Local Notation sample_en_of := (SchedulerSimulationBase.sample_en_of ctx cost_limit).
-  Local Notation join_gate_zero_of_arg := (SchedulerSimulationBase.join_gate_zero_of_arg ctx cost_limit).
-  Local Notation join_has_stall := (SchedulerSimulationBase.join_has_stall ctx cost_limit).
-  Local Notation join_kind := (SchedulerSimulationBase.join_kind ctx).
-  Local Notation join_nid_succ := (SchedulerSimulationBase.join_nid_succ ctx cost_limit).
-  Local Notation join_pendings_calls := (SchedulerSimulationBase.join_pendings_calls ctx).
-  Local Notation join_pendings_espec := (SchedulerSimulationBase.join_pendings_espec ctx).
-  Local Notation join_pendings_fg := (SchedulerSimulationBase.join_pendings_fg ctx).
-  Local Notation join_pendings_full := (SchedulerSimulationBase.join_pendings_full ctx).
-  Local Notation join_pendings_g := (SchedulerSimulationBase.join_pendings_g ctx).
-  Local Notation join_pendings_grows := (SchedulerSimulationBase.join_pendings_grows ctx).
-  Local Notation join_pendings_js := (SchedulerSimulationBase.join_pendings_js ctx).
-  Local Notation join_pendings_jst := (SchedulerSimulationBase.join_pendings_jst ctx).
-  Local Notation join_pendings_leaves := (SchedulerSimulationBase.join_pendings_leaves ctx).
-  Local Notation join_pendings_none := (SchedulerSimulationBase.join_pendings_none ctx).
-  Local Notation join_pendings_pos := (SchedulerSimulationBase.join_pendings_pos ctx).
-  Local Notation join_pendings_samples := (SchedulerSimulationBase.join_pendings_samples ctx).
-  Local Notation join_pendings_succ := (SchedulerSimulationBase.join_pendings_succ ctx).
-  Local Notation join_pendings_vm_eq := (SchedulerSimulationBase.join_pendings_vm_eq ctx).
-  Local Notation join_waits_on_sample := (SchedulerSimulationBase.join_waits_on_sample ctx cost_limit).
-  Local Notation joins_sequence := (SchedulerSimulationBase.joins_sequence ctx).
-  Local Notation joins_sequence_build_dfg := (SchedulerSimulationBase.joins_sequence_build_dfg ctx cost_limit).
-  Local Notation joins_sequence_cons := (SchedulerSimulationBase.joins_sequence_cons ctx).
-  Local Notation joins_sequence_emit_comb := (SchedulerSimulationBase.joins_sequence_emit_comb ctx).
-  Local Notation joins_sequence_emit_order := (SchedulerSimulationBase.joins_sequence_emit_order ctx).
-  Local Notation joins_sequence_emit_other := (SchedulerSimulationBase.joins_sequence_emit_other ctx).
-  Local Notation joins_sequence_graph_eq := (SchedulerSimulationBase.joins_sequence_graph_eq ctx).
-  Local Notation joins_sequence_rev := (SchedulerSimulationBase.joins_sequence_rev ctx).
-  Local Notation joins_stalled := (SchedulerSimulationBase.joins_stalled ctx).
-  Local Notation joins_stalled_build_dfg := (SchedulerSimulationBase.joins_stalled_build_dfg ctx cost_limit).
-  Local Notation joins_stalled_cons_nonjoin := (SchedulerSimulationBase.joins_stalled_cons_nonjoin ctx).
-  Local Notation joins_stalled_rev := (SchedulerSimulationBase.joins_stalled_rev ctx).
-  Local Notation js_bind_at := (SchedulerSimulationBase.js_bind_at ctx).
-  Local Notation js_call_head := (SchedulerSimulationBase.js_call_head ctx).
-  Local Notation jst_node := (SchedulerSimulationBase.jst_node ctx).
-  Local Notation jst_node_cons := (SchedulerSimulationBase.jst_node_cons ctx).
-  Local Notation jst_node_mono := (SchedulerSimulationBase.jst_node_mono ctx).
-  Local Notation last_sample_found := (SchedulerSimulationBase.last_sample_found ctx).
-  Local Notation last_sample_max := (SchedulerSimulationBase.last_sample_max ctx).
-  Local Notation last_sample_nidwf := (SchedulerSimulationBase.last_sample_nidwf ctx).
-  Local Notation last_sample_pos := (SchedulerSimulationBase.last_sample_pos ctx).
-  Local Notation last_sample_spec := (SchedulerSimulationBase.last_sample_spec ctx).
-  Local Notation later_drive_gate := (SchedulerSimulationBase.later_drive_gate ctx cost_limit).
-  Local Notation later_drive_gate_full := (SchedulerSimulationBase.later_drive_gate_full ctx cost_limit).
-  Local Notation max_cycle := (SchedulerSimulationBase.max_cycle ctx cost_limit).
-  Local Notation merge_key_basic := (SchedulerSimulationBase.merge_key_basic ctx).
-  Local Notation merge_key_fg := (SchedulerSimulationBase.merge_key_fg ctx).
-  Local Notation merge_key_full := (SchedulerSimulationBase.merge_key_full ctx).
-  Local Notation merge_key_pos := (SchedulerSimulationBase.merge_key_pos ctx).
-  Local Notation merge_key_spec := (SchedulerSimulationBase.merge_key_spec ctx).
-  Local Notation merge_loop_cover := (SchedulerSimulationBase.merge_loop_cover ctx).
-  Local Notation merge_loop_fg := (SchedulerSimulationBase.merge_loop_fg ctx).
-  Local Notation merge_loop_full := (SchedulerSimulationBase.merge_loop_full ctx).
-  Local Notation merge_loop_gmono := (SchedulerSimulationBase.merge_loop_gmono ctx).
-  Local Notation merge_loop_pos := (SchedulerSimulationBase.merge_loop_pos ctx).
-  Local Notation merge_loop_spec := (SchedulerSimulationBase.merge_loop_spec ctx).
-  Local Notation merge_maps_fg := (SchedulerSimulationBase.merge_maps_fg ctx).
-  Local Notation merge_maps_full := (SchedulerSimulationBase.merge_maps_full ctx).
-  Local Notation merge_maps_pos := (SchedulerSimulationBase.merge_maps_pos ctx).
-  Local Notation merge_maps_spec := (SchedulerSimulationBase.merge_maps_spec ctx).
-  Local Notation nid_seq := (SchedulerSimulationBase.nid_seq ctx).
-  Local Notation nid_seq_bound := (SchedulerSimulationBase.nid_seq_bound ctx).
-  Local Notation nid_seq_ids_desc := (SchedulerSimulationBase.nid_seq_ids_desc ctx).
-  Local Notation nids_bounded := (SchedulerSimulationBase.nids_bounded ctx).
-  Local Notation nids_bounded_cons := (SchedulerSimulationBase.nids_bounded_cons ctx).
-  Local Notation nidwf := (SchedulerSimulationBase.nidwf ctx).
-  Local Notation nidwf_gmono := (SchedulerSimulationBase.nidwf_gmono ctx).
-  Local Notation no_stall_on_joined := (SchedulerSimulationBase.no_stall_on_joined ctx cost_limit).
-  Local Notation node_args_range := (SchedulerSimulationBase.node_args_range ctx cost_limit).
-  Local Notation node_args_sz := (SchedulerSimulationBase.node_args_sz ctx).
-  Local Notation node_args_sz_gmono := (SchedulerSimulationBase.node_args_sz_gmono ctx).
-  Local Notation node_at_nid := (SchedulerSimulationBase.node_at_nid ctx cost_limit).
-  Local Notation node_cycle := (SchedulerSimulationBase.node_cycle ctx cost_limit).
-  Local Notation node_cycle_is_div := (SchedulerSimulationBase.node_cycle_is_div ctx cost_limit).
-  Local Notation node_cycle_le_max_cycle := (SchedulerSimulationBase.node_cycle_le_max_cycle ctx cost_limit).
-  Local Notation node_nid_at := (SchedulerSimulationBase.node_nid_at ctx cost_limit).
-  Local Notation node_op := (SchedulerSimulationBase.node_op ctx cost_limit).
-  Local Notation node_op_not_empty := (SchedulerSimulationBase.node_op_not_empty ctx cost_limit).
-  Local Notation node_op_range := (SchedulerSimulationBase.node_op_range ctx cost_limit).
-  Local Notation node_rank := (SchedulerSimulationBase.node_rank ctx cost_limit).
-  Local Notation node_rank_child := (SchedulerSimulationBase.node_rank_child ctx cost_limit).
-  Local Notation node_rank_le := (SchedulerSimulationBase.node_rank_le ctx cost_limit).
-  Local Notation node_rank_mono := (SchedulerSimulationBase.node_rank_mono ctx cost_limit).
-  Local Notation node_rank_mono_le := (SchedulerSimulationBase.node_rank_mono_le ctx cost_limit).
-  Local Notation node_rank_stall := (SchedulerSimulationBase.node_rank_stall ctx cost_limit).
-  Local Notation node_ref_expr := (SchedulerSimulationBase.node_ref_expr ctx cost_limit).
-  Local Notation node_ref_valid := (SchedulerSimulationBase.node_ref_valid ctx cost_limit).
-  Local Notation not_sample_not_in_sample_bufs := (SchedulerSimulationBase.not_sample_not_in_sample_bufs ctx cost_limit).
-  Local Notation nre_binary := (SchedulerSimulationBase.nre_binary ctx cost_limit).
-  Local Notation nre_const := (SchedulerSimulationBase.nre_const ctx cost_limit).
-  Local Notation nre_drive := (SchedulerSimulationBase.nre_drive ctx cost_limit).
-  Local Notation nre_fuel := (SchedulerSimulationBase.nre_fuel ctx cost_limit).
-  Local Notation nre_input := (SchedulerSimulationBase.nre_input ctx cost_limit).
-  Local Notation nre_ovar := (SchedulerSimulationBase.nre_ovar ctx cost_limit).
-  Local Notation nre_phi := (SchedulerSimulationBase.nre_phi ctx cost_limit).
-  Local Notation nre_resize := (SchedulerSimulationBase.nre_resize ctx cost_limit).
-  Local Notation nre_sample := (SchedulerSimulationBase.nre_sample ctx cost_limit).
-  Local Notation nre_stall := (SchedulerSimulationBase.nre_stall ctx cost_limit).
-  Local Notation nre_svar := (SchedulerSimulationBase.nre_svar ctx cost_limit).
-  Local Notation nre_unary := (SchedulerSimulationBase.nre_unary ctx cost_limit).
-  Local Notation nre_unfold := (SchedulerSimulationBase.nre_unfold ctx cost_limit).
-  Local Notation nval := (SchedulerSimulationBase.nval ctx cost_limit).
-  Local Notation nval_fresh_ovar := (SchedulerSimulationBase.nval_fresh_ovar ctx cost_limit).
-  Local Notation nval_fresh_svar := (SchedulerSimulationBase.nval_fresh_svar ctx cost_limit).
-  Local Notation nval_var_ovar := (SchedulerSimulationBase.nval_var_ovar ctx cost_limit).
-  Local Notation nval_var_svar := (SchedulerSimulationBase.nval_var_svar ctx cost_limit).
-  Local Notation op_assigns_st := (SchedulerSimulationBase.op_assigns_st ctx cost_limit).
-  Local Notation op_writes_out := (SchedulerSimulationBase.op_writes_out ctx cost_limit).
-  Local Notation ospec := (SchedulerSimulationBase.ospec ctx).
-  Local Notation ospec_trans := (SchedulerSimulationBase.ospec_trans ctx).
-  Local Notation ospecv := (SchedulerSimulationBase.ospecv ctx).
-  Local Notation pending_samples_covers := (SchedulerSimulationBase.pending_samples_covers ctx).
-  Local Notation pending_samples_nidwf := (SchedulerSimulationBase.pending_samples_nidwf ctx).
-  Local Notation pending_samples_nidwf' := (SchedulerSimulationBase.pending_samples_nidwf' ctx).
-  Local Notation pending_samples_pos := (SchedulerSimulationBase.pending_samples_pos ctx).
-  Local Notation pending_samples_spec := (SchedulerSimulationBase.pending_samples_spec ctx).
-  Local Notation pends := (SchedulerSimulationBase.pends ctx).
-  Local Notation pends_cons := (SchedulerSimulationBase.pends_cons ctx).
-  Local Notation pends_join := (SchedulerSimulationBase.pends_join ctx).
-  Local Notation pends_mono := (SchedulerSimulationBase.pends_mono ctx).
-  Local Notation pends_not_drive := (SchedulerSimulationBase.pends_not_drive ctx cost_limit).
-  Local Notation pends_not_joined_drive := (SchedulerSimulationBase.pends_not_joined_drive ctx cost_limit).
-  Local Notation pends_samp := (SchedulerSimulationBase.pends_samp ctx).
-  Local Notation pleaf := (SchedulerSimulationBase.pleaf ctx).
-  Local Notation pleaf_cons := (SchedulerSimulationBase.pleaf_cons ctx).
-  Local Notation pleaf_here := (SchedulerSimulationBase.pleaf_here ctx).
-  Local Notation pleaf_left := (SchedulerSimulationBase.pleaf_left ctx).
-  Local Notation pleaf_mono := (SchedulerSimulationBase.pleaf_mono ctx).
-  Local Notation pleaf_right := (SchedulerSimulationBase.pleaf_right ctx).
-  Local Notation preserves_all := (SchedulerSimulationBase.preserves_all ctx).
-  Local Notation preserves_all_bind := (SchedulerSimulationBase.preserves_all_bind ctx).
-  Local Notation preserves_all_emit := (SchedulerSimulationBase.preserves_all_emit ctx).
-  Local Notation preserves_all_ensure_var := (SchedulerSimulationBase.preserves_all_ensure_var ctx).
-  Local Notation preserves_all_get_var := (SchedulerSimulationBase.preserves_all_get_var ctx).
-  Local Notation preserves_all_merge_key := (SchedulerSimulationBase.preserves_all_merge_key ctx).
-  Local Notation preserves_all_merge_loop := (SchedulerSimulationBase.preserves_all_merge_loop ctx).
-  Local Notation preserves_all_ret := (SchedulerSimulationBase.preserves_all_ret ctx).
-  Local Notation preserves_all_set_var := (SchedulerSimulationBase.preserves_all_set_var ctx).
-  Local Notation preserves_g := (SchedulerSimulationBase.preserves_g ctx).
-  Local Notation preserves_g_bind := (SchedulerSimulationBase.preserves_g_bind ctx).
-  Local Notation preserves_g_emit := (SchedulerSimulationBase.preserves_g_emit ctx).
-  Local Notation preserves_g_ensure_var := (SchedulerSimulationBase.preserves_g_ensure_var ctx).
-  Local Notation preserves_g_get_var := (SchedulerSimulationBase.preserves_g_get_var ctx).
-  Local Notation preserves_g_merge_key := (SchedulerSimulationBase.preserves_g_merge_key ctx).
-  Local Notation preserves_g_merge_loop := (SchedulerSimulationBase.preserves_g_merge_loop ctx).
-  Local Notation preserves_g_merge_maps := (SchedulerSimulationBase.preserves_g_merge_maps ctx).
-  Local Notation preserves_g_ret := (SchedulerSimulationBase.preserves_g_ret ctx).
-  Local Notation preserves_g_set_var := (SchedulerSimulationBase.preserves_g_set_var ctx).
-  Local Notation preserves_js := (SchedulerSimulationBase.preserves_js ctx).
-  Local Notation preserves_js_bind := (SchedulerSimulationBase.preserves_js_bind ctx).
-  Local Notation preserves_js_bind_st := (SchedulerSimulationBase.preserves_js_bind_st ctx).
-  Local Notation preserves_js_emit := (SchedulerSimulationBase.preserves_js_emit ctx).
-  Local Notation preserves_js_ensure_var := (SchedulerSimulationBase.preserves_js_ensure_var ctx).
-  Local Notation preserves_js_get_state := (SchedulerSimulationBase.preserves_js_get_state ctx).
-  Local Notation preserves_js_get_var := (SchedulerSimulationBase.preserves_js_get_var ctx).
-  Local Notation preserves_js_merge_key := (SchedulerSimulationBase.preserves_js_merge_key ctx).
-  Local Notation preserves_js_merge_loop := (SchedulerSimulationBase.preserves_js_merge_loop ctx).
-  Local Notation preserves_js_merge_maps := (SchedulerSimulationBase.preserves_js_merge_maps ctx).
-  Local Notation preserves_js_ret := (SchedulerSimulationBase.preserves_js_ret ctx).
-  Local Notation preserves_js_set_var := (SchedulerSimulationBase.preserves_js_set_var ctx).
-  Local Notation put_state_red := (SchedulerSimulationBase.put_state_red ctx).
-  Local Notation read_var_cases := (SchedulerSimulationBase.read_var_cases ctx).
-  Local Notation read_var_vmap := (SchedulerSimulationBase.read_var_vmap ctx).
-  Local Notation require_buffer_node_range := (SchedulerSimulationBase.require_buffer_node_range ctx cost_limit).
-  Local Notation reset_states_has_v := (SchedulerSimulationBase.reset_states_has_v ctx cost_limit).
-  Local Notation reset_states_not_done := (SchedulerSimulationBase.reset_states_not_done ctx cost_limit).
-  Local Notation reset_states_not_svar := (SchedulerSimulationBase.reset_states_not_svar ctx cost_limit).
-  Local Notation reset_updates_no_done := (SchedulerSimulationBase.reset_updates_no_done ctx cost_limit).
-  Local Notation reset_updates_no_out := (SchedulerSimulationBase.reset_updates_no_out ctx cost_limit).
-  Local Notation reset_updates_no_svar := (SchedulerSimulationBase.reset_updates_no_svar ctx cost_limit).
-  Local Notation reset_updates_v := (SchedulerSimulationBase.reset_updates_v ctx cost_limit).
-  Local Notation ret_fspec := (SchedulerSimulationBase.ret_fspec ctx).
-  Local Notation ret_full := (SchedulerSimulationBase.ret_full ctx).
-  Local Notation ret_pos := (SchedulerSimulationBase.ret_pos ctx).
-  Local Notation run_n := (SchedulerSimulationBase.run_n ctx cost_limit).
-  Local Notation run_preserves_ovar := (SchedulerSimulationBase.run_preserves_ovar ctx cost_limit).
-  Local Notation run_preserves_svar := (SchedulerSimulationBase.run_preserves_svar ctx cost_limit).
-  Local Notation sample_before_drive := (SchedulerSimulationBase.sample_before_drive ctx cost_limit).
-  Local Notation sample_buffer_frozen := (SchedulerSimulationBase.sample_buffer_frozen ctx cost_limit).
-  Local Notation sample_bufs := (SchedulerSimulationBase.sample_bufs ctx cost_limit).
-  Local Notation sample_chain_between := (SchedulerSimulationBase.sample_chain_between ctx cost_limit).
-  Local Notation sample_chain_no_drive := (SchedulerSimulationBase.sample_chain_no_drive ctx cost_limit).
-  Local Notation sample_chain_no_sample := (SchedulerSimulationBase.sample_chain_no_sample ctx cost_limit).
-  Local Notation sample_drive := (SchedulerSimulationBase.sample_drive ctx cost_limit).
-  Local Notation sample_drive_head := (SchedulerSimulationBase.sample_drive_head ctx cost_limit).
-  Local Notation sample_drive_head_op := (SchedulerSimulationBase.sample_drive_head_op ctx cost_limit).
-  Local Notation sample_drive_head_shape := (SchedulerSimulationBase.sample_drive_head_shape ctx cost_limit).
-  Local Notation sample_drive_in_drive_nodes := (SchedulerSimulationBase.sample_drive_in_drive_nodes ctx cost_limit).
-  Local Notation sample_drive_lt := (SchedulerSimulationBase.sample_drive_lt ctx cost_limit).
-  Local Notation sample_drive_op := (SchedulerSimulationBase.sample_drive_op ctx cost_limit).
-  Local Notation sample_drive_req := (SchedulerSimulationBase.sample_drive_req ctx cost_limit).
-  Local Notation sample_gate_cases := (SchedulerSimulationBase.sample_gate_cases ctx cost_limit).
-  Local Notation sample_gate_is_stall_reg := (SchedulerSimulationBase.sample_gate_is_stall_reg ctx cost_limit).
-  Local Notation sample_has_drive := (SchedulerSimulationBase.sample_has_drive ctx cost_limit).
-  Local Notation sample_index := (SchedulerSimulationBase.sample_index ctx cost_limit).
-  Local Notation sample_is_buffered := (SchedulerSimulationBase.sample_is_buffered ctx cost_limit).
-  Local Notation sample_nid_succ := (SchedulerSimulationBase.sample_nid_succ ctx cost_limit).
-  Local Notation sample_node_in_range := (SchedulerSimulationBase.sample_node_in_range ctx cost_limit).
-  Local Notation sample_ref_is_register := (SchedulerSimulationBase.sample_ref_is_register ctx cost_limit).
-  Local Notation sample_req := (SchedulerSimulationBase.sample_req ctx cost_limit).
-  Local Notation sample_req_head := (SchedulerSimulationBase.sample_req_head ctx cost_limit).
-  Local Notation sample_tok_is_stall := (SchedulerSimulationBase.sample_tok_is_stall ctx cost_limit).
-  Local Notation samples_driven := (SchedulerSimulationBase.samples_driven ctx).
-  Local Notation samples_driven_build_dfg := (SchedulerSimulationBase.samples_driven_build_dfg ctx cost_limit).
-  Local Notation samples_driven_cons2 := (SchedulerSimulationBase.samples_driven_cons2 ctx).
-  Local Notation samples_driven_cons_nonsample := (SchedulerSimulationBase.samples_driven_cons_nonsample ctx).
-  Local Notation samples_driven_rev := (SchedulerSimulationBase.samples_driven_rev ctx).
-  Local Notation samples_stalled := (SchedulerSimulationBase.samples_stalled ctx).
-  Local Notation samples_stalled_build_dfg := (SchedulerSimulationBase.samples_stalled_build_dfg ctx cost_limit).
-  Local Notation samples_stalled_cons2 := (SchedulerSimulationBase.samples_stalled_cons2 ctx).
-  Local Notation samples_stalled_cons_nonsample := (SchedulerSimulationBase.samples_stalled_cons_nonsample ctx).
-  Local Notation samples_stalled_rev := (SchedulerSimulationBase.samples_stalled_rev ctx).
-  Local Notation samples_within := (SchedulerSimulationBase.samples_within ctx).
-  Local Notation sched_input := (SchedulerSimulationBase.sched_input ctx cost_limit).
-  Local Notation sched_step := (SchedulerSimulationBase.sched_step ctx cost_limit).
-  Local Notation sched_step_done := (SchedulerSimulationBase.sched_step_done ctx cost_limit).
-  Local Notation sched_step_done_ovar := (SchedulerSimulationBase.sched_step_done_ovar ctx cost_limit).
-  Local Notation sched_step_done_ovar_untouched := (SchedulerSimulationBase.sched_step_done_ovar_untouched ctx cost_limit).
-  Local Notation sched_step_done_set := (SchedulerSimulationBase.sched_step_done_set ctx cost_limit).
-  Local Notation sched_step_done_svar := (SchedulerSimulationBase.sched_step_done_svar ctx cost_limit).
-  Local Notation sched_step_done_svar_untouched := (SchedulerSimulationBase.sched_step_done_svar_untouched ctx cost_limit).
-  Local Notation sched_step_done_v := (SchedulerSimulationBase.sched_step_done_v ctx cost_limit).
-  Local Notation sched_step_done_valid := (SchedulerSimulationBase.sched_step_done_valid ctx cost_limit).
-  Local Notation sched_step_eq := (SchedulerSimulationBase.sched_step_eq ctx cost_limit).
-  Local Notation sched_step_getout := (SchedulerSimulationBase.sched_step_getout ctx cost_limit).
-  Local Notation sched_step_getst := (SchedulerSimulationBase.sched_step_getst ctx cost_limit).
-  Local Notation sched_step_preserves_ovar := (SchedulerSimulationBase.sched_step_preserves_ovar ctx cost_limit).
-  Local Notation sched_step_preserves_svar := (SchedulerSimulationBase.sched_step_preserves_svar ctx cost_limit).
-  Local Notation scheduler_reaches_done := (SchedulerSimulationBase.scheduler_reaches_done ctx cost_limit).
-  Local Notation seq_full := (SchedulerSimulationBase.seq_full ctx).
-  Local Notation seq_pos := (SchedulerSimulationBase.seq_pos ctx).
-  Local Notation seq_sz := (SchedulerSimulationBase.seq_sz ctx).
-  Local Notation set_var_fg := (SchedulerSimulationBase.set_var_fg ctx).
-  Local Notation set_var_full := (SchedulerSimulationBase.set_var_full ctx).
-  Local Notation set_var_graph := (SchedulerSimulationBase.set_var_graph ctx).
-  Local Notation set_var_ospecv := (SchedulerSimulationBase.set_var_ospecv ctx).
-  Local Notation set_var_pos := (SchedulerSimulationBase.set_var_pos ctx).
-  Local Notation set_var_spec := (SchedulerSimulationBase.set_var_spec ctx).
-  Local Notation set_var_vm_head := (SchedulerSimulationBase.set_var_vm_head ctx).
-  Local Notation set_var_vm_inv := (SchedulerSimulationBase.set_var_vm_inv ctx).
-  Local Notation set_var_vm_inv2 := (SchedulerSimulationBase.set_var_vm_inv2 ctx).
-  Local Notation set_var_vm_keep := (SchedulerSimulationBase.set_var_vm_keep ctx).
-  Local Notation settle_bound := (SchedulerSimulationBase.settle_bound ctx cost_limit).
-  Local Notation slot_keys_nodup := (SchedulerSimulationBase.slot_keys_nodup ctx cost_limit).
-  Local Notation ssucc_build_dfg := (SchedulerSimulationBase.ssucc_build_dfg ctx cost_limit).
-  Local Notation stall_cost_gap := (SchedulerSimulationBase.stall_cost_gap ctx cost_limit).
-  Local Notation stall_counter_bounded := (SchedulerSimulationBase.stall_counter_bounded ctx cost_limit).
-  Local Notation stall_counter_run := (SchedulerSimulationBase.stall_counter_run ctx cost_limit).
-  Local Notation stall_counter_step := (SchedulerSimulationBase.stall_counter_step ctx cost_limit).
-  Local Notation stall_counter_wide := (SchedulerSimulationBase.stall_counter_wide ctx cost_limit).
-  Local Notation stall_gate_walks := (SchedulerSimulationBase.stall_gate_walks ctx cost_limit).
-  Local Notation stall_is_buffered := (SchedulerSimulationBase.stall_is_buffered ctx cost_limit).
-  Local Notation stall_lat_of := (SchedulerSimulationBase.stall_lat_of ctx cost_limit).
-  Local Notation stall_nid_succ := (SchedulerSimulationBase.stall_nid_succ ctx cost_limit).
-  Local Notation stall_saturated_step := (SchedulerSimulationBase.stall_saturated_step ctx cost_limit).
-  Local Notation stall_valid_next_inv := (SchedulerSimulationBase.stall_valid_next_inv ctx cost_limit).
-  Local Notation stall_valid_next_ones := (SchedulerSimulationBase.stall_valid_next_ones ctx cost_limit).
-  Local Notation stall_wait_start := (SchedulerSimulationBase.stall_wait_start ctx cost_limit).
-  Local Notation stall_weight := (SchedulerSimulationBase.stall_weight ctx cost_limit).
-  Local Notation start_rel := (SchedulerSimulationBase.start_rel ctx cost_limit).
-  Local Notation succ_arg_node := (SchedulerSimulationBase.succ_arg_node ctx).
-  Local Notation succ_args_build_dfg := (SchedulerSimulationBase.succ_args_build_dfg ctx cost_limit).
-  Local Notation succ_sample_node := (SchedulerSimulationBase.succ_sample_node ctx).
-  Local Notation tfs_get_updates_cons := (SchedulerSimulationBase.tfs_get_updates_cons ctx cost_limit).
-  Local Notation valid_and_eval := (SchedulerSimulationBase.valid_and_eval ctx cost_limit).
-  Local Notation valid_gates := (SchedulerSimulationBase.valid_gates ctx cost_limit).
-  Local Notation valid_if_eval := (SchedulerSimulationBase.valid_if_eval ctx cost_limit).
-  Local Notation valid_if_eval_inv := (SchedulerSimulationBase.valid_if_eval_inv ctx cost_limit).
-  Local Notation valid_if_eval_sel := (SchedulerSimulationBase.valid_if_eval_sel ctx cost_limit).
-  Local Notation valid_refs := (SchedulerSimulationBase.valid_refs ctx cost_limit).
-  Local Notation valid_settled := (SchedulerSimulationBase.valid_settled ctx cost_limit).
-  Local Notation valid_settled_run := (SchedulerSimulationBase.valid_settled_run ctx cost_limit).
-  Local Notation valid_zero_run := (SchedulerSimulationBase.valid_zero_run ctx cost_limit).
-  Local Notation validity_monotone_step := (SchedulerSimulationBase.validity_monotone_step ctx cost_limit).
-  Local Notation valids_ones_run := (SchedulerSimulationBase.valids_ones_run ctx cost_limit).
-  Local Notation var_map_entry_size := (SchedulerSimulationBase.var_map_entry_size ctx cost_limit).
-  Local Notation var_map_node_range := (SchedulerSimulationBase.var_map_node_range ctx cost_limit).
-  Local Notation var_map_output_has_cost := (SchedulerSimulationBase.var_map_output_has_cost ctx cost_limit).
-  Local Notation var_map_snd_is_graph_nid := (SchedulerSimulationBase.var_map_snd_is_graph_nid ctx cost_limit).
-  Local Notation var_node_at := (SchedulerSimulationBase.var_node_at ctx cost_limit).
-  Local Notation vmg := (SchedulerSimulationBase.vmg ctx).
-  Local Notation vreg_nid := (SchedulerSimulationBase.vreg_nid ctx cost_limit).
-  Local Notation vreg_nid_in_require_buffer := (SchedulerSimulationBase.vreg_nid_in_require_buffer ctx cost_limit).
-  Local Notation vreg_nid_inj := (SchedulerSimulationBase.vreg_nid_inj ctx cost_limit).
-  Local Notation vreg_nid_node_range := (SchedulerSimulationBase.vreg_nid_node_range ctx cost_limit).
-  Local Notation vreg_nid_of_entry := (SchedulerSimulationBase.vreg_nid_of_entry ctx cost_limit).
-  Local Notation wfg := (SchedulerSimulationBase.wfg ctx).
-  Local Notation wfg_build_dfg := (SchedulerSimulationBase.wfg_build_dfg ctx cost_limit).
-  Local Notation wgmono := (SchedulerSimulationBase.wgmono ctx).
-  Local Notation wgmono_refl := (SchedulerSimulationBase.wgmono_refl ctx).
-  Local Notation wgmono_trans := (SchedulerSimulationBase.wgmono_trans ctx).
-  Local Notation winv := (SchedulerSimulationBase.winv ctx).
-  Local Notation wnidwf := (SchedulerSimulationBase.wnidwf ctx).
-  Local Notation wnidwf_bound := (SchedulerSimulationBase.wnidwf_bound ctx).
-  Local Notation wnidwf_gmono := (SchedulerSimulationBase.wnidwf_gmono ctx).
-  Local Notation wsz := (SchedulerSimulationBase.wsz ctx).
-  Local Notation wsz_fwd := (SchedulerSimulationBase.wsz_fwd ctx cost_limit).
-  Local Notation wsz_gmono := (SchedulerSimulationBase.wsz_gmono ctx).
-  Local Notation wsz_node_sz := (SchedulerSimulationBase.wsz_node_sz ctx cost_limit).
-  Local Notation wvmg := (SchedulerSimulationBase.wvmg ctx).
-  Local Notation wvsz := (SchedulerSimulationBase.wvsz ctx).
-  Local Notation wvsz_build_dfg := (SchedulerSimulationBase.wvsz_build_dfg ctx cost_limit).
-  Local Notation zeroed_at_start := (SchedulerSimulationBase.zeroed_at_start ctx cost_limit).
+  Local Notation P_emit_expr := (SchedulerSimulationLemmas.P_emit_expr ctx).
+  Local Notation P_emit_expr_calls := (SchedulerSimulationLemmas.P_emit_expr_calls ctx).
+  Local Notation P_emit_expr_jst := (SchedulerSimulationLemmas.P_emit_expr_jst ctx).
+  Local Notation P_emit_expr_samples := (SchedulerSimulationLemmas.P_emit_expr_samples ctx).
+  Local Notation P_emit_expr_sdr := (SchedulerSimulationLemmas.P_emit_expr_sdr ctx).
+  Local Notation P_emit_expr_sst := (SchedulerSimulationLemmas.P_emit_expr_sst ctx).
+  Local Notation P_emit_expr_ssucc := (SchedulerSimulationLemmas.P_emit_expr_ssucc ctx).
+  Local Notation Q_plain := (SchedulerSimulationLemmas.Q_plain ctx).
+  Local Notation Q_plain_succ := (SchedulerSimulationLemmas.Q_plain_succ ctx).
+  Local Notation act_idx_aligned := (SchedulerSimulationLemmas.act_idx_aligned ctx cost_limit).
+  Local Notation all_bind_at := (SchedulerSimulationLemmas.all_bind_at ctx).
+  Local Notation all_nodes := (SchedulerSimulationLemmas.all_nodes ctx).
+  Local Notation all_nodes_emit := (SchedulerSimulationLemmas.all_nodes_emit ctx).
+  Local Notation all_nodes_rev := (SchedulerSimulationLemmas.all_nodes_rev ctx).
+  Local Notation always_ops_cons := (SchedulerSimulationLemmas.always_ops_cons ctx cost_limit).
+  Local Notation always_ops_no_out := (SchedulerSimulationLemmas.always_ops_no_out ctx cost_limit).
+  Local Notation always_ops_no_svar := (SchedulerSimulationLemmas.always_ops_no_svar ctx cost_limit).
+  Local Notation arg_buffer_cycle_gt := (SchedulerSimulationLemmas.arg_buffer_cycle_gt ctx cost_limit).
+  Local Notation arg_same_cycle_or_buffer := (SchedulerSimulationLemmas.arg_same_cycle_or_buffer ctx cost_limit).
+  Local Notation args_lt := (SchedulerSimulationLemmas.args_lt ctx).
+  Local Notation args_lt_fwd := (SchedulerSimulationLemmas.args_lt_fwd ctx cost_limit).
+  Local Notation backward_cost_monotone := (SchedulerSimulationLemmas.backward_cost_monotone ctx cost_limit).
+  Local Notation backward_cycle_monotone := (SchedulerSimulationLemmas.backward_cycle_monotone ctx cost_limit).
+  Local Notation bind_pair := (SchedulerSimulationLemmas.bind_pair ctx).
+  Local Notation bind_red := (SchedulerSimulationLemmas.bind_red ctx).
+  Local Notation buf_valid_expr := (SchedulerSimulationLemmas.buf_valid_expr ctx cost_limit).
+  Local Notation buf_value_expr := (SchedulerSimulationLemmas.buf_value_expr ctx cost_limit).
+  Local Notation buffer_after_cycle := (SchedulerSimulationLemmas.buffer_after_cycle ctx cost_limit).
+  Local Notation buffer_entry_at := (SchedulerSimulationLemmas.buffer_entry_at ctx cost_limit).
+  Local Notation buffer_frozen_step := (SchedulerSimulationLemmas.buffer_frozen_step ctx cost_limit).
+  Local Notation buffer_needs_eq := (SchedulerSimulationLemmas.buffer_needs_eq ctx cost_limit).
+  Local Notation buffer_ops_concrete := (SchedulerSimulationLemmas.buffer_ops_concrete ctx cost_limit).
+  Local Notation buffer_register_node_size := (SchedulerSimulationLemmas.buffer_register_node_size ctx cost_limit).
+  Local Notation buffer_slot_eq := (SchedulerSimulationLemmas.buffer_slot_eq ctx cost_limit).
+  Local Notation buffer_slot_of := (SchedulerSimulationLemmas.buffer_slot_of ctx cost_limit).
+  Local Notation buffer_slot_size := (SchedulerSimulationLemmas.buffer_slot_size ctx cost_limit).
+  Local Notation buffer_valid_gate := (SchedulerSimulationLemmas.buffer_valid_gate ctx cost_limit).
+  Local Notation buffer_gate_zero := (SchedulerSimulationLemmas.buffer_gate_zero ctx cost_limit).
+  Local Notation sample_buffer_zero_step := (SchedulerSimulationLemmas.sample_buffer_zero_step ctx cost_limit).
+  Local Notation sample_buffer_guard_zero_step := (SchedulerSimulationLemmas.sample_buffer_guard_zero_step ctx cost_limit).
+  Local Notation build_dfg_args_pos := (SchedulerSimulationLemmas.build_dfg_args_pos ctx cost_limit).
+  Local Notation build_dfg_nids := (SchedulerSimulationLemmas.build_dfg_nids ctx cost_limit).
+  Local Notation build_dfg_suffix_frozen := (SchedulerSimulationLemmas.build_dfg_suffix_frozen ctx cost_limit).
+  Local Notation build_dfg_wf := (SchedulerSimulationLemmas.build_dfg_wf ctx cost_limit).
+  Local Notation calc_backward_cost_fold := (SchedulerSimulationLemmas.calc_backward_cost_fold ctx cost_limit).
+  Local Notation call_sequenced_join := (SchedulerSimulationLemmas.call_sequenced_join ctx cost_limit).
+  Local Notation calls_main := (SchedulerSimulationLemmas.calls_main ctx).
+  Local Notation calls_main_build_dfg := (SchedulerSimulationLemmas.calls_main_build_dfg ctx cost_limit).
+  Local Notation calls_main_rev := (SchedulerSimulationLemmas.calls_main_rev ctx).
+  Local Notation calls_sequenced := (SchedulerSimulationLemmas.calls_sequenced ctx).
+  Local Notation calls_sequenced_cons_join := (SchedulerSimulationLemmas.calls_sequenced_cons_join ctx).
+  Local Notation calls_sequenced_cons_sample := (SchedulerSimulationLemmas.calls_sequenced_cons_sample ctx).
+  Local Notation calls_sequenced_head := (SchedulerSimulationLemmas.calls_sequenced_head ctx).
+  Local Notation chain_gate_is_join := (SchedulerSimulationLemmas.chain_gate_is_join ctx cost_limit).
+  Local Notation chain_gate_some_of_stall := (SchedulerSimulationLemmas.chain_gate_some_of_stall ctx cost_limit).
+  Local Notation chain_gate_some := (SchedulerSimulationLemmas.chain_gate_some ctx cost_limit).
+  Local Notation combine_valid_eval := (SchedulerSimulationLemmas.combine_valid_eval ctx cost_limit).
+  Local Notation compile_buffered_valid := (SchedulerSimulationLemmas.compile_buffered_valid ctx cost_limit).
+  Local Notation compile_buffered_value := (SchedulerSimulationLemmas.compile_buffered_value ctx cost_limit).
+  Local Notation compile_dfg_buffers_entry := (SchedulerSimulationLemmas.compile_dfg_buffers_entry ctx cost_limit).
+  Local Notation compile_dfg_buffers_no_out := (SchedulerSimulationLemmas.compile_dfg_buffers_no_out ctx cost_limit).
+  Local Notation compile_dfg_buffers_no_svar := (SchedulerSimulationLemmas.compile_dfg_buffers_no_svar ctx cost_limit).
+  Local Notation compile_dfg_drives_entry := (SchedulerSimulationLemmas.compile_dfg_drives_entry ctx cost_limit).
+  Local Notation compile_dfg_drives_no_out := (SchedulerSimulationLemmas.compile_dfg_drives_no_out ctx cost_limit).
+  Local Notation compile_dfg_drives_no_svar := (SchedulerSimulationLemmas.compile_dfg_drives_no_svar ctx cost_limit).
+  Local Notation compile_drive_valid := (SchedulerSimulationLemmas.compile_drive_valid ctx cost_limit).
+  Local Notation compile_fst_phi := (SchedulerSimulationLemmas.compile_fst_phi ctx cost_limit).
+  Local Notation compile_fst_phi_gen := (SchedulerSimulationLemmas.compile_fst_phi_gen ctx cost_limit).
+  Local Notation compile_fst_pi_irrel := (SchedulerSimulationLemmas.compile_fst_pi_irrel ctx cost_limit).
+  Local Notation compile_fuel_irrel := (SchedulerSimulationLemmas.compile_fuel_irrel ctx cost_limit).
+  Local Notation compile_fuel_irrel_gen := (SchedulerSimulationLemmas.compile_fuel_irrel_gen ctx cost_limit).
+  Local Notation compile_join_valid := (SchedulerSimulationLemmas.compile_join_valid ctx cost_limit).
+  Local Notation compile_nobuf_state_indep := (SchedulerSimulationLemmas.compile_nobuf_state_indep ctx cost_limit).
+  Local Notation compile_nobuf_state_indep_gen := (SchedulerSimulationLemmas.compile_nobuf_state_indep_gen ctx cost_limit).
+  Local Notation compile_nobuf_step_stable := (SchedulerSimulationLemmas.compile_nobuf_step_stable ctx cost_limit).
+  Local Notation compile_sample_valid := (SchedulerSimulationLemmas.compile_sample_valid ctx cost_limit).
+  Local Notation compile_stall_valid := (SchedulerSimulationLemmas.compile_stall_valid ctx cost_limit).
+  Local Notation compile_stall_value := (SchedulerSimulationLemmas.compile_stall_value ctx cost_limit).
+  Local Notation compile_subst_ref_valid_gen := (SchedulerSimulationLemmas.compile_subst_ref_valid_gen ctx cost_limit).
+  Local Notation compile_subst_valid := (SchedulerSimulationLemmas.compile_subst_valid ctx cost_limit).
+  Local Notation compile_subst_valid_gen := (SchedulerSimulationLemmas.compile_subst_valid_gen ctx cost_limit).
+  Local Notation compile_valid_ones := (SchedulerSimulationLemmas.compile_valid_ones ctx cost_limit).
+  Local Notation compile_valid_ones_gen := (SchedulerSimulationLemmas.compile_valid_ones_gen ctx cost_limit).
+  Local Notation compile_valid_path_mono := (SchedulerSimulationLemmas.compile_valid_path_mono ctx cost_limit).
+  Local Notation compile_table_irrel_gen := (SchedulerSimulationLemmas.compile_table_irrel_gen ctx cost_limit).
+  Local Notation compile_valid_state_indep_gen := (SchedulerSimulationLemmas.compile_valid_state_indep_gen ctx cost_limit).
+  Local Notation cost_frozen_fold := (SchedulerSimulationLemmas.cost_frozen_fold ctx cost_limit).
+  Local Notation cost_ge_after_fold := (SchedulerSimulationLemmas.cost_ge_after_fold ctx cost_limit).
+  Local Notation cost_mono_fold := (SchedulerSimulationLemmas.cost_mono_fold ctx cost_limit).
+  Local Notation covers := (SchedulerSimulationLemmas.covers ctx).
+  Local Notation covers_cons := (SchedulerSimulationLemmas.covers_cons ctx).
+  Local Notation covers_mono := (SchedulerSimulationLemmas.covers_mono ctx).
+  Local Notation cycle_done_val := (SchedulerSimulationLemmas.cycle_done_val ctx cost_limit).
+  Local Notation cycle_updates := (SchedulerSimulationLemmas.cycle_updates ctx cost_limit).
+  Local Notation cycle_updates_done := (SchedulerSimulationLemmas.cycle_updates_done ctx cost_limit).
+  Local Notation cycle_updates_not_done := (SchedulerSimulationLemmas.cycle_updates_not_done ctx cost_limit).
+  Local Notation dataflow_expr_all := (SchedulerSimulationLemmas.dataflow_expr_all ctx).
+  Local Notation dataflow_expr_fg := (SchedulerSimulationLemmas.dataflow_expr_fg ctx).
+  Local Notation dataflow_expr_full := (SchedulerSimulationLemmas.dataflow_expr_full ctx).
+  Local Notation dataflow_expr_g := (SchedulerSimulationLemmas.dataflow_expr_g ctx).
+  Local Notation dataflow_expr_grows := (SchedulerSimulationLemmas.dataflow_expr_grows ctx).
+  Local Notation dataflow_expr_joins := (SchedulerSimulationLemmas.dataflow_expr_joins ctx).
+  Local Notation dataflow_expr_pos := (SchedulerSimulationLemmas.dataflow_expr_pos ctx).
+  Local Notation dataflow_expr_spec := (SchedulerSimulationLemmas.dataflow_expr_spec ctx).
+  Local Notation dataflow_expr_sz := (SchedulerSimulationLemmas.dataflow_expr_sz ctx).
+  Local Notation dataflow_ops_calls := (SchedulerSimulationLemmas.dataflow_ops_calls ctx).
+  Local Notation dataflow_ops_fg := (SchedulerSimulationLemmas.dataflow_ops_fg ctx).
+  Local Notation dataflow_ops_full := (SchedulerSimulationLemmas.dataflow_ops_full ctx).
+  Local Notation dataflow_ops_joins := (SchedulerSimulationLemmas.dataflow_ops_joins ctx).
+  Local Notation dataflow_ops_jst := (SchedulerSimulationLemmas.dataflow_ops_jst ctx).
+  Local Notation dataflow_ops_pos := (SchedulerSimulationLemmas.dataflow_ops_pos ctx).
+  Local Notation dataflow_ops_preserves_vmg := (SchedulerSimulationLemmas.dataflow_ops_preserves_vmg ctx).
+  Local Notation dataflow_ops_sdr := (SchedulerSimulationLemmas.dataflow_ops_sdr ctx).
+  Local Notation dataflow_ops_spec := (SchedulerSimulationLemmas.dataflow_ops_spec ctx).
+  Local Notation dataflow_ops_sst := (SchedulerSimulationLemmas.dataflow_ops_sst ctx).
+  Local Notation dataflow_ops_ssucc := (SchedulerSimulationLemmas.dataflow_ops_ssucc ctx).
+  Local Notation dataflow_ops_succ := (SchedulerSimulationLemmas.dataflow_ops_succ ctx).
+  Local Notation dataflow_var_fg := (SchedulerSimulationLemmas.dataflow_var_fg ctx).
+  Local Notation dataflow_var_sz := (SchedulerSimulationLemmas.dataflow_var_sz ctx).
+  Local Notation done_by_settle_bound := (SchedulerSimulationLemmas.done_by_settle_bound ctx cost_limit).
+  Local Notation done_exprs_concrete := (SchedulerSimulationLemmas.done_exprs_concrete ctx cost_limit).
+  Local Notation done_ops_no_done := (SchedulerSimulationLemmas.done_ops_no_done ctx cost_limit).
+  Local Notation done_ops_no_dup := (SchedulerSimulationLemmas.done_ops_no_dup ctx cost_limit).
+  Local Notation done_set := (SchedulerSimulationLemmas.done_set ctx cost_limit).
+  Local Notation done_set_dec := (SchedulerSimulationLemmas.done_set_dec ctx cost_limit).
+  Local Notation done_val_eval := (SchedulerSimulationLemmas.done_val_eval ctx cost_limit).
+  Local Notation drive_after_cycle := (SchedulerSimulationLemmas.drive_after_cycle ctx cost_limit).
+  Local Notation drive_after_sample := (SchedulerSimulationLemmas.drive_after_sample ctx cost_limit).
+  Local Notation drive_at := (SchedulerSimulationLemmas.drive_at ctx).
+  Local Notation drive_at_mono := (SchedulerSimulationLemmas.drive_at_mono ctx).
+  Local Notation drive_nodes_complete := (SchedulerSimulationLemmas.drive_nodes_complete ctx cost_limit).
+  Local Notation drive_nodes_desc := (SchedulerSimulationLemmas.drive_nodes_desc ctx cost_limit).
+  Local Notation drive_has_sample := (SchedulerSimulationLemmas.drive_has_sample ctx cost_limit).
+  Local Notation drive_nodes_spec := (SchedulerSimulationLemmas.drive_nodes_spec ctx cost_limit).
+  Local Notation drive_nodes_split := (SchedulerSimulationLemmas.drive_nodes_split ctx cost_limit).
+  Local Notation drive_payload := (SchedulerSimulationLemmas.drive_payload ctx cost_limit).
+  Local Notation drive_payload_eval := (SchedulerSimulationLemmas.drive_payload_eval ctx cost_limit).
+  Local Notation drive_payload_expr := (SchedulerSimulationLemmas.drive_payload_expr ctx cost_limit).
+  Local Notation drive_payload_expr_hold := (SchedulerSimulationLemmas.drive_payload_expr_hold ctx cost_limit).
+  Local Notation drive_payload_hold := (SchedulerSimulationLemmas.drive_payload_hold ctx cost_limit).
+  Local Notation ip_contract := (SchedulerSimulationLemmas.ip_contract ctx cost_limit).
+  Local Notation port_strobe_after := (SchedulerSimulationLemmas.port_strobe_after ctx cost_limit).
+  Local Notation port_strobe_quiet := (SchedulerSimulationLemmas.port_strobe_quiet ctx cost_limit).
+  Local Notation port_strobe_take_later := (SchedulerSimulationLemmas.port_strobe_take_later ctx cost_limit).
+  Local Notation slice_app_hi := (SchedulerSimulationLemmas.slice_app_hi ctx cost_limit).
+  Local Notation port_strobe := (SchedulerSimulationLemmas.port_strobe ctx cost_limit).
+  Local Notation drive_payload_slice := (SchedulerSimulationLemmas.drive_payload_slice ctx cost_limit).
+  Local Notation drive_payload_take := (SchedulerSimulationLemmas.drive_payload_take ctx cost_limit).
+  Local Notation drive_payload_take_later := (SchedulerSimulationLemmas.drive_payload_take_later ctx cost_limit).
+  Local Notation drive_pulse := (SchedulerSimulationLemmas.drive_pulse ctx cost_limit).
+  Local Notation drive_pulse_excl := (SchedulerSimulationLemmas.drive_pulse_excl ctx cost_limit).
+  Local Notation drive_pulse_zero_of_counter := (SchedulerSimulationLemmas.drive_pulse_zero_of_counter ctx cost_limit).
+  Local Notation drive_pulse_zero_of_en := (SchedulerSimulationLemmas.drive_pulse_zero_of_en ctx cost_limit).
+  Local Notation drive_pulse_zero_of_gate_reg := (SchedulerSimulationLemmas.drive_pulse_zero_of_gate_reg ctx cost_limit).
+  Local Notation drive_pulse_zero_of_join := (SchedulerSimulationLemmas.drive_pulse_zero_of_join ctx cost_limit).
+  Local Notation drive_pulse_zero_of_vfirst := (SchedulerSimulationLemmas.drive_pulse_zero_of_vfirst ctx cost_limit).
+  Local Notation drive_pulse_zero_of_vgate := (SchedulerSimulationLemmas.drive_pulse_zero_of_vgate ctx cost_limit).
+  Local Notation drive_sbufs := (SchedulerSimulationLemmas.drive_sbufs ctx cost_limit).
+  Local Notation drive_strobe_expr := (SchedulerSimulationLemmas.drive_strobe_expr ctx cost_limit).
+  Local Notation drive_value_expr := (SchedulerSimulationLemmas.drive_value_expr ctx cost_limit).
+  Local Notation drive_value_expr_split := (SchedulerSimulationLemmas.drive_value_expr_split ctx cost_limit).
+  Local Notation drive_vfirst := (SchedulerSimulationLemmas.drive_vfirst ctx cost_limit).
+  Local Notation emit_eq := (SchedulerSimulationLemmas.emit_eq ctx).
+  Local Notation emit_eval := (SchedulerSimulationLemmas.emit_eval ctx).
+  Local Notation emit_fg := (SchedulerSimulationLemmas.emit_fg ctx).
+  Local Notation emit_fspec := (SchedulerSimulationLemmas.emit_fspec ctx).
+  Local Notation emit_full := (SchedulerSimulationLemmas.emit_full ctx).
+  Local Notation emit_gmono := (SchedulerSimulationLemmas.emit_gmono ctx).
+  Local Notation emit_pos := (SchedulerSimulationLemmas.emit_pos ctx).
+  Local Notation emit_red := (SchedulerSimulationLemmas.emit_red ctx).
+  Local Notation emit_spec := (SchedulerSimulationLemmas.emit_spec ctx).
+  Local Notation emit_sz := (SchedulerSimulationLemmas.emit_sz ctx).
+  Local Notation emit_var_node_at := (SchedulerSimulationLemmas.emit_var_node_at ctx cost_limit).
+  Local Notation emit_vm := (SchedulerSimulationLemmas.emit_vm ctx).
+  Local Notation emitted_node_at := (SchedulerSimulationLemmas.emitted_node_at ctx cost_limit).
+  Local Notation ensure_var_eq := (SchedulerSimulationLemmas.ensure_var_eq ctx).
+  Local Notation ensure_var_fg := (SchedulerSimulationLemmas.ensure_var_fg ctx).
+  Local Notation ensure_var_full := (SchedulerSimulationLemmas.ensure_var_full ctx).
+  Local Notation ensure_var_gmono := (SchedulerSimulationLemmas.ensure_var_gmono ctx).
+  Local Notation ensure_var_graph := (SchedulerSimulationLemmas.ensure_var_graph ctx).
+  Local Notation ensure_var_node_at := (SchedulerSimulationLemmas.ensure_var_node_at ctx cost_limit).
+  Local Notation ensure_var_pos := (SchedulerSimulationLemmas.ensure_var_pos ctx).
+  Local Notation ensure_var_spec := (SchedulerSimulationLemmas.ensure_var_spec ctx).
+  Local Notation ensure_var_sz := (SchedulerSimulationLemmas.ensure_var_sz ctx).
+  Local Notation ensure_var_vm_head := (SchedulerSimulationLemmas.ensure_var_vm_head ctx).
+  Local Notation ensure_var_vm_inv := (SchedulerSimulationLemmas.ensure_var_vm_inv ctx).
+  Local Notation ensure_var_vm_keep := (SchedulerSimulationLemmas.ensure_var_vm_keep ctx).
+  Local Notation ensure_var_vmap := (SchedulerSimulationLemmas.ensure_var_vmap ctx).
+  Local Notation espec := (SchedulerSimulationLemmas.espec ctx).
+  Local Notation espec_ospec := (SchedulerSimulationLemmas.espec_ospec ctx).
+  Local Notation espec_trans := (SchedulerSimulationLemmas.espec_trans ctx).
+  Local Notation eval1_const1 := (SchedulerSimulationLemmas.eval1_const1 ctx cost_limit).
+  Local Notation eval1_svar_v := (SchedulerSimulationLemmas.eval1_svar_v ctx cost_limit).
+  Local Notation eval_convert_ivar := (SchedulerSimulationLemmas.eval_convert_ivar ctx cost_limit).
+  Local Notation eval_convert_ovar := (SchedulerSimulationLemmas.eval_convert_ovar ctx cost_limit).
+  Local Notation eval_convert_svar := (SchedulerSimulationLemmas.eval_convert_svar ctx cost_limit).
+  Local Notation eval_pulse_fold_hold := (SchedulerSimulationLemmas.eval_pulse_fold_hold ctx cost_limit).
+  Local Notation eval_pulse_fold_take := (SchedulerSimulationLemmas.eval_pulse_fold_take ctx cost_limit).
+  Local Notation eval_stall_start_zero := (SchedulerSimulationLemmas.eval_stall_start_zero ctx cost_limit).
+  Local Notation eval_svar_same := (SchedulerSimulationLemmas.eval_svar_same ctx cost_limit).
+  Local Notation exists_act_idx := (SchedulerSimulationLemmas.exists_act_idx ctx cost_limit).
+  Local Notation exports := (SchedulerSimulationLemmas.exports ctx cost_limit).
+  Local Notation final_ops_concrete := (SchedulerSimulationLemmas.final_ops_concrete ctx cost_limit).
+  Local Notation final_ops_no_ovar := (SchedulerSimulationLemmas.final_ops_no_ovar ctx cost_limit).
+  Local Notation final_ops_no_svar := (SchedulerSimulationLemmas.final_ops_no_svar ctx cost_limit).
+  Local Notation final_ops_ovar_in := (SchedulerSimulationLemmas.final_ops_ovar_in ctx cost_limit).
+  Local Notation final_ops_svar_in := (SchedulerSimulationLemmas.final_ops_svar_in ctx cost_limit).
+  Local Notation find_ge_desc := (SchedulerSimulationLemmas.find_ge_desc ctx).
+  Local Notation find_out_update_app_None := (SchedulerSimulationLemmas.find_out_update_app_None ctx cost_limit).
+  Local Notation find_out_update_app_r_None := (SchedulerSimulationLemmas.find_out_update_app_r_None ctx cost_limit).
+  Local Notation find_out_update_not_in := (SchedulerSimulationLemmas.find_out_update_not_in ctx cost_limit).
+  Local Notation find_out_update_not_in_raw := (SchedulerSimulationLemmas.find_out_update_not_in_raw ctx cost_limit).
+  Local Notation find_out_update_output_head := (SchedulerSimulationLemmas.find_out_update_output_head ctx cost_limit).
+  Local Notation find_out_update_skip_cons := (SchedulerSimulationLemmas.find_out_update_skip_cons ctx cost_limit).
+  Local Notation find_out_update_skip_head := (SchedulerSimulationLemmas.find_out_update_skip_head ctx cost_limit).
+  Local Notation find_out_update_unique_output := (SchedulerSimulationLemmas.find_out_update_unique_output ctx cost_limit).
+  Local Notation find_st_update_app_r_None := (SchedulerSimulationLemmas.find_st_update_app_r_None ctx cost_limit).
+  Local Notation find_st_update_assign_head := (SchedulerSimulationLemmas.find_st_update_assign_head ctx cost_limit).
+  Local Notation find_st_update_map_init := (SchedulerSimulationLemmas.find_st_update_map_init ctx cost_limit).
+  Local Notation find_st_update_not_in := (SchedulerSimulationLemmas.find_st_update_not_in ctx cost_limit).
+  Local Notation find_st_update_not_in_raw := (SchedulerSimulationLemmas.find_st_update_not_in_raw ctx cost_limit).
+  Local Notation find_st_update_skip_cons := (SchedulerSimulationLemmas.find_st_update_skip_cons ctx cost_limit).
+  Local Notation find_st_update_skip_head := (SchedulerSimulationLemmas.find_st_update_skip_head ctx cost_limit).
+  Local Notation find_st_update_unique_assign := (SchedulerSimulationLemmas.find_st_update_unique_assign ctx cost_limit).
+  Local Notation fold_valid_and_ext := (SchedulerSimulationLemmas.fold_valid_and_ext ctx cost_limit).
+  Local Notation fold_valid_and_ones := (SchedulerSimulationLemmas.fold_valid_and_ones ctx cost_limit).
+  Local Notation fspec := (SchedulerSimulationLemmas.fspec ctx).
+  Local Notation fspec_seq := (SchedulerSimulationLemmas.fspec_seq ctx).
+  Local Notation g_bind_at := (SchedulerSimulationLemmas.g_bind_at ctx).
+  Local Notation get_state_red := (SchedulerSimulationLemmas.get_state_red ctx).
+  Local Notation get_var_cases := (SchedulerSimulationLemmas.get_var_cases ctx).
+  Local Notation get_var_fg := (SchedulerSimulationLemmas.get_var_fg ctx).
+  Local Notation get_var_fspec := (SchedulerSimulationLemmas.get_var_fspec ctx).
+  Local Notation get_var_full := (SchedulerSimulationLemmas.get_var_full ctx).
+  Local Notation get_var_pos := (SchedulerSimulationLemmas.get_var_pos ctx).
+  Local Notation get_var_spec := (SchedulerSimulationLemmas.get_var_spec ctx).
+  Local Notation get_var_sz := (SchedulerSimulationLemmas.get_var_sz ctx).
+  Local Notation getenv_maps_from := (SchedulerSimulationLemmas.getenv_maps_from ctx cost_limit).
+  Local Notation gmono := (SchedulerSimulationLemmas.gmono ctx).
+  Local Notation gmono_refl := (SchedulerSimulationLemmas.gmono_refl ctx).
+  Local Notation gmono_trans := (SchedulerSimulationLemmas.gmono_trans ctx).
+  Local Notation gne_gmono := (SchedulerSimulationLemmas.gne_gmono ctx).
+  Local Notation gpos := (SchedulerSimulationLemmas.gpos ctx).
+  Local Notation graph_nid_has_cost := (SchedulerSimulationLemmas.graph_nid_has_cost ctx cost_limit).
+  Local Notation graph_position_has_target_cycle := (SchedulerSimulationLemmas.graph_position_has_target_cycle ctx cost_limit).
+  Local Notation grows := (SchedulerSimulationLemmas.grows ctx).
+  Local Notation grows_bind := (SchedulerSimulationLemmas.grows_bind ctx).
+  Local Notation grows_emit := (SchedulerSimulationLemmas.grows_emit ctx).
+  Local Notation grows_get_var := (SchedulerSimulationLemmas.grows_get_var ctx).
+  Local Notation grows_ret := (SchedulerSimulationLemmas.grows_ret ctx).
+  Local Notation gsi_entry_at := (SchedulerSimulationLemmas.gsi_entry_at ctx).
+  Local Notation gsi_idx_at := (SchedulerSimulationLemmas.gsi_idx_at ctx).
+  Local Notation gsi_idx_bound := (SchedulerSimulationLemmas.gsi_idx_bound ctx).
+  Local Notation gsi_length := (SchedulerSimulationLemmas.gsi_length ctx).
+  Local Notation gsi_map_fst := (SchedulerSimulationLemmas.gsi_map_fst ctx).
+  Local Notation gsi_size := (SchedulerSimulationLemmas.gsi_size ctx).
+  Local Notation guard_expr_fold := (SchedulerSimulationLemmas.guard_expr_fold ctx cost_limit).
+  Local Notation guard_expr_zero := (SchedulerSimulationLemmas.guard_expr_zero ctx cost_limit).
+  Local Notation guard_lit := (SchedulerSimulationLemmas.guard_lit ctx cost_limit).
+  Local Notation guards_disjoint_excl := (SchedulerSimulationLemmas.guards_disjoint_excl ctx cost_limit).
+  Local Notation head_drives := (SchedulerSimulationLemmas.head_drives ctx).
+  Local Notation head_drives_cons := (SchedulerSimulationLemmas.head_drives_cons ctx).
+  Local Notation head_drives_emit := (SchedulerSimulationLemmas.head_drives_emit ctx).
+  Local Notation head_drives_mono := (SchedulerSimulationLemmas.head_drives_mono ctx).
+  Local Notation ids_desc := (SchedulerSimulationLemmas.ids_desc ctx).
+  Local Notation ids_desc_cons := (SchedulerSimulationLemmas.ids_desc_cons ctx).
+  Local Notation ids_desc_hd := (SchedulerSimulationLemmas.ids_desc_hd ctx).
+  Local Notation ids_desc_tl := (SchedulerSimulationLemmas.ids_desc_tl ctx).
+  Local Notation in_graph_fwd := (SchedulerSimulationLemmas.in_graph_fwd ctx cost_limit).
+  Local Notation in_var_node_at := (SchedulerSimulationLemmas.in_var_node_at ctx cost_limit).
+  Local Notation is_sample_of := (SchedulerSimulationLemmas.is_sample_of ctx cost_limit).
+  Local Notation sample_en_of := (SchedulerSimulationLemmas.sample_en_of ctx cost_limit).
+  Local Notation join_gate_zero_of_arg := (SchedulerSimulationLemmas.join_gate_zero_of_arg ctx cost_limit).
+  Local Notation join_has_stall := (SchedulerSimulationLemmas.join_has_stall ctx cost_limit).
+  Local Notation join_kind := (SchedulerSimulationLemmas.join_kind ctx).
+  Local Notation join_nid_succ := (SchedulerSimulationLemmas.join_nid_succ ctx cost_limit).
+  Local Notation join_pendings_calls := (SchedulerSimulationLemmas.join_pendings_calls ctx).
+  Local Notation join_pendings_espec := (SchedulerSimulationLemmas.join_pendings_espec ctx).
+  Local Notation join_pendings_fg := (SchedulerSimulationLemmas.join_pendings_fg ctx).
+  Local Notation join_pendings_full := (SchedulerSimulationLemmas.join_pendings_full ctx).
+  Local Notation join_pendings_g := (SchedulerSimulationLemmas.join_pendings_g ctx).
+  Local Notation join_pendings_grows := (SchedulerSimulationLemmas.join_pendings_grows ctx).
+  Local Notation join_pendings_js := (SchedulerSimulationLemmas.join_pendings_js ctx).
+  Local Notation join_pendings_jst := (SchedulerSimulationLemmas.join_pendings_jst ctx).
+  Local Notation join_pendings_leaves := (SchedulerSimulationLemmas.join_pendings_leaves ctx).
+  Local Notation join_pendings_none := (SchedulerSimulationLemmas.join_pendings_none ctx).
+  Local Notation join_pendings_pos := (SchedulerSimulationLemmas.join_pendings_pos ctx).
+  Local Notation join_pendings_samples := (SchedulerSimulationLemmas.join_pendings_samples ctx).
+  Local Notation join_pendings_succ := (SchedulerSimulationLemmas.join_pendings_succ ctx).
+  Local Notation join_pendings_vm_eq := (SchedulerSimulationLemmas.join_pendings_vm_eq ctx).
+  Local Notation join_waits_on_sample := (SchedulerSimulationLemmas.join_waits_on_sample ctx cost_limit).
+  Local Notation joins_sequence := (SchedulerSimulationLemmas.joins_sequence ctx).
+  Local Notation joins_sequence_build_dfg := (SchedulerSimulationLemmas.joins_sequence_build_dfg ctx cost_limit).
+  Local Notation joins_sequence_cons := (SchedulerSimulationLemmas.joins_sequence_cons ctx).
+  Local Notation joins_sequence_emit_comb := (SchedulerSimulationLemmas.joins_sequence_emit_comb ctx).
+  Local Notation joins_sequence_emit_order := (SchedulerSimulationLemmas.joins_sequence_emit_order ctx).
+  Local Notation joins_sequence_emit_other := (SchedulerSimulationLemmas.joins_sequence_emit_other ctx).
+  Local Notation joins_sequence_graph_eq := (SchedulerSimulationLemmas.joins_sequence_graph_eq ctx).
+  Local Notation joins_sequence_rev := (SchedulerSimulationLemmas.joins_sequence_rev ctx).
+  Local Notation joins_stalled := (SchedulerSimulationLemmas.joins_stalled ctx).
+  Local Notation joins_stalled_build_dfg := (SchedulerSimulationLemmas.joins_stalled_build_dfg ctx cost_limit).
+  Local Notation joins_stalled_cons_nonjoin := (SchedulerSimulationLemmas.joins_stalled_cons_nonjoin ctx).
+  Local Notation joins_stalled_rev := (SchedulerSimulationLemmas.joins_stalled_rev ctx).
+  Local Notation js_bind_at := (SchedulerSimulationLemmas.js_bind_at ctx).
+  Local Notation js_call_head := (SchedulerSimulationLemmas.js_call_head ctx).
+  Local Notation jst_node := (SchedulerSimulationLemmas.jst_node ctx).
+  Local Notation jst_node_cons := (SchedulerSimulationLemmas.jst_node_cons ctx).
+  Local Notation jst_node_mono := (SchedulerSimulationLemmas.jst_node_mono ctx).
+  Local Notation last_sample_found := (SchedulerSimulationLemmas.last_sample_found ctx).
+  Local Notation last_sample_max := (SchedulerSimulationLemmas.last_sample_max ctx).
+  Local Notation last_sample_nidwf := (SchedulerSimulationLemmas.last_sample_nidwf ctx).
+  Local Notation last_sample_pos := (SchedulerSimulationLemmas.last_sample_pos ctx).
+  Local Notation last_sample_spec := (SchedulerSimulationLemmas.last_sample_spec ctx).
+  Local Notation later_drive_gate := (SchedulerSimulationLemmas.later_drive_gate ctx cost_limit).
+  Local Notation later_drive_gate_full := (SchedulerSimulationLemmas.later_drive_gate_full ctx cost_limit).
+  Local Notation max_cycle := (SchedulerSimulationLemmas.max_cycle ctx cost_limit).
+  Local Notation merge_key_basic := (SchedulerSimulationLemmas.merge_key_basic ctx).
+  Local Notation merge_key_fg := (SchedulerSimulationLemmas.merge_key_fg ctx).
+  Local Notation merge_key_full := (SchedulerSimulationLemmas.merge_key_full ctx).
+  Local Notation merge_key_pos := (SchedulerSimulationLemmas.merge_key_pos ctx).
+  Local Notation merge_key_spec := (SchedulerSimulationLemmas.merge_key_spec ctx).
+  Local Notation merge_loop_cover := (SchedulerSimulationLemmas.merge_loop_cover ctx).
+  Local Notation merge_loop_fg := (SchedulerSimulationLemmas.merge_loop_fg ctx).
+  Local Notation merge_loop_full := (SchedulerSimulationLemmas.merge_loop_full ctx).
+  Local Notation merge_loop_gmono := (SchedulerSimulationLemmas.merge_loop_gmono ctx).
+  Local Notation merge_loop_pos := (SchedulerSimulationLemmas.merge_loop_pos ctx).
+  Local Notation merge_loop_spec := (SchedulerSimulationLemmas.merge_loop_spec ctx).
+  Local Notation merge_maps_fg := (SchedulerSimulationLemmas.merge_maps_fg ctx).
+  Local Notation merge_maps_full := (SchedulerSimulationLemmas.merge_maps_full ctx).
+  Local Notation merge_maps_pos := (SchedulerSimulationLemmas.merge_maps_pos ctx).
+  Local Notation merge_maps_spec := (SchedulerSimulationLemmas.merge_maps_spec ctx).
+  Local Notation nid_seq := (SchedulerSimulationLemmas.nid_seq ctx).
+  Local Notation nid_seq_bound := (SchedulerSimulationLemmas.nid_seq_bound ctx).
+  Local Notation nid_seq_ids_desc := (SchedulerSimulationLemmas.nid_seq_ids_desc ctx).
+  Local Notation nids_bounded := (SchedulerSimulationLemmas.nids_bounded ctx).
+  Local Notation nids_bounded_cons := (SchedulerSimulationLemmas.nids_bounded_cons ctx).
+  Local Notation nidwf := (SchedulerSimulationLemmas.nidwf ctx).
+  Local Notation nidwf_gmono := (SchedulerSimulationLemmas.nidwf_gmono ctx).
+  Local Notation no_stall_on_joined := (SchedulerSimulationLemmas.no_stall_on_joined ctx cost_limit).
+  Local Notation node_args_range := (SchedulerSimulationLemmas.node_args_range ctx cost_limit).
+  Local Notation node_args_sz := (SchedulerSimulationLemmas.node_args_sz ctx).
+  Local Notation node_args_sz_gmono := (SchedulerSimulationLemmas.node_args_sz_gmono ctx).
+  Local Notation node_at_nid := (SchedulerSimulationLemmas.node_at_nid ctx cost_limit).
+  Local Notation node_cycle := (SchedulerSimulationLemmas.node_cycle ctx cost_limit).
+  Local Notation node_cycle_is_div := (SchedulerSimulationLemmas.node_cycle_is_div ctx cost_limit).
+  Local Notation node_cycle_le_max_cycle := (SchedulerSimulationLemmas.node_cycle_le_max_cycle ctx cost_limit).
+  Local Notation node_nid_at := (SchedulerSimulationLemmas.node_nid_at ctx cost_limit).
+  Local Notation node_op := (SchedulerSimulationLemmas.node_op ctx cost_limit).
+  Local Notation node_op_not_empty := (SchedulerSimulationLemmas.node_op_not_empty ctx cost_limit).
+  Local Notation node_op_range := (SchedulerSimulationLemmas.node_op_range ctx cost_limit).
+  Local Notation node_rank := (SchedulerSimulationLemmas.node_rank ctx cost_limit).
+  Local Notation node_rank_child := (SchedulerSimulationLemmas.node_rank_child ctx cost_limit).
+  Local Notation node_rank_le := (SchedulerSimulationLemmas.node_rank_le ctx cost_limit).
+  Local Notation node_rank_mono := (SchedulerSimulationLemmas.node_rank_mono ctx cost_limit).
+  Local Notation node_rank_mono_le := (SchedulerSimulationLemmas.node_rank_mono_le ctx cost_limit).
+  Local Notation node_rank_stall := (SchedulerSimulationLemmas.node_rank_stall ctx cost_limit).
+  Local Notation node_ref_expr := (SchedulerSimulationLemmas.node_ref_expr ctx cost_limit).
+  Local Notation node_ref_valid := (SchedulerSimulationLemmas.node_ref_valid ctx cost_limit).
+  Local Notation not_sample_not_in_sample_bufs := (SchedulerSimulationLemmas.not_sample_not_in_sample_bufs ctx cost_limit).
+  Local Notation nre_binary := (SchedulerSimulationLemmas.nre_binary ctx cost_limit).
+  Local Notation nre_const := (SchedulerSimulationLemmas.nre_const ctx cost_limit).
+  Local Notation nre_drive := (SchedulerSimulationLemmas.nre_drive ctx cost_limit).
+  Local Notation nre_fuel := (SchedulerSimulationLemmas.nre_fuel ctx cost_limit).
+  Local Notation nre_input := (SchedulerSimulationLemmas.nre_input ctx cost_limit).
+  Local Notation nre_ovar := (SchedulerSimulationLemmas.nre_ovar ctx cost_limit).
+  Local Notation nre_phi := (SchedulerSimulationLemmas.nre_phi ctx cost_limit).
+  Local Notation nre_resize := (SchedulerSimulationLemmas.nre_resize ctx cost_limit).
+  Local Notation nre_sample := (SchedulerSimulationLemmas.nre_sample ctx cost_limit).
+  Local Notation nre_stall := (SchedulerSimulationLemmas.nre_stall ctx cost_limit).
+  Local Notation nre_svar := (SchedulerSimulationLemmas.nre_svar ctx cost_limit).
+  Local Notation nre_unary := (SchedulerSimulationLemmas.nre_unary ctx cost_limit).
+  Local Notation nre_unfold := (SchedulerSimulationLemmas.nre_unfold ctx cost_limit).
+  Local Notation nval := (SchedulerSimulationLemmas.nval ctx cost_limit).
+  Local Notation nval_fresh_ovar := (SchedulerSimulationLemmas.nval_fresh_ovar ctx cost_limit).
+  Local Notation nval_fresh_svar := (SchedulerSimulationLemmas.nval_fresh_svar ctx cost_limit).
+  Local Notation nval_var_ovar := (SchedulerSimulationLemmas.nval_var_ovar ctx cost_limit).
+  Local Notation nval_var_svar := (SchedulerSimulationLemmas.nval_var_svar ctx cost_limit).
+  Local Notation op_assigns_st := (SchedulerSimulationLemmas.op_assigns_st ctx cost_limit).
+  Local Notation op_writes_out := (SchedulerSimulationLemmas.op_writes_out ctx cost_limit).
+  Local Notation ospec := (SchedulerSimulationLemmas.ospec ctx).
+  Local Notation ospec_trans := (SchedulerSimulationLemmas.ospec_trans ctx).
+  Local Notation ospecv := (SchedulerSimulationLemmas.ospecv ctx).
+  Local Notation pending_samples_covers := (SchedulerSimulationLemmas.pending_samples_covers ctx).
+  Local Notation pending_samples_nidwf := (SchedulerSimulationLemmas.pending_samples_nidwf ctx).
+  Local Notation pending_samples_nidwf' := (SchedulerSimulationLemmas.pending_samples_nidwf' ctx).
+  Local Notation pending_samples_pos := (SchedulerSimulationLemmas.pending_samples_pos ctx).
+  Local Notation pending_samples_spec := (SchedulerSimulationLemmas.pending_samples_spec ctx).
+  Local Notation pends := (SchedulerSimulationLemmas.pends ctx).
+  Local Notation pends_cons := (SchedulerSimulationLemmas.pends_cons ctx).
+  Local Notation pends_join := (SchedulerSimulationLemmas.pends_join ctx).
+  Local Notation pends_mono := (SchedulerSimulationLemmas.pends_mono ctx).
+  Local Notation pends_not_drive := (SchedulerSimulationLemmas.pends_not_drive ctx cost_limit).
+  Local Notation pends_not_joined_drive := (SchedulerSimulationLemmas.pends_not_joined_drive ctx cost_limit).
+  Local Notation pends_samp := (SchedulerSimulationLemmas.pends_samp ctx).
+  Local Notation pleaf := (SchedulerSimulationLemmas.pleaf ctx).
+  Local Notation pleaf_cons := (SchedulerSimulationLemmas.pleaf_cons ctx).
+  Local Notation pleaf_here := (SchedulerSimulationLemmas.pleaf_here ctx).
+  Local Notation pleaf_left := (SchedulerSimulationLemmas.pleaf_left ctx).
+  Local Notation pleaf_mono := (SchedulerSimulationLemmas.pleaf_mono ctx).
+  Local Notation pleaf_right := (SchedulerSimulationLemmas.pleaf_right ctx).
+  Local Notation preserves_all := (SchedulerSimulationLemmas.preserves_all ctx).
+  Local Notation preserves_all_bind := (SchedulerSimulationLemmas.preserves_all_bind ctx).
+  Local Notation preserves_all_emit := (SchedulerSimulationLemmas.preserves_all_emit ctx).
+  Local Notation preserves_all_ensure_var := (SchedulerSimulationLemmas.preserves_all_ensure_var ctx).
+  Local Notation preserves_all_get_var := (SchedulerSimulationLemmas.preserves_all_get_var ctx).
+  Local Notation preserves_all_merge_key := (SchedulerSimulationLemmas.preserves_all_merge_key ctx).
+  Local Notation preserves_all_merge_loop := (SchedulerSimulationLemmas.preserves_all_merge_loop ctx).
+  Local Notation preserves_all_ret := (SchedulerSimulationLemmas.preserves_all_ret ctx).
+  Local Notation preserves_all_set_var := (SchedulerSimulationLemmas.preserves_all_set_var ctx).
+  Local Notation preserves_g := (SchedulerSimulationLemmas.preserves_g ctx).
+  Local Notation preserves_g_bind := (SchedulerSimulationLemmas.preserves_g_bind ctx).
+  Local Notation preserves_g_emit := (SchedulerSimulationLemmas.preserves_g_emit ctx).
+  Local Notation preserves_g_ensure_var := (SchedulerSimulationLemmas.preserves_g_ensure_var ctx).
+  Local Notation preserves_g_get_var := (SchedulerSimulationLemmas.preserves_g_get_var ctx).
+  Local Notation preserves_g_merge_key := (SchedulerSimulationLemmas.preserves_g_merge_key ctx).
+  Local Notation preserves_g_merge_loop := (SchedulerSimulationLemmas.preserves_g_merge_loop ctx).
+  Local Notation preserves_g_merge_maps := (SchedulerSimulationLemmas.preserves_g_merge_maps ctx).
+  Local Notation preserves_g_ret := (SchedulerSimulationLemmas.preserves_g_ret ctx).
+  Local Notation preserves_g_set_var := (SchedulerSimulationLemmas.preserves_g_set_var ctx).
+  Local Notation preserves_js := (SchedulerSimulationLemmas.preserves_js ctx).
+  Local Notation preserves_js_bind := (SchedulerSimulationLemmas.preserves_js_bind ctx).
+  Local Notation preserves_js_bind_st := (SchedulerSimulationLemmas.preserves_js_bind_st ctx).
+  Local Notation preserves_js_emit := (SchedulerSimulationLemmas.preserves_js_emit ctx).
+  Local Notation preserves_js_ensure_var := (SchedulerSimulationLemmas.preserves_js_ensure_var ctx).
+  Local Notation preserves_js_get_state := (SchedulerSimulationLemmas.preserves_js_get_state ctx).
+  Local Notation preserves_js_get_var := (SchedulerSimulationLemmas.preserves_js_get_var ctx).
+  Local Notation preserves_js_merge_key := (SchedulerSimulationLemmas.preserves_js_merge_key ctx).
+  Local Notation preserves_js_merge_loop := (SchedulerSimulationLemmas.preserves_js_merge_loop ctx).
+  Local Notation preserves_js_merge_maps := (SchedulerSimulationLemmas.preserves_js_merge_maps ctx).
+  Local Notation preserves_js_ret := (SchedulerSimulationLemmas.preserves_js_ret ctx).
+  Local Notation preserves_js_set_var := (SchedulerSimulationLemmas.preserves_js_set_var ctx).
+  Local Notation put_state_red := (SchedulerSimulationLemmas.put_state_red ctx).
+  Local Notation read_var_cases := (SchedulerSimulationLemmas.read_var_cases ctx).
+  Local Notation read_var_vmap := (SchedulerSimulationLemmas.read_var_vmap ctx).
+  Local Notation require_buffer_node_range := (SchedulerSimulationLemmas.require_buffer_node_range ctx cost_limit).
+  Local Notation reset_states_has_v := (SchedulerSimulationLemmas.reset_states_has_v ctx cost_limit).
+  Local Notation reset_states_not_done := (SchedulerSimulationLemmas.reset_states_not_done ctx cost_limit).
+  Local Notation reset_states_not_svar := (SchedulerSimulationLemmas.reset_states_not_svar ctx cost_limit).
+  Local Notation reset_updates_no_done := (SchedulerSimulationLemmas.reset_updates_no_done ctx cost_limit).
+  Local Notation reset_updates_no_out := (SchedulerSimulationLemmas.reset_updates_no_out ctx cost_limit).
+  Local Notation reset_updates_no_svar := (SchedulerSimulationLemmas.reset_updates_no_svar ctx cost_limit).
+  Local Notation reset_updates_v := (SchedulerSimulationLemmas.reset_updates_v ctx cost_limit).
+  Local Notation ret_fspec := (SchedulerSimulationLemmas.ret_fspec ctx).
+  Local Notation ret_full := (SchedulerSimulationLemmas.ret_full ctx).
+  Local Notation ret_pos := (SchedulerSimulationLemmas.ret_pos ctx).
+  Local Notation run_n := (SchedulerSimulationLemmas.run_n ctx cost_limit).
+  Local Notation run_preserves_ovar := (SchedulerSimulationLemmas.run_preserves_ovar ctx cost_limit).
+  Local Notation run_preserves_svar := (SchedulerSimulationLemmas.run_preserves_svar ctx cost_limit).
+  Local Notation sample_before_drive := (SchedulerSimulationLemmas.sample_before_drive ctx cost_limit).
+  Local Notation sample_buffer_frozen := (SchedulerSimulationLemmas.sample_buffer_frozen ctx cost_limit).
+  Local Notation sample_bufs := (SchedulerSimulationLemmas.sample_bufs ctx cost_limit).
+  Local Notation sample_chain_between := (SchedulerSimulationLemmas.sample_chain_between ctx cost_limit).
+  Local Notation sample_chain_no_drive := (SchedulerSimulationLemmas.sample_chain_no_drive ctx cost_limit).
+  Local Notation sample_chain_no_sample := (SchedulerSimulationLemmas.sample_chain_no_sample ctx cost_limit).
+  Local Notation sample_drive := (SchedulerSimulationLemmas.sample_drive ctx cost_limit).
+  Local Notation sample_drive_head := (SchedulerSimulationLemmas.sample_drive_head ctx cost_limit).
+  Local Notation sample_drive_head_op := (SchedulerSimulationLemmas.sample_drive_head_op ctx cost_limit).
+  Local Notation sample_drive_head_shape := (SchedulerSimulationLemmas.sample_drive_head_shape ctx cost_limit).
+  Local Notation sample_drive_in_drive_nodes := (SchedulerSimulationLemmas.sample_drive_in_drive_nodes ctx cost_limit).
+  Local Notation sample_drive_lt := (SchedulerSimulationLemmas.sample_drive_lt ctx cost_limit).
+  Local Notation sample_drive_op := (SchedulerSimulationLemmas.sample_drive_op ctx cost_limit).
+  Local Notation sample_drive_req := (SchedulerSimulationLemmas.sample_drive_req ctx cost_limit).
+  Local Notation sample_gate_cases := (SchedulerSimulationLemmas.sample_gate_cases ctx cost_limit).
+  Local Notation sample_gate_is_stall_reg := (SchedulerSimulationLemmas.sample_gate_is_stall_reg ctx cost_limit).
+  Local Notation sample_has_drive := (SchedulerSimulationLemmas.sample_has_drive ctx cost_limit).
+  Local Notation sample_index := (SchedulerSimulationLemmas.sample_index ctx cost_limit).
+  Local Notation sample_is_buffered := (SchedulerSimulationLemmas.sample_is_buffered ctx cost_limit).
+  Local Notation sample_nid_succ := (SchedulerSimulationLemmas.sample_nid_succ ctx cost_limit).
+  Local Notation sample_node_in_range := (SchedulerSimulationLemmas.sample_node_in_range ctx cost_limit).
+  Local Notation sample_ref_is_register := (SchedulerSimulationLemmas.sample_ref_is_register ctx cost_limit).
+  Local Notation sample_req := (SchedulerSimulationLemmas.sample_req ctx cost_limit).
+  Local Notation sample_req_head := (SchedulerSimulationLemmas.sample_req_head ctx cost_limit).
+  Local Notation sample_tok_is_stall := (SchedulerSimulationLemmas.sample_tok_is_stall ctx cost_limit).
+  Local Notation samples_driven := (SchedulerSimulationLemmas.samples_driven ctx).
+  Local Notation samples_driven_build_dfg := (SchedulerSimulationLemmas.samples_driven_build_dfg ctx cost_limit).
+  Local Notation samples_driven_cons2 := (SchedulerSimulationLemmas.samples_driven_cons2 ctx).
+  Local Notation samples_driven_cons_nonsample := (SchedulerSimulationLemmas.samples_driven_cons_nonsample ctx).
+  Local Notation samples_driven_rev := (SchedulerSimulationLemmas.samples_driven_rev ctx).
+  Local Notation samples_stalled := (SchedulerSimulationLemmas.samples_stalled ctx).
+  Local Notation samples_stalled_build_dfg := (SchedulerSimulationLemmas.samples_stalled_build_dfg ctx cost_limit).
+  Local Notation samples_stalled_cons2 := (SchedulerSimulationLemmas.samples_stalled_cons2 ctx).
+  Local Notation samples_stalled_cons_nonsample := (SchedulerSimulationLemmas.samples_stalled_cons_nonsample ctx).
+  Local Notation samples_stalled_rev := (SchedulerSimulationLemmas.samples_stalled_rev ctx).
+  Local Notation samples_within := (SchedulerSimulationLemmas.samples_within ctx).
+  Local Notation sched_input := (SchedulerSimulationLemmas.sched_input ctx cost_limit).
+  Local Notation sched_step := (SchedulerSimulationLemmas.sched_step ctx cost_limit).
+  Local Notation sched_step_done := (SchedulerSimulationLemmas.sched_step_done ctx cost_limit).
+  Local Notation sched_step_done_ovar := (SchedulerSimulationLemmas.sched_step_done_ovar ctx cost_limit).
+  Local Notation sched_step_done_ovar_untouched := (SchedulerSimulationLemmas.sched_step_done_ovar_untouched ctx cost_limit).
+  Local Notation sched_step_done_set := (SchedulerSimulationLemmas.sched_step_done_set ctx cost_limit).
+  Local Notation sched_step_done_svar := (SchedulerSimulationLemmas.sched_step_done_svar ctx cost_limit).
+  Local Notation sched_step_done_svar_untouched := (SchedulerSimulationLemmas.sched_step_done_svar_untouched ctx cost_limit).
+  Local Notation sched_step_done_v := (SchedulerSimulationLemmas.sched_step_done_v ctx cost_limit).
+  Local Notation sched_step_done_valid := (SchedulerSimulationLemmas.sched_step_done_valid ctx cost_limit).
+  Local Notation sched_step_eq := (SchedulerSimulationLemmas.sched_step_eq ctx cost_limit).
+  Local Notation sched_step_getout := (SchedulerSimulationLemmas.sched_step_getout ctx cost_limit).
+  Local Notation sched_step_getst := (SchedulerSimulationLemmas.sched_step_getst ctx cost_limit).
+  Local Notation sched_step_preserves_ovar := (SchedulerSimulationLemmas.sched_step_preserves_ovar ctx cost_limit).
+  Local Notation sched_step_preserves_svar := (SchedulerSimulationLemmas.sched_step_preserves_svar ctx cost_limit).
+  Local Notation scheduler_reaches_done := (SchedulerSimulationLemmas.scheduler_reaches_done ctx cost_limit).
+  Local Notation seq_full := (SchedulerSimulationLemmas.seq_full ctx).
+  Local Notation seq_pos := (SchedulerSimulationLemmas.seq_pos ctx).
+  Local Notation seq_sz := (SchedulerSimulationLemmas.seq_sz ctx).
+  Local Notation set_var_fg := (SchedulerSimulationLemmas.set_var_fg ctx).
+  Local Notation set_var_full := (SchedulerSimulationLemmas.set_var_full ctx).
+  Local Notation set_var_graph := (SchedulerSimulationLemmas.set_var_graph ctx).
+  Local Notation set_var_ospecv := (SchedulerSimulationLemmas.set_var_ospecv ctx).
+  Local Notation set_var_pos := (SchedulerSimulationLemmas.set_var_pos ctx).
+  Local Notation set_var_spec := (SchedulerSimulationLemmas.set_var_spec ctx).
+  Local Notation set_var_vm_head := (SchedulerSimulationLemmas.set_var_vm_head ctx).
+  Local Notation set_var_vm_inv := (SchedulerSimulationLemmas.set_var_vm_inv ctx).
+  Local Notation set_var_vm_inv2 := (SchedulerSimulationLemmas.set_var_vm_inv2 ctx).
+  Local Notation set_var_vm_keep := (SchedulerSimulationLemmas.set_var_vm_keep ctx).
+  Local Notation settle_bound := (SchedulerSimulationLemmas.settle_bound ctx cost_limit).
+  Local Notation slot_keys_nodup := (SchedulerSimulationLemmas.slot_keys_nodup ctx cost_limit).
+  Local Notation ssucc_build_dfg := (SchedulerSimulationLemmas.ssucc_build_dfg ctx cost_limit).
+  Local Notation stall_cost_gap := (SchedulerSimulationLemmas.stall_cost_gap ctx cost_limit).
+  Local Notation stall_counter_bounded := (SchedulerSimulationLemmas.stall_counter_bounded ctx cost_limit).
+  Local Notation stall_counter_run := (SchedulerSimulationLemmas.stall_counter_run ctx cost_limit).
+  Local Notation stall_counter_step := (SchedulerSimulationLemmas.stall_counter_step ctx cost_limit).
+  Local Notation stall_counter_wide := (SchedulerSimulationLemmas.stall_counter_wide ctx cost_limit).
+  Local Notation stall_gate_walks := (SchedulerSimulationLemmas.stall_gate_walks ctx cost_limit).
+  Local Notation stall_is_buffered := (SchedulerSimulationLemmas.stall_is_buffered ctx cost_limit).
+  Local Notation stall_lat_of := (SchedulerSimulationLemmas.stall_lat_of ctx cost_limit).
+  Local Notation stall_nid_succ := (SchedulerSimulationLemmas.stall_nid_succ ctx cost_limit).
+  Local Notation stall_saturated_step := (SchedulerSimulationLemmas.stall_saturated_step ctx cost_limit).
+  Local Notation stall_valid_next_inv := (SchedulerSimulationLemmas.stall_valid_next_inv ctx cost_limit).
+  Local Notation stall_valid_next_ones := (SchedulerSimulationLemmas.stall_valid_next_ones ctx cost_limit).
+  Local Notation stall_wait_start := (SchedulerSimulationLemmas.stall_wait_start ctx cost_limit).
+  Local Notation stall_weight := (SchedulerSimulationLemmas.stall_weight ctx cost_limit).
+  Local Notation start_rel := (SchedulerSimulationLemmas.start_rel ctx cost_limit).
+  Local Notation succ_arg_node := (SchedulerSimulationLemmas.succ_arg_node ctx).
+  Local Notation succ_args_build_dfg := (SchedulerSimulationLemmas.succ_args_build_dfg ctx cost_limit).
+  Local Notation succ_sample_node := (SchedulerSimulationLemmas.succ_sample_node ctx).
+  Local Notation tfs_get_updates_cons := (SchedulerSimulationLemmas.tfs_get_updates_cons ctx cost_limit).
+  Local Notation valid_and_eval := (SchedulerSimulationLemmas.valid_and_eval ctx cost_limit).
+  Local Notation valid_gates := (SchedulerSimulationLemmas.valid_gates ctx cost_limit).
+  Local Notation valid_if_eval := (SchedulerSimulationLemmas.valid_if_eval ctx cost_limit).
+  Local Notation valid_if_eval_inv := (SchedulerSimulationLemmas.valid_if_eval_inv ctx cost_limit).
+  Local Notation valid_if_eval_sel := (SchedulerSimulationLemmas.valid_if_eval_sel ctx cost_limit).
+  Local Notation valid_refs := (SchedulerSimulationLemmas.valid_refs ctx cost_limit).
+  Local Notation valid_settled := (SchedulerSimulationLemmas.valid_settled ctx cost_limit).
+  Local Notation valid_settled_run := (SchedulerSimulationLemmas.valid_settled_run ctx cost_limit).
+  Local Notation valid_zero_run := (SchedulerSimulationLemmas.valid_zero_run ctx cost_limit).
+  Local Notation validity_monotone_step := (SchedulerSimulationLemmas.validity_monotone_step ctx cost_limit).
+  Local Notation valids_ones_run := (SchedulerSimulationLemmas.valids_ones_run ctx cost_limit).
+  Local Notation var_map_entry_size := (SchedulerSimulationLemmas.var_map_entry_size ctx cost_limit).
+  Local Notation var_map_node_range := (SchedulerSimulationLemmas.var_map_node_range ctx cost_limit).
+  Local Notation var_map_output_has_cost := (SchedulerSimulationLemmas.var_map_output_has_cost ctx cost_limit).
+  Local Notation var_map_snd_is_graph_nid := (SchedulerSimulationLemmas.var_map_snd_is_graph_nid ctx cost_limit).
+  Local Notation var_node_at := (SchedulerSimulationLemmas.var_node_at ctx cost_limit).
+  Local Notation vmg := (SchedulerSimulationLemmas.vmg ctx).
+  Local Notation vreg_nid := (SchedulerSimulationLemmas.vreg_nid ctx cost_limit).
+  Local Notation vreg_nid_in_require_buffer := (SchedulerSimulationLemmas.vreg_nid_in_require_buffer ctx cost_limit).
+  Local Notation vreg_nid_inj := (SchedulerSimulationLemmas.vreg_nid_inj ctx cost_limit).
+  Local Notation vreg_nid_node_range := (SchedulerSimulationLemmas.vreg_nid_node_range ctx cost_limit).
+  Local Notation vreg_nid_of_entry := (SchedulerSimulationLemmas.vreg_nid_of_entry ctx cost_limit).
+  Local Notation wfg := (SchedulerSimulationLemmas.wfg ctx).
+  Local Notation wfg_build_dfg := (SchedulerSimulationLemmas.wfg_build_dfg ctx cost_limit).
+  Local Notation wgmono := (SchedulerSimulationLemmas.wgmono ctx).
+  Local Notation wgmono_refl := (SchedulerSimulationLemmas.wgmono_refl ctx).
+  Local Notation wgmono_trans := (SchedulerSimulationLemmas.wgmono_trans ctx).
+  Local Notation winv := (SchedulerSimulationLemmas.winv ctx).
+  Local Notation wnidwf := (SchedulerSimulationLemmas.wnidwf ctx).
+  Local Notation wnidwf_bound := (SchedulerSimulationLemmas.wnidwf_bound ctx).
+  Local Notation wnidwf_gmono := (SchedulerSimulationLemmas.wnidwf_gmono ctx).
+  Local Notation wsz := (SchedulerSimulationLemmas.wsz ctx).
+  Local Notation wsz_fwd := (SchedulerSimulationLemmas.wsz_fwd ctx cost_limit).
+  Local Notation wsz_gmono := (SchedulerSimulationLemmas.wsz_gmono ctx).
+  Local Notation wsz_node_sz := (SchedulerSimulationLemmas.wsz_node_sz ctx cost_limit).
+  Local Notation wvmg := (SchedulerSimulationLemmas.wvmg ctx).
+  Local Notation wvsz := (SchedulerSimulationLemmas.wvsz ctx).
+  Local Notation wvsz_build_dfg := (SchedulerSimulationLemmas.wvsz_build_dfg ctx cost_limit).
+  Local Notation zeroed_at_start := (SchedulerSimulationLemmas.zeroed_at_start ctx cost_limit).
 
   Local Notation sched := (tfs_schedule ctx cost_limit).
   Local Notation s_var := (tfs_spec_states ctx).
@@ -697,7 +697,7 @@ Section SchedulerSimulation.
     cbn [compile_dfg_expr_aux].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:E;
       [ exfalso; rewrite Hbuf in E; congruence |].
-    cbv beta iota. unfold SchedulerSimulationBase.node_op in Hop. rewrite Hop.
+    cbv beta iota. unfold SchedulerSimulationLemmas.node_op in Hop. rewrite Hop.
     destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                 (build_dfg ctx act) arg bufs).
     reflexivity.
@@ -717,7 +717,7 @@ Section SchedulerSimulation.
     cbn [compile_dfg_expr_aux].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:E;
       [ exfalso; rewrite Hbuf in E; congruence |].
-    cbv beta iota. unfold SchedulerSimulationBase.node_op in Hop. rewrite Hop.
+    cbv beta iota. unfold SchedulerSimulationLemmas.node_op in Hop. rewrite Hop.
     destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                 (build_dfg ctx act) arg bufs).
     reflexivity.
@@ -740,7 +740,7 @@ Section SchedulerSimulation.
     cbn [compile_dfg_expr_aux].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:E;
       [ exfalso; rewrite Hbuf in E; congruence |].
-    cbv beta iota. unfold SchedulerSimulationBase.node_op in Hop. rewrite Hop.
+    cbv beta iota. unfold SchedulerSimulationLemmas.node_op in Hop. rewrite Hop.
     destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                 (build_dfg ctx act) a1 bufs).
     destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx
@@ -771,7 +771,7 @@ Section SchedulerSimulation.
     cbn [Init.Nat.pred]. cbn [compile_dfg_expr_aux].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:E;
       [ exfalso; rewrite Hbuf in E; congruence |].
-    cbv beta iota. unfold SchedulerSimulationBase.node_op in Hop. rewrite Hop.
+    cbv beta iota. unfold SchedulerSimulationLemmas.node_op in Hop. rewrite Hop.
     unfold phi_path. rewrite Hcrit.
     destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                 (build_dfg ctx act) c bufs).
@@ -807,7 +807,7 @@ Section SchedulerSimulation.
     cbn [Init.Nat.pred]. cbn [compile_dfg_expr_aux].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:E;
       [ exfalso; rewrite Hbuf in E; congruence |].
-    cbv beta iota. unfold SchedulerSimulationBase.node_op in Hop. rewrite Hop.
+    cbv beta iota. unfold SchedulerSimulationLemmas.node_op in Hop. rewrite Hop.
     unfold phi_path. rewrite Hcrit.
     destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                 (build_dfg ctx act) c bufs).
@@ -868,11 +868,11 @@ Section SchedulerSimulation.
     intros Hop Ha1 Hnlen Hval.
     assert (Han : arg < n)
       by (apply (arg_lt_of_op act n arg Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
     rewrite (compile_unary_valid act a_idx n uop arg (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold SchedulerSimulationBase.is_sample_of; rewrite Hop; reflexivity))
+                  ltac:(unfold SchedulerSimulationLemmas.is_sample_of; rewrite Hop; reflexivity))
                ltac:(lia)) in Hval.
     exact (nrv_peel_refuel act a_idx arg pi ss input Ha1 ltac:(lia) Hval).
   Qed.
@@ -887,11 +887,11 @@ Section SchedulerSimulation.
     intros Hop Ha1 Hnlen Hval.
     assert (Han : arg < n)
       by (apply (arg_lt_of_op act n arg Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
     rewrite (compile_resize_valid act a_idx n arg (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold SchedulerSimulationBase.is_sample_of; rewrite Hop; reflexivity))
+                  ltac:(unfold SchedulerSimulationLemmas.is_sample_of; rewrite Hop; reflexivity))
                ltac:(lia)) in Hval.
     exact (nrv_peel_refuel act a_idx arg pi ss input Ha1 ltac:(lia) Hval).
   Qed.
@@ -910,12 +910,12 @@ Section SchedulerSimulation.
     intros Hop Ha1 Hnlen Hval.
     assert (Han : arg < n)
       by (apply (arg_lt_of_op act n arg Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args;
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args;
           rewrite Hop; left; reflexivity).
     rewrite (compile_unary_valid act a_idx n uop arg (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold SchedulerSimulationBase.is_sample_of;
+                  ltac:(unfold SchedulerSimulationLemmas.is_sample_of;
                         rewrite Hop; reflexivity))
                ltac:(lia)).
     rewrite (compile_fuel_irrel_gen act a_idx (sample_bufs act a_idx) _ _ arg
@@ -935,12 +935,12 @@ Section SchedulerSimulation.
     intros Hop Ha1 Hnlen Hval.
     assert (Han : arg < n)
       by (apply (arg_lt_of_op act n arg Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args;
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args;
           rewrite Hop; left; reflexivity).
     rewrite (compile_resize_valid act a_idx n arg (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold SchedulerSimulationBase.is_sample_of;
+                  ltac:(unfold SchedulerSimulationLemmas.is_sample_of;
                         rewrite Hop; reflexivity))
                ltac:(lia)).
     rewrite (compile_fuel_irrel_gen act a_idx (sample_bufs act a_idx) _ _ arg
@@ -963,8 +963,8 @@ Section SchedulerSimulation.
                   (Nat.lt_succ_diag_r n) H2).
     cbn [compile_dfg_expr_aux].
     rewrite (not_sample_not_in_sample_bufs act a_idx n
-              ltac:(unfold SchedulerSimulationBase.is_sample_of; rewrite Hop; reflexivity)).
-    cbv beta iota. unfold SchedulerSimulationBase.node_op in Hop. rewrite Hop.
+              ltac:(unfold SchedulerSimulationLemmas.is_sample_of; rewrite Hop; reflexivity)).
+    cbv beta iota. unfold SchedulerSimulationLemmas.node_op in Hop. rewrite Hop.
     cbn [snd]. exact (eval1_const1 ss input).
   Qed.
 
@@ -983,19 +983,19 @@ Section SchedulerSimulation.
     intros Hop Hopt Hope Hc1 Ht1 He1 Hnlen Hcv.
     assert (Hcn : c < n)
       by (apply (arg_lt_of_op act n c Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args;
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args;
           rewrite Hop; left; reflexivity).
     assert (Htn : t < n)
       by (apply (arg_lt_of_op act n t Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args;
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args;
           rewrite Hop; right; left; reflexivity).
     assert (Hen : e < n)
       by (apply (arg_lt_of_op act n e Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args;
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args;
           rewrite Hop; right; right; left; reflexivity).
     assert (Hnb : BitsToLists.list_assoc (sample_bufs act a_idx) n = None)
       by (apply not_sample_not_in_sample_bufs;
-          unfold SchedulerSimulationBase.is_sample_of; rewrite Hop; reflexivity).
+          unfold SchedulerSimulationLemmas.is_sample_of; rewrite Hop; reflexivity).
     assert (Hcv' : eval1 (snd (compile_dfg_expr_at ctx bneeds pi
                      (pred (length (graph (build_dfg ctx act)))) a_idx
                      (build_dfg ctx act) c (sample_bufs act a_idx))) ss input
@@ -1050,14 +1050,14 @@ Section SchedulerSimulation.
     intros Hop H11 H21 Hnlen Hval.
     assert (H1n : a1 < n)
       by (apply (arg_lt_of_op act n a1 Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
     assert (H2n : a2 < n)
       by (apply (arg_lt_of_op act n a2 Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args; rewrite Hop; right; left; reflexivity).
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args; rewrite Hop; right; left; reflexivity).
     rewrite (compile_binary_valid act a_idx n bop a1 a2 (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold SchedulerSimulationBase.is_sample_of; rewrite Hop; reflexivity))
+                  ltac:(unfold SchedulerSimulationLemmas.is_sample_of; rewrite Hop; reflexivity))
                ltac:(lia)) in Hval.
     rewrite valid_and_eval in Hval.
     destruct (bits1_and_split _ _ Hval) as [Hv1 Hv2].
@@ -1081,17 +1081,17 @@ Section SchedulerSimulation.
     intros Hop Hcrit Hc1 Ht1 He1 Hnlen Hval.
     assert (Hcn : c < n)
       by (apply (arg_lt_of_op act n c Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
     assert (Htn : t < n)
       by (apply (arg_lt_of_op act n t Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args; rewrite Hop; right; left; reflexivity).
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args; rewrite Hop; right; left; reflexivity).
     assert (Hen : e < n)
       by (apply (arg_lt_of_op act n e Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args; rewrite Hop; right; right; left; reflexivity).
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args; rewrite Hop; right; right; left; reflexivity).
     rewrite (compile_phi_valid_crit act a_idx n c t e (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold SchedulerSimulationBase.is_sample_of; rewrite Hop; reflexivity))
+                  ltac:(unfold SchedulerSimulationLemmas.is_sample_of; rewrite Hop; reflexivity))
                ltac:(lia) Hcrit) in Hval.
     rewrite valid_and_eval, valid_and_eval in Hval.
     destruct (bits1_and_split _ _ Hval) as [Hte Hcv].
@@ -1119,17 +1119,17 @@ Section SchedulerSimulation.
     intros Hop Hcrit Hc1 Ht1 He1 Hnlen Hval.
     assert (Hcn : c < n)
       by (apply (arg_lt_of_op act n c Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
     assert (Htn : t < n)
       by (apply (arg_lt_of_op act n t Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args; rewrite Hop; right; left; reflexivity).
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args; rewrite Hop; right; left; reflexivity).
     assert (Hen : e < n)
       by (apply (arg_lt_of_op act n e Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args; rewrite Hop; right; right; left; reflexivity).
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args; rewrite Hop; right; right; left; reflexivity).
     rewrite (compile_phi_valid_sel act a_idx n c t e (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold SchedulerSimulationBase.is_sample_of; rewrite Hop; reflexivity))
+                  ltac:(unfold SchedulerSimulationLemmas.is_sample_of; rewrite Hop; reflexivity))
                ltac:(lia) Hcrit) in Hval.
     rewrite valid_and_eval in Hval.
     destruct (bits1_and_split _ _ Hval) as [Hcv Hif].
@@ -1137,7 +1137,7 @@ Section SchedulerSimulation.
                                (pred (length (graph (build_dfg ctx act)))) a_idx
                                (build_dfg ctx act) c (sample_bufs act a_idx))) ss input
                   = eval1 (node_ref_expr act a_idx c) ss input).
-    { unfold SchedulerSimulationBase.node_ref_expr.
+    { unfold SchedulerSimulationLemmas.node_ref_expr.
       rewrite (compile_fst_pi_irrel (get_tainted ctx (build_dfg ctx act))
                  (decl_facts ctx (build_dfg ctx act)) a_idx (build_dfg ctx act)
                  (sample_bufs act a_idx)
@@ -1170,7 +1170,7 @@ Section SchedulerSimulation.
     intros Hop Ha1 Hnlen Hval.
     assert (Han : arg < n)
       by (apply (arg_lt_of_op act n arg Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args;
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args;
           rewrite Hop; left; reflexivity).
     rewrite (compile_stall_valid (build_dfg ctx act)
                (get_tainted ctx (build_dfg ctx act))
@@ -1178,7 +1178,7 @@ Section SchedulerSimulation.
                a_idx n lat arg (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold SchedulerSimulationBase.is_sample_of;
+                  ltac:(unfold SchedulerSimulationLemmas.is_sample_of;
                         rewrite Hop; reflexivity))
                ltac:(lia)) in Hval.
     exact (nrv_peel_refuel act a_idx arg pi ss input Ha1 ltac:(lia) Hval).
@@ -1194,11 +1194,11 @@ Section SchedulerSimulation.
     intros Hop Ha1 Hb1 Hnlen Hval.
     assert (Han : a < n)
       by (apply (arg_lt_of_op act n a Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args;
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args;
           rewrite Hop; left; reflexivity).
     assert (Hbn : b < n)
       by (apply (arg_lt_of_op act n b Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args;
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args;
           rewrite Hop; right; left; reflexivity).
     rewrite (compile_join_valid (build_dfg ctx act)
                (get_tainted ctx (build_dfg ctx act))
@@ -1206,7 +1206,7 @@ Section SchedulerSimulation.
                a_idx n a b (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold SchedulerSimulationBase.is_sample_of;
+                  ltac:(unfold SchedulerSimulationLemmas.is_sample_of;
                         rewrite Hop; reflexivity))
                ltac:(lia)) in Hval.
     rewrite valid_and_eval in Hval.
@@ -1226,7 +1226,7 @@ Section SchedulerSimulation.
     intros Hop Ha1 Hnlen Hval.
     assert (Han : arg < n)
       by (apply (arg_lt_of_op act n arg Hnlen);
-          unfold SchedulerSimulationBase.node_op in Hop; unfold get_args;
+          unfold SchedulerSimulationLemmas.node_op in Hop; unfold get_args;
           rewrite Hop; left; reflexivity).
     rewrite (compile_drive_valid (build_dfg ctx act)
                (get_tainted ctx (build_dfg ctx act))
@@ -1234,7 +1234,7 @@ Section SchedulerSimulation.
                a_idx n p arg en (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold SchedulerSimulationBase.is_sample_of;
+                  ltac:(unfold SchedulerSimulationLemmas.is_sample_of;
                         rewrite Hop; reflexivity))
                ltac:(lia)) in Hval.
     (* peel the guard conjuncts off the fold, left to right *)
@@ -1418,7 +1418,7 @@ Section SchedulerSimulation.
           as [R1 [R2 [Rop _]]].
         split.
         + apply (sem_inv_vm s s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem ].
-        + unfold SchedulerSimulationBase.nval. rewrite (nre_const act a_idx id c R1 R2 Rop). reflexivity.
+        + unfold SchedulerSimulationLemmas.nval. rewrite (nre_const act a_idx id c R1 R2 Rop). reflexivity.
       - (* tf_svar *)
         cbn [dataflow_expr] in Hde. unfold bind in Hde.
         pose proof (get_var_sz (DFG_SVar sv) s Hinv Hvsz) as Hgv.
@@ -1453,7 +1453,7 @@ Section SchedulerSimulation.
             { pose proof (get_var_pos (DFG_SVar sv) s Hpos) as Hp0.
               rewrite Egv in Hp0. exact (proj1 Hp0). }
             intros pi Hgp Hv.
-            unfold SchedulerSimulationBase.nval in Hval |- *.
+            unfold SchedulerSimulationLemmas.nval in Hval |- *.
             rewrite (nre_resize act a_idx id src_id R1 R2 Rop), Hsrcsz.
             cbn [tf_eval_expr].
             rewrite (Hval pi Hgp (nrv_peel_resize act a_idx id src_id pi ss sinput
@@ -1471,7 +1471,7 @@ Section SchedulerSimulation.
                       HF Hne Eem Hg') as [R1 [R2 [Rop _]]].
           split.
           * apply (sem_inv_vm s s1); [ exact (emit_vm _ _ _ _ _ Eem) | exact Hsem ].
-          * unfold SchedulerSimulationBase.nval. rewrite (nre_input act a_idx src_id iv R1 R2 Rop).
+          * unfold SchedulerSimulationLemmas.nval. rewrite (nre_input act a_idx src_id iv R1 R2 Rop).
             cbn [tf_eval_expr]. rewrite Hsin. reflexivity.
         + assert (Hg1F : wgmono s1 F)
             by exact (wgmono_trans s1 s' F (emit_gmono _ _ _ _ _ Hde) Hg').
@@ -1483,7 +1483,7 @@ Section SchedulerSimulation.
           * apply (sem_inv_vm s s'); [ | exact Hsem ].
             rewrite (emit_vm _ _ _ _ _ Hde). exact (emit_vm _ _ _ _ _ Eem).
           * intros pi Hgp Hv.
-            unfold SchedulerSimulationBase.nval.
+            unfold SchedulerSimulationLemmas.nval.
             rewrite (nre_resize act a_idx id src_id Q1 Q2 Qop), Rsz.
             cbn [tf_eval_expr].
             rewrite (nre_input act a_idx src_id iv R1 R2 Rop).
@@ -1522,7 +1522,7 @@ Section SchedulerSimulation.
             { pose proof (get_var_pos (DFG_OVar ov) s Hpos) as Hp0.
               rewrite Egv in Hp0. exact (proj1 Hp0). }
             intros pi Hgp Hv.
-            unfold SchedulerSimulationBase.nval in Hval |- *.
+            unfold SchedulerSimulationLemmas.nval in Hval |- *.
             rewrite (nre_resize act a_idx id src_id R1 R2 Rop), Hsrcsz.
             cbn [tf_eval_expr].
             rewrite (Hval pi Hgp (nrv_peel_resize act a_idx id src_id pi ss sinput
@@ -1549,7 +1549,7 @@ Section SchedulerSimulation.
           split.
           * apply (sem_inv_vm s1 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem1 ].
           * intros pi Hgp Hv.
-            unfold SchedulerSimulationBase.nval in Hv1 |- *.
+            unfold SchedulerSimulationLemmas.nval in Hv1 |- *.
             rewrite (nre_unary act a_idx id tf_not src_id R1 R2 Rop).
             cbn [tf_eval_expr].
             rewrite (Hv1 pi Hgp (nrv_peel_unary act a_idx id tf_not src_id pi ss sinput
@@ -1576,7 +1576,7 @@ Section SchedulerSimulation.
           split.
           * apply (sem_inv_vm s1 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem1 ].
           * intros pi Hgp Hv.
-            unfold SchedulerSimulationBase.nval in Hv1 |- *.
+            unfold SchedulerSimulationLemmas.nval in Hv1 |- *.
             rewrite (nre_unary act a_idx id (tf_resize source_size) src_id R1 R2 Rop).
             cbn [tf_eval_expr].
             rewrite (Hv1 pi Hgp (nrv_peel_unary act a_idx id (tf_resize source_size)
@@ -1617,7 +1617,7 @@ Section SchedulerSimulation.
               | intros pi Hgp Hv;
                 destruct (nrv_peel_binary act a_idx id _ id1 id2 pi ss sinput
                             Rop Hid1p Hid2p R2 Hv) as [Hb1 Hb2];
-                unfold SchedulerSimulationBase.nval in Hv1, Hv2 |- *;
+                unfold SchedulerSimulationLemmas.nval in Hv1, Hv2 |- *;
                 rewrite (nre_binary act a_idx id _ id1 id2 R1 R2 Rop);
                 cbn [tf_eval_expr];
                 rewrite (Hv1 pi Hgp Hb1), (Hv2 pi Hgp Hb2); reflexivity ]).
@@ -1652,7 +1652,7 @@ Section SchedulerSimulation.
         | intros pi Hgp Hv;
           destruct (nrv_peel_binary act a_idx id (tf_cmp szC cop) id1 id2 pi ss sinput
                       Rop Hid1p Hid2p R2 Hv) as [Hb1 Hb2];
-          unfold SchedulerSimulationBase.nval in Hv1, Hv2 |- *;
+          unfold SchedulerSimulationLemmas.nval in Hv1, Hv2 |- *;
           rewrite (nre_binary act a_idx id (tf_cmp szC cop) id1 id2 R1 R2 Rop);
           cbn [tf_eval_expr];
           rewrite (Hv1 pi Hgp Hb1), (Hv2 pi Hgp Hb2); reflexivity ].
@@ -1689,7 +1689,7 @@ Section SchedulerSimulation.
         | intros pi Hgp Hv;
           destruct (nrv_peel_binary act a_idx id (tf_concat hz lz) id1 id2 pi ss sinput
                       Rop Hid1p Hid2p R2 Hv) as [Hb1 Hb2];
-          unfold SchedulerSimulationBase.nval in Hv1, Hv2 |- *;
+          unfold SchedulerSimulationLemmas.nval in Hv1, Hv2 |- *;
           rewrite (nre_binary act a_idx id (tf_concat hz lz) id1 id2 R1 R2 Rop);
           cbn [tf_eval_expr];
           rewrite (Hv1 pi Hgp Hb1), (Hv2 pi Hgp Hb2); reflexivity ].
@@ -1729,7 +1729,7 @@ Section SchedulerSimulation.
         split.
         + apply (sem_inv_vm s3 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem3 ].
         + intros pi Hgp Hv.
-          unfold SchedulerSimulationBase.nval in Hvc, Hvt, Hve |- *.
+          unfold SchedulerSimulationLemmas.nval in Hvc, Hvt, Hve |- *.
           rewrite (nre_phi act a_idx id cid tid eid R1 R2 Rop).
           destruct (phi_crit (get_tainted ctx (build_dfg ctx act))
                       (decl_facts ctx (build_dfg ctx act)) cid pi) eqn:Ecrit.
@@ -1900,7 +1900,7 @@ Section SchedulerSimulation.
                       (dfg_var_size ctx k) phi HF Hne Ee Hg1) as [R1 [R2 [Rop _]]].
           destruct (phi_branch_valid cond_id b phi vt ve pi Hb Rop Hc1
                       (Hvtp vt eq_refl) (Hvep ve eq_refl) R2 Hgp Hv) as [Hcv [Hbt Hbe]].
-          unfold SchedulerSimulationBase.nval.
+          unfold SchedulerSimulationLemmas.nval.
           rewrite (nre_phi act a_idx phi cond_id vt ve R1 R2 Rop).
           rewrite Hb, (Hsel pi Hgp Hcv). destruct b.
           * destruct (Hbe eq_refl) as [pi' [Hgp' Hv']].
@@ -1929,7 +1929,7 @@ Section SchedulerSimulation.
         assert (Hve0 : b = true -> NV (dfg_var_size ctx k) ve0 = src_get spe k).
         { intro Hbt2. rewrite (nval_fresh s sA k ve0 Hne Ev HgA). symmetry.
           exact (Hven Hbt2 eq_refl). }
-        unfold SchedulerSimulationBase.nval.
+        unfold SchedulerSimulationLemmas.nval.
         rewrite (nre_phi act a_idx phi cond_id vt ve0 R1 R2 Rop).
         rewrite Hb, (Hsel pi Hgp Hcv). destruct b.
         + exact (Hve0 eq_refl).
@@ -1957,7 +1957,7 @@ Section SchedulerSimulation.
         assert (Hvt0 : b = false -> NV (dfg_var_size ctx k) vt0 = src_get spt k).
         { intro Hbf. rewrite (nval_fresh s sA k vt0 Hne Ev HgA). symmetry.
           exact (Hvtn Hbf eq_refl). }
-        unfold SchedulerSimulationBase.nval.
+        unfold SchedulerSimulationLemmas.nval.
         rewrite (nre_phi act a_idx phi cond_id vt0 ve R1 R2 Rop).
         rewrite Hb, (Hsel pi Hgp Hcv). destruct b.
         + destruct (Hbe eq_refl) as [pi' [Hgp' Hv']].
@@ -2203,7 +2203,7 @@ Section SchedulerSimulation.
       length (graph s) <= length (graph s').
     Proof.
       intros Hne Hs Hs' Hg.
-      unfold SchedulerSimulationBase.nid_seq in Hs.
+      unfold SchedulerSimulationLemmas.nid_seq in Hs.
       destruct (graph s) as [| nd rest] eqn:Egs; [ cbn in Hne; lia |].
       assert (Hnd : nid nd = length rest).
       { cbn [map length] in Hs. rewrite revseq_S in Hs.
@@ -2354,10 +2354,10 @@ Section SchedulerSimulation.
     Proof.
       intros Hs Hs' Hg Hin Hlt.
       assert (Hnodup : NoDup (map nid (graph s'))).
-      { unfold SchedulerSimulationBase.nid_seq in Hs'. rewrite Hs'.
+      { unfold SchedulerSimulationLemmas.nid_seq in Hs'. rewrite Hs'.
         apply NoDup_rev. apply seq_NoDup. }
       assert (Hnd : In (nid nd) (map nid (graph s))).
-      { unfold SchedulerSimulationBase.nid_seq in Hs. rewrite Hs.
+      { unfold SchedulerSimulationLemmas.nid_seq in Hs. rewrite Hs.
         apply in_rev. rewrite rev_involutive. apply in_seq. lia. }
       apply in_map_iff in Hnd. destruct Hnd as [nd0 [Hn0 Hin0]].
       rewrite <- (nodup_map_inj nid (graph s') Hnodup nd0 nd (Hg _ Hin0) Hin Hn0).
@@ -2529,7 +2529,7 @@ Section SchedulerSimulation.
       pose proof (in_graph_fwd act F _ HF (Hg _ Hin)) as Hin'.
       destruct (node_at_nid act _ Hin') as [_ Hnth].
       cbn [nid] in Hnth.
-      apply (Hno w). unfold SchedulerSimulationBase.node_op.
+      apply (Hno w). unfold SchedulerSimulationLemmas.node_op.
       rewrite Hnth. reflexivity.
     Qed.
 
@@ -2580,7 +2580,7 @@ Section SchedulerSimulation.
         destruct Hlow as [Hlt | Hvn].
         - rewrite (emit_id o size s1 id s' Hem) in Hlt. lia.
         - apply (vnode_absurd s' id Hg'); [| exact Hvn ].
-          intros w Hc. unfold SchedulerSimulationBase.node_op in Hc.
+          intros w Hc. unfold SchedulerSimulationLemmas.node_op in Hc.
           rewrite Rop in Hc. exact (Hnv w Hc). }
       destruct e as [ c | sv | iv | ov | uop e1 | bop e1 e2 | ec et ee ].
       - exfalso. exact (ABSURD _ _ s Hne (Nat.le_refl _)
@@ -2753,7 +2753,7 @@ Section SchedulerSimulation.
           destruct (emitted_node_at act F s s1 (DFG_Phi cond_id vt ve)
                       (dfg_var_size ctx k) phi HF Hne Ee Hg') as [_ [_ [Rop _]]].
           split; [ rewrite (emit_id _ _ s phi s1 Ee); apply Nat.le_refl | ].
-          intros w Hc. unfold SchedulerSimulationBase.node_op in Hc.
+          intros w Hc. unfold SchedulerSimulationLemmas.node_op in Hc.
           rewrite Rop in Hc. discriminate Hc.
       - destruct (ensure_var ctx k s) as [ve0 sA] eqn:Ev.
         rewrite (bind_red (ensure_var ctx k) _ s _ _ Ev) in Hrun.
@@ -2771,7 +2771,7 @@ Section SchedulerSimulation.
         destruct (emitted_node_at act F sA s1 (DFG_Phi cond_id vt ve0)
                     (dfg_var_size ctx k) phi HF ltac:(lia) Ee Hg') as [_ [_ [Rop _]]].
         split; [ rewrite (emit_id _ _ sA phi s1 Ee); lia | ].
-        intros w Hc. unfold SchedulerSimulationBase.node_op in Hc.
+        intros w Hc. unfold SchedulerSimulationLemmas.node_op in Hc.
         rewrite Rop in Hc. discriminate Hc.
       - destruct (ensure_var ctx k s) as [vt0 sA] eqn:Ev.
         rewrite (bind_red (ensure_var ctx k) _ s _ _ Ev) in Hrun.
@@ -2789,7 +2789,7 @@ Section SchedulerSimulation.
         destruct (emitted_node_at act F sA s1 (DFG_Phi cond_id vt0 ve)
                     (dfg_var_size ctx k) phi HF ltac:(lia) Ee Hg') as [_ [_ [Rop _]]].
         split; [ rewrite (emit_id _ _ sA phi s1 Ee); lia | ].
-        intros w Hc. unfold SchedulerSimulationBase.node_op in Hc.
+        intros w Hc. unfold SchedulerSimulationLemmas.node_op in Hc.
         rewrite Rop in Hc. discriminate Hc.
       - unfold ret in Hrun. injection Hrun as Hr Hs. subst s'.
         split; [ apply Nat.le_refl | ].
@@ -3143,7 +3143,7 @@ Section SchedulerSimulation.
             destruct (Hminv v n Hin) as [[Hveq Hn] | [Hin0 Hnv]].
             -- exfalso. subst n. destruct Hlow as [Hlt | Hvn]; [ lia | ].
                apply (vnode_absurd s' samp_id Hg'); [| exact Hvn ].
-               intros w Hc. unfold SchedulerSimulationBase.node_op in Hc.
+               intros w Hc. unfold SchedulerSimulationLemmas.node_op in Hc.
                rewrite MsmOp in Hc. discriminate Hc.
             -- rewrite (src_get_put_s_neq sp dst _ v Hnv).
                rewrite Hvm2 in Hin0.
@@ -3222,7 +3222,7 @@ Section SchedulerSimulation.
           - intros k id Hin. unfold sR in Hin; simpl in Hin.
             destruct (Hv1 k id Hin) as [node [Hn Hnid]].
             exists node. split; [ unfold sR; simpl; apply Gthen; exact Hn | exact Hnid ].
-          - unfold SchedulerSimulationBase.nid_seq, sR; simpl. exact Hnst.
+          - unfold SchedulerSimulationLemmas.nid_seq, sR; simpl. exact Hnst.
           - unfold sR; simpl. exact Habt. }
         assert (QsR : wvsz sR).
         { intros v id Hin. unfold sR in Hin; simpl in Hin.
@@ -3558,10 +3558,10 @@ Section SchedulerSimulation.
             - intro E.
               destruct (emitted_node_at act F sd sh (DFG_Join drive_id prev) 1
                           head_id HF Hned E GhF) as [_ [_ [MjnOp _]]].
-              unfold SchedulerSimulationBase.sample_req_head, SchedulerSimulationBase.node_op. rewrite MjnOp.
+              unfold SchedulerSimulationLemmas.sample_req_head, SchedulerSimulationLemmas.node_op. rewrite MjnOp.
               split; [ rewrite MdrOp; reflexivity | exact I ].
             - unfold ret. intro E. injection E as <- _.
-              unfold SchedulerSimulationBase.sample_req_head, SchedulerSimulationBase.node_op. rewrite MdrOp.
+              unfold SchedulerSimulationLemmas.sample_req_head, SchedulerSimulationLemmas.node_op. rewrite MdrOp.
               split; [ reflexivity | exact I ]. }
           destruct Hhd as [Hhd1 Hhd2].
           (* the same walk, stopped at the drive and checked to be on [ip] *)
@@ -3570,19 +3570,19 @@ Section SchedulerSimulation.
             - intro E.
               destruct (emitted_node_at act F sd sh (DFG_Join drive_id prev) 1
                           head_id HF Hned E GhF) as [_ [_ [MjnOp2 _]]].
-              unfold SchedulerSimulationBase.sample_drive_head, SchedulerSimulationBase.node_op. rewrite MjnOp2, MdrOp.
+              unfold SchedulerSimulationLemmas.sample_drive_head, SchedulerSimulationLemmas.node_op. rewrite MjnOp2, MdrOp.
               destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) ip ip) as [_ | Hnp];
                 [ reflexivity | exfalso; exact (Hnp eq_refl) ].
             - unfold ret. intro E. injection E as <- _.
-              unfold SchedulerSimulationBase.sample_drive_head, SchedulerSimulationBase.node_op. rewrite MdrOp.
+              unfold SchedulerSimulationLemmas.sample_drive_head, SchedulerSimulationLemmas.node_op. rewrite MdrOp.
               destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) ip ip) as [_ | Hnp];
                 [ reflexivity | exfalso; exact (Hnp eq_refl) ]. }
           assert (Hdrv : sample_drive act samp_id = Some drive_id).
-          { unfold SchedulerSimulationBase.sample_drive, SchedulerSimulationBase.node_op. rewrite MsmOp.
+          { unfold SchedulerSimulationLemmas.sample_drive, SchedulerSimulationLemmas.node_op. rewrite MsmOp.
             revert Es1. unfold stall_chain.
             destruct (ip_lat (tfs_spec_ip ctx ip)) as [| l].
             - unfold ret. intro E. injection E as <- _.
-              revert Hhd2 Hdh. unfold SchedulerSimulationBase.node_op.
+              revert Hhd2 Hdh. unfold SchedulerSimulationLemmas.node_op.
               destruct (op (nth head_id (graph (build_dfg ctx act))
                               {| nid := 0; op := DFG_Empty; sz := 0 |}));
                 try (intros _ H; exact H).
@@ -3591,13 +3591,13 @@ Section SchedulerSimulation.
               destruct (emitted_node_at act F sh s1 (DFG_Stall (S l) head_id)
                           (counter_sz (S l)) stall_id HF Hneh E Gt1F)
                 as [_ [_ [MstOp2 _]]].
-              unfold SchedulerSimulationBase.node_op. rewrite MstOp2. exact Hdh. }
+              unfold SchedulerSimulationLemmas.node_op. rewrite MstOp2. exact Hdh. }
           assert (Hreq : sample_req act samp_id = Some arg_id).
-          { unfold SchedulerSimulationBase.sample_req, SchedulerSimulationBase.node_op. rewrite MsmOp.
+          { unfold SchedulerSimulationLemmas.sample_req, SchedulerSimulationLemmas.node_op. rewrite MsmOp.
             revert Es1. unfold stall_chain.
             destruct (ip_lat (tfs_spec_ip ctx ip)) as [| l].
             - unfold ret. intro E. injection E as <- _.
-              revert Hhd2 Hhd1. unfold SchedulerSimulationBase.node_op.
+              revert Hhd2 Hhd1. unfold SchedulerSimulationLemmas.node_op.
               destruct (op (nth head_id (graph (build_dfg ctx act))
                               {| nid := 0; op := DFG_Empty; sz := 0 |}));
                 try (intros _ H; exact H).
@@ -3606,7 +3606,7 @@ Section SchedulerSimulation.
               destruct (emitted_node_at act F sh s1 (DFG_Stall (S l) head_id)
                           (counter_sz (S l)) stall_id HF Hneh E Gt1F)
                 as [_ [_ [MstOp _]]].
-              unfold SchedulerSimulationBase.node_op. rewrite MstOp. exact Hhd1. }
+              unfold SchedulerSimulationLemmas.node_op. rewrite MstOp. exact Hhd1. }
           (* --- the semantics --- *)
           destruct (dataflow_expr_sem expr (ip_req_sz (tfs_spec_ip ctx ip)) s sa
                       arg_id sp Hne Hinv Hvsz Hpos Ea GaF Hsem) as [[Hvm1 Hfr1] Hval].
@@ -3627,24 +3627,24 @@ Section SchedulerSimulation.
             rewrite Ejp in Hvj. cbn [snd] in Hvj. exact Hvj. }
           (* the sample's reference IS its register, and [Hrt] reads it *)
           assert (Hsampv : is_sample_of act samp_id = true)
-            by (unfold SchedulerSimulationBase.is_sample_of, SchedulerSimulationBase.node_op; rewrite MsmOp; reflexivity).
+            by (unfold SchedulerSimulationLemmas.is_sample_of, SchedulerSimulationLemmas.node_op; rewrite MsmOp; reflexivity).
           destruct (sample_index act a_idx samp_id Hali Hsampv) as [n_idx Hvn].
           assert (Hbsz : ss_sz (tf_dfg_b a_idx n_idx)
                          = dfg_var_size ctx (DFG_SVar dst))
             by (rewrite (buffer_register_node_size act a_idx n_idx Hali), Hvn;
                 exact MsmSz).
           assert (Hsmop : node_op act (vreg_nid a_idx n_idx) = DFG_Sample ip stall_id en)
-            by (unfold SchedulerSimulationBase.node_op; rewrite Hvn, MsmOp; reflexivity).
+            by (unfold SchedulerSimulationLemmas.node_op; rewrite Hvn, MsmOp; reflexivity).
           assert (Hsmdr : sample_drive act (vreg_nid a_idx n_idx) = Some drive_id)
             by (rewrite Hvn; exact Hdrv).
           assert (Hdrop2 : node_op act drive_id = DFG_Drive ip arg_id en)
-            by (unfold SchedulerSimulationBase.node_op; rewrite MdrOp; reflexivity).
+            by (unfold SchedulerSimulationLemmas.node_op; rewrite MdrOp; reflexivity).
           assert (Hsamp : (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
                           NV (dfg_var_size ctx (DFG_SVar dst)) samp_id
                           = convert (ip_fn (tfs_spec_ip ctx ip)
                               (NV (ip_req_sz (tfs_spec_ip ctx ip)) arg_id))).
           { intro Hreg.
-            unfold SchedulerSimulationBase.nval. rewrite <- Hvn.
+            unfold SchedulerSimulationLemmas.nval. rewrite <- Hvn.
             rewrite (nre_sample act a_idx n_idx Hali
                        ltac:(rewrite Hvn; exact Hsampv)).
             rewrite <- Hbsz, eval_svar_same.
@@ -3737,7 +3737,7 @@ Section SchedulerSimulation.
           - intros k id Hin. unfold sR in Hin; simpl in Hin.
             destruct (Hv1 k id Hin) as [node [Hn Hnid]].
             exists node. split; [ unfold sR; simpl; apply Gthen; exact Hn | exact Hnid ].
-          - unfold SchedulerSimulationBase.nid_seq, sR; simpl. exact Hnst.
+          - unfold SchedulerSimulationLemmas.nid_seq, sR; simpl. exact Hnst.
           - unfold sR; simpl. exact Habt. }
         assert (QsR : wvsz sR).
         { intros v id Hin. unfold sR in Hin; simpl in Hin.
@@ -3764,7 +3764,7 @@ Section SchedulerSimulation.
         assert (HposR : gpos sR).
         { destruct Hpos1 as [_ [Hvm1p _]].
           pose proof Hpos_then as Hpt0; destruct Hpt0 as [Hl [_ [Hargs [Hsent Hnz]]]].
-          unfold SchedulerSimulationBase.gpos, sR; cbn [graph var_map].
+          unfold SchedulerSimulationLemmas.gpos, sR; cbn [graph var_map].
           split; [ exact Hl | split; [ exact Hvm1p | split; [ exact Hargs |
             split; [ exact Hsent | exact Hnz ] ] ] ]. }
         pose proof (dataflow_ops_fg op2 ((cond_id, false) :: en) sR PsR QsR FsR Hen_e) as Fe.
@@ -3820,7 +3820,7 @@ Section SchedulerSimulation.
         assert (Hg_s1 : wgmono s1 F) by exact (wgmono_trans s1 s_then F Gthen Hg_then).
         destruct (dataflow_expr_sem cond 1 s s1 cond_id sp Hne Hinv Hvsz Hpos Ec Hg_s1 Hsem)
           as [Hsem1 Hvc].
-        unfold SchedulerSimulationBase.nval in Hvc.
+        unfold SchedulerSimulationLemmas.nval in Hvc.
         assert (HsemR : sem_inv sR sp).
         { apply (sem_inv_vm s1 sR); [ unfold sR; simpl; reflexivity | exact Hsem1 ]. }
         assert (HvmF : var_map sF = final_vars) by (unfold sF; reflexivity).
@@ -3977,7 +3977,7 @@ Section SchedulerSimulation.
       /\ exports act Fin
       /\ var_map (build_dfg ctx act) = var_map Fin.
   Proof.
-    unfold SchedulerSimulationBase.exports, build_dfg.
+    unfold SchedulerSimulationLemmas.exports, build_dfg.
     destruct (dataflow_ops ctx [] (tfs_spec_action_ops ctx act)
                 {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |})
       as [u final] eqn:Ed.
@@ -4052,7 +4052,7 @@ Section SchedulerSimulation.
                             var_map := [] |}).
     { split; [ | split ].
       - intros k id Hin. destruct Hin.
-      - unfold SchedulerSimulationBase.nid_seq. reflexivity.
+      - unfold SchedulerSimulationLemmas.nid_seq. reflexivity.
       - intros a Ha x Hx. simpl in Ha. destruct Ha as [<-|[]]. simpl in Hx. destruct Hx. }
     assert (Hemvsz : wvsz {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ];
                             var_map := [] |}).
@@ -4060,13 +4060,13 @@ Section SchedulerSimulation.
     assert (Hemfg : wfg {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ];
                           var_map := [] |}).
     { intros node Hin. simpl in Hin. destruct Hin as [<-|[]].
-      unfold SchedulerSimulationBase.node_args_sz. cbn [op]. exact I. }
+      unfold SchedulerSimulationLemmas.node_args_sz. cbn [op]. exact I. }
     assert (Hne0 : 0 < length (graph ({| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ];
                                         var_map := [] |} : wst))).
     { cbn [graph]. simpl. apply Nat.lt_0_1. }
     assert (Hpos0 : gpos ({| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ];
                             var_map := [] |} : wst)).
-    { unfold SchedulerSimulationBase.gpos; cbn [graph var_map].
+    { unfold SchedulerSimulationLemmas.gpos; cbn [graph var_map].
       split; [ apply Nat.le_refl |].
       split; [ intros k id [] |].
       split; [ intros node Hin x Hx; cbn [In] in Hin; destruct Hin as [<- | []];
@@ -4134,10 +4134,10 @@ Section SchedulerSimulation.
   Proof.
     intro Hgd. rewrite drive_sbufs_eq. apply guard_expr_ones.
     intros [c b] Hin. destruct (Hgd c b Hin) as [Ht Hf].
-    unfold SchedulerSimulationBase.guard_lit. cbv zeta. cbn [fst snd].
+    unfold SchedulerSimulationLemmas.guard_lit. cbv zeta. cbn [fst snd].
     destruct b.
     - exact (Ht eq_refl).
-    - cbn [tf_eval_expr]. unfold SchedulerSimulationBase.node_ref_expr in Hf. rewrite (Hf eq_refl).
+    - cbn [tf_eval_expr]. unfold SchedulerSimulationLemmas.node_ref_expr in Hf. rewrite (Hf eq_refl).
       vm_compute. discriminate.
   Qed.
 
@@ -4149,11 +4149,11 @@ Section SchedulerSimulation.
     guard_holds act a_idx ss sinput en.
   Proof.
     rewrite drive_sbufs_eq. intros Hnz c b Hin.
-    pose proof (SchedulerSimulationBase.guard_expr_split ctx cost_limit act a_idx (sample_bufs act a_idx) en ss sinput
+    pose proof (SchedulerSimulationLemmas.guard_expr_split ctx cost_limit act a_idx (sample_bufs act a_idx) en ss sinput
                   Hnz (c, b) Hin) as Hl.
-    unfold SchedulerSimulationBase.guard_lit in Hl.
+    unfold SchedulerSimulationLemmas.guard_lit in Hl.
     cbv zeta in Hl. cbn [fst snd] in Hl.
-    unfold SchedulerSimulationBase.node_ref_expr.
+    unfold SchedulerSimulationLemmas.node_ref_expr.
     destruct b.
     - split; [ intros _; exact Hl | intro Hb; discriminate Hb ].
     - split; [ intro Hb; discriminate Hb | intros _ ].
@@ -4401,7 +4401,7 @@ Section SchedulerSimulation.
     destruct (BitsToLists.list_assoc (sample_bufs act a_idx) n) as [[q qsz] |] eqn:Hq;
       [| exfalso; exact (sample_is_buffered act a_idx n Halign Hsam Hq) ].
     pose proof (wla_in _ _ _ Hq) as Hin.
-    unfold SchedulerSimulationBase.sample_bufs in Hin. apply filter_In in Hin. destruct Hin as [Hin _].
+    unfold SchedulerSimulationLemmas.sample_bufs in Hin. apply filter_In in Hin. destruct Hin as [Hin _].
     assert (Hassoc : BitsToLists.list_assoc
                        (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) n
                      = Some (q, qsz))
@@ -4532,12 +4532,12 @@ Section SchedulerSimulation.
             replace C with (Bits.ones 1) by (symmetry; exact Hc)
         end.
         reflexivity.
-    - rewrite (SchedulerSimulationBase.compile_stall_valid ctx cost_limit
+    - rewrite (SchedulerSimulationLemmas.compile_stall_valid ctx cost_limit
                  (build_dfg ctx act) (get_tainted ctx (build_dfg ctx act))
                  (decl_facts ctx (build_dfg ctx act)) a_idx n slat sa
                  (sample_bufs act a_idx) pi (S fuel) Hop Hla ltac:(lia)).
       exact (Harg sa ltac:(unfold get_args; rewrite Hop; left; reflexivity) pi).
-    - rewrite (SchedulerSimulationBase.compile_drive_valid ctx cost_limit
+    - rewrite (SchedulerSimulationLemmas.compile_drive_valid ctx cost_limit
                  (build_dfg ctx act) (get_tainted ctx (build_dfg ctx act))
                  (decl_facts ctx (build_dfg ctx act)) a_idx n dp darg den
                  (sample_bufs act a_idx) pi (S fuel) Hop Hla ltac:(lia)).
@@ -4562,12 +4562,12 @@ Section SchedulerSimulation.
             replace R with (Bits.ones 1) by (symmetry; exact Hr)
         end.
         reflexivity.
-    - rewrite (SchedulerSimulationBase.compile_sample_valid ctx cost_limit
+    - rewrite (SchedulerSimulationLemmas.compile_sample_valid ctx cost_limit
                  (build_dfg ctx act) (get_tainted ctx (build_dfg ctx act))
                  (decl_facts ctx (build_dfg ctx act)) a_idx n sp stok sen
                  (sample_bufs act a_idx) pi (S fuel) Hop Hla ltac:(lia)).
       exact (Harg stok ltac:(unfold get_args; rewrite Hop; left; reflexivity) pi).
-    - rewrite (SchedulerSimulationBase.compile_join_valid ctx cost_limit
+    - rewrite (SchedulerSimulationLemmas.compile_join_valid ctx cost_limit
                  (build_dfg ctx act) (get_tainted ctx (build_dfg ctx act))
                  (decl_facts ctx (build_dfg ctx act)) a_idx n ja jb
                  (sample_bufs act a_idx) pi (S fuel) Hop Hla ltac:(lia)),
@@ -4589,12 +4589,12 @@ Section SchedulerSimulation.
   Lemma sample_bufs_no_ips (act: tfs_action sched) a_idx :
     (p_var -> False) -> sample_bufs act a_idx = [].
   Proof.
-    intro Hno. unfold SchedulerSimulationBase.sample_bufs.
+    intro Hno. unfold SchedulerSimulationLemmas.sample_bufs.
     induction (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
       as [| e l IH]; [ reflexivity |].
     cbn [filter]. destruct e as [m msz].
     assert (Hf : is_sample_of act m = false).
-    { unfold SchedulerSimulationBase.is_sample_of.
+    { unfold SchedulerSimulationLemmas.is_sample_of.
       destruct (node_op act m) as [c | iv | v | uop a | bop a b | r | c t e
                                   | lat a | dp da den | sp stok sen | ja jb | ];
         try reflexivity.
@@ -4644,7 +4644,7 @@ Section SchedulerSimulation.
                     (build_dfg ctx act) (fst l) bufs)) ss input = Bits.ones 1.
   Proof.
     intros Hop Hbuf Hf Hval l Hin.
-    unfold SchedulerSimulationBase.node_op in Hop.
+    unfold SchedulerSimulationLemmas.node_op in Hop.
     rewrite (compile_drive_valid (build_dfg ctx act) _ _ a_idx n p arg en bufs pi fuel
                Hop Hbuf Hf) in Hval.
     refine (proj2 (proj1 (fold_valid_and_ones
@@ -4757,7 +4757,7 @@ Section SchedulerSimulation.
         try discriminate.
       apply Nat.eqb_eq in Hpred. subst ja.
       exists jb. destruct (node_at_nid act j Hin) as [_ Hnth].
-      unfold SchedulerSimulationBase.node_op. rewrite Hnth, Ejop. reflexivity.
+      unfold SchedulerSimulationLemmas.node_op. rewrite Hnth, Ejop. reflexivity.
   Qed.
 
 
@@ -4798,7 +4798,7 @@ Section SchedulerSimulation.
       destruct (op nd) as [ | | | | | | | l aa | | | | ] eqn:Hop;
         try discriminate Hp.
       apply Nat.eqb_eq in Hp. subst aa.
-      exists l. unfold SchedulerSimulationBase.node_op. rewrite Hnth. exact Hop. }
+      exists l. unfold SchedulerSimulationLemmas.node_op. rewrite Hnth. exact Hop. }
     unfold chain_gate. cbv zeta.
     destruct (find (fun nd => match op nd with
                               | DFG_Stall _ a => Nat.eqb a n
@@ -4844,10 +4844,10 @@ Section SchedulerSimulation.
     set (lt := ip_lat (tfs_spec_ip ctx p)) in *.
     destruct (node_at_nid act t Ht) as [_ Hnth].
     assert (Htok : node_op act tok = DFG_Stall lt aa)
-      by (unfold SchedulerSimulationBase.node_op; rewrite <- Htid, Hnth; exact Htop).
+      by (unfold SchedulerSimulationLemmas.node_op; rewrite <- Htid, Hnth; exact Htop).
     pose proof (stall_nid_succ act tok lt aa Htok) as Htoks.
     assert (Hsdh : sample_drive_head act p aa = Some d)
-      by (unfold SchedulerSimulationBase.sample_drive in Hsd; rewrite Hsamp, Htok in Hsd; exact Hsd).
+      by (unfold SchedulerSimulationLemmas.sample_drive in Hsd; rewrite Hsamp, Htok in Hsd; exact Hsd).
     (* both heads are [d] itself or the ordering join above it *)
     destruct (sample_drive_head_shape act p aa d Hsdh)
       as [[Hdaa [ar1 [e1 Haadr]]] | [prev' [ar2 [e2 [Haaj Hd2dr]]]]];
@@ -4868,7 +4868,7 @@ Section SchedulerSimulation.
     snd (compile_dfg_expr ctx bneeds f a_idx (build_dfg ctx act) x (sample_bufs act a_idx))
     = node_ref_valid act a_idx x.
   Proof.
-    intros H1 H2 H3. unfold SchedulerSimulationBase.node_ref_valid.
+    intros H1 H2 H3. unfold SchedulerSimulationLemmas.node_ref_valid.
     rewrite (compile_fuel_irrel act a_idx (sample_bufs act a_idx) x H1 H2 f
                (length (graph (build_dfg ctx act))) H3 H2).
     reflexivity.
@@ -4906,7 +4906,7 @@ Section SchedulerSimulation.
     { intros x Hx. apply list_assoc_key_none. intro Hin2.
       apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
       cbn [fst] in Hxx. subst x2.
-      unfold SchedulerSimulationBase.sample_bufs in Hmem2. apply filter_In in Hmem2.
+      unfold SchedulerSimulationLemmas.sample_bufs in Hmem2. apply filter_In in Hmem2.
       apply (list_assoc_none_key _ _ Hx), in_map_iff.
       exists (x, v2). split; [ reflexivity | exact (proj1 Hmem2) ]. }
     assert (Hsam_same : forall x m msz,
@@ -4916,9 +4916,9 @@ Section SchedulerSimulation.
               is_sample_of act x = true ->
               BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)).
     { intros x m msz Hx Hsx. apply list_assoc_nodup_in.
-      - unfold SchedulerSimulationBase.sample_bufs. apply nodup_map_fst_filter.
+      - unfold SchedulerSimulationLemmas.sample_bufs. apply nodup_map_fst_filter.
         exact (slot_keys_nodup act a_idx Halign).
-      - unfold SchedulerSimulationBase.sample_bufs. apply filter_In.
+      - unfold SchedulerSimulationLemmas.sample_bufs. apply filter_In.
         split; [ exact (wla_in _ _ _ Hx) | exact Hsx ]. }
     (* the node whose validity gates the pulse, and that validity *)
     assert (Hgate : exists m, (m = n \/ exists prev, node_op act m = DFG_Join n prev)
@@ -4927,7 +4927,7 @@ Section SchedulerSimulation.
                                (build_dfg ctx act) m
                                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
                    ss input = Bits.ones 1).
-    { unfold SchedulerSimulationBase.drive_pulse in Hpulse. cbv zeta in Hpulse.
+    { unfold SchedulerSimulationLemmas.drive_pulse in Hpulse. cbv zeta in Hpulse.
       destruct (chain_gate ctx (build_dfg ctx act) n) as [[g h] |] eqn:Hcg.
       - exists g. split; [ exact (chain_gate_cases act n g h Hcg) |].
         cbn [tf_eval_expr] in Hpulse.
@@ -4955,12 +4955,12 @@ Section SchedulerSimulation.
     assert (Hnref : eval1 (node_ref_valid act a_idx n) ss input = Bits.ones 1).
     { destruct Hmshape as [-> | [prev Hj]]; [ exact Hmref |].
       pose proof (join_nid_succ act m n prev p arg en Hj Hop) as Hms.
-      unfold SchedulerSimulationBase.node_ref_valid in Hmref.
+      unfold SchedulerSimulationLemmas.node_ref_valid in Hmref.
       rewrite (compile_join_valid (build_dfg ctx act) _ _ a_idx m n prev
                  (sample_bufs act a_idx) [] (length (graph (build_dfg ctx act)))
                  Hj
                  (not_sample_not_in_sample_bufs act a_idx m
-                    ltac:(unfold SchedulerSimulationBase.is_sample_of; rewrite Hj; reflexivity))
+                    ltac:(unfold SchedulerSimulationLemmas.is_sample_of; rewrite Hj; reflexivity))
                  ltac:(lia)) in Hmref.
       rewrite valid_and_eval in Hmref.
       destruct (bits1_and_split _ _ Hmref) as [Hnv _].
@@ -4968,12 +4968,12 @@ Section SchedulerSimulation.
                  Hn1 Hnlen ltac:(lia)) in Hnv.
       exact Hnv. }
     (* and on to the literal's own source *)
-    unfold SchedulerSimulationBase.node_ref_valid in Hnref.
+    unfold SchedulerSimulationLemmas.node_ref_valid in Hnref.
     pose proof (compile_guard_sources_valid act a_idx n p arg en
                   (sample_bufs act a_idx) [] (length (graph (build_dfg ctx act)))
                   ss input Hop
                   (not_sample_not_in_sample_bufs act a_idx n
-                     ltac:(unfold SchedulerSimulationBase.is_sample_of; rewrite Hop; reflexivity))
+                     ltac:(unfold SchedulerSimulationLemmas.is_sample_of; rewrite Hop; reflexivity))
                   ltac:(lia) Hnref l Hin) as Hl.
     assert (Hlin : In (fst l) (get_args ctx (nth n (graph (build_dfg ctx act))
                                  {| nid := 0; op := DFG_Empty; sz := 0 |})))
@@ -5028,7 +5028,7 @@ Section SchedulerSimulation.
     destruct (node_op_pos act mm ltac:(rewrite Hm; discriminate)) as [Hm1 Hmlen].
     assert (Hlin : In c1 (get_args ctx (nth mm (graph (build_dfg ctx act))
                             {| nid := 0; op := DFG_Empty; sz := 0 |})))
-      by (unfold get_args; unfold SchedulerSimulationBase.node_op in Hm; rewrite Hm; right;
+      by (unfold get_args; unfold SchedulerSimulationLemmas.node_op in Hm; rewrite Hm; right;
           exact (in_map fst en_m (c1, b1) Hin1)).
     destruct (node_args_range act mm Hm1 Hmlen c1 Hlin) as [Hc1 Hc2].
     (* ... so it reads the same at the end of the run, where [guard_holds] pins it *)
@@ -5040,8 +5040,8 @@ Section SchedulerSimulation.
     { apply (drive_pulse_zero_of_en act a_idx mm p arg_m en_m _ _ Hm).
       rewrite drive_sbufs_eq.
       apply (guard_expr_zero act a_idx (sample_bufs act a_idx) en_m (c1, b1) _ _ Hin1).
-      unfold SchedulerSimulationBase.guard_lit. cbv zeta. cbn [fst snd].
-      unfold SchedulerSimulationBase.node_ref_expr in Hst, Ht, Hf.
+      unfold SchedulerSimulationLemmas.guard_lit. cbv zeta. cbn [fst snd].
+      unfold SchedulerSimulationLemmas.node_ref_expr in Hst, Ht, Hf.
       destruct b1; destruct b2; try (exfalso; apply Hsnd; reflexivity).
       - rewrite Hst. exact (Hf eq_refl).
       - cbn [tf_eval_expr]. rewrite Hst.
@@ -5107,8 +5107,8 @@ Section SchedulerSimulation.
                       (sched_input input (resp j)) Halign Hnd Hones) as Hgate.
         rewrite Hnjvn in Hgate.
         assert (Hsnj : s <> nid nj).
-        { intro He. rewrite He in Hsam. unfold SchedulerSimulationBase.is_sample_of in Hsam.
-          unfold SchedulerSimulationBase.node_op in Hsam. rewrite Hopat in Hsam. discriminate Hsam. }
+        { intro He. rewrite He in Hsam. unfold SchedulerSimulationLemmas.is_sample_of in Hsam.
+          unfold SchedulerSimulationLemmas.node_op in Hsam. rewrite Hopat in Hsam. discriminate Hsam. }
         assert (HsubF : forall n0 e,
                   BitsToLists.list_assoc
                     (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (nid nj)))
@@ -5168,8 +5168,8 @@ Section SchedulerSimulation.
                       (sched_input input (resp j)) Halign Hnd Hones) as Hgate.
         rewrite Hnjvn in Hgate.
         assert (Hsnj : s <> nid nj).
-        { intro He. rewrite He in Hsam. unfold SchedulerSimulationBase.is_sample_of in Hsam.
-          unfold SchedulerSimulationBase.node_op in Hsam. rewrite Hopat in Hsam. discriminate Hsam. }
+        { intro He. rewrite He in Hsam. unfold SchedulerSimulationLemmas.is_sample_of in Hsam.
+          unfold SchedulerSimulationLemmas.node_op in Hsam. rewrite Hopat in Hsam. discriminate Hsam. }
         assert (HsubF : forall n0 e,
                   BitsToLists.list_assoc
                     (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (nid nj)))
@@ -5219,7 +5219,7 @@ Section SchedulerSimulation.
   Proof.
     intros Halign Hsam.
     destruct (vreg_nid_node_range act a_idx n_idx Halign) as [_ Hnlen].
-    unfold SchedulerSimulationBase.node_ref_valid.
+    unfold SchedulerSimulationLemmas.node_ref_valid.
     rewrite (sample_ref_is_register act a_idx n_idx Halign Hsam []
                (length (graph (build_dfg ctx act))) Hnlen).
     reflexivity.
@@ -5239,7 +5239,7 @@ Section SchedulerSimulation.
                   (build_dfg ctx act) arg bufs)) ss input = Bits.ones 1.
   Proof.
     intros Hop Hbuf Hf Hval.
-    unfold SchedulerSimulationBase.node_op in Hop.
+    unfold SchedulerSimulationLemmas.node_op in Hop.
     rewrite (compile_drive_valid (build_dfg ctx act) _ _ a_idx n p arg en bufs pi fuel
                Hop Hbuf Hf) in Hval.
     exact (proj1 (proj1 (fold_valid_and_ones
@@ -5287,9 +5287,9 @@ Section SchedulerSimulation.
       (* the covering leaf is a sample on [p] either way *)
       assert (Hs'sam : is_sample_of act s' = true).
       { destruct Hd as [Hq | [nd [tk [en'' [Hnd [Hnid [Hop _]]]]]]].
-        - subst s'. unfold SchedulerSimulationBase.is_sample_of. rewrite Hsamp. reflexivity.
+        - subst s'. unfold SchedulerSimulationLemmas.is_sample_of. rewrite Hsamp. reflexivity.
         - destruct (node_at_nid act nd Hnd) as [_ Hat].
-          unfold SchedulerSimulationBase.is_sample_of, SchedulerSimulationBase.node_op. rewrite Hnid in Hat. rewrite Hat, Hop.
+          unfold SchedulerSimulationLemmas.is_sample_of, SchedulerSimulationLemmas.node_op. rewrite Hnid in Hat. rewrite Hat, Hop.
           reflexivity. }
       assert (Hs'op : exists tok2 en3, node_op act s' = DFG_Sample p tok2 en3
                         /\ (s' = samp \/ guards_disjoint en_s en3 = false)).
@@ -5297,7 +5297,7 @@ Section SchedulerSimulation.
         - subst s'. exists tok, en_s. split; [ exact Hsamp | left; reflexivity ].
         - destruct (node_at_nid act nd Hnd) as [_ Hat].
           exists tk, en''. rewrite Hnid in Hat.
-          split; [ unfold SchedulerSimulationBase.node_op; rewrite Hat; exact Hop | right; exact Hdisj ]. }
+          split; [ unfold SchedulerSimulationLemmas.node_op; rewrite Hat; exact Hop | right; exact Hdisj ]. }
       destruct Hs'op as [tok2 [en3 [Hs'sop Hdj]]].
       destruct (sample_slot act a_idx s' Halign Hs'sam)
         as [q0 [qsz [s_idx [Hassoc [Hidx Hvn]]]]].
@@ -5316,7 +5316,7 @@ Section SchedulerSimulation.
       assert (Hprevlt : prev < g).
       { pose proof (args_lt_fwd act _ Hgnode prev) as Hal.
         rewrite (node_nid_at act g Hglt) in Hal. apply Hal.
-        unfold get_args. unfold SchedulerSimulationBase.node_op in Hg. rewrite Hg. right; left; reflexivity. }
+        unfold get_args. unfold SchedulerSimulationLemmas.node_op in Hg. rewrite Hg. right; left; reflexivity. }
       assert (Hpfuel : prev < pred (length (graph (build_dfg ctx act)))) by lia.
       (* the leaf's register is down, so the whole tree above it reads zero *)
       assert (Htree : forall bufs fuel k,
@@ -5365,7 +5365,7 @@ Section SchedulerSimulation.
                        Halign Hzv Hpre ltac:(lia)); exact Hpz).
         assert (Hsg : s' <> vreg_nid a_idx g_idx).
         { rewrite Hgvn. intro He. rewrite He in Hs'sam.
-          unfold SchedulerSimulationBase.is_sample_of, SchedulerSimulationBase.node_op in Hs'sam. unfold SchedulerSimulationBase.node_op in Hg.
+          unfold SchedulerSimulationLemmas.is_sample_of, SchedulerSimulationLemmas.node_op in Hs'sam. unfold SchedulerSimulationLemmas.node_op in Hg.
           rewrite Hg in Hs'sam. discriminate Hs'sam. }
         assert (Hgnone : BitsToLists.list_assoc
                   (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (vreg_nid a_idx g_idx)))
@@ -5552,9 +5552,9 @@ Section SchedulerSimulation.
       set (l := ip_lat (tfs_spec_ip ctx p)) in *.
       destruct (node_at_nid act t Ht) as [_ Hnth].
       assert (Htok2 : node_op act tok2 = DFG_Stall l aa)
-        by (unfold SchedulerSimulationBase.node_op; rewrite <- Htid, Hnth; exact Htop).
+        by (unfold SchedulerSimulationLemmas.node_op; rewrite <- Htid, Hnth; exact Htop).
       assert (Hsdh : sample_drive_head act p aa = Some d2).
-      { unfold SchedulerSimulationBase.sample_drive in Hsd2. rewrite Hs2, Htok2 in Hsd2. exact Hsd2. }
+      { unfold SchedulerSimulationLemmas.sample_drive in Hsd2. rewrite Hs2, Htok2 in Hsd2. exact Hsd2. }
       assert (Htoklt : tok2 < vreg_nid a_idx s2).
       { pose proof (args_lt_fwd act _ Hs2in tok2) as Hal.
         rewrite (node_nid_at act (vreg_nid a_idx s2) Hs2len) in Hal.
@@ -5605,9 +5605,9 @@ Section SchedulerSimulation.
       assert (Hs'le : s' <= prev) by (exact (pleaf_le act prev s' Hpl)).
       assert (Hs'sam : is_sample_of act s' = true).
       { destruct Hd' as [Hq | [nd [tk [en'' [Hnd [Hnid [Hop _]]]]]]].
-        - rewrite Hq. unfold SchedulerSimulationBase.is_sample_of. rewrite Hs1. reflexivity.
+        - rewrite Hq. unfold SchedulerSimulationLemmas.is_sample_of. rewrite Hs1. reflexivity.
         - destruct (node_at_nid act nd Hnd) as [_ Hat].
-          unfold SchedulerSimulationBase.is_sample_of, SchedulerSimulationBase.node_op. rewrite Hnid in Hat. rewrite Hat, Hop.
+          unfold SchedulerSimulationLemmas.is_sample_of, SchedulerSimulationLemmas.node_op. rewrite Hnid in Hat. rewrite Hat, Hop.
           reflexivity. }
       destruct (sample_slot act a_idx s' Halign Hs'sam)
         as [q0 [qsz [s'_idx [Hassoc [Hidx Hvn]]]]].
@@ -5661,7 +5661,7 @@ Section SchedulerSimulation.
           rewrite Hids in Hv. exact (Hfin kk Hkk Hv).
         - destruct (node_at_nid act nd Hnd) as [_ Hat].
           assert (Hs'op : node_op act (vreg_nid a_idx s'_idx) = DFG_Sample p tk en'')
-            by (unfold SchedulerSimulationBase.node_op; rewrite Hvn, <- Hnid, Hat; exact Hop).
+            by (unfold SchedulerSimulationLemmas.node_op; rewrite Hvn, <- Hnid, Hat; exact Hop).
           assert (Hs'lt : s' < n2) by lia.
           assert (Hbound : vreg_nid a_idx s'_idx <= s') by (rewrite Hvn; lia).
           assert (Hge' : vreg_nid a_idx s1 <= vreg_nid a_idx s'_idx)
@@ -5884,7 +5884,7 @@ Section SchedulerSimulation.
     { intros x Hx. apply list_assoc_key_none. intro Hin2.
       apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
       cbn [fst] in Hxx. subst x2.
-      unfold SchedulerSimulationBase.sample_bufs in Hmem2. apply filter_In in Hmem2.
+      unfold SchedulerSimulationLemmas.sample_bufs in Hmem2. apply filter_In in Hmem2.
       apply (list_assoc_none_key _ _ Hx), in_map_iff.
       exists (x, v2). split; [ reflexivity | exact (proj1 Hmem2) ]. }
     assert (Hsam_same : forall x m msz,
@@ -5894,9 +5894,9 @@ Section SchedulerSimulation.
               is_sample_of act x = true ->
               BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)).
     { intros x m msz Hx Hsx. apply list_assoc_nodup_in.
-      - unfold SchedulerSimulationBase.sample_bufs. apply nodup_map_fst_filter.
+      - unfold SchedulerSimulationLemmas.sample_bufs. apply nodup_map_fst_filter.
         exact (slot_keys_nodup act a_idx Halign).
-      - unfold SchedulerSimulationBase.sample_bufs. apply filter_In.
+      - unfold SchedulerSimulationLemmas.sample_bufs. apply filter_In.
         split; [ exact (wla_in _ _ _ Hx) | exact Hsx ]. }
     rewrite (compile_subst_valid act a_idx (run_n t act input resp ss0)
                (sched_input input (resp t)) Halign Hinv
@@ -5948,7 +5948,7 @@ Section SchedulerSimulation.
                (length (graph (build_dfg ctx act))) d
                (ip_req_sz (tfs_spec_ip ctx p)) Hdlen Hrv).
     pose proof (nre_drive act a_idx d p av en' Hd1 Hdlen Hdop) as Hnre.
-    unfold SchedulerSimulationBase.node_ref_expr in Hnre. rewrite Hnre. reflexivity.
+    unfold SchedulerSimulationLemmas.node_ref_expr in Hnre. rewrite Hnre. reflexivity.
   Qed.
 
   (* THE ROUND TRIP, discharged.  The sample latches on the cycle its validity
@@ -6113,7 +6113,7 @@ Section SchedulerSimulation.
     assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
       by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
     assert (Hsamv : is_sample_of act (vreg_nid a_idx n_idx) = true)
-      by (unfold SchedulerSimulationBase.is_sample_of; rewrite Hsamp; reflexivity).
+      by (unfold SchedulerSimulationLemmas.is_sample_of; rewrite Hsamp; reflexivity).
     (* the cycle the answer is latched on *)
     assert (dec : forall k,
               {(fst (run_n k act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1}
@@ -6172,13 +6172,13 @@ Section SchedulerSimulation.
     change (fst (nth (index_to_nat n_idx)
                    (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))
       with (vreg_nid a_idx n_idx).
-    unfold SchedulerSimulationBase.buf_value_expr.
+    unfold SchedulerSimulationLemmas.buf_value_expr.
     destruct (stall_lat_of act (vreg_nid a_idx n_idx)) as [l |] eqn:Hst.
-    { exfalso. unfold SchedulerSimulationBase.stall_lat_of, SchedulerSimulationBase.is_sample_of in Hst, Hsamv.
+    { exfalso. unfold SchedulerSimulationLemmas.stall_lat_of, SchedulerSimulationLemmas.is_sample_of in Hst, Hsamv.
       destruct (node_op act (vreg_nid a_idx n_idx)); discriminate. }
-    assert (Hsen : SchedulerSimulationBase.sample_en_of ctx cost_limit act
+    assert (Hsen : SchedulerSimulationLemmas.sample_en_of ctx cost_limit act
                      (vreg_nid a_idx n_idx) = Some en)
-      by (unfold SchedulerSimulationBase.sample_en_of; rewrite Hsamp; reflexivity).
+      by (unfold SchedulerSimulationLemmas.sample_en_of; rewrite Hsamp; reflexivity).
     rewrite Hsen.
     assert (Hnone : BitsToLists.list_assoc
               (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (vreg_nid a_idx n_idx)))
@@ -6195,7 +6195,7 @@ Section SchedulerSimulation.
     | |- context [ Bits.neg ?x ] =>
         replace x with (@Bits.zero 1) by (symmetry; exact Hvj)
     end.
-    unfold SchedulerSimulationBase.drive_sbufs in Hen_ones.
+    unfold SchedulerSimulationLemmas.drive_sbufs in Hen_ones.
     rewrite Hgate, Hen_ones.
     match goal with
     | |- context [ @beq_dec ?T ?E ?x ?z ] =>
@@ -6260,8 +6260,8 @@ Section SchedulerSimulation.
     eval1 (drive_pulse act a_idx n) ss input = Bits.ones 1.
   Proof.
     intros Hop Hcg Hen Hvg Hvf.
-    unfold SchedulerSimulationBase.node_op in Hop.
-    unfold SchedulerSimulationBase.drive_pulse. cbv zeta. rewrite Hop, Hcg.
+    unfold SchedulerSimulationLemmas.node_op in Hop.
+    unfold SchedulerSimulationLemmas.drive_pulse. cbv zeta. rewrite Hop, Hcg.
     cbn [tf_eval_expr].
     change (filter
               (fun '(m, _) =>
@@ -6319,9 +6319,9 @@ Section SchedulerSimulation.
                (ip_lat (tfs_spec_ip ctx p)) aa Halign
                (nth_In _ _ Hslen) (nth_In _ _ Htlen)).
       - rewrite (node_nid_at act tok Htlen).
-        unfold SchedulerSimulationBase.node_op in Hsamp.
+        unfold SchedulerSimulationLemmas.node_op in Hsamp.
         unfold get_args. rewrite Hsamp. left. reflexivity.
-      - unfold SchedulerSimulationBase.node_op in Htok. exact Htok. }
+      - unfold SchedulerSimulationLemmas.node_op in Htok. exact Htok. }
     destruct (BitsToLists.list_assoc
                 (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) tok)
       as [[m msz] |] eqn:Hq; [| exfalso; exact (Hne eq_refl) ].
@@ -6370,7 +6370,7 @@ Section SchedulerSimulation.
       by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
     assert (Hjlen : j2 < length (graph (build_dfg ctx act)))
       by (apply node_op_range; rewrite Hjop; discriminate).
-    pose proof Hjop as Hjop'. unfold SchedulerSimulationBase.node_op in Hjop'.
+    pose proof Hjop as Hjop'. unfold SchedulerSimulationLemmas.node_op in Hjop'.
     assert (Hdin : In d (get_args ctx (nth j2 (graph (build_dfg ctx act))
                      {| nid := 0; op := DFG_Empty; sz := 0 |})))
       by (unfold get_args; rewrite Hjop'; left; reflexivity).
@@ -6555,7 +6555,7 @@ Section SchedulerSimulation.
     { rewrite Hsd in Hsd2. injection Hsd2 as He. symmetry. exact He. }
     subst d2.
     assert (Hdh : sample_drive_head act p aa = Some d).
-    { unfold SchedulerSimulationBase.sample_drive in Hsd.
+    { unfold SchedulerSimulationLemmas.sample_drive in Hsd.
       rewrite Hsamp, Htok in Hsd. exact Hsd. }
     assert (HCG : exists g h, chain_gate ctx (build_dfg ctx act) d = Some (g, h)).
     { destruct (sample_drive_head_shape act p aa d Hdh)
@@ -6584,7 +6584,7 @@ Section SchedulerSimulation.
       apply (Hargpos (nth tok (graph (build_dfg ctx act))
                         {| nid := 0; op := DFG_Empty; sz := 0 |})
                (nth_In _ _ Htoklen)).
-      unfold get_args. unfold SchedulerSimulationBase.node_op in Htok.
+      unfold get_args. unfold SchedulerSimulationLemmas.node_op in Htok.
       rewrite Htok. left. reflexivity. }
     rewrite (stall_gate_walks act a_idx t_idx (ip_lat (tfs_spec_ip ctx p)) aa
                Htokstall Haane Hlen0) in Hgt.
@@ -6623,7 +6623,7 @@ Section SchedulerSimulation.
     { intros x Hx. apply list_assoc_key_none. intro Hin2.
       apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
       cbn [fst] in Hxx. subst x2.
-      unfold SchedulerSimulationBase.sample_bufs in Hmem2. apply filter_In in Hmem2.
+      unfold SchedulerSimulationLemmas.sample_bufs in Hmem2. apply filter_In in Hmem2.
       apply (list_assoc_none_key _ _ Hx), in_map_iff.
       exists (x, v2). split; [ reflexivity | exact (proj1 Hmem2) ]. }
     assert (Hsam_same : forall x m2 msz2,
@@ -6633,9 +6633,9 @@ Section SchedulerSimulation.
               is_sample_of act x = true ->
               BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m2, msz2)).
     { intros x m2 msz2 Hx Hsx. apply list_assoc_nodup_in.
-      - unfold SchedulerSimulationBase.sample_bufs. apply nodup_map_fst_filter.
+      - unfold SchedulerSimulationLemmas.sample_bufs. apply nodup_map_fst_filter.
         exact (slot_keys_nodup act a_idx Halign).
-      - unfold SchedulerSimulationBase.sample_bufs. apply filter_In.
+      - unfold SchedulerSimulationLemmas.sample_bufs. apply filter_In.
         split; [ exact (wla_in _ _ _ Hx) | exact Hsx ]. }
     assert (Haa_ref : eval1 (snd (compile_dfg_expr_at ctx bneeds []
                         (pred (length (graph (build_dfg ctx act)))) a_idx
@@ -6651,7 +6651,7 @@ Section SchedulerSimulation.
     assert (Hd_ref : eval1 (node_ref_valid act a_idx d)
                        (run_n t act input resp ss0) (sched_input input (resp t))
                      = Bits.ones 1).
-    { unfold SchedulerSimulationBase.node_ref_valid.
+    { unfold SchedulerSimulationLemmas.node_ref_valid.
       destruct (sample_drive_head_shape act p aa d Hdh)
         as [[Hda _] | [prev [arg2 [en2 [Hjop Hdop2]]]]].
       - subst aa.
@@ -6664,13 +6664,13 @@ Section SchedulerSimulation.
         { apply list_assoc_key_none. intro Hin2.
           apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
           cbn [fst] in Hxx. subst x2.
-          unfold SchedulerSimulationBase.sample_bufs in Hmem2.
+          unfold SchedulerSimulationLemmas.sample_bufs in Hmem2.
           apply filter_In in Hmem2. destruct Hmem2 as [_ Hsx].
-          unfold SchedulerSimulationBase.is_sample_of,
-                 SchedulerSimulationBase.node_op in Hsx.
-          unfold SchedulerSimulationBase.node_op in Hjop.
+          unfold SchedulerSimulationLemmas.is_sample_of,
+                 SchedulerSimulationLemmas.node_op in Hsx.
+          unfold SchedulerSimulationLemmas.node_op in Hjop.
           rewrite Hjop in Hsx. discriminate Hsx. }
-        unfold SchedulerSimulationBase.node_op in Hjop.
+        unfold SchedulerSimulationLemmas.node_op in Hjop.
         assert (Hdaa : d < aa).
         { pose proof (args_lt_fwd act (nth aa (graph (build_dfg ctx act))
                         {| nid := 0; op := DFG_Empty; sz := 0 |})
@@ -6693,7 +6693,7 @@ Section SchedulerSimulation.
     { intros l Hin.
       assert (Hlin : In (fst l) (get_args ctx (nth d (graph (build_dfg ctx act))
                         {| nid := 0; op := DFG_Empty; sz := 0 |}))).
-      { unfold get_args. unfold SchedulerSimulationBase.node_op in Hd2op.
+      { unfold get_args. unfold SchedulerSimulationLemmas.node_op in Hd2op.
         rewrite Hd2op. right. exact (in_map fst en l Hin). }
       pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
       split; [ exact (Hargpos _ (nth_In _ _ Hdlen) _ Hlin) |].
@@ -6703,11 +6703,11 @@ Section SchedulerSimulation.
     { apply list_assoc_key_none. intro Hin2.
       apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
       cbn [fst] in Hxx. subst x2.
-      unfold SchedulerSimulationBase.sample_bufs in Hmem2.
+      unfold SchedulerSimulationLemmas.sample_bufs in Hmem2.
       apply filter_In in Hmem2. destruct Hmem2 as [_ Hsx].
-      unfold SchedulerSimulationBase.is_sample_of,
-             SchedulerSimulationBase.node_op in Hsx.
-      unfold SchedulerSimulationBase.node_op in Hd2op.
+      unfold SchedulerSimulationLemmas.is_sample_of,
+             SchedulerSimulationLemmas.node_op in Hsx.
+      unfold SchedulerSimulationLemmas.node_op in Hd2op.
       rewrite Hd2op in Hsx. discriminate Hsx. }
     assert (Hsrc : forall l, In l en ->
               eval1 (node_ref_valid act a_idx (fst l))
@@ -6721,7 +6721,7 @@ Section SchedulerSimulation.
                     (length (graph (build_dfg ctx act)))
                     (run_n t act input resp ss0) (sched_input input (resp t))
                     Hd2op Hnad ltac:(lia) Hd_ref l Hin) as Hl.
-      unfold SchedulerSimulationBase.node_ref_valid.
+      unfold SchedulerSimulationLemmas.node_ref_valid.
       rewrite (compile_fuel_irrel act a_idx (sample_bufs act a_idx) (fst l)
                  Hl1 Hllen (length (graph (build_dfg ctx act)))
                  (pred (length (graph (build_dfg ctx act)))) Hllen Hlpred).
@@ -6741,7 +6741,7 @@ Section SchedulerSimulation.
     (* the wait is on its first cycle *)
     assert (Hstlat : stall_lat_of act (vreg_nid a_idx t_idx)
                      = Some (ip_lat (tfs_spec_ip ctx p))).
-    { unfold SchedulerSimulationBase.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
+    { unfold SchedulerSimulationLemmas.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
     destruct (stall_counter_wide act a_idx t_idx (ip_lat (tfs_spec_ip ctx p))
                 Halign Hstlat) as [Hlt1 Hwide].
     assert (Hbz : (fst (run_n t act input resp ss0)).[tf_dfg_b a_idx t_idx]
@@ -6767,7 +6767,7 @@ Section SchedulerSimulation.
     { destruct (sample_drive_head_shape act p aa d Hdh)
         as [[Hda _] | [prev [arg2 [en2 [Hjop Hdop2]]]]].
       - subst aa. exact Hvgate.
-      - unfold SchedulerSimulationBase.node_op in Hjop.
+      - unfold SchedulerSimulationLemmas.node_op in Hjop.
         assert (Hdaa : d < aa).
         { pose proof (args_lt_fwd act (nth aa (graph (build_dfg ctx act))
                         {| nid := 0; op := DFG_Empty; sz := 0 |})
@@ -6954,7 +6954,7 @@ Section SchedulerSimulation.
       apply (Hargpos (nth tok (graph (build_dfg ctx act))
                         {| nid := 0; op := DFG_Empty; sz := 0 |})
                (nth_In _ _ Htoklen)).
-      unfold get_args. unfold SchedulerSimulationBase.node_op in Htok.
+      unfold get_args. unfold SchedulerSimulationLemmas.node_op in Htok.
       rewrite Htok. left. reflexivity. }
     rewrite (stall_gate_walks act a_idx t_idx (ip_lat (tfs_spec_ip ctx p)) aa
                Htokstall Haane Hlen0) in Hsg.
@@ -6978,7 +6978,7 @@ Section SchedulerSimulation.
     (* down to the drive *)
     destruct (node_op_pos act d ltac:(rewrite Hdop; discriminate)) as [Hd1 Hdlen].
     assert (Hdh : sample_drive_head act p aa = Some d).
-    { unfold SchedulerSimulationBase.sample_drive in Hsd.
+    { unfold SchedulerSimulationLemmas.sample_drive in Hsd.
       rewrite Hsamp, Htok in Hsd. exact Hsd. }
     assert (Hdfull : eval1 (snd (compile_dfg_expr ctx bneeds
                        (length (graph (build_dfg ctx act))) a_idx
@@ -7006,7 +7006,7 @@ Section SchedulerSimulation.
     { intros x Hx. apply list_assoc_key_none. intro Hin2.
       apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
       cbn [fst] in Hxx. subst x2.
-      unfold SchedulerSimulationBase.sample_bufs in Hmem2. apply filter_In in Hmem2.
+      unfold SchedulerSimulationLemmas.sample_bufs in Hmem2. apply filter_In in Hmem2.
       apply (list_assoc_none_key _ _ Hx), in_map_iff.
       exists (x, v2). split; [ reflexivity | exact (proj1 Hmem2) ]. }
     assert (Hsam_same : forall x m2 msz2,
@@ -7016,9 +7016,9 @@ Section SchedulerSimulation.
               is_sample_of act x = true ->
               BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m2, msz2)).
     { intros x m2 msz2 Hx Hsx. apply list_assoc_nodup_in.
-      - unfold SchedulerSimulationBase.sample_bufs. apply nodup_map_fst_filter.
+      - unfold SchedulerSimulationLemmas.sample_bufs. apply nodup_map_fst_filter.
         exact (slot_keys_nodup act a_idx Halign).
-      - unfold SchedulerSimulationBase.sample_bufs. apply filter_In.
+      - unfold SchedulerSimulationLemmas.sample_bufs. apply filter_In.
         split; [ exact (wla_in _ _ _ Hx) | exact Hsx ]. }
     assert (Hd_ref : eval1 (snd (compile_dfg_expr ctx bneeds
                        (length (graph (build_dfg ctx act))) a_idx
@@ -7034,11 +7034,11 @@ Section SchedulerSimulation.
     { apply list_assoc_key_none. intro Hin2.
       apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
       cbn [fst] in Hxx. subst x2.
-      unfold SchedulerSimulationBase.sample_bufs in Hmem2.
+      unfold SchedulerSimulationLemmas.sample_bufs in Hmem2.
       apply filter_In in Hmem2. destruct Hmem2 as [_ Hsx].
-      unfold SchedulerSimulationBase.is_sample_of,
-             SchedulerSimulationBase.node_op in Hsx.
-      unfold SchedulerSimulationBase.node_op in Hdop.
+      unfold SchedulerSimulationLemmas.is_sample_of,
+             SchedulerSimulationLemmas.node_op in Hsx.
+      unfold SchedulerSimulationLemmas.node_op in Hdop.
       rewrite Hdop in Hsx. discriminate Hsx. }
     pose proof (compile_drive_arg_valid act a_idx d p av en'
                   (sample_bufs act a_idx) [] (length (graph (build_dfg ctx act)))
@@ -7047,7 +7047,7 @@ Section SchedulerSimulation.
     (* the argument sits below the drive *)
     assert (Havin : In av (get_args ctx (nth d (graph (build_dfg ctx act))
                       {| nid := 0; op := DFG_Empty; sz := 0 |}))).
-    { unfold get_args. unfold SchedulerSimulationBase.node_op in Hdop.
+    { unfold get_args. unfold SchedulerSimulationLemmas.node_op in Hdop.
       rewrite Hdop. left. reflexivity. }
     pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
     assert (Hav1 : 1 <= av) by exact (Hargpos _ (nth_In _ _ Hdlen) _ Havin).
@@ -7059,12 +7059,12 @@ Section SchedulerSimulation.
                Hav1 Havlen (pred (length (graph (build_dfg ctx act))))
                (length (graph (build_dfg ctx act))) ltac:(lia) Havlen) in Hav.
     (* and validity does not fall *)
-    unfold SchedulerSimulationBase.node_ref_valid.
+    unfold SchedulerSimulationLemmas.node_ref_valid.
     replace (S (S M'')) with (M'' + 2) by lia.
     apply (compile_valid_mono_run act a_idx input resp ss0 (sample_bufs act a_idx)
              (length (graph (build_dfg ctx act))) av [] M'' 2 Halign Hzv);
       [ intros i Hi; apply Hpre; lia
-      | intros e He; unfold SchedulerSimulationBase.sample_bufs in He;
+      | intros e He; unfold SchedulerSimulationLemmas.sample_bufs in He;
         exact (proj1 (proj1 (filter_In _ e _) He))
       | exact Havlen
       | intros x Hx Hsx;
@@ -7136,7 +7136,7 @@ Section SchedulerSimulation.
     { intro Heq. rewrite Heq, Hsamp in Htok. discriminate Htok. }
     assert (Hstlat : stall_lat_of act (vreg_nid a_idx t_idx)
                      = Some (ip_lat (tfs_spec_ip ctx p))).
-    { unfold SchedulerSimulationBase.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
+    { unfold SchedulerSimulationLemmas.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
     destruct (stall_counter_wide act a_idx t_idx (ip_lat (tfs_spec_ip ctx p))
                 Halign Hstlat) as [Hlt1 Hwide].
     (* one cycle back from the sample: its gate is the stall's register *)
@@ -7166,9 +7166,9 @@ Section SchedulerSimulation.
                   (ip_lat (tfs_spec_ip ctx p)) aa Halign
                   (nth_In _ _ Hslen) (nth_In _ _ Htoklen)).
          - rewrite (node_nid_at act tok Htoklen).
-           unfold SchedulerSimulationBase.node_op in Hsamp.
+           unfold SchedulerSimulationLemmas.node_op in Hsamp.
            unfold get_args. rewrite Hsamp. left. reflexivity.
-         - unfold SchedulerSimulationBase.node_op in Htok. exact Htok.
+         - unfold SchedulerSimulationLemmas.node_op in Htok. exact Htok.
          - rewrite (node_nid_at act tok Htoklen). exact Htnone. }
     assert (Hsid : s_idx = t_idx).
     { apply (vreg_nid_inj act a_idx _ _ Halign). rewrite Hsvn, Htvn. reflexivity. }
@@ -7262,7 +7262,7 @@ Section SchedulerSimulation.
       assert (Haalen : aa < length (graph (build_dfg ctx act)))
         by (apply node_op_range; rewrite Haaop; discriminate).
       assert (Hprevlen : prev < length (graph (build_dfg ctx act))).
-      { pose proof Haaop as Haaop'. unfold SchedulerSimulationBase.node_op in Haaop'.
+      { pose proof Haaop as Haaop'. unfold SchedulerSimulationLemmas.node_op in Haaop'.
         pose proof (args_lt_fwd act _ (nth_In _ _ Haalen) prev
                       ltac:(unfold get_args; rewrite Haaop'; right; left; reflexivity))
           as Hlt.
@@ -7274,13 +7274,13 @@ Section SchedulerSimulation.
                              /\ guards_disjoint en_m en'' = false)).
       { destruct Hs'shape as [-> | [nd [tk [en'' [Hin [Hid [Hop Hdj]]]]]]].
         - split; [| left; reflexivity ].
-          unfold SchedulerSimulationBase.is_sample_of,
-                 SchedulerSimulationBase.node_op in *.
+          unfold SchedulerSimulationLemmas.is_sample_of,
+                 SchedulerSimulationLemmas.node_op in *.
           rewrite Hsm. reflexivity.
         - destruct (node_at_nid act nd Hin) as [_ Hnth].
           assert (Hs'op : node_op act s' = DFG_Sample p tk en'')
-            by (unfold SchedulerSimulationBase.node_op; rewrite <- Hid, Hnth; exact Hop).
-          split; [ unfold SchedulerSimulationBase.is_sample_of;
+            by (unfold SchedulerSimulationLemmas.node_op; rewrite <- Hid, Hnth; exact Hop).
+          split; [ unfold SchedulerSimulationLemmas.is_sample_of;
                    rewrite Hs'op; reflexivity
                  | right; exists tk, en''; split; [ exact Hs'op | exact Hdj ]]. }
       destruct Hs'sam as [Hs'is Hs'alt].
@@ -7295,7 +7295,7 @@ Section SchedulerSimulation.
                  (fun n e H => H) Hprevlen Hprevv). }
       (* so ours' predecessor has latched too *)
       assert (Hsm_is : is_sample_of act samp_m = true)
-        by (unfold SchedulerSimulationBase.is_sample_of; rewrite Hsm; reflexivity).
+        by (unfold SchedulerSimulationLemmas.is_sample_of; rewrite Hsm; reflexivity).
       destruct (sample_slot act a_idx samp_m Halign Hsm_is)
         as [q1 [qsz1 [sm_idx [Hass1 [Hidx1 Hvn1]]]]].
       assert (Hv_sm : (fst (run_n t act input resp ss0)).[tf_dfg_v a_idx sm_idx]
@@ -7328,7 +7328,7 @@ Section SchedulerSimulation.
         assert (Hstl : stall_lat_of act (vreg_nid a_idx tm_idx)
                        = Some (ip_lat (tfs_spec_ip ctx p))).
         { destruct (sample_tok_is_stall act samp_m p tok_m en_m Hsm) as [am Htokm].
-          unfold SchedulerSimulationBase.stall_lat_of. rewrite Htvn1, Htokm. reflexivity. }
+          unfold SchedulerSimulationLemmas.stall_lat_of. rewrite Htvn1, Htokm. reflexivity. }
         destruct (stall_counter_wide act a_idx tm_idx (ip_lat (tfs_spec_ip ctx p))
                     Halign Hstl) as [_ Hwide].
         intro Hc.
@@ -7342,7 +7342,7 @@ Section SchedulerSimulation.
       (* and the pulse reads that counter *)
       destruct (sample_tok_is_stall act samp_m p tok_m en_m Hsm) as [am Htokm].
       assert (Hdhm : sample_drive_head act p am = Some mm).
-      { unfold SchedulerSimulationBase.sample_drive in Hsdm.
+      { unfold SchedulerSimulationLemmas.sample_drive in Hsdm.
         rewrite Hsm, Htokm in Hsdm. exact Hsdm. }
       assert (HCGm : exists g h, chain_gate ctx (build_dfg ctx act) mm = Some (g, h)).
       { destruct (sample_drive_head_shape act p am mm Hdhm)
@@ -7422,9 +7422,9 @@ Section SchedulerSimulation.
                      {| nid := 0; op := DFG_Empty; sz := 0 |})
                   lt aa Halign (nth_In _ _ Hslen) (nth_In _ _ Htoklen)).
          - rewrite (node_nid_at act tok Htoklen).
-           unfold SchedulerSimulationBase.node_op in Hsamp.
+           unfold SchedulerSimulationLemmas.node_op in Hsamp.
            unfold get_args. rewrite Hsamp. left. reflexivity.
-         - unfold SchedulerSimulationBase.node_op in Htok. exact Htok.
+         - unfold SchedulerSimulationLemmas.node_op in Htok. exact Htok.
          - rewrite (node_nid_at act tok Htoklen). exact Htnone. }
     rewrite Hbg, eval1_svar_v in Hgate_j.
     destruct j as [| j'].
@@ -7444,7 +7444,7 @@ Section SchedulerSimulation.
                    (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))
       with (vreg_nid a_idx t_idx) in Hgate_j.
     assert (Hstlat : stall_lat_of act (vreg_nid a_idx t_idx) = Some lt).
-    { unfold SchedulerSimulationBase.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
+    { unfold SchedulerSimulationLemmas.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
     destruct (stall_counter_wide act a_idx t_idx lt Halign Hstlat) as [Hlt1 Hwide].
     destruct (stall_valid_next_inv act a_idx t_idx (run_n j' act input resp ss0)
                 (sched_input input (resp j')) lt _ Hstlat Hwide Hgate_j)
@@ -7567,9 +7567,9 @@ Section SchedulerSimulation.
         change (fst (nth (index_to_nat n_idx)
                        (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))
           with (vreg_nid a_idx n_idx).
-        unfold SchedulerSimulationBase.buf_valid_expr.
+        unfold SchedulerSimulationLemmas.buf_valid_expr.
         assert (Hnostall : stall_lat_of act (vreg_nid a_idx n_idx) = None)
-          by (unfold SchedulerSimulationBase.stall_lat_of; rewrite Hsamp; reflexivity).
+          by (unfold SchedulerSimulationLemmas.stall_lat_of; rewrite Hsamp; reflexivity).
         rewrite Hnostall, Hbg, eval1_svar_v. exact HvstallT. }
       assert (Hmono : (fst (run_n (S j') act input resp ss0)).[tf_dfg_v a_idx n_idx]
                       = Bits.ones 1).
@@ -7615,7 +7615,7 @@ Section SchedulerSimulation.
     subst d2.
     assert (Hstl : stall_lat_of act (vreg_nid a_idx t_idx)
                    = Some (ip_lat (tfs_spec_ip ctx p))).
-    { unfold SchedulerSimulationBase.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
+    { unfold SchedulerSimulationLemmas.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
     destruct (stall_counter_wide act a_idx t_idx (ip_lat (tfs_spec_ip ctx p))
                 Halign Hstl) as [_ Hwide].
     exists t.
@@ -7652,7 +7652,7 @@ Section SchedulerSimulation.
         { intros l Hin.
           assert (Hlin : In (fst l) (get_args ctx (nth d (graph (build_dfg ctx act))
                             {| nid := 0; op := DFG_Empty; sz := 0 |}))).
-          { unfold get_args. unfold SchedulerSimulationBase.node_op in Hd2op.
+          { unfold get_args. unfold SchedulerSimulationLemmas.node_op in Hd2op.
             rewrite Hd2op. right. exact (in_map fst en l Hin). }
           pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
           split; [ exact (Hargpos _ (nth_In _ _ Hdlen) _ Hlin) |].
@@ -7665,9 +7665,9 @@ Section SchedulerSimulation.
                   is_sample_of act x = true ->
                   BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m2, msz2)).
         { intros x m2 msz2 Hx Hsx. apply list_assoc_nodup_in.
-          - unfold SchedulerSimulationBase.sample_bufs. apply nodup_map_fst_filter.
+          - unfold SchedulerSimulationLemmas.sample_bufs. apply nodup_map_fst_filter.
             exact (slot_keys_nodup act a_idx Halign).
-          - unfold SchedulerSimulationBase.sample_bufs. apply filter_In.
+          - unfold SchedulerSimulationLemmas.sample_bufs. apply filter_In.
             split; [ exact (wla_in _ _ _ Hx) | exact Hsx ]. }
         assert (Hsrc_j : forall l, In l en ->
                   eval1 (node_ref_valid act a_idx (fst l))
@@ -7676,14 +7676,14 @@ Section SchedulerSimulation.
         { intros l Hin.
           destruct (Hlrange l Hin) as [_ Hld].
           assert (Hllen : fst l < length (graph (build_dfg ctx act))) by lia.
-          unfold SchedulerSimulationBase.node_ref_valid.
+          unfold SchedulerSimulationLemmas.node_ref_valid.
           replace j with (t + (j - t)) by lia.
           apply (compile_valid_mono_run act a_idx input resp ss0
                    (sample_bufs act a_idx)
                    (length (graph (build_dfg ctx act))) (fst l) [] t (j - t)
                    Halign Hzv);
             [ intros i Hi; apply Hpre; lia
-            | intros e He; unfold SchedulerSimulationBase.sample_bufs in He;
+            | intros e He; unfold SchedulerSimulationLemmas.sample_bufs in He;
               exact (proj1 (proj1 (filter_In _ e _) He))
             | exact Hllen
             | intros x Hx Hsx;
@@ -7744,7 +7744,7 @@ Section SchedulerSimulation.
       exact H. }
     assert (Hlin : In (fst l) (get_args ctx (nth d (graph (build_dfg ctx act))
                       {| nid := 0; op := DFG_Empty; sz := 0 |}))).
-    { unfold get_args. unfold SchedulerSimulationBase.node_op in Hdop.
+    { unfold get_args. unfold SchedulerSimulationLemmas.node_op in Hdop.
       rewrite Hdop. right. exact (in_map fst en l Hin). }
     destruct (node_args_range act d
                 ltac:(destruct (node_op_pos act d
@@ -7758,18 +7758,18 @@ Section SchedulerSimulation.
               is_sample_of act x = true ->
               BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m2, msz2)).
     { intros x m2 msz2 Hx Hsx. apply list_assoc_nodup_in.
-      - unfold SchedulerSimulationBase.sample_bufs. apply nodup_map_fst_filter.
+      - unfold SchedulerSimulationLemmas.sample_bufs. apply nodup_map_fst_filter.
         exact (slot_keys_nodup act a_idx Halign).
-      - unfold SchedulerSimulationBase.sample_bufs. apply filter_In.
+      - unfold SchedulerSimulationLemmas.sample_bufs. apply filter_In.
         split; [ exact (wla_in _ _ _ Hx) | exact Hsx ]. }
-    unfold SchedulerSimulationBase.node_ref_valid.
+    unfold SchedulerSimulationLemmas.node_ref_valid.
     replace m with (t + (m - t)) by lia.
     apply (compile_valid_mono_run act a_idx input resp ss0
              (sample_bufs act a_idx)
              (length (graph (build_dfg ctx act))) (fst l) [] t (m - t)
              Halign Hzv);
       [ intros i Hi; apply Hpre; lia
-      | intros e He; unfold SchedulerSimulationBase.sample_bufs in He;
+      | intros e He; unfold SchedulerSimulationLemmas.sample_bufs in He;
         exact (proj1 (proj1 (filter_In _ e _) He))
       | exact Hllen
       | intros x Hx Hsx;
@@ -7810,13 +7810,13 @@ Section SchedulerSimulation.
       apply Bool.negb_true_iff. apply Nat.eqb_neq. lia. }
     split.
     - intros x Hx Hnone. rewrite Hkeep in Hnone by exact Hx.
-      unfold SchedulerSimulationBase.sample_bufs.
+      unfold SchedulerSimulationLemmas.sample_bufs.
       exact (list_assoc_filter_none _ _ _ Hnone).
     - intros x m msz Hx Hsome Hsx. rewrite Hkeep in Hsome by exact Hx.
       apply list_assoc_nodup_in.
-      + unfold SchedulerSimulationBase.sample_bufs. apply nodup_map_fst_filter.
+      + unfold SchedulerSimulationLemmas.sample_bufs. apply nodup_map_fst_filter.
         exact (slot_keys_nodup act a_idx Halign).
-      + unfold SchedulerSimulationBase.sample_bufs. apply filter_In.
+      + unfold SchedulerSimulationLemmas.sample_bufs. apply filter_In.
         split; [ exact (wla_in _ _ _ Hsome) | exact Hsx ].
   Qed.
 
@@ -7835,12 +7835,12 @@ Section SchedulerSimulation.
           BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)).
   Proof.
     intro Halign. split.
-    - intros x Hnone. unfold SchedulerSimulationBase.sample_bufs.
+    - intros x Hnone. unfold SchedulerSimulationLemmas.sample_bufs.
       exact (list_assoc_filter_none _ _ _ Hnone).
     - intros x m msz Hsome Hsx. apply list_assoc_nodup_in.
-      + unfold SchedulerSimulationBase.sample_bufs. apply nodup_map_fst_filter.
+      + unfold SchedulerSimulationLemmas.sample_bufs. apply nodup_map_fst_filter.
         exact (slot_keys_nodup act a_idx Halign).
-      + unfold SchedulerSimulationBase.sample_bufs. apply filter_In.
+      + unfold SchedulerSimulationLemmas.sample_bufs. apply filter_In.
         split; [ exact (wla_in _ _ _ Hsome) | exact Hsx ].
   Qed.
   Lemma sample_guards_valid_run
@@ -7882,10 +7882,10 @@ Section SchedulerSimulation.
     assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
       by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
     assert (Hsam : is_sample_of act (vreg_nid a_idx n_idx) = true)
-      by (unfold SchedulerSimulationBase.is_sample_of;
+      by (unfold SchedulerSimulationLemmas.is_sample_of;
           rewrite Hsamp; reflexivity).
     assert (Hen : sample_en_of act (vreg_nid a_idx n_idx) = Some en)
-      by (unfold SchedulerSimulationBase.sample_en_of;
+      by (unfold SchedulerSimulationLemmas.sample_en_of;
           rewrite Hsamp; reflexivity).
     destruct (sample_guard_rise act a_idx input resp ss0 k n_idx p tok en
                 Halign Hlen Hz0 Hpre Hsamp Hvk) as [j [Hjk [Hvdown [HvSj Hval]]]].
@@ -7901,7 +7901,7 @@ Section SchedulerSimulation.
           exact H. }
         assert (Hlin : In c (get_args ctx (nth d (graph (build_dfg ctx act))
                           {| nid := 0; op := DFG_Empty; sz := 0 |}))).
-        { unfold get_args. unfold SchedulerSimulationBase.node_op in Hdop.
+        { unfold get_args. unfold SchedulerSimulationLemmas.node_op in Hdop.
           rewrite Hdop. right. exact (in_map fst en (c, b) Hin). }
         destruct (node_args_range act d
                     ltac:(destruct (node_op_pos act d
@@ -7990,7 +7990,7 @@ Section SchedulerSimulation.
     { intros x Hx. apply list_assoc_key_none. intro Hin2.
       apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
       cbn [fst] in Hxx. subst x2.
-      unfold SchedulerSimulationBase.sample_bufs in Hmem2. apply filter_In in Hmem2.
+      unfold SchedulerSimulationLemmas.sample_bufs in Hmem2. apply filter_In in Hmem2.
       apply (list_assoc_none_key _ _ Hx), in_map_iff.
       exists (x, v2). split; [ reflexivity | exact (proj1 Hmem2) ]. }
     assert (Hsam_same : forall x m msz,
@@ -8000,9 +8000,9 @@ Section SchedulerSimulation.
               is_sample_of act x = true ->
               BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)).
     { intros x m msz Hx Hsx. apply list_assoc_nodup_in.
-      + unfold SchedulerSimulationBase.sample_bufs. apply nodup_map_fst_filter.
+      + unfold SchedulerSimulationLemmas.sample_bufs. apply nodup_map_fst_filter.
         exact (slot_keys_nodup act a_idx Halign).
-      + unfold SchedulerSimulationBase.sample_bufs. apply filter_In.
+      + unfold SchedulerSimulationLemmas.sample_bufs. apply filter_In.
         split; [ exact (wla_in _ _ _ Hx) | exact Hsx ]. }
     (* drop the buffers from any var_map node's compiled expression *)
     assert (Hdrop : forall v n szB,

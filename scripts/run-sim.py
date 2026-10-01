@@ -31,14 +31,14 @@ class Bench:
 
 BENCHES = {
     # Against a MODEL of the IP: identity or +1, latency 3, not pipelined.
-    "tb_call":      Bench("Example_CallSpike"),
-    "tb_two":       Bench("Example_TwoCallSpike"),
-    "tb_chain":     Bench("Example_ChainedCallSpike"),
-    "tb_branch":    Bench("Example_BranchCallSpike"),
-    "tb_guard":     Bench("Example_GuardCallSpike"),
-    "tb_arms":      Bench("Example_ArmsSeqSpike"),
-    "tb_untaken":   Bench("Example_ArmsSeqSpike"),
-    "tb_xport":     Bench("Example_XPortGuardSpike"),
+    "tb_call":      Bench("Regression_Call"),
+    "tb_two":       Bench("Regression_TwoCall"),
+    "tb_chain":     Bench("Regression_ChainedCall"),
+    "tb_branch":    Bench("Regression_BranchCall"),
+    "tb_guard":     Bench("Regression_GuardCall"),
+    "tb_arms":      Bench("Regression_ArmsSeq"),
+    "tb_untaken":   Bench("Regression_ArmsSeq"),
+    "tb_xport":     Bench("Regression_XPortGuard"),
     "tb_mars":      Bench("Example_Mars"),
 
     # Against the REAL secworks/sha256 core through external/glue/.

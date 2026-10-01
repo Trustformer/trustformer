@@ -6,7 +6,7 @@ Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.
 
 Require Import Trustformer.Syntax.
-Require Import Trustformer.Scheduler.Contract.
+Require Import Trustformer.Contract.
 Require Export Trustformer.Scheduler.Show.
 
 Require Import Coq.Lists.List.

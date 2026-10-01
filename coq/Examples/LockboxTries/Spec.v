@@ -5,9 +5,9 @@ Require Import Koika.KoikaForm.SimpleVal.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.TypedSynthesis.
-Require Import Trustformer.Scheduler.Contract.
-Require Import Trustformer.Scheduler.VariableScheduler.
+Require Import Trustformer.Backend.Lowering.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
 
 (* The paper's running example, verbatim: the lockbox with a retry counter
    (paper/sections/05_design/01_functional_spec.tex, fig:example-spec).  The
@@ -213,7 +213,7 @@ Section Examples.
 
 End Examples.
 
-Section TypedSynthesis.
+Section Lowering.
 
     (* Blackbox: no declassification rules, so every phi on a secret is
        critical.  The whitebox variants live in Taint.v. *)
@@ -250,9 +250,9 @@ Section TypedSynthesis.
         tf_action_encoding_inj := fs_action_encoding_inj;
     |}.
 
-  Definition package := TypedSynthesis.package tf_ctx "Example_LockboxTries".
+  Definition package := Lowering.package tf_ctx "Example_LockboxTries".
 
-End TypedSynthesis.
+End Lowering.
 
 (* Extraction *)
 

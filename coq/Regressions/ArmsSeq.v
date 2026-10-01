@@ -13,9 +13,9 @@ Require Import Koika.Std.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.Scheduler.DFG.
-Require Import Trustformer.Scheduler.Contract.
-Require Import Trustformer.Scheduler.VariableScheduler.
+Require Import Trustformer.DFG.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
 
 Require Import Coq.Lists.List.
 Import ListNotations.
@@ -91,7 +91,7 @@ Section ArmsSeq.
 
 End ArmsSeq.
 
-Require Import Trustformer.TypedSynthesis.
+Require Import Trustformer.Backend.Lowering.
 
 Section ArmsSeqSynthesis.
 
@@ -109,10 +109,10 @@ Section ArmsSeqSynthesis.
     tf_action_encoding := as_action_encoding;
     tf_action_encoding_inj := as_action_encoding_inj;
   |}.
-  Definition as_package := TypedSynthesis.package as_tf_ctx "Example_ArmsSeqSpike".
+  Definition as_package := Lowering.package as_tf_ctx "Regression_ArmsSeq".
 
 End ArmsSeqSynthesis.
 
 Definition as_prog := Interop.Backends.register as_package.
 Set Extraction Output Directory "build".
-Extraction "Example_ArmsSeqSpike.ml" as_prog.
+Extraction "Regression_ArmsSeq.ml" as_prog.

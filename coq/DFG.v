@@ -77,7 +77,7 @@ End SchedulerTypes.
 (* Blackbox is [sources = []] with [guard = []]; an unconditional         *)
 (* inverter has [guard = []]; a phi rule carries a guard.                 *)
 (* The matching proof obligation is [instance_sound] in                   *)
-(* coq/Properties/IPR.v.                                                  *)
+(* coq/Theorems/IPR.v.                                                  *)
 (* ===================================================================== *)
 
 Record decl_instance := {

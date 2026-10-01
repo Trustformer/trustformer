@@ -40,18 +40,19 @@ is whether the list is the right one.
 
 ## What is in here
 
-| Path                                            | Contents                                                                                      |
-| ----------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `coq/Syntax.v`, `coq/Semantics.v`               | the specification language and its denotational semantics                                     |
-| `coq/Scheduler/Contract.v`                      | `TFSchedContext` (what a user writes) and `TFSchedule` (what the scheduler must produce)      |
-| `coq/Scheduler/DFG.v`                           | data-flow graph datatypes and declassification instances                                      |
-| `coq/Scheduler/VariableScheduler.v`             | DFG construction, cost model, taint and declassification analyses, buffering, code generation |
-| `coq/Scheduler/Show.v`, `coq/Scheduler/Audit.v` | diagnostics: readable criticality reports, cycle bounds with witnesses, Graphviz output       |
-| `coq/TypedSynthesis.v`                          | the Kôika register file, rules and scheduler for a `TFSchedule`                               |
-| `coq/Properties/`                               | the proofs: `Synthesis.v`, `SchedulerSimulation.v`, `IPR.v`                                   |
-| `coq/Rules/`                                    | the declassification rule library                                                             |
-| `coq/Examples/`                                 | the worked designs, one folder each: a `Spec.v` and any proofs about it                       |
-| `coq/Regressions/`                              | toolchain tests: the analyses, the lowering, and the designs the testbenches drive             |
+| Path                                                  | Contents                                                                                      |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `coq/Syntax.v`, `coq/Semantics.v`                     | the specification language and its denotational semantics                                     |
+| `coq/Contract.v`                                      | `TFSchedContext` (what a user writes) and `TFSchedule` (what the scheduler must produce)      |
+| `coq/DFG.v`                                           | data-flow graph datatypes and declassification instances                                      |
+| `coq/Scheduler/Passes.v`, `coq/Scheduler/Schedule.v`  | DFG construction, cost model, taint and declassification analyses, buffering, code generation |
+| `coq/Scheduler/Show.v`, `coq/Scheduler/Audit.v`       | diagnostics: readable criticality reports, cycle bounds with witnesses, Graphviz output       |
+| `coq/Backend/`                                        | `Lowering.v`, the Kôika register file, rules and scheduler for a `TFSchedule`                 |
+| `coq/Theorems/`                                       | the guarantees: `Synthesis.v`, `SchedulerSimulation.v`, `IPR.v`, `Confidentiality.v`          |
+| `coq/Theorems/Internal/`                              | proof bulk those rest on — machine-checked, not written to be read                            |
+| `coq/Declassification/`                               | the declassification rule library                                                             |
+| `coq/Examples/`                                       | the worked designs, one folder each: a `Spec.v` and any proofs about it                       |
+| `coq/Regressions/`                                    | toolchain tests: the analyses, the lowering, and the designs the testbenches drive            |
 
 ## Writing a module
 
@@ -61,9 +62,9 @@ is whether the list is the right one.
 2. Give the action semantics as `tf_ops` — see the notation in
    `coq/Examples/LockboxTries/Spec.v` (`let $x := ...`, `if ... then ... else ...`).
 3. Pack it into a `TFSchedContext`. Leave `tfs_spec_decls := []` for a
-   blackbox attacker, or list declassification rules from `coq/Rules/` for a whitebox attacker.
+   blackbox attacker, or list declassification rules from `coq/Declassification/` for a whitebox attacker.
 4. `tfs_schedule ctx cost_limit` produces the `TFSchedule`; feeding it to
-   `TypedSynthesis` yields the Kôika `package`, and
+   `coq/Backend/Lowering.v` yields the Kôika `package`, and
    `Interop.Backends.register package` plus `Extraction` produce the Verilog
    generator.
 

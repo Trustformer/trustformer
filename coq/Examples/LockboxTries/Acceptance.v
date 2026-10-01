@@ -9,14 +9,14 @@ Require Import Koika.Std.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.Scheduler.DFG.
-Require Import Trustformer.Scheduler.Contract.
-Require Import Trustformer.Scheduler.VariableScheduler.
-Require Import Trustformer.Properties.SchedulerSimulation.
-Require Import Trustformer.Properties.IPR.
-Require Import Trustformer.Rules.Negation.
-Require Import Trustformer.Rules.PhiBranch.
-Require Import Trustformer.Rules.PhiConst.
+Require Import Trustformer.DFG.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
+Require Import Trustformer.Theorems.SchedulerSimulation.
+Require Import Trustformer.Theorems.IPR.
+Require Import Trustformer.Declassification.Negation.
+Require Import Trustformer.Declassification.PhiBranch.
+Require Import Trustformer.Declassification.PhiConst.
 
 Require Import Coq.Lists.List.
 Import ListNotations.

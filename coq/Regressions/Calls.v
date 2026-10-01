@@ -11,9 +11,9 @@ Require Import Koika.Std.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.Scheduler.DFG.
-Require Import Trustformer.Scheduler.Contract.
-Require Import Trustformer.Scheduler.VariableScheduler.
+Require Import Trustformer.DFG.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
 
 Require Import Coq.Lists.List.
 Import ListNotations.
@@ -145,14 +145,14 @@ Section CallSpike.
 End CallSpike.
 
 (* ===================================================================== *)
-(*  End-to-end: through TypedSynthesis and out to Verilog.               *)
+(*  End-to-end: through Backend/Lowering.v and out to Verilog.               *)
 (* ===================================================================== *)
 (* Extracted so the hardware can be READ and RUN (sim/tb_call.sv).  In
-   build/Example_CallSpike.v: the request assigned from ALWAYS logic, its
+   build/Regression_Call.v: the request assigned from ALWAYS logic, its
    else-branch reading the port's own previous value so it HOLDS, one driver,
    and the response read LIVE off the wire. *)
 
-Require Import Trustformer.TypedSynthesis.
+Require Import Trustformer.Backend.Lowering.
 
 Section CallSynthesis.
 
@@ -171,13 +171,13 @@ Section CallSynthesis.
     tf_action_encoding_inj := cs_action_encoding_inj;
   |}.
 
-  Definition package := TypedSynthesis.package cs_tf_ctx "Example_CallSpike".
+  Definition package := Lowering.package cs_tf_ctx "Regression_Call".
 
 End CallSynthesis.
 
 Definition prog := Interop.Backends.register package.
 Set Extraction Output Directory "build".
-Extraction "Example_CallSpike.ml" prog.
+Extraction "Regression_Call.ml" prog.
 
 (* ===================================================================== *)
 (*  Two calls to the SAME IP in one action.                              *)
@@ -311,7 +311,7 @@ Proof. vm_compute. reflexivity. Qed.
 (*  End-to-end for TWO sequenced calls on one IP.                        *)
 (* ===================================================================== *)
 (* Two calls on one IP with INDEPENDENT arguments.  In
-   build/Example_TwoCallSpike.v: TWO strobe pulses on the request's top bit
+   build/Regression_TwoCall.v: TWO strobe pulses on the request's top bit
    [lat] apart, the payload changing between them and HELD in between, and a
    single driver.  Run by sim/tb_two.sv. *)
 
@@ -325,12 +325,12 @@ Section TwoCallSynthesis.
     tf_action_encoding_inj := cs_action_encoding_inj;
   |}.
 
-  Definition tc_package := TypedSynthesis.package tc_tf_ctx "Example_TwoCallSpike".
+  Definition tc_package := Lowering.package tc_tf_ctx "Regression_TwoCall".
 
 End TwoCallSynthesis.
 
 Definition tc_prog := Interop.Backends.register tc_package.
-Extraction "Example_TwoCallSpike.ml" tc_prog.
+Extraction "Regression_TwoCall.ml" tc_prog.
 
 (* ===================================================================== *)
 (*  End-to-end for two CHAINED calls: call 2's argument is call 1's       *)
@@ -350,12 +350,12 @@ Section TwoCallsChainedSynthesis.
     tf_action_encoding_inj := cs_action_encoding_inj;
   |}.
 
-  Definition tc2_package := TypedSynthesis.package tc2_tf_ctx "Example_ChainedCallSpike".
+  Definition tc2_package := Lowering.package tc2_tf_ctx "Regression_ChainedCall".
 
 End TwoCallsChainedSynthesis.
 
 Definition tc2_prog := Interop.Backends.register tc2_package.
-Extraction "Example_ChainedCallSpike.ml" tc2_prog.
+Extraction "Regression_ChainedCall.ml" tc2_prog.
 
 (* ===================================================================== *)
 (*  A call under a BRANCH.                                               *)
@@ -419,12 +419,12 @@ Section BranchCallSynthesis.
     tf_action_encoding := cs_action_encoding;
     tf_action_encoding_inj := cs_action_encoding_inj;
   |}.
-  Definition bc_package := TypedSynthesis.package bc_tf_ctx "Example_BranchCallSpike".
+  Definition bc_package := Lowering.package bc_tf_ctx "Regression_BranchCall".
 
 End BranchCallSynthesis.
 
 Definition bc_prog := Interop.Backends.register bc_package.
-Extraction "Example_BranchCallSpike.ml" bc_prog.
+Extraction "Regression_BranchCall.ml" bc_prog.
 
 
 (* ===================================================================== *)
@@ -481,9 +481,9 @@ Section GuardOnResultSynthesis.
     tf_action_encoding := cs_action_encoding;
     tf_action_encoding_inj := cs_action_encoding_inj;
   |}.
-  Definition gr_package := TypedSynthesis.package gr_tf_ctx "Example_GuardCallSpike".
+  Definition gr_package := Lowering.package gr_tf_ctx "Regression_GuardCall".
 
 End GuardOnResultSynthesis.
 
 Definition gr_prog := Interop.Backends.register gr_package.
-Extraction "Example_GuardCallSpike.ml" gr_prog.
+Extraction "Regression_GuardCall.ml" gr_prog.

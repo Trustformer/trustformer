@@ -9,12 +9,12 @@ Require Import Koika.Std.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.Scheduler.DFG.
-Require Import Trustformer.Scheduler.Contract.
-Require Import Trustformer.Scheduler.VariableScheduler.
-Require Import Trustformer.Properties.IPR.
-Require Import Trustformer.Rules.Xor.
-Require Import Trustformer.Rules.Widening.
+Require Import Trustformer.DFG.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
+Require Import Trustformer.Theorems.IPR.
+Require Import Trustformer.Declassification.Xor.
+Require Import Trustformer.Declassification.Widening.
 
 Require Import Coq.Lists.List.
 Require Import Lia.

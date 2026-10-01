@@ -9,8 +9,8 @@ Require Import Coq.Logic.FunctionalExtensionality.
 Require Import Trustformer.Utils.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Export Trustformer.Scheduler.DFG.
-Require Import Trustformer.Scheduler.Contract.
+Require Export Trustformer.DFG.
+Require Import Trustformer.Contract.
 Require Import Hammer.Plugin.Hammer.
 Set Hammer GSMode 63.
 
@@ -24,9 +24,9 @@ Import ListNotations.
 
 (* Steps 1-6 of the variable scheduler: DFG construction, cost, target cycles,
    buffer allocation, taint and declassification, and the TF lowering.
-   VariableScheduler.v proves the record obligations on top of these. *)
+   Schedule.v proves the record obligations on top of these. *)
 
-Section SchedulerCore.
+Section Passes.
 
   Context (ctx: TFSchedContext).
   Context (cost_limit: nat).
@@ -943,7 +943,7 @@ Section SchedulerCore.
 
   (* ---------------------------------------------------------------- *)
   (* CYCLE BOUNDS.  How long an action takes for a CONCRETE input is    *)
-  (* not something to compute (that is [L] in Properties/IPR.v, which   *)
+  (* not something to compute (that is [L] in Theorems/IPR.v, which   *)
   (* exists for the proofs).  What the circuit does give cheaply is the *)
   (* best and worst case, read off the same cone the compiler walks.    *)
   (* ---------------------------------------------------------------- *)
@@ -1592,4 +1592,4 @@ Section SchedulerCore.
     | tf_dfg_ov _ => Bits.zero
     end.
 
-End SchedulerCore.
+End Passes.

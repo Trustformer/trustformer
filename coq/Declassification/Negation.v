@@ -7,11 +7,11 @@ Require Import Koika.Utils.Common.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.Scheduler.DFG.
-Require Import Trustformer.Scheduler.Contract.
-Require Import Trustformer.Scheduler.VariableScheduler.
-Require Import Trustformer.Properties.SchedulerSimulation.
-Require Import Trustformer.Properties.IPR.
+Require Import Trustformer.DFG.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
+Require Import Trustformer.Theorems.SchedulerSimulation.
+Require Import Trustformer.Theorems.IPR.
 
 Require Import Coq.Lists.List.
 Require Import Lia.
@@ -74,7 +74,7 @@ Section Soundness.
     cbn [di_sources di_target] in Hsrc, Hv, Hv' |- *.
     assert (Hnlen : n < length (graph (build_dfg ctx act))) by exact Hlen.
     assert (Hop' : node_op ctx cost_limit act n = DFG_Unary tf_not arg)
-      by (unfold SchedulerSimulationBase.node_op; rewrite Hop; reflexivity).
+      by (unfold SchedulerSimulationLemmas.node_op; rewrite Hop; reflexivity).
     destruct (node_args_range ctx cost_limit act n Hn1 Hlen arg
                 ltac:(unfold get_args; rewrite Hop; left; reflexivity)) as [Harg1 _].
     specialize (Hsrc n pi (or_introl eq_refl) Hpi Hpi'

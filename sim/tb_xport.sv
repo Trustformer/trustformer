@@ -1,4 +1,4 @@
-// Example_XPortGuardSpike: a branch on a call result, where the branch's own
+// Regression_XPortGuard: a branch on a call result, where the branch's own
 // calls are on a DIFFERENT port from the call the condition reads.
 //
 //   st_c := cond(in_msg);
@@ -24,7 +24,7 @@ module tb_xport;
   wire         ready, cond_ack, arm_ack, msg_ack;
   wire [255:0] cond_wire, arm_wire;
 
-  Example_XPortGuardSpike dut(
+  Regression_XPortGuard dut(
     .CLK(clk), .RST_N(rst_n),
     .ip_resp_sec_xp_cond_out(cond_wire),
     .ip_resp_sec_xp_arm_out(arm_wire),

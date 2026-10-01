@@ -3,7 +3,7 @@
 (*  DIFFERENT port from the call the condition reads.                    *)
 (* ===================================================================== *)
 (*
-    [Example_GuardCallSpike] is the same program with every call on ONE port,
+    [Regression_GuardCall] is the same program with every call on ONE port,
     and it passes: [last_sample] finds the first call's sample -- its guard is
     not disjoint from either arm's -- so both arms' drives are sequenced behind
     it and cannot fire until the answer is latched.
@@ -21,9 +21,9 @@ Require Import Koika.Std.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.Scheduler.DFG.
-Require Import Trustformer.Scheduler.Contract.
-Require Import Trustformer.Scheduler.VariableScheduler.
+Require Import Trustformer.DFG.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
 
 Require Import Coq.Lists.List.
 Import ListNotations.
@@ -113,7 +113,7 @@ Section XPortGuard.
 
 End XPortGuard.
 
-Require Import Trustformer.TypedSynthesis.
+Require Import Trustformer.Backend.Lowering.
 
 Section XPortGuardSynthesis.
 
@@ -131,10 +131,10 @@ Section XPortGuardSynthesis.
     tf_action_encoding := xp_action_encoding;
     tf_action_encoding_inj := xp_action_encoding_inj;
   |}.
-  Definition xp_package := TypedSynthesis.package xp_tf_ctx "Example_XPortGuardSpike".
+  Definition xp_package := Lowering.package xp_tf_ctx "Regression_XPortGuard".
 
 End XPortGuardSynthesis.
 
 Definition xp_prog := Interop.Backends.register xp_package.
 Set Extraction Output Directory "build".
-Extraction "Example_XPortGuardSpike.ml" xp_prog.
+Extraction "Regression_XPortGuard.ml" xp_prog.

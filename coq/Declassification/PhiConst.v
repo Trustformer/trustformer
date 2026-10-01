@@ -7,11 +7,11 @@ Require Import Koika.Utils.Common.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.Scheduler.DFG.
-Require Import Trustformer.Scheduler.Contract.
-Require Import Trustformer.Scheduler.VariableScheduler.
-Require Import Trustformer.Properties.SchedulerSimulation.
-Require Import Trustformer.Properties.IPR.
+Require Import Trustformer.DFG.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
+Require Import Trustformer.Theorems.SchedulerSimulation.
+Require Import Trustformer.Theorems.IPR.
 
 Require Import Coq.Lists.List.
 Require Import Lia.
@@ -129,11 +129,11 @@ Section Soundness.
                 ltac:(unfold get_args; rewrite Hop; left; reflexivity))
       as [Hc1 Hc2].
     assert (Hopn : node_op ctx cost_limit act n = DFG_Phi cnd tid eid)
-      by (unfold SchedulerSimulationBase.node_op; rewrite Hop; reflexivity).
+      by (unfold SchedulerSimulationLemmas.node_op; rewrite Hop; reflexivity).
     assert (Hoptn : node_op ctx cost_limit act tid = DFG_Const kt)
-      by (unfold SchedulerSimulationBase.node_op; rewrite Hopt; reflexivity).
+      by (unfold SchedulerSimulationLemmas.node_op; rewrite Hopt; reflexivity).
     assert (Hopen : node_op ctx cost_limit act eid = DFG_Const ke)
-      by (unfold SchedulerSimulationBase.node_op; rewrite Hope; reflexivity).
+      by (unfold SchedulerSimulationLemmas.node_op; rewrite Hope; reflexivity).
     specialize (Hsrc n pi (or_introl eq_refl) Hpi Hpi'
                   (nrv_lift_phi_const ctx cost_limit act a_idx n cnd tid eid kt ke
                      pi ss  input  Hopn Hoptn Hopen Hc1 Ht1 He1 Hlen Hv)

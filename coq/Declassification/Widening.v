@@ -8,11 +8,11 @@ Require Import Koika.BitsToLists.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.Scheduler.DFG.
-Require Import Trustformer.Scheduler.Contract.
-Require Import Trustformer.Scheduler.VariableScheduler.
-Require Import Trustformer.Properties.SchedulerSimulation.
-Require Import Trustformer.Properties.IPR.
+Require Import Trustformer.DFG.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
+Require Import Trustformer.Theorems.SchedulerSimulation.
+Require Import Trustformer.Theorems.IPR.
 
 Require Import Coq.Lists.List.
 Require Import Lia.
@@ -176,7 +176,7 @@ Section Soundness.
                       ltac:(unfold get_args; rewrite Hop; left; reflexivity))
             as [Harg1 _].
           exact (nrv_lift_unary ctx cost_limit act a_idx n (tf_resize src) arg pi
-                   s inp ltac:(unfold SchedulerSimulationBase.node_op;
+                   s inp ltac:(unfold SchedulerSimulationLemmas.node_op;
                                rewrite Hop; reflexivity) Harg1 Hlen Hva).
       - (* DFG_Resize: the source width is the argument node's own width *)
         destruct (Nat.leb (sz (nth arg (graph (build_dfg ctx act))
@@ -197,7 +197,7 @@ Section Soundness.
                       ltac:(unfold get_args; rewrite Hop; left; reflexivity))
             as [Harg1 _].
           exact (nrv_lift_resize ctx cost_limit act a_idx n arg pi s inp
-                   ltac:(unfold SchedulerSimulationBase.node_op;
+                   ltac:(unfold SchedulerSimulationLemmas.node_op;
                          rewrite Hop; reflexivity) Harg1 Hlen Hva). }
 
     destruct Hcase as [arg [src [Hnre [Hsz [Hle [Hieq Hlift]]]]]]. subst i.

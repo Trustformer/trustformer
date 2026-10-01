@@ -7,11 +7,11 @@ Require Import Koika.Utils.Common.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.Scheduler.DFG.
-Require Import Trustformer.Scheduler.Contract.
-Require Import Trustformer.Scheduler.VariableScheduler.
-Require Import Trustformer.Properties.SchedulerSimulation.
-Require Import Trustformer.Properties.IPR.
+Require Import Trustformer.DFG.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
+Require Import Trustformer.Theorems.SchedulerSimulation.
+Require Import Trustformer.Theorems.IPR.
 
 Require Import Coq.Lists.List.
 Require Import Lia.
@@ -136,7 +136,7 @@ Section Soundness.
     pose proof (nre_binary ctx cost_limit act a_idx n tf_xor a1 a2 Hn1 Hlen Hop)
       as Hnre.
     assert (Hopn : node_op ctx cost_limit act n = DFG_Binary tf_xor a1 a2)
-      by (unfold SchedulerSimulationBase.node_op; rewrite Hop; reflexivity).
+      by (unfold SchedulerSimulationLemmas.node_op; rewrite Hop; reflexivity).
     destruct (node_args_range ctx cost_limit act n Hn1 Hlen a1
                 ltac:(unfold get_args; rewrite Hop; left; reflexivity)) as [Ha11 _].
     destruct (node_args_range ctx cost_limit act n Hn1 Hlen a2

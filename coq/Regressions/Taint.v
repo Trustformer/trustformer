@@ -3,8 +3,8 @@ Require Import Koika.Std.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.Scheduler.Contract.
-Require Import Trustformer.Scheduler.VariableScheduler.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
 
 (* Regressions for the forward taint analysis (`get_tainted`) and the
    criticality test `compile_dfg_expr` derives from it.  Each action isolates one

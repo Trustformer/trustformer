@@ -10,8 +10,8 @@ Require Import Coq.Program.Program.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Utils.
-Require Import Trustformer.Scheduler.Contract.
-Require Trustformer.Properties.Common.
+Require Import Trustformer.Contract.
+Require Trustformer.Backend.KoikaLemmas.
 From Koika.Utils Require Import Tactics.
 
 Require Import Streams.
@@ -73,7 +73,7 @@ Section SynthesisTypes.
 
 End SynthesisTypes.
 
-Section TypedSynthesis.
+Section Lowering.
 
     Context (tf_ctx: TFSynthContext).
 
@@ -641,7 +641,7 @@ Section TypedSynthesis.
 
          ip_verilog := {| vp_ext_fn_specs := ext_fn_specs |} |}.
 
-End TypedSynthesis.
+End Lowering.
 
 (* Graded opacity: these build large dependently-typed Koika terms, so implicit
    reduction (simpl/cbn) is forbidden and explicit reduction (unfold, cbv,

@@ -3,12 +3,12 @@ Require Import Koika.Std.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.Scheduler.DFG.
-Require Import Trustformer.Scheduler.Contract.
-Require Import Trustformer.Scheduler.VariableScheduler.
-Require Import Trustformer.Properties.IPR.
-Require Import Trustformer.Rules.PhiConst.
-Require Import Trustformer.Rules.PhiBranch.
+Require Import Trustformer.DFG.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
+Require Import Trustformer.Theorems.IPR.
+Require Import Trustformer.Declassification.PhiConst.
+Require Import Trustformer.Declassification.PhiBranch.
 Require Import Trustformer.Examples.LockboxTries.Spec.
 
 Require Import Coq.Lists.List.
@@ -288,7 +288,7 @@ Print Assumptions lockboxB_uncond_sound.
 Print Assumptions lockboxB_decl_guard_sound.
 
 (* Cycle bounds: [action_bounds] reports a CIRCUIT's best and worst case, where
-   [L] in Properties/IPR.v gives one concrete input's latency for the proofs.
+   [L] in Theorems/IPR.v gives one concrete input's latency for the proofs.
    [fst = snd] certifies the action is constant time. *)
 
 Section Bounds.

@@ -5,9 +5,9 @@ Require Import Koika.KoikaForm.SimpleVal.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Import Trustformer.TypedSynthesis.
-Require Import Trustformer.Scheduler.Contract.
-Require Import Trustformer.Scheduler.VariableScheduler.
+Require Import Trustformer.Backend.Lowering.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
 
 Require Import Coq.Logic.EqdepFacts.
 Require Import Coq.Lists.List.
@@ -535,7 +535,7 @@ Section FunctionalSpecification.
 
 End FunctionalSpecification.
 
-Section TypedSynthesis.
+Section Lowering.
 
     Definition tfs_ctx : TFSchedContext := {|
         tfs_spec_states := fs_states;
@@ -609,9 +609,9 @@ Section TypedSynthesis.
         tf_action_encoding_inj := fs_action_encoding_inj;
     |}.
 
-  Definition package := TypedSynthesis.package tf_ctx "Example_Mars".
+  Definition package := Lowering.package tf_ctx "Example_Mars".
 
-End TypedSynthesis.
+End Lowering.
 
 (* Extraction *)
 

@@ -9,9 +9,9 @@ Require Koika.Properties.SemanticProperties.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Utils.
-Require Import Trustformer.Scheduler.Contract.
-Require Import Trustformer.TypedSynthesis.
-Require Trustformer.Properties.Common.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Backend.Lowering.
+Require Trustformer.Backend.KoikaLemmas.
 From Koika.Utils Require Import Tactics.
 Require Import Koika.IRR.Tactics.
 
@@ -672,7 +672,7 @@ Section SynthesisCorrectness.
 
       induction regs as [| r regs H0 ]; simpl in *; try contradiction.
       destruct Hin as [Heq | Hin]; subst.
-      - destruct (Common.in_dec idx regs).
+      - destruct (KoikaLemmas.in_dec idx regs).
         + rewrite (H0 i). rewrite may_write_log_cons_eq.
           destruct prt; simpl.
           * remember ((negb _) && (negb _) && (negb _)) as cond.
@@ -922,7 +922,7 @@ Section SynthesisCorrectness.
       cbn [fold_left]. apply (H0); clear H0.
       + abstract ( inversion H_nodup_inputs; subst; assumption ).
       + rewrite may_write_all_log_cons_neq; try assumption.
-        apply Common.not_in_map; try assumption.
+        apply KoikaLemmas.not_in_map; try assumption.
         * abstract ( inversion H_nodup_inputs; subst; assumption ).
         * abstract ( intros; inversion H; reflexivity ).
   Time Qed. (* ca. 0.05 s *)
@@ -1147,9 +1147,9 @@ Section SynthesisCorrectness.
     generalize dependent log1.
     induction expr; intros log1 szB; try reflexivity.
     - destruct op.
-      + cbn. rewrite Common.fst_let_repackage. f_equal.
+      + cbn. rewrite KoikaLemmas.fst_let_repackage. f_equal.
         apply IHexpr.
-      + cbn. rewrite Common.fst_let_repackage. f_equal.
+      + cbn. rewrite KoikaLemmas.fst_let_repackage. f_equal.
         apply (IHexpr log1 source_size).
     - cbn. destruct op.
       + let_to_projs. f_equal. f_equal. 
@@ -2216,7 +2216,7 @@ Section SynthesisCorrectness.
     unfold convert. destruct (eq_dec 1 1) as [e | n]; [| congruence].
     assert (e = eq_refl) as He by (apply Eqdep_dec.UIP_dec; exact PeanoNat.Nat.eq_dec).
     subst e. simpl.
-    rewrite Common.bits_single_is_neg_beq_dec. rewrite negb_involutive. reflexivity.
+    rewrite KoikaLemmas.bits_single_is_neg_beq_dec. rewrite negb_involutive. reflexivity.
   Qed.
 
   Definition construct_log (sys: sys_state_t) (act: spec_action) (input: input_t) (ready: bits_t 1) (log_a: Log R ContextEnv): Log R ContextEnv :=
@@ -2252,7 +2252,7 @@ Section SynthesisCorrectness.
         apply NoDup_cons; try assumption.
         induction l.
         * auto.
-        * simpl in *. apply Common.not_in_app_iff in Hnotin. destruct Hnotin as [Hnotin Hnotin_l].
+        * simpl in *. apply KoikaLemmas.not_in_app_iff in Hnotin. destruct Hnotin as [Hnotin Hnotin_l].
           specialize (IHl0 Hnotin_l); clear Hnotin_l.          
           destruct a.
           -- simpl. apply IHl0. exact IHl.
@@ -2270,7 +2270,7 @@ Section SynthesisCorrectness.
         apply NoDup_cons; try assumption.
         induction l.
         * auto.
-        * simpl in *. apply Common.not_in_app_iff in Hnotin. destruct Hnotin as [Hnotin Hnotin_l].
+        * simpl in *. apply KoikaLemmas.not_in_app_iff in Hnotin. destruct Hnotin as [Hnotin Hnotin_l].
           specialize (IHl0 Hnotin_l); clear Hnotin_l.          
           destruct a.
           -- simpl. apply IHl0. exact IHl.
@@ -2304,7 +2304,7 @@ Section SynthesisCorrectness.
         apply NoDup_cons; try assumption.
         induction l.
         * auto.
-        * simpl in *. apply Common.not_in_app_iff in Hnotin. destruct Hnotin as [Hnotin Hnotin_l].
+        * simpl in *. apply KoikaLemmas.not_in_app_iff in Hnotin. destruct Hnotin as [Hnotin Hnotin_l].
           specialize (IHl0 Hnotin_l); clear Hnotin_l.          
           destruct a.
           -- simpl. apply IHl0. exact IHl.
@@ -2322,7 +2322,7 @@ Section SynthesisCorrectness.
         apply NoDup_cons; try assumption.
         induction l.
         * auto.
-        * simpl in *. apply Common.not_in_app_iff in Hnotin. destruct Hnotin as [Hnotin Hnotin_l].
+        * simpl in *. apply KoikaLemmas.not_in_app_iff in Hnotin. destruct Hnotin as [Hnotin Hnotin_l].
           specialize (IHl0 Hnotin_l); clear Hnotin_l.          
           destruct a.
           -- simpl. apply IHl0. exact IHl.
@@ -3591,7 +3591,7 @@ Section SynthesisCorrectness.
       unfold opt_bind. destruct may_read; [|apply IH]. destruct may_write; [rewrite IH|apply IH].
       clear IH. rewrite SemanticProperties.latest_write_app.
       rewrite SemanticProperties.latest_write_cons_neq; [|symmetry; exact (H p)].
-      rewrite Common.latest_write_log_cons_read; [|auto].
+      rewrite KoikaLemmas.latest_write_log_cons_read; [|auto].
       rewrite SemanticProperties.latest_write_empty. reflexivity.
   Qed.
 
@@ -3613,7 +3613,7 @@ Section SynthesisCorrectness.
       unfold opt_bind. destruct may_read; [|apply IH]. destruct may_write; [rewrite IH|apply IH]. 
       clear IH. rewrite SemanticProperties.latest_write_app. 
       rewrite SemanticProperties.latest_write_cons_neq; [|symmetry; exact (H o)].
-      rewrite Common.latest_write_log_cons_read; [|auto].
+      rewrite KoikaLemmas.latest_write_log_cons_read; [|auto].
       rewrite SemanticProperties.latest_write_empty. reflexivity.
   Qed.
 

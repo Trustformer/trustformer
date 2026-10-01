@@ -1,4 +1,4 @@
-// Testbench for Example_CallSpike: one IP call, declared latency 3.
+// Testbench for Regression_Call: one IP call, declared latency 3.
 //
 // The IP model presents its answer for EXACTLY ONE CYCLE, 3 cycles after the
 // request strobe, and drives GARBAGE on the response wire at every other
@@ -19,7 +19,7 @@ module tb_call;
   wire         resp_ack, msg_ack;
   logic [255:0] resp_wire;
 
-  Example_CallSpike dut(
+  Regression_Call dut(
     .CLK(clk), .RST_N(rst_n),
     .ip_resp_sec_cs_crypto_out(resp_wire),
     .in_param_pub_in_msg_out(msg),
