@@ -311,6 +311,57 @@ Section SchedulerWorld.
           nval act a_idx ss input (nsz act r) r
           = nval act a_idx ss' input' (nsz act r) r).
 
+  (* A node has SETTLED when its reference reads some path's validity as ones:
+     every sample buffer it reads has latched, so its bits are a fact about the
+     run rather than about a cycle. *)
+  Definition settled_at (act: tfs_action sched) (a_idx: a_index)
+      (ss: sched_sys_state) (input: sched_input_t) (n: nid_t) : Prop :=
+    exists pi: list lit,
+      pi_holds act a_idx input pi ss
+      /\ rvalid act a_idx pi n ss input = Bits.ones 1.
+
+  (* A rule names nodes of the graph it was given: [decl_instances] walks that
+     graph, so every id an instance mentions is one of its nodes. *)
+  Definition instance_in_range (act: tfs_action sched) (i: decl_instance) : Prop :=
+    forall m, List.In m (di_target i :: di_sources i ++ map fst (di_guard i)) ->
+      1 <= m /\ m < length (graph (build_dfg ctx act)).
+
+  Definition decl_in_range (act: tfs_action sched) : Prop :=
+    forall i, List.In i (Taint.decl_instances ctx (build_dfg ctx act)) ->
+      instance_in_range act i.
+
+  (* A guard literal is a phi's condition, and a phi compiles its condition at
+     width one; a rule that keeps to that discharges this by well-formedness. *)
+  Definition instance_guards_sized (act: tfs_action sched) (i: decl_instance)
+    : Prop :=
+    forall l, List.In l (di_guard i) -> nsz act (fst l) = 1.
+
+  (* THE VALIDITY OBLIGATION ON AN INSTANCE: a rule reads its sources where the
+     target has settled, so settledness must travel from the target to what the
+     rule reads.  Each rule proves it from the same design fact its soundness
+     already assumes ([xor_settled], [phibranch_settled]). *)
+  Definition instance_lifts (act: tfs_action sched) (a_idx: a_index)
+      (i: decl_instance) : Prop :=
+    forall (ss: sched_sys_state) (input: sched_input_t),
+      settled_at act a_idx ss input (di_target i) ->
+      (forall c, List.In c (map fst (di_guard i)) ->
+         settled_at act a_idx ss input c)
+      /\ (pi_holds act a_idx input (di_guard i) ss ->
+          forall s, List.In s (di_sources i) ->
+            settled_at act a_idx ss input s).
+
+  (* THE EXTRACTION OBLIGATION.  [di_extract] computes the target's bits from
+     the sources' bits, in ONE run, wherever the instance's guard holds.  The
+     relational [instance_sound] below is this equation read across two runs. *)
+  Definition instance_extracts (act: tfs_action sched) (a_idx: a_index)
+      (i: decl_instance) : Prop :=
+    forall (ss: sched_sys_state) (input: sched_input_t),
+      pi_holds act a_idx input (di_guard i) ss ->
+      vect_to_list (nval act a_idx ss input (nsz act (di_target i)) (di_target i))
+      = di_extract i
+          (map (fun s => vect_to_list (nval act a_idx ss input (nsz act s) s))
+               (di_sources i)).
+
   (* The uniform user obligation on a single declassification instance: it is
      [uncond_sound]'s premise plus the instance's own guard. *)
   Definition instance_sound (act: tfs_action sched) (a_idx: a_index)
@@ -340,9 +391,11 @@ Section SchedulerWorld.
     ss_done (ss_run N act input resp ss0)
     /\ forall i, i < N -> ~ ss_done (ss_run i act input resp ss0).
 
-  Definition emulate (act: tfs_action sched) (input: input_t)
-      (sp0: src_sys_state) (N k: nat) (ov: o_var) :=
-    if Nat.ltb k N then (snd sp0).[ov] else (snd (spec_run act sp0 input)).[ov].
+  (* THE ATTACKER'S MODEL OF A RUN, over the two published snapshots and the
+     cycle count: the outputs stand at [pre] until cycle [N] and at [post] from
+     there.  The arguments are the whole of what it may read. *)
+  Definition emulate (pre post: src_out_env) (N k: nat) (ov: o_var) :=
+    if Nat.ltb k N then pre.[ov] else post.[ov].
 
   Definition done_test (act: tfs_action sched) (input: input_t)
       (resp: nat -> resp_val) (ss0: sched_sys_state) (k: nat) : bool :=
@@ -351,6 +404,168 @@ Section SchedulerWorld.
   Definition L (act: tfs_action sched) (input: input_t)
       (resp: nat -> resp_val) (ss0: sched_sys_state) : nat :=
     first_true (done_test act input resp ss0) (S (settle_bound act)) 0.
+
+  (* ================================================================= *)
+  (* THE ATTACKER'S CLOCK.  Everything below is computed from public     *)
+  (* data: the validity bits and stall counts the attacker keeps, the     *)
+  (* selector values the declassification rules recover, and the graph.   *)
+  (* ================================================================= *)
+
+  (* The attacker's copy of the validity registers, one entry per buffer slot
+     in the order [buffer_needs] lists them. *)
+  Definition vvec := list bool.
+
+  Definition slot_valid (vv: vvec) (j: nat) : bool := nth j vv false.
+
+  (* A node's validity as the attacker computes it: the buffer slots it reads
+     come from [vv], and an untainted phi's selector from [vals].  It mirrors
+     [compile_dfg_expr_aux]'s second component. *)
+  Fixpoint avalid (act: tfs_action sched) (vals: nid_t -> option (list bool))
+      (vv: vvec) (bufs: list (nid_t * (nat * sz_t)))
+      (fuel: nat) (pi: list lit) (n: nid_t) : bool :=
+    match fuel with
+    | 0 => false
+    | S f =>
+        match BitsToLists.list_assoc bufs n with
+        | Some (j, _) => slot_valid vv j
+        | None =>
+            let rec := avalid act vals vv bufs f in
+            match node_op act n with
+            | DFG_Const _ => true
+            | DFG_Input _ => true
+            | DFG_Var _ => true
+            | DFG_Unary _ a => rec pi a
+            | DFG_Resize a => rec pi a
+            | DFG_Binary _ a b => andb (rec pi a) (rec pi b)
+            | DFG_Stall _ a => rec pi a
+            | DFG_Sample _ tok _ => rec pi tok
+            | DFG_Join a b => andb (rec pi a) (rec pi b)
+            | DFG_Drive _ a en =>
+                fold_right (fun l acc => andb (rec pi (fst l)) acc) (rec pi a) en
+            | DFG_Phi c t e =>
+                let crit := phi_crit (get_tainted ctx (build_dfg ctx act))
+                                     (decl_facts ctx (build_dfg ctx act)) c pi in
+                if crit
+                then andb (andb (rec (phi_path crit c true pi) t)
+                                (rec (phi_path crit c false pi) e))
+                          (rec pi c)
+                else andb (rec pi c)
+                          (match vals c with
+                           | Some (b :: nil) =>
+                               rec (phi_path crit c b pi) (if b then t else e)
+                           | _ => false
+                           end)
+            | DFG_Empty => false
+            end
+        end
+    end.
+
+  (* WHAT [avalid] NEEDS OF THE EXTRACTION: a selecting phi reads its condition
+     to pick an arm, so the rules must recover that condition -- wherever it has
+     settled, which is where the phi reads it. *)
+  Definition selectors_extractable (act: tfs_action sched) (a_idx: a_index)
+      (vals: nid_t -> option (list bool))
+      (ss: sched_sys_state) (input: sched_input_t) : Prop :=
+    forall n c t e pi,
+      node_op act n = DFG_Phi c t e ->
+      phi_crit (get_tainted ctx (build_dfg ctx act))
+               (decl_facts ctx (build_dfg ctx act)) c pi = false ->
+      pi_holds act a_idx input pi ss ->
+      rvalid act a_idx pi c ss input = Bits.ones 1 ->
+      exists b, vals c = Some [b].
+
+  (* The attacker's vector IS the validity registers, slot by slot. *)
+  Definition vv_matches (a_idx: a_index) (vv: vvec) (ss: sched_sys_state)
+      (bufs: list (nid_t * (nat * sz_t))) : Prop :=
+    forall n j jsz n_idx,
+      BitsToLists.list_assoc bufs n = Some (j, jsz) ->
+      index_of_nat (length (nth (index_to_nat a_idx) bneeds [])) j = Some n_idx ->
+      (slot_valid vv j = true <-> (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1).
+
+  (* The values it brings are the run's values, WHERE THE NODE HAS SETTLED.
+     Before that a node reads buffers that have not latched, and no published
+     table says anything about what they hold. *)
+  Definition vals_sound (act: tfs_action sched) (a_idx: a_index)
+      (vals: nid_t -> option (list bool))
+      (ss: sched_sys_state) (input: sched_input_t) : Prop :=
+    forall n v (pi: list lit),
+      vals n = Some v ->
+      pi_holds act a_idx input pi ss ->
+      rvalid act a_idx pi n ss input = Bits.ones 1 ->
+      vect_to_list (nval act a_idx ss input (nsz act n) n) = v.
+
+  (* ---- THE SHADOW MACHINE: the registers an attacker can keep ----
+     Validity bits and stall counts, one per buffer slot.  No value register
+     appears: a validity reads other validities, the counts, and the
+     selectors, and nothing else. *)
+  Definition sstate := (vvec * list nat)%type.
+
+  (* The table a slot's own gate is compiled against: the action's, minus the
+     slot itself, since a buffer recomputes from its sources. *)
+  Definition gate_bufs (a_idx: a_index) (n: nid_t)
+    : list (nid_t * (nat * sz_t)) :=
+    filter (fun '(b, _) => negb (Nat.eqb b n))
+           (nth (index_to_nat a_idx) bneeds []).
+
+  Definition slot_gate (act: tfs_action sched) (a_idx: a_index)
+      (vals: nid_t -> option (list bool)) (vv: vvec) (n: nid_t) : bool :=
+    avalid act vals vv (gate_bufs a_idx n)
+      (length (graph (build_dfg ctx act))) [] n.
+
+  (* ONE CYCLE of one slot, read off [compile_dfg_buffers]: a stall's bit rises
+     [lat] cycles after its gate and the count advances until it saturates;
+     every other slot's bit follows its gate. *)
+  Definition slot_step (act: tfs_action sched) (a_idx: a_index)
+      (vals: nid_t -> option (list bool)) (st: sstate)
+      (e: nid_t * (nat * sz_t)) : bool * nat :=
+    let g := slot_gate act a_idx vals (fst st) (fst e) in
+    let c := nth (fst (snd e)) (snd st) 0 in
+    match stall_lat_of act (fst e) with
+    | Some l => (andb g (Nat.eqb c (pred l)),
+                 if andb g (negb (Nat.eqb c (pred l))) then S c else c)
+    | None => (g, c)
+    end.
+
+  Definition sstep (act: tfs_action sched) (a_idx: a_index)
+      (vals: nid_t -> option (list bool)) (st: sstate) : sstate :=
+    let next := map (slot_step act a_idx vals st)
+                    (nth (index_to_nat a_idx) bneeds []) in
+    (map fst next, map snd next).
+
+  Definition sstart (a_idx: a_index) : sstate :=
+    (repeat false (length (nth (index_to_nat a_idx) bneeds [])),
+     repeat 0 (length (nth (index_to_nat a_idx) bneeds []))).
+
+  Fixpoint srun (act: tfs_action sched) (a_idx: a_index)
+      (vals: nid_t -> option (list bool)) (k: nat) : sstate :=
+    match k with
+    | 0 => sstart a_idx
+    | S m => sstep act a_idx vals (srun act a_idx vals m)
+    end.
+
+  (* The done flag the design assigns: every root of the action has settled. *)
+  Definition adone (act: tfs_action sched) (a_idx: a_index)
+      (vals: nid_t -> option (list bool)) (vv: vvec) : bool :=
+    forallb (fun r => avalid act vals vv (nth (index_to_nat a_idx) bneeds [])
+                        (length (graph (build_dfg ctx act))) [] r)
+            (nodup Nat.eq_dec (map snd (var_map (build_dfg ctx act)))).
+
+  (* The register takes its value from the cycle before, so cycle 0 is never
+     done: the design resets it. *)
+  Definition pdone_test (act: tfs_action sched) (a_idx: a_index)
+      (vals: nid_t -> option (list bool)) (k: nat) : bool :=
+    match k with
+    | 0 => false
+    | S m => adone act a_idx vals (fst (srun act a_idx vals m))
+    end.
+
+  (* THE LATENCY, OVER PUBLIC DATA: the first cycle at which the attacker's own
+     copy of the validity registers says every root has settled.  Its arguments
+     are the action, its slot, and the values the rules recover -- no state, no
+     input, no IP answer. *)
+  Definition L_pub (act: tfs_action sched) (a_idx: a_index)
+      (vals: nid_t -> option (list bool)) : nat :=
+    first_true (pdone_test act a_idx vals) (S (settle_bound act)) 0.
 
   (* ---- what the attacker can derive, and the soundness obligation the
          declassification rules carry (the hypotheses of the timing
@@ -619,8 +834,11 @@ Section SynthWorld.
   Definition env_matches (act: spec_action) (input: input_t) (r: ContextEnv.(env_t) R) : Prop :=
     (* action variable maps cleanly *)
     (r.[tf_cmd] = spec_action_encoding act) /\
-    (* input variables map cleanly *)
-    (forall (x: spec_inputs), r.[tf_in x] = input x).
+    (* THE LATCHED inputs map cleanly.  A response port is read live off the
+       wire, so its latch holds the value from the dispatch cycle and
+       [live_inputs_match] below is what pins it. *)
+    (forall (x: spec_inputs),
+       tfs_inputs_resp sched_ctx x = None -> r.[tf_in x] = input x).
 
   Definition state_env_matches (sys: sys_state_t) (act: spec_action) (input: input_t) (r: ContextEnv.(env_t) R) : Prop :=
     state_matches sys r /\

@@ -44,13 +44,32 @@ HEADLINE = [
       ("Trustformer.Theorems.IPR", "emulator_correct"),
       ("Trustformer.Theorems.IPR", "emulator_correct_L")]),
 
+    ("the latency is a function of public data",
+     "the cycle count IS computed from the published tables, so no secret can "
+     "reach it by construction",
+     [("Trustformer.Theorems.IPR", "L_is_public"),
+      ("Trustformer.Theorems.IPR", "L_pub_is_latency"),
+      ("Trustformer.Declassification.Extract", "L_over_tables"),
+      ("Trustformer.Declassification.Extract", "latency_over_tables"),
+      ("Trustformer.Declassification.Extract", "emulator_correct_over_tables")]),
+
     ("the declassification rules are sound",
      "each rule widens what may be published; unsound means a real leak",
      [("Trustformer.Declassification.Negation", "neg_rule_sound"),
       ("Trustformer.Declassification.PhiBranch", "phibranch_rule_sound"),
       ("Trustformer.Declassification.PhiConst", "phiconst_rule_sound"),
       ("Trustformer.Declassification.Widening", "widen_rule_sound"),
-      ("Trustformer.Declassification.Xor", "xor_rule_sound")]),
+      ("Trustformer.Declassification.Xor", "xor_rule_sound"),
+      ("Trustformer.Declassification.Negation", "neg_rule_extracts"),
+      ("Trustformer.Declassification.PhiBranch", "phibranch_rule_extracts"),
+      ("Trustformer.Declassification.PhiConst", "phiconst_rule_extracts"),
+      ("Trustformer.Declassification.Widening", "widen_rule_extracts"),
+      ("Trustformer.Declassification.Xor", "xor_rule_extracts"),
+      ("Trustformer.Declassification.Negation", "neg_rule_lifts"),
+      ("Trustformer.Declassification.PhiBranch", "phibranch_rule_lifts"),
+      ("Trustformer.Declassification.PhiConst", "phiconst_rule_lifts"),
+      ("Trustformer.Declassification.Widening", "widen_rule_lifts"),
+      ("Trustformer.Declassification.Xor", "xor_rule_lifts")]),
 ]
 
 CLOSED = "Closed under the global context"

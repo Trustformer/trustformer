@@ -34,7 +34,12 @@ Definition phiconst_rule {s i o p} : decl_rule s i o p :=
              | DFG_Const kt, DFG_Const ke =>
                  if beq_dec (Bits.of_nat (sz nd) kt) (Bits.of_nat (sz nd) ke)
                  then []
-                 else [ {| di_target := cnd; di_sources := [n]; di_guard := [] |} ]
+                 else [ {| di_target := cnd; di_sources := [n]; di_guard := [];
+                           (* the arms differ, so the value names the arm *)
+                           di_extract := fun vs =>
+                             if list_eq_dec Bool.bool_dec (nth 0 vs [])
+                                  (vect_to_list (Bits.of_nat (sz nd) kt))
+                             then [true] else [false] |} ]
              | _, _ => []
              end
          | _ => []
@@ -159,5 +164,140 @@ Section Soundness.
     - rewrite (Hnz _ E1), (Hnz _ E2). reflexivity.
   Qed.
 
-End Soundness.
 
+  (* THE REVERSING FUNCTION IS CORRECT: the arms differ, so comparing the node
+     against the then-constant names the selector. *)
+  Theorem phiconst_rule_extracts (act: tfs_action sched) (a_idx: a_index)
+      (i: decl_instance) :
+    List.In i (phiconst_rule (build_dfg ctx act)) ->
+    instance_extracts ctx cost_limit act a_idx i.
+  Proof.
+    unfold phiconst_rule. intro Hin.
+    apply in_flat_map in Hin. destruct Hin as [n [Hseq Hi]].
+    apply in_seq in Hseq. destruct Hseq as [Hn1 Hn2].
+    assert (Hlen : n < length (graph (build_dfg ctx act))) by lia.
+    cbv zeta in Hi.
+    destruct (op (nth n (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dp darg den | sp stok sen | ja jb | ] eqn:Hop;
+      cbn [List.In] in Hi; try contradiction.
+    destruct (op (nth tid (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      as [kt | | | | | | | | | | | ] eqn:Hopt; try contradiction.
+    destruct (op (nth eid (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      as [ke | | | | | | | | | | | ] eqn:Hope; try contradiction.
+    destruct (beq_dec
+                (Bits.of_nat (sz (nth n (graph (build_dfg ctx act))
+                                    {| nid := 0; op := DFG_Empty; sz := 0 |})) kt)
+                (Bits.of_nat (sz (nth n (graph (build_dfg ctx act))
+                                    {| nid := 0; op := DFG_Empty; sz := 0 |})) ke))
+      eqn:Hdistinct; [ contradiction | ].
+    destruct Hi as [Hi | []]. subst i.
+    intros ss input _.
+    cbn [di_sources di_target di_extract]. cbn [map nth].
+
+    assert (Hnode_in : List.In (nth n (graph (build_dfg ctx act))
+                                  {| nid := 0; op := DFG_Empty; sz := 0 |})
+                         (graph (build_dfg ctx act)))
+      by (apply nth_In; exact Hlen).
+    pose proof (wfg_build_dfg ctx cost_limit act _ Hnode_in) as Hfg.
+    unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+    destruct Hfg as [Hfc [Hft Hfe]].
+    destruct (wsz_node_sz ctx cost_limit act cnd 1 Hfc) as [Hclen Hcsz].
+    rewrite Hcsz.
+    destruct (node_args_range ctx cost_limit act n Hn1 Hlen tid
+                ltac:(unfold get_args; rewrite Hop; right; left; reflexivity))
+      as [Ht1 Ht2].
+    destruct (node_args_range ctx cost_limit act n Hn1 Hlen eid
+                ltac:(unfold get_args; rewrite Hop; right; right; left; reflexivity))
+      as [He1 He2].
+    pose proof (nre_phi ctx cost_limit act a_idx n cnd tid eid Hn1 Hlen Hop)
+      as Hnre.
+    pose proof (nre_const ctx cost_limit act a_idx tid kt Ht1 ltac:(lia) Hopt)
+      as Hnret.
+    pose proof (nre_const ctx cost_limit act a_idx eid ke He1 ltac:(lia) Hope)
+      as Hnree.
+    unfold nval. rewrite Hnre, Hnret, Hnree. cbn [tf_eval_expr].
+
+    (* the selector is one bit, and each constant names its own arm *)
+    assert (Hnz : forall b: bits_t 1, beq_dec b Bits.zero = false -> b = Bits.ones 1).
+    { intros b Hb.
+      destruct (SchedulerSimulationLemmas.bits1_cases b) as [Ho | Hz];
+        [ exact Ho | rewrite Hz, beq_dec_refl in Hb; discriminate ]. }
+    destruct (beq_dec
+                (tf_eval_expr (tfs_states_size sched) (tfs_inputs_size sched)
+                   (tfs_outputs_size sched) (szB := 1)
+                   (node_ref_expr ctx cost_limit act a_idx cnd) ss input)
+                Bits.zero) eqn:E.
+    - apply beq_dec_iff in E. rewrite E.
+      match goal with
+      | |- context[list_eq_dec ?d ?a ?b] => destruct (list_eq_dec d a b) as [Heq | _]
+      end; [ exfalso | reflexivity ].
+      apply (vect_to_list_inj bool _ _ _) in Heq.
+      rewrite <- Heq, beq_dec_refl in Hdistinct. discriminate.
+    - rewrite (Hnz _ E).
+      match goal with
+      | |- context[list_eq_dec ?d ?a ?b] => destruct (list_eq_dec d a b) as [_ | Hne]
+      end; [ reflexivity | exfalso; exact (Hne eq_refl) ].
+  Qed.
+
+
+  (* THE SETTLEDNESS LIFT: the instance reads the phi, and a phi whose arms are
+     constants is valid as soon as its condition is. *)
+  Theorem phiconst_rule_lifts (act: tfs_action sched) (a_idx: a_index)
+      (i: decl_instance) :
+    List.In i (phiconst_rule (build_dfg ctx act)) ->
+    instance_in_range ctx cost_limit act i
+    /\ instance_guards_sized ctx cost_limit act i
+    /\ instance_lifts ctx cost_limit act a_idx i.
+  Proof.
+    unfold phiconst_rule. intro Hin.
+    apply in_flat_map in Hin. destruct Hin as [n [Hseq Hi]].
+    apply in_seq in Hseq. destruct Hseq as [Hn1 Hn2].
+    assert (Hlen : n < length (graph (build_dfg ctx act))) by lia.
+    cbv zeta in Hi.
+    destruct (op (nth n (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dp darg den | sp stok sen | ja jb | ] eqn:Hop;
+      cbn [List.In] in Hi; try contradiction.
+    destruct (op (nth tid (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      as [kt | | | | | | | | | | | ] eqn:Hopt; try contradiction.
+    destruct (op (nth eid (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      as [ke | | | | | | | | | | | ] eqn:Hope; try contradiction.
+    destruct (beq_dec
+                (Bits.of_nat (sz (nth n (graph (build_dfg ctx act))
+                                    {| nid := 0; op := DFG_Empty; sz := 0 |})) kt)
+                (Bits.of_nat (sz (nth n (graph (build_dfg ctx act))
+                                    {| nid := 0; op := DFG_Empty; sz := 0 |})) ke))
+      eqn:Hdistinct; [ contradiction | ].
+    destruct Hi as [Hi | []]. subst i.
+    destruct (node_args_range ctx cost_limit act n Hn1 Hlen cnd
+                ltac:(unfold get_args; rewrite Hop; left; reflexivity))
+      as [Hc1 Hc2].
+    destruct (node_args_range ctx cost_limit act n Hn1 Hlen tid
+                ltac:(unfold get_args; rewrite Hop; right; left; reflexivity))
+      as [Ht1 Ht2].
+    destruct (node_args_range ctx cost_limit act n Hn1 Hlen eid
+                ltac:(unfold get_args; rewrite Hop; right; right; left; reflexivity))
+      as [He1 He2].
+    split; [ | split ].
+    - intros m Hm. cbn [di_target di_sources di_guard map List.app] in Hm.
+      destruct Hm as [<- | [<- | []]]; [ split; lia | split; lia ].
+    - (* the rule emits no guard *) intros l Hl. destruct Hl.
+    - intros ss input Hst.
+      cbn [di_target di_sources di_guard map] in Hst |- *.
+      split; [ intros c0 [] | ].
+      intros _ s Hs. destruct Hs as [<- | []].
+      destruct Hst as [pi [Hpi Hv]]. exists pi. split; [ exact Hpi | ].
+      exact (nrv_lift_phi_const ctx cost_limit act a_idx n cnd tid eid kt ke pi
+               ss input
+               ltac:(unfold Definitions.node_op; rewrite Hop; reflexivity)
+               ltac:(unfold Definitions.node_op; rewrite Hopt; reflexivity)
+               ltac:(unfold Definitions.node_op; rewrite Hope; reflexivity)
+               Hc1 Ht1 He1 Hlen Hv).
+  Qed.
+
+End Soundness.

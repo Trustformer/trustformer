@@ -84,6 +84,10 @@ Record decl_instance := {
   di_target  : nid_t;
   di_sources : list nid_t;
   di_guard   : list (nid_t * bool);
+  (* HOW to recover it: the target's bits from the sources' bits, in the order
+     [di_sources] lists them.  [instance_extracts] is the obligation that this
+     agrees with the design, and the relational [instance_sound] follows. *)
+  di_extract : list (list bool) -> list bool;
 }.
 
 (* A reusable rule inspects the current DFG and emits instances, so users never

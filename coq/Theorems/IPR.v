@@ -48,8 +48,12 @@ Section IPR.
   Local Notation guards_sized := (guards_sized ctx cost_limit).
 
   Local Notation first_done := (first_done ctx cost_limit).
-  Local Notation emulate := (emulate ctx cost_limit).
+  Local Notation emulate := (emulate ctx).
   Local Notation L := (L ctx cost_limit).
+  Local Notation L_pub := (L_pub ctx cost_limit).
+  Local Notation vals_sound := (vals_sound ctx cost_limit).
+  Local Notation selectors_extractable := (selectors_extractable ctx cost_limit).
+  Local Notation sched_input := (sched_input ctx cost_limit).
 
   (* ------------------------------------------------------------------- *)
   (* THE ONE ASSUMPTION ON THE USER.  Everything below holds for a design
@@ -151,7 +155,7 @@ Section IPR.
     first_done act input resp ss0 N ->
     forall k, k <= N ->
       forall ov, (snd (ss_run k act input resp ss0)).[ov]
-               = emulate act input sp0 N k ov.
+               = emulate (snd sp0) (snd (spec_run act sp0 input)) N k ov.
   Proof. exact (IPRProof.emulator_correct ctx cost_limit act sp0 ss0 input resp N). Qed.
 
   (* [L] is a function of the action and the PUBLIC data -- the public inputs
@@ -180,13 +184,88 @@ Section IPR.
     L act input resp ss0 = L act input' resp' ss0'.
   Proof. exact (IPRProof.L_public ctx cost_limit Hdecls Hdguard act a_idx input input' resp resp' sp0 sp0' ss0 ss0'). Qed.
 
-  Corollary emulator_correct_L (act: tfs_action sched) (sp0: src_sys_state)
-      (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val) :
+  (* [L] IS A PUBLIC FUNCTION, BY CONSTRUCTION.  [L_public] above says the cycle
+     count cannot tell two runs apart; this says what it IS.  [L_pub] takes the
+     action, its slot in the buffer table, and the values the declassification
+     rules recover -- no state, no input and no IP answer appears among its
+     arguments, so no secret can reach it.  The two hypotheses on [vals] are
+     what the rules discharge: it answers with the run's own values wherever a
+     node has settled, and it answers at all for the selector of every phi the
+     analysis did not call critical. *)
+  Theorem L_is_public (act: tfs_action sched) (a_idx: a_index)
+      (vals: nid_t -> option (list bool))
+      (sp0: src_sys_state) (ss0: sched_sys_state)
+      (input: input_t) (resp: nat -> resp_val) :
+    act_idx_aligned ctx cost_limit act a_idx ->
+    start_rel ctx cost_limit sp0 ss0 ->
+    (forall k, (forall i, 1 <= i <= k ->
+                  ~ done_set ctx cost_limit (ss_run i act input resp ss0)) ->
+       selectors_extractable act a_idx vals (ss_run k act input resp ss0)
+         (sched_input input (resp k))) ->
+    (forall k, (forall i, 1 <= i <= k ->
+                  ~ done_set ctx cost_limit (ss_run i act input resp ss0)) ->
+       vals_sound act a_idx vals (ss_run k act input resp ss0)
+         (sched_input input (resp k))) ->
+    L act input resp ss0 = L_pub act a_idx vals.
+  Proof.
+    intros Halign Hstart Hsel Hvals.
+    exact (IPRProof.L_pub_correct ctx cost_limit act a_idx vals input resp ss0
+             Halign (proj2 (proj2 Hstart)) Hsel Hvals).
+  Qed.
+
+  (* THE COMPLETION CYCLE IS THE PUBLIC ONE: the design is done at the cycle the
+     attacker computes from public data, and at no earlier cycle. *)
+  Theorem L_pub_is_latency (act: tfs_action sched) (a_idx: a_index)
+      (vals: nid_t -> option (list bool))
+      (sp0: src_sys_state) (ss0: sched_sys_state)
+      (input: input_t) (resp: nat -> resp_val) :
+    act_idx_aligned ctx cost_limit act a_idx ->
+    start_rel ctx cost_limit sp0 ss0 ->
+    (forall k, (forall i, 1 <= i <= k ->
+                  ~ done_set ctx cost_limit (ss_run i act input resp ss0)) ->
+       selectors_extractable act a_idx vals (ss_run k act input resp ss0)
+         (sched_input input (resp k))) ->
+    (forall k, (forall i, 1 <= i <= k ->
+                  ~ done_set ctx cost_limit (ss_run i act input resp ss0)) ->
+       vals_sound act a_idx vals (ss_run k act input resp ss0)
+         (sched_input input (resp k))) ->
+    first_done act input resp ss0 (L_pub act a_idx vals).
+  Proof.
+    intros Halign Hstart Hsel Hvals.
+    rewrite <- (L_is_public act a_idx vals sp0 ss0 input resp
+                  Halign Hstart Hsel Hvals).
+    exact (IPRProof.L_first_done ctx cost_limit act sp0 ss0 input resp Hstart).
+  Qed.
+
+  (* THE EMULATOR, OVER PUBLIC DATA ALONE.  Every cycle up to the attacker's own
+     [L_pub], the outputs are what its two published snapshots say they are: the
+     pre-action outputs until that cycle, the post-action outputs from it.  No
+     argument of the right-hand side is anything a run keeps to itself. *)
+  Corollary emulator_correct_L (act: tfs_action sched) (a_idx: a_index)
+      (vals: nid_t -> option (list bool))
+      (sp0: src_sys_state) (ss0: sched_sys_state)
+      (input: input_t) (resp: nat -> resp_val) :
+    act_idx_aligned ctx cost_limit act a_idx ->
     start_rel ctx cost_limit sp0 ss0 ->
     Definitions.ip_contract ctx cost_limit act input resp ss0 ->
-    forall k, k <= L act input resp ss0 ->
+    (forall k, (forall i, 1 <= i <= k ->
+                  ~ done_set ctx cost_limit (ss_run i act input resp ss0)) ->
+       selectors_extractable act a_idx vals (ss_run k act input resp ss0)
+         (sched_input input (resp k))) ->
+    (forall k, (forall i, 1 <= i <= k ->
+                  ~ done_set ctx cost_limit (ss_run i act input resp ss0)) ->
+       vals_sound act a_idx vals (ss_run k act input resp ss0)
+         (sched_input input (resp k))) ->
+    forall k, k <= L_pub act a_idx vals ->
       forall ov, (snd (ss_run k act input resp ss0)).[ov]
-               = emulate act input sp0 (L act input resp ss0) k ov.
-  Proof. exact (IPRProof.emulator_correct_L ctx cost_limit act sp0 ss0 input resp). Qed.
+               = emulate (snd sp0) (snd (spec_run act sp0 input))
+                   (L_pub act a_idx vals) k ov.
+  Proof.
+    intros Halign Hstart Hipc Hsel Hvals.
+    rewrite <- (L_is_public act a_idx vals sp0 ss0 input resp
+                  Halign Hstart Hsel Hvals).
+    exact (IPRProof.emulator_correct_L ctx cost_limit act sp0 ss0 input resp
+             Hstart Hipc).
+  Qed.
 
 End IPR.

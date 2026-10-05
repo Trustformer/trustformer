@@ -1034,10 +1034,13 @@ Section SynthesisProof.
       reflexivity.
   Time Qed. (* ca. 0.15 s *)
 
+  (* The latched inputs only, matching [env_matches]: an expression reads a
+     response off the wire, so its latch is dead weight here. *)
   Definition inputs_are_buffered (input: input_t) (r: ContextEnv.(env_t) R) log :=
-    forall v, 
-      latest_write0 (REnv:=REnv) (R:=R) log (tf_in v) = Some (input v) 
-      \/ 
+    forall v,
+      tfs_inputs_resp sched_ctx v = None ->
+      latest_write0 (REnv:=REnv) (R:=R) log (tf_in v) = Some (input v)
+      \/
       latest_write0 (REnv:=REnv) (R:=R) log (tf_in v) = None /\ r.[tf_in v] = input v.
 
   Fixpoint eval_expr_aux {szB}
@@ -1575,7 +1578,7 @@ Section SynthesisProof.
       inputs_are_buffered input r (log_app (expr_log expr szB sys input log_a) log_r).
   Proof.
     intros input r log_a log_r expr szB sys Hlatest.
-    unfold inputs_are_buffered in *. intros v. specialize (Hlatest v).
+    unfold inputs_are_buffered in *. intros v Hresp. specialize (Hlatest v Hresp).
     rewrite SemanticProperties.latest_write0_app in *.
     rewrite latest_write0_expr_log. exact Hlatest.
   Qed.
@@ -1642,7 +1645,7 @@ Section SynthesisProof.
       * unfold expr_log. rewrite interp_synth_convert.
         cbn [interp_action eval_expr_aux]. rewrite Hresp. cbn [snd fold_right].
         rewrite may_read_all_one_input with (i:=v); try assumption.
-        unfold inputs_are_buffered, inputs_are_buffered in Hin_buf. specialize (Hin_buf v).
+        unfold inputs_are_buffered, inputs_are_buffered in Hin_buf. specialize (Hin_buf v Hresp).
         destruct Hin_buf.
         -- rewrite H. reflexivity.
         -- destruct H as [H1 H2]. rewrite H1. rewrite H2. reflexivity.
@@ -1856,7 +1859,7 @@ Section SynthesisProof.
       inputs_are_buffered input r (log_app (log_cons (R:=R) (REnv:=REnv) reg entry log_a) log_r).
   Proof.
     intros input r log_a log_r reg entry Hnot_input Hin_buf.
-    unfold inputs_are_buffered in *. intros v. specialize (Hin_buf v).
+    unfold inputs_are_buffered in *. intros v Hresp. specialize (Hin_buf v Hresp).
     rewrite SemanticProperties.latest_write0_app in *.
     rewrite SemanticProperties.latest_write0_cons_neq in *; try assumption.
     clear Hin_buf.
@@ -2775,7 +2778,7 @@ Section SynthesisProof.
                   else log_cons tf_cmd Read0 (log_cons tf_ready Read0 log_empty)) log).
   Proof.
     intros r act input sigma log Hrdy Hnrdy Hwr0_in.
-    unfold inputs_are_buffered. intros v.
+    unfold inputs_are_buffered. intros v Hresp.
     destruct (reg_ready_or_not r) as [Hready | Hnotready].
     - rewrite Hready. replace (Bits.single Ob~1) with true by reflexivity. cbv iota.
       left. unfold log_after_cmd_guard_rdy.
@@ -2794,7 +2797,7 @@ Section SynthesisProof.
         apply Hwr0_in. apply in_map. apply in_spec_all_inputs. }
       apply may_write0_latest_write0_None in Hmw. destruct Hmw as [_ Hlr].
       right. rewrite Hlr. split; [ reflexivity |].
-      destruct (Hnrdy Hnotready) as [_ Hin]. exact (Hin v).
+      destruct (Hnrdy Hnotready) as [_ Hin]. exact (Hin v Hresp).
   Qed.
 
   Lemma interp_rule_correct :
@@ -3512,7 +3515,8 @@ Section SynthesisProof.
       + unfold commit_update. rewrite getenv_create.
         destruct (reg_ready_or_not r) as [Hready | Hnotready].
         * rewrite (latest_write_input_rdy sys r act input sigma log x); try assumption; reflexivity.
-        * rewrite (latest_write_input_nrdy sys r act input sigma log x); try assumption. apply (Hin_nrdy Hnotready). 
+        * rewrite (latest_write_input_nrdy sys r act input sigma log x); try assumption.
+          apply (Hin_nrdy Hnotready); assumption.
   Qed.
 
   Lemma interp_rule_cmd_wrong :

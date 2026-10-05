@@ -27,10 +27,16 @@ Definition phibranch_rule {s i o p} : decl_rule s i o p :=
          let dflt := {| nid := 0; op := DFG_Empty; sz := 0 |} in
          match op (nth n (graph dfg) dflt) with
          | DFG_Phi cnd tid eid =>
-             [ {| di_target := n;   di_sources := [tid]; di_guard := [(cnd, true)] |}
-             ; {| di_target := tid; di_sources := [n];   di_guard := [(cnd, true)] |}
-             ; {| di_target := n;   di_sources := [eid]; di_guard := [(cnd, false)] |}
-             ; {| di_target := eid; di_sources := [n];   di_guard := [(cnd, false)] |} ]
+             (* the selected arm and the phi carry the same bits *)
+             let idt := fun vs : list (list bool) => nth 0 vs [] in
+             [ {| di_target := n;   di_sources := [tid]; di_guard := [(cnd, true)];
+                  di_extract := idt |}
+             ; {| di_target := tid; di_sources := [n];   di_guard := [(cnd, true)];
+                  di_extract := idt |}
+             ; {| di_target := n;   di_sources := [eid]; di_guard := [(cnd, false)];
+                  di_extract := idt |}
+             ; {| di_target := eid; di_sources := [n];   di_guard := [(cnd, false)];
+                  di_extract := idt |} ]
          | _ => []
          end)
       (List.seq 1 (length (graph dfg) - 1)).
@@ -239,6 +245,141 @@ Section Soundness.
       exact (Hsrc n pi0 (or_introl eq_refl) Hpi Hpi'
                (Hset n cnd tid eid Hopn pi0 ss  input  (or_intror Hv ))
                (Hset n cnd tid eid Hopn pi0 ss' input' (or_intror Hv'))).
+  Qed.
+
+
+  (* THE REVERSING FUNCTION IS CORRECT: under its own guard the phi and the arm
+     it selects carry the same bits, so the identity is the inverse. *)
+  Theorem phibranch_rule_extracts (act: tfs_action sched) (a_idx: a_index)
+      (i: decl_instance) :
+    List.In i (phibranch_rule (build_dfg ctx act)) ->
+    instance_extracts ctx cost_limit act a_idx i.
+  Proof.
+    unfold phibranch_rule. intro Hin.
+    apply in_flat_map in Hin. destruct Hin as [n [Hseq Hi]].
+    apply in_seq in Hseq. destruct Hseq as [Hn1 Hn2].
+    assert (Hlen : n < length (graph (build_dfg ctx act))) by lia.
+    cbv zeta in Hi.
+    destruct (op (nth n (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dp darg den | sp stok sen | ja jb | ] eqn:Hop;
+      cbn [List.In] in Hi; try contradiction.
+
+    assert (Hnode_in : List.In (nth n (graph (build_dfg ctx act))
+                                  {| nid := 0; op := DFG_Empty; sz := 0 |})
+                         (graph (build_dfg ctx act)))
+      by (apply nth_In; exact Hlen).
+    pose proof (wfg_build_dfg ctx cost_limit act _ Hnode_in) as Hfg.
+    unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+    destruct Hfg as [_ [Hft Hfe]].
+    destruct (wsz_node_sz ctx cost_limit act tid _ Hft) as [_ Htsz].
+    destruct (wsz_node_sz ctx cost_limit act eid _ Hfe) as [_ Hesz].
+
+    assert (Hsel : forall (b: bool) (inp: sched_input_t) (ss: sched_sys_state),
+              pi_holds ctx cost_limit act a_idx inp [(cnd, b)] ss ->
+              nval ctx cost_limit act a_idx ss inp (nsz act n) n
+              = nval ctx cost_limit act a_idx ss inp
+                  (nsz act n) (if b then tid else eid)).
+    { intros b inp ss Hp.
+      exact (phi_selects act a_idx inp ss n cnd tid eid b Hn1 Hlen Hop
+               (Hp cnd b (or_introl eq_refl))). }
+
+    destruct Hi as [Hi | [Hi | [Hi | [Hi | []]]]]; subst i;
+      intros ss input Hp;
+      cbn [di_sources di_target di_guard di_extract] in Hp |- *;
+      cbn [map nth].
+    - rewrite (Hsel true input ss Hp), <- Htsz. reflexivity.
+    - rewrite Htsz, <- (Hsel true input ss Hp). reflexivity.
+    - rewrite (Hsel false input ss Hp), <- Hesz. reflexivity.
+    - rewrite Hesz, <- (Hsel false input ss Hp). reflexivity.
+  Qed.
+  (* THE SETTLEDNESS LIFT: a phi carries its condition's validity, so the
+     condition of the guard has settled wherever the phi has; and under that
+     guard the arm the condition names has settled too.  The two instances that
+     read the phi FROM an arm use [phibranch_settled], as their soundness
+     does. *)
+  Theorem phibranch_rule_lifts (act: tfs_action sched) (a_idx: a_index)
+      (i: decl_instance) :
+    List.In i (phibranch_rule (build_dfg ctx act)) ->
+    phibranch_settled act a_idx ->
+    instance_in_range ctx cost_limit act i
+    /\ instance_guards_sized ctx cost_limit act i
+    /\ instance_lifts ctx cost_limit act a_idx i.
+  Proof.
+    unfold phibranch_rule. intros Hin Hset.
+    apply in_flat_map in Hin. destruct Hin as [n [Hseq Hi]].
+    apply in_seq in Hseq. destruct Hseq as [Hn1 Hn2].
+    assert (Hlen : n < length (graph (build_dfg ctx act))) by lia.
+    cbv zeta in Hi.
+    destruct (op (nth n (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dp darg den | sp stok sen | ja jb | ] eqn:Hop;
+      cbn [List.In] in Hi; try contradiction.
+    assert (Hopn : node_op ctx cost_limit act n = DFG_Phi cnd tid eid)
+      by (unfold Definitions.node_op; rewrite Hop; reflexivity).
+    destruct (node_args_range ctx cost_limit act n Hn1 Hlen cnd
+                ltac:(unfold get_args; rewrite Hop; left; reflexivity))
+      as [Hc1 Hc2].
+    destruct (node_args_range ctx cost_limit act n Hn1 Hlen tid
+                ltac:(unfold get_args; rewrite Hop; right; left; reflexivity))
+      as [Ht1 Ht2].
+    destruct (node_args_range ctx cost_limit act n Hn1 Hlen eid
+                ltac:(unfold get_args; rewrite Hop; right; right; left; reflexivity))
+      as [He1 He2].
+    (* the phi's own arguments, wherever the phi has settled *)
+    assert (Hargs : forall (ss: sched_sys_state) (input: sched_input_t),
+              Definitions.settled_at ctx cost_limit act a_idx ss input n ->
+              Definitions.settled_at ctx cost_limit act a_idx ss input cnd
+              /\ (Definitions.nval ctx cost_limit act a_idx ss input 1 cnd
+                    <> Bits.zero ->
+                  Definitions.settled_at ctx cost_limit act a_idx ss input tid)
+              /\ (Definitions.nval ctx cost_limit act a_idx ss input 1 cnd
+                    = Bits.zero ->
+                  Definitions.settled_at ctx cost_limit act a_idx ss input eid))
+      by (intros ss input Hst;
+          exact (IPRProof.phi_args_settled ctx cost_limit act a_idx ss input
+                   n cnd tid eid Hopn Hc1 Ht1 He1 Hlen Hst)).
+    (* the guard literal is the phi's condition, which compiles at width one *)
+    destruct (wsz_node_sz ctx cost_limit act cnd 1
+                ltac:(pose proof (wfg_build_dfg ctx cost_limit act
+                                    (nth n (graph (build_dfg ctx act))
+                                       {| nid := 0; op := DFG_Empty; sz := 0 |})
+                                    (nth_In _ _ Hlen)) as Hfg;
+                      unfold node_args_sz in Hfg; rewrite Hop in Hfg;
+                      exact (proj1 Hfg)))
+      as [_ Hcsz].
+    destruct Hi as [Hi | [Hi | [Hi | [Hi | []]]]]; subst i;
+      (split; [ intros m Hm; cbn [di_target di_sources di_guard map List.app fst] in Hm;
+                destruct Hm as [<- | [<- | [<- | []]]]; split; lia
+              | split; [ intros l Hl;
+                         cbn [di_guard] in Hl; destruct Hl as [<- | []];
+                         cbn [fst]; exact Hcsz | ] ]);
+      intros ss input Hst;
+      cbn [di_target di_sources di_guard map fst] in Hst |- *.
+    - (* the phi from its then-arm's value, under [cnd] *)
+      split; [ intros c0 [<- | []]; exact (proj1 (Hargs ss input Hst)) | ].
+      intros Hpi s Hs. destruct Hs as [<- | []].
+      apply (proj1 (proj2 (Hargs ss input Hst))).
+      rewrite (Hpi cnd true (or_introl eq_refl)). exact ones1_neq_zero.
+    - (* the then-arm from the phi, under [cnd] *)
+      destruct Hst as [pi [Hpi Hv]].
+      assert (Hvn : Definitions.settled_at ctx cost_limit act a_idx ss input n)
+        by (exists pi; split;
+            [ exact Hpi | exact (Hset n cnd tid eid Hopn pi ss input (or_introl Hv)) ]).
+      split; [ intros c0 [<- | []]; exact (proj1 (Hargs ss input Hvn)) | ].
+      intros _ s Hs. destruct Hs as [<- | []]. exact Hvn.
+    - (* the phi from its else-arm's value, under [not cnd] *)
+      split; [ intros c0 [<- | []]; exact (proj1 (Hargs ss input Hst)) | ].
+      intros Hpi s Hs. destruct Hs as [<- | []].
+      apply (proj2 (proj2 (Hargs ss input Hst))).
+      exact (Hpi cnd false (or_introl eq_refl)).
+    - (* the else-arm from the phi, under [not cnd] *)
+      destruct Hst as [pi [Hpi Hv]].
+      assert (Hvn : Definitions.settled_at ctx cost_limit act a_idx ss input n)
+        by (exists pi; split;
+            [ exact Hpi | exact (Hset n cnd tid eid Hopn pi ss input (or_intror Hv)) ]).
+      split; [ intros c0 [<- | []]; exact (proj1 (Hargs ss input Hvn)) | ].
+      intros _ s Hs. destruct Hs as [<- | []]. exact Hvn.
   Qed.
 
 End Soundness.

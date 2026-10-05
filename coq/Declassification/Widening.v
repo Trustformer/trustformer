@@ -31,7 +31,9 @@ Definition widen_rule {s i o p} : decl_rule s i o p :=
          let nd := nth n (graph dfg) dflt in
          let keep arg source_size :=
            if Nat.leb source_size (sz nd)
-           then [ {| di_target := arg; di_sources := [n]; di_guard := [] |} ]
+           then [ {| di_target := arg; di_sources := [n]; di_guard := [];
+                     (* widening pads at the top, so the operand is the low bits *)
+                     di_extract := fun vs => firstn source_size (nth 0 vs []) |} ]
            else [] in
          match op nd with
          | DFG_Resize arg => keep arg (sz (nth arg (graph dfg) dflt))
@@ -70,6 +72,22 @@ Section ConvertInj.
       exact (List.app_inv_tail _ _ _ Hc).
   Qed.
 
+
+  (* The truncation that undoes the widening, at the bit level. *)
+  Lemma convert_firstn (szA szB: nat) (x: bits_t szA) :
+    szA <= szB ->
+    firstn szA (vect_to_list (convert (szB := szB) x)) = vect_to_list x.
+  Proof.
+    intro Hle. unfold convert.
+    destruct (eq_dec szA szB) as [e | ne].
+    - destruct e.
+      rewrite firstn_all2 by (rewrite vect_to_list_length; lia). reflexivity.
+    - rewrite slice_to_list_widen by exact Hle.
+      rewrite firstn_app, vect_to_list_length.
+      rewrite firstn_all2 by (rewrite vect_to_list_length; lia).
+      replace (szA - szA) with 0 by lia. cbn [firstn].
+      apply app_nil_r.
+  Qed.
 End ConvertInj.
 
 Section Soundness.
@@ -124,10 +142,22 @@ Section Soundness.
     exact (convert_inj src (nsz act n) _ _ Hle Hn).
   Qed.
 
-  Theorem widen_rule_sound (act: tfs_action sched) (a_idx: a_index)
-      (input: sched_input_t) (i: decl_instance) :
+
+  (* The two encodings of a widening, and what the instance looks like for
+     either.  Both theorems below read their content off this. *)
+  Lemma widen_shape (act: tfs_action sched) (a_idx: a_index) (i: decl_instance) :
     List.In i (widen_rule (build_dfg ctx act)) ->
-    instance_sound ctx cost_limit act a_idx input i.
+    exists n arg src,
+              node_ref_expr ctx cost_limit act a_idx n
+                = tf_op1 (tf_resize src) (node_ref_expr ctx cost_limit act a_idx arg)
+              /\ nsz act arg = src
+              /\ src <= nsz act n
+              /\ i = {| di_target := arg; di_sources := [n]; di_guard := [];
+                        di_extract := fun vs => firstn src (nth 0 vs []) |}
+              /\ (forall pi (s: sched_sys_state) (inp: sched_input_t),
+                    rvalid act a_idx pi arg s inp = Bits.ones 1 ->
+                    rvalid act a_idx pi n   s inp = Bits.ones 1)
+      .
   Proof.
     unfold widen_rule. intro Hin.
     apply in_flat_map in Hin. destruct Hin as [n [Hseq Hi]].
@@ -140,18 +170,8 @@ Section Soundness.
       by (apply nth_In; exact Hlen).
     pose proof (wfg_build_dfg ctx cost_limit act _ Hnode_in) as Hfg.
     unfold node_args_sz in Hfg.
-
-    (* the two encodings, then the shared argument *)
-    assert (Hcase : exists arg src,
-              node_ref_expr ctx cost_limit act a_idx n
-                = tf_op1 (tf_resize src) (node_ref_expr ctx cost_limit act a_idx arg)
-              /\ nsz act arg = src
-              /\ src <= nsz act n
-              /\ i = {| di_target := arg; di_sources := [n]; di_guard := [] |}
-              /\ (forall pi (s: sched_sys_state) (inp: sched_input_t),
-                    rvalid act a_idx pi arg s inp = Bits.ones 1 ->
-                    rvalid act a_idx pi n   s inp = Bits.ones 1)).
-    { destruct (op (nth n (graph (build_dfg ctx act))
+    exists n.
+      destruct (op (nth n (graph (build_dfg ctx act))
                       {| nid := 0; op := DFG_Empty; sz := 0 |}))
         as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dp darg den | sp stok sen | ja jb | ] eqn:Hop;
         cbn [List.In] in Hi; try contradiction.
@@ -195,14 +215,105 @@ Section Soundness.
             as [Harg1 _].
           exact (nrv_lift_resize ctx cost_limit act a_idx n arg pi s inp
                    ltac:(unfold Definitions.node_op;
-                         rewrite Hop; reflexivity) Harg1 Hlen Hva). }
+                         rewrite Hop; reflexivity) Harg1 Hlen Hva).
+  Qed.
 
-    destruct Hcase as [arg [src [Hnre [Hsz [Hle [Hieq Hlift]]]]]]. subst i.
+  Theorem widen_rule_sound (act: tfs_action sched) (a_idx: a_index)
+      (input: sched_input_t) (i: decl_instance) :
+    List.In i (widen_rule (build_dfg ctx act)) ->
+    instance_sound ctx cost_limit act a_idx input i.
+  Proof.
+    intro Hin.
+    destruct (widen_shape act a_idx i Hin)
+      as [n [arg [src [Hnre [Hsz [Hle [Hieq Hlift]]]]]]]. subst i.
     intros ss ss' input' pi Hpub _ _ Hsrc Hpi Hpi' Hv Hv'.
     cbn [di_sources di_target] in Hsrc, Hv, Hv' |- *.
     exact (widen_step act a_idx input input' n arg src ss ss' Hnre Hsz Hle
              (Hsrc n pi (or_introl eq_refl) Hpi Hpi'
                 (Hlift pi ss input Hv) (Hlift pi ss' input' Hv'))).
+  Qed.
+
+  (* THE REVERSING FUNCTION IS CORRECT: widening pads at the top, so taking the
+     operand's own width off the bottom gives it back. *)
+  Theorem widen_rule_extracts (act: tfs_action sched) (a_idx: a_index)
+      (i: decl_instance) :
+    List.In i (widen_rule (build_dfg ctx act)) ->
+    instance_extracts ctx cost_limit act a_idx i.
+  Proof.
+    intro Hin.
+    destruct (widen_shape act a_idx i Hin)
+      as [n [arg [src [Hnre [Hsz [Hle [Hieq _]]]]]]]. subst i.
+    intros ss input _.
+    cbn [di_sources di_target di_extract]. cbn [map nth].
+    unfold nval. rewrite Hnre. cbn [tf_eval_expr]. rewrite Hsz.
+    symmetry. apply convert_firstn. exact Hle.
+  Qed.
+
+  (* THE SETTLEDNESS LIFT: the instance reads the widening, which is valid as
+     soon as its operand is -- [widen_shape]'s own lift. *)
+  Theorem widen_rule_lifts (act: tfs_action sched) (a_idx: a_index)
+      (i: decl_instance) :
+    List.In i (widen_rule (build_dfg ctx act)) ->
+    instance_in_range ctx cost_limit act i
+    /\ instance_guards_sized ctx cost_limit act i
+    /\ instance_lifts ctx cost_limit act a_idx i.
+  Proof.
+    unfold widen_rule. intro Hin.
+    apply in_flat_map in Hin. destruct Hin as [n [Hseq Hi]].
+    apply in_seq in Hseq. destruct Hseq as [Hn1 Hn2].
+    assert (Hlen : n < length (graph (build_dfg ctx act))) by lia.
+    cbv zeta in Hi.
+    (* both encodings name the operand and the node, and lift the same way *)
+    assert (Hcase : exists arg src,
+              1 <= arg /\ arg < n
+              /\ i = {| di_target := arg; di_sources := [n]; di_guard := [];
+                        di_extract := fun vs => firstn src (nth 0 vs []) |}
+              /\ (forall pi (s: sched_sys_state) (inp: sched_input_t),
+                    rvalid act a_idx pi arg s inp = Bits.ones 1 ->
+                    rvalid act a_idx pi n s inp = Bits.ones 1)).
+    { destruct (op (nth n (graph (build_dfg ctx act))
+                      {| nid := 0; op := DFG_Empty; sz := 0 |}))
+        as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dp darg den | sp stok sen | ja jb | ] eqn:Hop;
+        cbn [List.In] in Hi; try contradiction.
+      - destruct uop as [| src]; cbn [List.In] in Hi; try contradiction.
+        destruct (Nat.leb src (sz (nth n (graph (build_dfg ctx act))
+                                     {| nid := 0; op := DFG_Empty; sz := 0 |})))
+          eqn:Hle; cbn [List.In] in Hi; try contradiction.
+        destruct Hi as [Hi | []].
+        destruct (node_args_range ctx cost_limit act n Hn1 Hlen arg
+                    ltac:(unfold get_args; rewrite Hop; left; reflexivity))
+          as [Ha1 Ha2].
+        exists arg, src. split; [ exact Ha1 | split; [ exact Ha2 | split; [ exact (eq_sym Hi) | ] ] ].
+        intros pi s inp Hva.
+        exact (nrv_lift_unary ctx cost_limit act a_idx n (tf_resize src) arg pi
+                 s inp ltac:(unfold Definitions.node_op; rewrite Hop; reflexivity)
+                 Ha1 Hlen Hva).
+      - destruct (Nat.leb (sz (nth arg (graph (build_dfg ctx act))
+                                 {| nid := 0; op := DFG_Empty; sz := 0 |}))
+                    (sz (nth n (graph (build_dfg ctx act))
+                           {| nid := 0; op := DFG_Empty; sz := 0 |})))
+          eqn:Hle; cbn [List.In] in Hi; try contradiction.
+        destruct Hi as [Hi | []].
+        destruct (node_args_range ctx cost_limit act n Hn1 Hlen arg
+                    ltac:(unfold get_args; rewrite Hop; left; reflexivity))
+          as [Ha1 Ha2].
+        exists arg, (nsz act arg).
+        split; [ exact Ha1 | split; [ exact Ha2 | split; [ exact (eq_sym Hi) | ] ] ].
+        intros pi s inp Hva.
+        exact (nrv_lift_resize ctx cost_limit act a_idx n arg pi s inp
+                 ltac:(unfold Definitions.node_op; rewrite Hop; reflexivity)
+                 Ha1 Hlen Hva). }
+    destruct Hcase as [arg [src [Ha1 [Ha2 [Hieq Hlift]]]]]. subst i.
+    split; [ | split ].
+    - intros m Hm. cbn [di_target di_sources di_guard map List.app] in Hm.
+      destruct Hm as [<- | [<- | []]]; split; lia.
+    - (* the rule emits no guard *) intros l Hl. destruct Hl.
+    - intros ss input Hst.
+      cbn [di_target di_sources di_guard map] in Hst |- *.
+      split; [ intros c0 [] | ].
+      intros _ s Hs. destruct Hs as [<- | []].
+      destruct Hst as [pi [Hpi Hv]]. exists pi. split; [ exact Hpi | ].
+      exact (Hlift pi ss input Hv).
   Qed.
 
 End Soundness.

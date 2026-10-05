@@ -40,6 +40,11 @@ Proof.
       [ destruct b, c; reflexivity | apply xor_cancel_r ].
 Defined.
 
+
+Lemma xor_cancel_l {sz} (x y: bits sz) :
+  Bits.xor (Bits.xor x y) x = y.
+Proof. rewrite (xor_comm x y). apply xor_cancel_r. Qed.
+
 Lemma xor_inj_r {sz} (x y k: bits sz) :
   Bits.xor x k = Bits.xor y k -> x = y.
 Proof.
@@ -54,14 +59,33 @@ Proof.
   rewrite (xor_comm x k), (xor_comm y k). exact H.
 Qed.
 
+
+(* The bit-level reading of [Bits.xor], which is what [di_extract] computes. *)
+Fixpoint vect_to_list_xor {sz} (x y: bits sz) {struct sz} :
+  vect_to_list (Bits.xor x y)
+  = List.map (fun p => xorb (fst p) (snd p))
+             (List.combine (vect_to_list x) (vect_to_list y)).
+Proof.
+  destruct sz.
+  - destruct x, y. reflexivity.
+  - destruct x as [a x'], y as [b y']. unfold Bits.xor in *. cbn.
+    f_equal. apply vect_to_list_xor.
+Defined.
+
 Definition xor_rule {s i o p} : decl_rule s i o p :=
   fun dfg =>
     flat_map
       (fun n =>
          match op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}) with
          | DFG_Binary tf_xor a1 a2 =>
-             [ {| di_target := a1; di_sources := [n; a2]; di_guard := [] |};
-               {| di_target := a2; di_sources := [n; a1]; di_guard := [] |} ]
+             (* xor is its own inverse: either operand is the node xor the other *)
+             let unxor := fun vs : list (list bool) =>
+               List.map (fun p => xorb (fst p) (snd p))
+                        (List.combine (nth 0 vs []) (nth 1 vs [])) in
+             [ {| di_target := a1; di_sources := [n; a2]; di_guard := [];
+                  di_extract := unxor |};
+               {| di_target := a2; di_sources := [n; a1]; di_guard := [];
+                  di_extract := unxor |} ]
          | _ => []
          end)
       (List.seq 1 (length (graph dfg) - 1)).
@@ -166,6 +190,98 @@ Section Soundness.
                               pi ss' input' Hopn Ha11 Ha21 Hlen Hvn'))) as Ha1.
       rewrite H2sz. rewrite H1sz in Ha1. unfold nval in Ha1 |- *.
       rewrite Ha1 in Hn. exact (xor_inj_l _ _ _ Hn).
+  Qed.
+
+
+  (* THE REVERSING FUNCTION IS CORRECT: xoring the node with one operand gives
+     the other, which is what [di_extract] computes bitwise. *)
+  Theorem xor_rule_extracts (act: tfs_action sched) (a_idx: a_index)
+      (i: decl_instance) :
+    List.In i (xor_rule (build_dfg ctx act)) ->
+    instance_extracts ctx cost_limit act a_idx i.
+  Proof.
+    unfold xor_rule. intro Hin.
+    apply in_flat_map in Hin. destruct Hin as [n [Hseq Hi]].
+    apply in_seq in Hseq. destruct Hseq as [Hn1 Hn2].
+    assert (Hlen : n < length (graph (build_dfg ctx act))) by lia.
+    destruct (op (nth n (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dp darg den | sp stok sen | ja jb | ] eqn:Hop;
+      cbn [List.In] in Hi; try contradiction.
+    destruct bop; cbn [List.In] in Hi; try contradiction.
+    assert (Hnode_in : List.In (nth n (graph (build_dfg ctx act))
+                                  {| nid := 0; op := DFG_Empty; sz := 0 |})
+                         (graph (build_dfg ctx act)))
+      by (apply nth_In; exact Hlen).
+    pose proof (wfg_build_dfg ctx cost_limit act _ Hnode_in) as Hfg.
+    unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+    destruct Hfg as [Hf1 Hf2].
+    destruct (wsz_node_sz ctx cost_limit act a1 _ Hf1) as [H1len H1sz].
+    destruct (wsz_node_sz ctx cost_limit act a2 _ Hf2) as [H2len H2sz].
+    pose proof (nre_binary ctx cost_limit act a_idx n tf_xor a1 a2 Hn1 Hlen Hop)
+      as Hnre.
+    destruct Hi as [Hi | [Hi | []]]; subst i;
+      intros ss input _;
+      cbn [di_sources di_target di_extract];
+      cbn [map nth];
+      rewrite H1sz, H2sz;
+      unfold nval; rewrite Hnre; cbn [tf_eval_expr];
+      rewrite <- vect_to_list_xor.
+    - rewrite xor_cancel_r. reflexivity.
+    - rewrite xor_cancel_l. reflexivity.
+  Qed.
+  (* THE SETTLEDNESS LIFT: each instance reads the xor node and the other
+     operand, which is [xor_settled] followed by [nrv_peel_binary]. *)
+  Theorem xor_rule_lifts (act: tfs_action sched) (a_idx: a_index)
+      (i: decl_instance) :
+    List.In i (xor_rule (build_dfg ctx act)) ->
+    xor_settled act a_idx ->
+    instance_in_range ctx cost_limit act i
+    /\ instance_guards_sized ctx cost_limit act i
+    /\ instance_lifts ctx cost_limit act a_idx i.
+  Proof.
+    unfold xor_rule. intros Hin Hset.
+    apply in_flat_map in Hin. destruct Hin as [n [Hseq Hi]].
+    apply in_seq in Hseq. destruct Hseq as [Hn1 Hn2].
+    assert (Hlen : n < length (graph (build_dfg ctx act))) by lia.
+    destruct (op (nth n (graph (build_dfg ctx act))
+                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dp darg den | sp stok sen | ja jb | ] eqn:Hop;
+      cbn [List.In] in Hi; try contradiction.
+    destruct bop; cbn [List.In] in Hi; try contradiction.
+    assert (Hopn : node_op ctx cost_limit act n = DFG_Binary tf_xor a1 a2)
+      by (unfold Definitions.node_op; rewrite Hop; reflexivity).
+    destruct (node_args_range ctx cost_limit act n Hn1 Hlen a1
+                ltac:(unfold get_args; rewrite Hop; left; reflexivity))
+      as [Ha11 Ha12].
+    destruct (node_args_range ctx cost_limit act n Hn1 Hlen a2
+                ltac:(unfold get_args; rewrite Hop; right; left; reflexivity))
+      as [Ha21 Ha22].
+    destruct Hi as [Hi | [Hi | []]]; subst i;
+      (split; [ intros m Hm; cbn [di_target di_sources di_guard map List.app] in Hm
+              | split; [ intros l Hl; destruct Hl | ] ]).
+    - destruct Hm as [<- | [<- | [<- | []]]]; split; lia.
+    - intros ss input Hst.
+      cbn [di_target di_sources di_guard map] in Hst |- *.
+      split; [ intros c0 [] | ].
+      intros _ s Hs. destruct Hst as [pi [Hpi Hv]].
+      assert (Hvn : rvalid act a_idx pi n ss input = Bits.ones 1)
+        by (exact (Hset n a1 a2 Hopn pi ss input (or_introl Hv))).
+      destruct Hs as [<- | [<- | []]]; exists pi; split; [ exact Hpi | exact Hvn
+                                                        | exact Hpi | ].
+      exact (proj2 (nrv_peel_binary ctx cost_limit act a_idx n tf_xor a1 a2 pi
+                      ss input Hopn Ha11 Ha21 Hlen Hvn)).
+    - destruct Hm as [<- | [<- | [<- | []]]]; split; lia.
+    - intros ss input Hst.
+      cbn [di_target di_sources di_guard map] in Hst |- *.
+      split; [ intros c0 [] | ].
+      intros _ s Hs. destruct Hst as [pi [Hpi Hv]].
+      assert (Hvn : rvalid act a_idx pi n ss input = Bits.ones 1)
+        by (exact (Hset n a1 a2 Hopn pi ss input (or_intror Hv))).
+      destruct Hs as [<- | [<- | []]]; exists pi; split; [ exact Hpi | exact Hvn
+                                                        | exact Hpi | ].
+      exact (proj1 (nrv_peel_binary ctx cost_limit act a_idx n tf_xor a1 a2 pi
+                      ss input Hopn Ha11 Ha21 Hlen Hvn)).
   Qed.
 
 End Soundness.
