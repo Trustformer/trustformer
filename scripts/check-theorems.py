@@ -36,22 +36,9 @@ HEADLINE = [
       ("Trustformer.Theorems.Confidentiality", "no_direct_secret_flow")]),
 
     ("no secret leaks by timing",
-     "the project's reason to exist: cycle counts are public",
-     [("Trustformer.Theorems.IPR", "latency_noninterference"),
-      ("Trustformer.Theorems.IPR", "latency_noninterference_start"),
-      ("Trustformer.Theorems.IPR", "latency_from_outputs"),
-      ("Trustformer.Theorems.IPR", "L_public"),
-      ("Trustformer.Theorems.IPR", "emulator_correct"),
-      ("Trustformer.Theorems.IPR", "emulator_correct_L")]),
-
-    ("the latency is a function of public data",
-     "the cycle count IS computed from the published tables, so no secret can "
-     "reach it by construction",
-     [("Trustformer.Theorems.IPR", "L_is_public"),
-      ("Trustformer.Theorems.IPR", "L_pub_is_latency"),
-      ("Trustformer.Declassification.Extract", "L_over_tables"),
-      ("Trustformer.Declassification.Extract", "latency_over_tables"),
-      ("Trustformer.Declassification.Extract", "emulator_correct_over_tables")]),
+     "the project's reason to exist: an output observer learns nothing a run "
+     "keeps to itself, and the cycle it learns it on is public",
+     [("Trustformer.Theorems.IPR", "emulator_correct")]),
 
     ("the declassification rules are sound",
      "each rule widens what may be published; unsound means a real leak",

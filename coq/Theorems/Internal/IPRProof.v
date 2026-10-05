@@ -3446,5 +3446,27 @@ Section IPRProof.
         discriminate Ha.
   Qed.
 
+  (* The completion cycle IS the public one: done at [L_pub], and at no cycle
+     before it.  [Theorems/IPR.v] states the emulator over this. *)
+  Corollary L_pub_first_done (act: tfs_action sched) (a_idx: a_index)
+      (vals: nid_t -> option (list bool))
+      (sp0: src_sys_state) (ss0: sched_sys_state)
+      (input: input_t) (resp: nat -> resp_val) :
+    act_idx_aligned ctx cost_limit act a_idx ->
+    start_rel ctx cost_limit sp0 ss0 ->
+    (forall j, (forall i, 1 <= i <= j -> ~ ss_done (ss_run i act input resp ss0)) ->
+       selectors_extractable act a_idx vals (ss_run j act input resp ss0)
+         (sched_input ctx cost_limit input (resp j))) ->
+    (forall j, (forall i, 1 <= i <= j -> ~ ss_done (ss_run i act input resp ss0)) ->
+       vals_sound act a_idx vals (ss_run j act input resp ss0)
+         (sched_input ctx cost_limit input (resp j))) ->
+    first_done act input resp ss0 (L_pub act a_idx vals).
+  Proof.
+    intros Halign Hstart Hsel Hvals.
+    rewrite <- (L_pub_correct act a_idx vals input resp ss0 Halign
+                  (proj2 (proj2 Hstart)) Hsel Hvals).
+    exact (L_first_done act sp0 ss0 input resp Hstart).
+  Qed.
+
 End IPRProof.
 

@@ -1798,9 +1798,9 @@ Section Extract.
         rewrite <- Hmm, getenv_maps_from. reflexivity.
       - rewrite (run_preserves_ovar ctx cost_limit act input resp ss0 k Hnd ov).
         rewrite Hoo. reflexivity. }
-    exact (L_is_public ctx cost_limit act a_idx
-             (pub_vals act pv_in pv_pre pv_post) sp0 ss0 input resp
-             Halign Hstart
+    exact (IPRProof.L_pub_correct ctx cost_limit act a_idx
+             (pub_vals act pv_in pv_pre pv_post) input resp ss0
+             Halign Hzz
              (fun k Hnd => pub_selectors_extractable act a_idx
                  (run_n ctx cost_limit k act input resp ss0)
                  (sched_input ctx cost_limit input (resp k))
