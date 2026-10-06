@@ -131,7 +131,7 @@ Section FigureB.
             ]}
         end.
 
-    Definition mk_ctxB (decls: list (decl_rule fsB_states fsB_inputs fsB_outputs Empty_set))
+    Definition mk_ctxB (decls: list (decl_packet fsB_states fsB_inputs fsB_outputs Empty_set))
         : TFSchedContext := {|
         tfs_spec_states := fsB_states;
         tfs_spec_states_fin := _;
@@ -157,7 +157,7 @@ Section FigureB.
     |}.
 
     Definition ctxB_blackbox := mk_ctxB [].
-    Definition ctxB_whitebox := mk_ctxB [phiconst_rule; phibranch_rule].
+    Definition ctxB_whitebox := mk_ctxB [phiconst_packet; phibranch_packet].
 
     Definition dfgB := build_dfg ctxB_blackbox fs_act_test.
 
@@ -191,7 +191,7 @@ Section FigureB.
       crit_report_all ctxB_whitebox (build_dfg ctxB_whitebox fs_act_test) = [].
     Proof. vm_compute. reflexivity. Qed.
 
-    Definition mk_ctxA (decls: list (decl_rule fs_states fs_inputs fs_outputs Empty_set))
+    Definition mk_ctxA (decls: list (decl_packet fs_states fs_inputs fs_outputs Empty_set))
         : TFSchedContext := {|
         tfs_spec_states := fs_states;
         tfs_spec_states_fin := _;
@@ -216,7 +216,7 @@ Section FigureB.
         tfs_spec_decls := decls
     |}.
 
-    Definition ctxA_whitebox := mk_ctxA [phiconst_rule; phibranch_rule].
+    Definition ctxA_whitebox := mk_ctxA [phiconst_packet; phibranch_packet].
 
     (* 03_taint_analysis.tex L202: untainting must not untaint too much.  The
        same two rules buy nothing back in fig:dfgA5, and the diagnostic says why

@@ -1,37 +1,22 @@
-(*! Running the declassification rules FORWARD.  A rule's [di_extract] turns the
-    bits it may read into the bits of its target; chaining them from a seed of
-    published values recovers every node the analysis calls declassifiable.
-    This is what makes a latency function over public data alone possible. !*)
+(*! The attacker's recipe is right.  Every value it works out from the published
+    bits is the run's own value wherever the hardware reads that node, so the
+    latency it computes is the design's. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.
-Require Import Koika.BitsToLists.
 
-Require Import Trustformer.Theorems.Definitions.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.DFG.
-Require Import Trustformer.Contract.
-Require Import Trustformer.Scheduler.Schedule.
-Require Import Trustformer.Theorems.SchedulerSimulation.
-Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
-Require Import Trustformer.Theorems.IPR.
-Require Import Trustformer.Theorems.Internal.IPRProof.
+Require Import Trustformer.Declassification.Recover.
+Require Import Trustformer.Declassification.PacketLemmas.
 
 Require Import Coq.Lists.List.
 Require Import Lia.
 Import ListNotations.
 
-(* The first [Some] a list yields, which is how an instance is chosen: any rule
-   that fires gives the same bits, so the search needs no order. *)
-Fixpoint find_map {A B} (f: A -> option B) (l: list A) : option B :=
-  match l with
-  | [] => None
-  | a :: rest => match f a with Some b => Some b | None => find_map f rest end
-  end.
-
 Lemma find_map_some {A B} (f: A -> option B) (l: list A) (b: B) :
-  find_map f l = Some b -> exists a, List.In a l /\ f a = Some b.
+  find_map f l = Some b -> exists a, In a l /\ f a = Some b.
 Proof.
   induction l as [| a l IH]; cbn [find_map]; intro H; [ discriminate | ].
   destruct (f a) as [b' |] eqn:Hfa.
@@ -40,138 +25,704 @@ Proof.
     exists a'. split; [ right; exact Hin | exact Hf ].
 Qed.
 
-(* The sources' bits in the order the instance lists them. *)
-Fixpoint gather {A} (f: nid_t -> option A) (ns: list nid_t) : option (list A) :=
-  match ns with
-  | [] => Some []
-  | n :: rest =>
-      match f n, gather f rest with
-      | Some v, Some vs => Some (v :: vs)
-      | _, _ => None
-      end
-  end.
+(* ================================================================= *)
+(* THE RECIPE AIMS AT ANY VALUATION THAT OBEYS THE GRAPH.              *)
+(* Operations, packets and IP functions are all the recipe uses, so     *)
+(* whatever obeys them is what it computes.                             *)
+(* ================================================================= *)
+Section RecipeSound.
+  Context {s_var i_var o_var p_var: Type} {p_eq: EqDec p_var}.
+  Context (ips: p_var -> ip_decl).
+  Context (decls: list (decl_packet s_var i_var o_var p_var)).
+  Context (g: @dfg_state_t s_var i_var o_var p_var).
+  Context (V: valuation g).
 
-Lemma gather_some {A} (f: nid_t -> option A) (ns: list nid_t) (vs: list A) :
-  gather f ns = Some vs ->
-  forall d: A, vs = map (fun n => match f n with Some v => v | None => d end) ns.
+  Definition guard_true (en: list (nid_t * bool)) : bool :=
+    forallb (fun l => Bool.eqb (nonzero (V (fst l))) (snd l)) en.
+
+  Hypothesis Hws : well_sized g.
+  Hypothesis Hcons : consistent g V.
+  Hypothesis Hsample_off : forall n p tok en,
+    op (node_at g n) = DFG_Sample p tok en -> guard_true en = false -> V n = Bits.zero.
+  Hypothesis Hsample_on : forall n p tok en a,
+    op (node_at g n) = DFG_Sample p tok en -> guard_true en = true ->
+    payload_of (p_eq := p_eq) g n = Some a ->
+    V n = convert (ip_fn (ips p) (convert (V a))).
+  Hypothesis Hstall : forall n l a, op (node_at g n) = DFG_Stall l a -> V n = Bits.zero.
+  Hypothesis Hjoin : forall n a b, op (node_at g n) = DFG_Join a b -> V n = Bits.zero.
+  Hypothesis Hdrive : forall n p a en,
+    op (node_at g n) = DFG_Drive p a en -> V n = convert (V a).
+
+  Definition sound_known (k: known g) : Prop := forall n v, k n = Some v -> v = V n.
+
+  Lemma guard_val_sound (k: known g) en b :
+    sound_known k -> guard_val g k en = Some b -> guard_true en = b.
+  Proof.
+    intro Hk. revert b. induction en as [| [c bc] en IH]; intros b Hg; cbn [guard_val] in Hg.
+    - injection Hg as <-. reflexivity.
+    - destruct (k c) as [x |] eqn:Hc; [ | discriminate ].
+      destruct (guard_val g k en) as [r |] eqn:Hr; [ | discriminate ].
+      injection Hg as <-. unfold guard_true in *. cbn [forallb fst snd].
+      rewrite <- (Hk c x Hc). f_equal. apply (IH r eq_refl).
+  Qed.
+
+  Lemma guard_true_holds en : guard_true en = true -> guard_holds g V en.
+  Proof.
+    unfold guard_true. intros Hg c b Hin. rewrite forallb_forall in Hg.
+    specialize (Hg (c, b) Hin). cbn [fst snd] in Hg. apply Bool.eqb_prop in Hg. exact Hg.
+  Qed.
+
+  Lemma step_sound (k: known g) n v :
+    sound_known k -> step (p_eq := p_eq) ips g k n = Some v -> v = V n.
+  Proof.
+    intros Hk Hs. pose proof (Hcons n) as Hc. unfold step in Hs. revert Hs Hc.
+    destruct (op (node_at g n))
+      as [c | iv | dv | uop a | bop a b | a | cnd t e | slat sa | dp darg den
+         | sp tok en | ja jb | ] eqn:Hop;
+      intros Hs Hc; try discriminate.
+    - injection Hs as <-. symmetry. exact Hc.
+    - destruct (k a) as [x |] eqn:Ha; [ | discriminate ]. cbn [option_map] in Hs.
+      injection Hs as <-. rewrite (Hk a x Ha). symmetry. exact Hc.
+    - destruct (k a) as [x |] eqn:Ha; [ | discriminate ].
+      destruct (k b) as [y |] eqn:Hb; [ | discriminate ].
+      injection Hs as <-. rewrite (Hk a x Ha), (Hk b y Hb). symmetry. exact Hc.
+    - destruct (k a) as [x |] eqn:Ha; [ | discriminate ]. cbn [option_map] in Hs.
+      injection Hs as <-. rewrite (Hk a x Ha). symmetry. exact Hc.
+    - destruct (k cnd) as [x |] eqn:Hx; [ | discriminate ].
+      pose proof (Hk cnd x Hx) as Hxv. subst x. rewrite Hc.
+      destruct (nonzero (V cnd)).
+      + destruct (k t) as [y |] eqn:Hy; [ | discriminate ]. cbn [option_map] in Hs.
+        injection Hs as <-. rewrite (Hk t y Hy). reflexivity.
+      + destruct (k e) as [y |] eqn:Hy; [ | discriminate ]. cbn [option_map] in Hs.
+        injection Hs as <-. rewrite (Hk e y Hy). reflexivity.
+    - injection Hs as <-. symmetry. exact (Hstall n slat sa Hop).
+    - destruct (k darg) as [x |] eqn:Ha; [ | discriminate ]. cbn [option_map] in Hs.
+      injection Hs as <-. rewrite (Hk darg x Ha). symmetry. exact (Hdrive n dp darg den Hop).
+    - destruct (guard_val g k en) as [[|] |] eqn:Hg; try discriminate.
+      + destruct (payload_of g n) as [a |] eqn:Hpl; [ | discriminate ].
+        destruct (k a) as [x |] eqn:Ha; [ | discriminate ]. cbn [option_map] in Hs.
+        injection Hs as <-. rewrite (Hk a x Ha).
+        symmetry. exact (Hsample_on n sp tok en a Hop (guard_val_sound k en _ Hk Hg) Hpl).
+      + injection Hs as <-.
+        symmetry. exact (Hsample_off n sp tok en Hop (guard_val_sound k en _ Hk Hg)).
+    - injection Hs as <-. symmetry. exact (Hjoin n ja jb Hop).
+  Qed.
+
+  Lemma back_sound (k: known g) n v :
+    sound_known k -> back decls g k n = Some v -> v = V n.
+  Proof.
+    intros Hk Hb. unfold back in Hb.
+    apply find_map_some in Hb. destruct Hb as [[r i] [Hin Hf]]. cbn [fst snd] in Hf.
+    destruct (Nat.eq_dec (di_target i) n) as [e | ne]; [ | discriminate ].
+    destruct e.
+    destruct (guard_val g k (di_guard i)) as [[|] |] eqn:Hg; try discriminate.
+    destruct (forallb _ (di_sources i)) eqn:Hsrc; [ | discriminate ].
+    injection Hf as <-. cbn [eq_rect].
+    unfold instances in Hin. apply in_flat_map in Hin. destruct Hin as [r' [_ Hin]].
+    apply in_map_iff in Hin. destruct Hin as [i' [Heq Hi']]. injection Heq as -> ->.
+    symmetry. apply (dp_sound r g i V (fill g k) Hws Hi' Hcons).
+    - apply guard_true_holds. exact (guard_val_sound k _ true Hk Hg).
+    - intros s Hs. unfold fill. rewrite forallb_forall in Hsrc. specialize (Hsrc s Hs).
+      destruct (k s) as [x |] eqn:Hks; [ | discriminate ]. exact (Hk s x Hks).
+  Qed.
+
+  Theorem recover_sound (seed: known g) :
+    sound_known seed ->
+    forall f, sound_known (recover (p_eq := p_eq) ips decls g seed f).
+  Proof.
+    intros Hseed f. induction f as [| f IH]; intros n v H; cbn [recover] in H;
+      [ discriminate | ].
+    destruct (seed n) as [x |] eqn:Hsd; [ injection H as <-; exact (Hseed n x Hsd) | ].
+    destruct (step ips g (recover ips decls g seed f) n) as [x |] eqn:Hst.
+    - injection H as <-. exact (step_sound _ n x IH Hst).
+    - exact (back_sound _ n v IH H).
+  Qed.
+
+  (* ---- more fuel keeps every value; the recovered nodes reach a closure ---- *)
+
+  Lemma guard_val_mono (k1 k2: known g) en b :
+    (forall m x, k1 m = Some x -> k2 m = Some x) ->
+    guard_val g k1 en = Some b -> guard_val g k2 en = Some b.
+  Proof.
+    intro Hk. revert b. induction en as [| [c bc] en IH]; intros b Hg; cbn [guard_val] in *;
+      [ exact Hg | ].
+    destruct (k1 c) as [x |] eqn:Hc; [ | discriminate ].
+    destruct (guard_val g k1 en) as [r |] eqn:Hr; [ | discriminate ].
+    rewrite (Hk c x Hc), (IH r eq_refl). exact Hg.
+  Qed.
+
+  Lemma step_mono (k1 k2: known g) n v :
+    (forall m x, k1 m = Some x -> k2 m = Some x) ->
+    step (p_eq := p_eq) ips g k1 n = Some v -> step (p_eq := p_eq) ips g k2 n = Some v.
+  Proof.
+    intros Hk Hs. unfold step in *.
+    destruct (op (node_at g n))
+      as [c | iv | dv | uop a | bop a b | a | cnd t e | slat sa | dp darg den
+         | sp tok en | ja jb | ];
+      try exact Hs; try discriminate Hs.
+    - destruct (k1 a) as [x |] eqn:E; [ | discriminate Hs ]. rewrite (Hk a x E). exact Hs.
+    - destruct (k1 a) as [x |] eqn:E1; [ | discriminate Hs ].
+      destruct (k1 b) as [y |] eqn:E2; [ | discriminate Hs ].
+      rewrite (Hk a x E1), (Hk b y E2). exact Hs.
+    - destruct (k1 a) as [x |] eqn:E; [ | discriminate Hs ]. rewrite (Hk a x E). exact Hs.
+    - destruct (k1 cnd) as [x |] eqn:E; [ | discriminate Hs ]. rewrite (Hk cnd x E).
+      destruct (nonzero x).
+      + destruct (k1 t) as [y |] eqn:Et; [ | discriminate Hs ]. rewrite (Hk t y Et). exact Hs.
+      + destruct (k1 e) as [y |] eqn:Ee; [ | discriminate Hs ]. rewrite (Hk e y Ee). exact Hs.
+    - destruct (k1 darg) as [x |] eqn:E; [ | discriminate Hs ]. rewrite (Hk darg x E). exact Hs.
+    - destruct (guard_val g k1 en) as [[|] |] eqn:Eg; try discriminate Hs.
+      + rewrite (guard_val_mono k1 k2 en true Hk Eg).
+        destruct (payload_of g n) as [a |]; [ | discriminate Hs ].
+        destruct (k1 a) as [x |] eqn:E; [ | discriminate Hs ]. rewrite (Hk a x E). exact Hs.
+      + rewrite (guard_val_mono k1 k2 en false Hk Eg). exact Hs.
+  Qed.
+
+  Lemma find_map_mono {A B C} (f1: A -> option B) (f2: A -> option C) (l: list A) :
+    (forall a, f1 a <> None -> f2 a <> None) -> find_map f1 l <> None -> find_map f2 l <> None.
+  Proof.
+    intro H. induction l as [| a l IH]; cbn [find_map]; [ tauto | ].
+    destruct (f2 a) eqn:E2; [ discriminate | ].
+    destruct (f1 a) eqn:E1; [ | exact IH ].
+    exfalso. apply (H a); [ rewrite E1; discriminate | exact E2 ].
+  Qed.
+
+  Lemma back_mono (k1 k2: known g) n :
+    (forall m x, k1 m = Some x -> k2 m = Some x) ->
+    back decls g k1 n <> None -> back decls g k2 n <> None.
+  Proof.
+    intro Hk. unfold back. apply find_map_mono. intros [r i] Hf. cbn [fst snd] in *.
+    destruct (Nat.eq_dec (di_target i) n) as [e | ne]; [ | exfalso; apply Hf; reflexivity ].
+    destruct (guard_val g k1 (di_guard i)) as [[|] |] eqn:Eg;
+      try (exfalso; apply Hf; reflexivity).
+    rewrite (guard_val_mono k1 k2 _ true Hk Eg).
+    destruct (forallb _ (di_sources i)) eqn:E1; [ | exfalso; apply Hf; reflexivity ].
+    replace (forallb (fun s => match k2 s with Some _ => true | None => false end)
+               (di_sources i)) with true; [ discriminate | ].
+    symmetry. rewrite forallb_forall in *. intros s Hs. specialize (E1 s Hs).
+    destruct (k1 s) as [x |] eqn:Ex; [ | discriminate ]. rewrite (Hk s x Ex). reflexivity.
+  Qed.
+
+  (* Two sound tables agree wherever both answer, so answering is all that matters. *)
+  Lemma sound_incl (k1 k2: known g) :
+    sound_known k1 -> sound_known k2 ->
+    (forall m, k1 m <> None -> k2 m <> None) ->
+    forall m x, k1 m = Some x -> k2 m = Some x.
+  Proof.
+    intros H1 H2 Hd m x Hx. destruct (k2 m) as [y |] eqn:Hy.
+    - rewrite (H1 m x Hx), (H2 m y Hy). reflexivity.
+    - exfalso. apply (Hd m); [ rewrite Hx; discriminate | exact Hy ].
+  Qed.
+
+  Section Closure.
+    Context (seed: known g).
+    Hypothesis Hseed : sound_known seed.
+
+    Local Notation K f := (recover (p_eq := p_eq) ips decls g seed f).
+
+    Lemma recover_S f n :
+      K (S f) n = match seed n with
+                  | Some v => Some v
+                  | None => match step ips g (K f) n with
+                            | Some v => Some v
+                            | None => back decls g (K f) n
+                            end
+                  end.
+    Proof. reflexivity. Qed.
+
+    Lemma recover_mono f n x : K f n = Some x -> K (S f) n = Some x.
+    Proof.
+      revert n x. induction f as [| f IH]; intros n x H; [ discriminate | ].
+      pose proof (recover_sound seed Hseed (S f) n x H) as Hx.
+      rewrite recover_S in H |- *.
+      destruct (seed n) as [y |] eqn:Hs; [ exact H | ].
+      destruct (step ips g (K f) n) as [y |] eqn:Hst.
+      - rewrite (step_mono _ _ n y IH Hst). exact H.
+      - destruct (step ips g (K (S f)) n) as [z |] eqn:Hst2.
+        + pose proof (step_sound _ n z (recover_sound seed Hseed (S f)) Hst2) as Hz.
+          rewrite Hx, Hz. reflexivity.
+        + pose proof (back_mono _ _ n IH ltac:(rewrite H; discriminate)) as Hb.
+          destruct (back decls g (K (S f)) n) as [w |] eqn:Hbw;
+            [ | exfalso; apply Hb; reflexivity ].
+          pose proof (back_sound _ n w (recover_sound seed Hseed (S f)) Hbw) as Hw.
+          rewrite Hx, Hw. reflexivity.
+    Qed.
+
+    Lemma recover_mono_le f f' n x : f <= f' -> K f n = Some x -> K f' n = Some x.
+    Proof.
+      intro Hle. induction Hle as [| f' Hle IH]; intro H; [ exact H | ].
+      exact (recover_mono f' n x (IH H)).
+    Qed.
+
+    Hypothesis Hseed_range : forall n, seed n <> None -> n < length (graph g).
+
+    Definition universe : list nid_t :=
+      List.seq 0 (length (graph g)) ++ map (fun ri => di_target (snd ri)) (instances decls g).
+
+    Lemma recover_support f n : K f n <> None -> In n universe.
+    Proof.
+      unfold universe. intro H. destruct f as [| f]; [ exfalso; apply H; reflexivity | ].
+      rewrite recover_S in H.
+      destruct (seed n) as [x |] eqn:Hs.
+      - apply in_or_app. left. apply in_seq. split; [ lia | ].
+        apply Hseed_range. rewrite Hs. discriminate.
+      - destruct (step ips g (K f) n) as [x |] eqn:Hst.
+        + apply in_or_app. left. apply in_seq. split; [ lia | ].
+          destruct (Nat.lt_ge_cases n (length (graph g))) as [Hlt | Hge]; [ lia | ].
+          exfalso. unfold step, node_at in Hst. rewrite nth_overflow in Hst by exact Hge.
+          discriminate.
+        + apply in_or_app. right. unfold back in H.
+          destruct (find_map _ (instances decls g)) as [y |] eqn:Hf;
+            [ | exfalso; apply H; reflexivity ].
+          apply find_map_some in Hf. destruct Hf as [[r i] [Hin Hf]]. cbn [fst snd] in Hf.
+          destruct (Nat.eq_dec (di_target i) n) as [e | ne]; [ | discriminate ].
+          apply in_map_iff. exists (r, i). split; [ exact e | exact Hin ].
+    Qed.
+
+    Definition defined (f: nat) (n: nid_t) : bool :=
+      match K f n with Some _ => true | None => false end.
+
+    Lemma filter_len_bound {A} (p: A -> bool) (l: list A) : length (filter p l) <= length l.
+    Proof.
+      induction l as [| a l IH]; cbn [filter]; [ lia | ].
+      destruct (p a); cbn [length]; lia.
+    Qed.
+
+    Lemma filter_len_mono {A} (p q: A -> bool) (l: list A) :
+      (forall x, p x = true -> q x = true) -> length (filter p l) <= length (filter q l).
+    Proof.
+      intro H. induction l as [| a l IH]; cbn [filter]; [ lia | ].
+      destruct (p a) eqn:Hp; [ rewrite (H a Hp); cbn [length]; lia | ].
+      destruct (q a); cbn [length]; lia.
+    Qed.
+
+    Lemma filter_len_eq {A} (p q: A -> bool) (l: list A) :
+      (forall x, p x = true -> q x = true) ->
+      length (filter p l) = length (filter q l) ->
+      forall x, In x l -> q x = true -> p x = true.
+    Proof.
+      intro H. induction l as [| a l IH]; intros Heq x Hx Hq; [ destruct Hx | ].
+      cbn [filter] in Heq.
+      destruct (p a) eqn:Hp.
+      - rewrite (H a Hp) in Heq. cbn [length] in Heq.
+        destruct Hx as [<- | Hx]; [ exact Hp | exact (IH ltac:(lia) x Hx Hq) ].
+      - destruct (q a) eqn:Hqa.
+        + exfalso. cbn [length] in Heq. pose proof (filter_len_mono p q l H). lia.
+        + destruct Hx as [<- | Hx]; [ rewrite Hqa in Hq; discriminate | exact (IH Heq x Hx Hq) ].
+    Qed.
+
+    Definition count (f: nat) : nat := length (filter (defined f) universe).
+
+    Definition stable_at (j: nat) : Prop := forall n, K (S j) n <> None -> K j n <> None.
+
+    Lemma defined_mono f n : defined f n = true -> defined (S f) n = true.
+    Proof.
+      unfold defined. destruct (K f n) as [x |] eqn:E; [ | discriminate ].
+      rewrite (recover_mono f n x E). reflexivity.
+    Qed.
+
+    Lemma stable_or_grow j : (exists j0, j0 <= j /\ stable_at j0) \/ j <= count j.
+    Proof.
+      induction j as [| j IH]; [ right; lia | ].
+      destruct IH as [[j0 [Hle Hst]] | Hc]; [ left; exists j0; split; [ lia | exact Hst ] | ].
+      destruct (Nat.eq_dec (count (S j)) (count j)) as [Heq | Hne].
+      - left. exists j. split; [ lia | ]. intros n Hn.
+        assert (Hd : defined (S j) n = true)
+          by (unfold defined; destruct (K (S j) n); [ reflexivity | exfalso; apply Hn; reflexivity ]).
+        pose proof (filter_len_eq (defined j) (defined (S j)) universe (defined_mono j)
+                      (eq_sym Heq) n (recover_support (S j) n Hn) Hd) as Hj.
+        unfold defined in Hj. destruct (K j n); [ discriminate | discriminate Hj ].
+      - right. pose proof (filter_len_mono (defined j) (defined (S j)) universe (defined_mono j)).
+        unfold count in *. lia.
+    Qed.
+
+    Lemma stable_forever j0 : stable_at j0 -> forall i n, K (i + j0) n <> None -> K j0 n <> None.
+    Proof.
+      intros Hst i. induction i as [| i IH]; intros n Hn; [ exact Hn | ].
+      apply Hst.
+      assert (Hincl : forall m x, K (i + j0) m = Some x -> K j0 m = Some x).
+      { apply sound_incl; [ apply recover_sound; exact Hseed | apply recover_sound; exact Hseed
+                          | exact IH ]. }
+      change (S i + j0) with (S (i + j0)) in Hn. rewrite recover_S in Hn |- *.
+      destruct (seed n) as [x |]; [ discriminate | ].
+      destruct (step ips g (K (i + j0)) n) as [x |] eqn:Hst1.
+      - rewrite (step_mono _ _ n x Hincl Hst1). discriminate.
+      - destruct (step ips g (K j0) n) as [y |]; [ discriminate | ].
+        exact (back_mono _ _ n Hincl Hn).
+    Qed.
+
+    (* Any value the recipe reaches with some fuel, it reaches with [S |universe|]. *)
+    Theorem recover_closed f n x :
+      K f n = Some x -> K (S (length universe)) n = Some x.
+    Proof.
+      intro H.
+      destruct (stable_or_grow (S (length universe))) as [[j0 [Hle Hst]] | Hc].
+      - destruct (Nat.le_gt_cases f j0) as [Hfj | Hfj].
+        + exact (recover_mono_le j0 _ n x Hle (recover_mono_le f j0 n x Hfj H)).
+        + pose proof (stable_forever j0 Hst (f - j0) n) as Hs.
+          replace (f - j0 + j0) with f in Hs by lia.
+          specialize (Hs ltac:(rewrite H; discriminate)).
+          destruct (K j0 n) as [y |] eqn:Hy; [ | exfalso; apply Hs; reflexivity ].
+          pose proof (recover_mono_le j0 _ n y Hle Hy) as Hy'.
+          rewrite Hy'. f_equal.
+          rewrite (recover_sound seed Hseed _ n y Hy), (recover_sound seed Hseed f n x H).
+          reflexivity.
+      - exfalso. unfold count in Hc.
+        pose proof (filter_len_bound (defined (S (length universe))) universe). lia.
+    Qed.
+  End Closure.
+End RecipeSound.
+
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
+Require Import Trustformer.Theorems.Definitions.
+Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
+Require Import Trustformer.Theorems.Internal.IPRProof.
+
+Lemma guard_true_ext {s i o p} (g: @dfg_state_t s i o p) (V1 V2: valuation g) en :
+  (forall l, In l en -> V1 (fst l) = V2 (fst l)) -> guard_true g V1 en = guard_true g V2 en.
 Proof.
-  revert vs. induction ns as [| n ns IH]; intros vs H d; cbn [gather] in H.
-  - injection H as <-. reflexivity.
-  - destruct (f n) as [v |] eqn:Hfn; [ | discriminate ].
-    destruct (gather f ns) as [vs' |] eqn:Hg; [ | discriminate ].
-    injection H as <-. cbn [map]. rewrite Hfn. f_equal.
-    exact (IH vs' eq_refl d).
+  induction en as [| l en IH]; intro H; [ reflexivity | ].
+  unfold guard_true in *. cbn [forallb].
+  rewrite (H l (or_introl eq_refl)), IH; [ reflexivity | ].
+  intros l' Hl'. exact (H l' (or_intror Hl')).
 Qed.
 
-
-(* Widening pads at the top and narrowing drops it, so one list-level resize
-   covers [Semantics.convert] in both directions. *)
-Definition resize_bits (w: nat) (l: list bool) : list bool :=
-  firstn w (l ++ List.repeat false w).
-
-Lemma firstn_repeat_false (k m: nat) :
-  firstn k (List.repeat false m) = List.repeat false (Nat.min k m).
-Proof.
-  revert m. induction k as [| k IH]; intro m; [ reflexivity | ].
-  destruct m as [| m]; [ reflexivity | ].
-  cbn [List.repeat firstn Nat.min]. rewrite IH. reflexivity.
-Qed.
-
-Lemma convert_to_list (szA szB: nat) (x: bits_t szA) :
-  vect_to_list (convert (szB := szB) x) = resize_bits szB (vect_to_list x).
-Proof.
-  unfold convert, resize_bits.
-  destruct (eq_dec szA szB) as [e | ne].
-  - destruct e. cbn [eq_rect].
-    rewrite firstn_app, vect_to_list_length.
-    rewrite firstn_all2 by (rewrite vect_to_list_length; lia).
-    replace (szA - szA) with 0 by lia. cbn [firstn].
-    symmetry. apply app_nil_r.
-  - rewrite BitsToLists.slice. cbn [take_drop' fst snd].
-    rewrite firstn_app, vect_to_list_length, firstn_repeat_false.
-    f_equal. f_equal. pose proof (vect_to_list_length x). lia.
-Qed.
-
-Lemma list_assoc_app {V} (l1 l2: list (nat * V)) (k: nat) (v: V) :
-  list_assoc (l1 ++ l2) k = Some v ->
-  list_assoc l1 k = Some v \/ list_assoc l2 k = Some v.
-Proof.
-  induction l1 as [| [k1 v1] l1 IH]; cbn [List.app list_assoc]; intro H.
-  - right; exact H.
-  - destruct (eq_dec k k1) as [-> | Hne]; [ left; exact H | exact (IH H) ].
-Qed.
-
-Lemma list_assoc_app_l {V} (l1 l2: list (nat * V)) (k: nat) (v: V) :
-  list_assoc l1 k = Some v -> list_assoc (l1 ++ l2) k = Some v.
-Proof.
-  induction l1 as [| [k1 v1] l1 IH]; cbn [List.app list_assoc]; intro H;
-    [ discriminate | ].
-  destruct (eq_dec k k1) as [-> | Hne]; [ exact H | exact (IH H) ].
-Qed.
-
-Lemma list_assoc_In {V} (l: list (nat * V)) (k: nat) (v: V) :
-  list_assoc l k = Some v -> List.In (k, v) l.
-Proof.
-  induction l as [| [k1 v1] l IH]; cbn [list_assoc]; intro H; [ discriminate | ].
-  destruct (eq_dec k k1) as [-> | Hne].
-  - injection H as <-. left; reflexivity.
-  - right; exact (IH H).
-Qed.
-
-(* The inverse of [vect_to_list] at a known width: [convert] casts the vector
-   the list builds, and at the right length that cast is the identity. *)
-Definition bits_of_list (w: nat) (l: list bool) : bits_t w :=
-  convert (vect_of_list l).
-
-Lemma resize_bits_id (w: nat) (l: list bool) :
-  length l = w -> resize_bits w l = l.
-Proof.
-  intro H. unfold resize_bits.
-  rewrite firstn_app, H, firstn_all2 by lia.
-  replace (w - w) with 0 by lia. cbn [firstn]. apply app_nil_r.
-Qed.
-
-Lemma vect_to_list_bits_of_list (w: nat) (l: list bool) :
-  length l = w -> vect_to_list (bits_of_list w l) = l.
-Proof.
-  intro Hl. unfold bits_of_list.
-  rewrite convert_to_list, BitsToLists.vect_to_list_of_list.
-  apply resize_bits_id. exact Hl.
-Qed.
-
-Lemma bits_of_list_to_list {w} (x: bits_t w) :
-  bits_of_list w (vect_to_list x) = x.
-Proof.
-  apply (vect_to_list_inj bool w).
-  apply vect_to_list_bits_of_list, vect_to_list_length.
-Qed.
-
-Section Extract.
-  Context (ctx: TFSchedContext).
-  Context (cost_limit: nat).
+(* ================================================================= *)
+(* THE RUN'S IDEAL VALUES: each node as it reads once it is ready,     *)
+(* every IP answer [ip_fn] of its request.                              *)
+(* ================================================================= *)
+Section Ideal.
+  Context (ctx: TFSchedContext) (cost_limit: nat).
 
   Local Notation sched := (tfs_schedule ctx cost_limit).
-  Local Notation s_var := (tfs_spec_states ctx).
   Local Notation i_var := (tfs_spec_inputs ctx).
   Local Notation o_var := (tfs_spec_outputs ctx).
+  Local Notation s_sz := (tfs_spec_states_size ctx).
   Local Notation i_sz := (tfs_spec_inputs_size ctx).
   Local Notation o_sz := (tfs_spec_outputs_size ctx).
-  Local Notation sched_st_env  := (ContextEnv.(env_t) (tf_states_type (tfs_states_size sched))).
-  Local Notation sched_out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).
-  Local Notation sched_sys_state := (sched_st_env * sched_out_env)%type.
-  Local Notation sched_input_t :=
-    (forall x : tfs_inputs sched, type_denote (tf_inputs_type (tfs_inputs_size sched) x)).
-  Local Notation a_index := (Vect.index (length (buffer_needs ctx cost_limit))).
-  Local Notation nsz act n :=
-    (sz (nth n (graph (build_dfg ctx act)) {| nid := 0; op := DFG_Empty; sz := 0 |})).
-  Local Notation s_sz := (tfs_spec_states_size ctx).
-  Local Notation src_st_env  := (ContextEnv.(env_t) (tf_states_type s_sz)).
   Local Notation src_out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).
-  Local Notation src_sys_state := (src_st_env * src_out_env)%type.
+  Local Notation src_sys_state :=
+    (ContextEnv.(env_t) (tf_states_type s_sz) * src_out_env)%type.
   Local Notation input_t := (forall x : i_var, type_denote (tf_inputs_type i_sz x)).
+  Local Notation peq := (tfs_spec_ips_eq_dec ctx).
+
+  Context (act: tfs_action sched) (sp0: src_sys_state) (input: input_t).
+
+  Local Notation G := (build_dfg ctx act).
+
+  Fixpoint videal_f (f: nat) (n: nid_t) : bits_t (node_sz G n) :=
+    match f with
+    | 0 => Bits.zero
+    | S f' =>
+        match op (node_at G n) with
+        | DFG_Const c => Bits.of_nat _ c
+        | DFG_Input v => convert (input v)
+        | DFG_Var (DFG_SVar sv) => convert ((fst sp0).[sv])
+        | DFG_Var (DFG_OVar ov) => convert ((snd sp0).[ov])
+        | DFG_Unary uop a => op1_bits uop _ _ (videal_f f' a)
+        | DFG_Resize a => convert (videal_f f' a)
+        | DFG_Binary bop a b => op2_bits bop _ _ _ (videal_f f' a) (videal_f f' b)
+        | DFG_Phi c t e =>
+            if nonzero (videal_f f' c) then convert (videal_f f' t)
+            else convert (videal_f f' e)
+        | DFG_Drive _ a _ => convert (videal_f f' a)
+        | DFG_Sample p _ en =>
+            if guard_true G (videal_f f') en then
+              match payload_of (p_eq := peq) G n with
+              | Some a => convert (ip_fn (tfs_spec_ip ctx p) (convert (videal_f f' a)))
+              | None => Bits.zero
+              end
+            else Bits.zero
+        | _ => Bits.zero
+        end
+    end.
+
+  Definition videal (n: nid_t) : bits_t (node_sz G n) := videal_f (S n) n.
+
+  (* ---- every node depends only on nodes below it ---- *)
+
+  Lemma arg_below n a :
+    op (node_at G n) <> DFG_Empty -> In a (get_args ctx (node_at G n)) -> a < n.
+  Proof.
+    intros Hne Hin. destruct (node_op_pos ctx cost_limit act n Hne) as [_ Hlen].
+    exact (arg_lt_of_op ctx cost_limit act n a Hlen Hin).
+  Qed.
+
+  Lemma drive_of_sample_drive n :
+    drive_of (p_eq := peq) G n = Definitions.sample_drive ctx cost_limit act n.
+  Proof. reflexivity. Qed.
+
+  Lemma sample_drive_below n p tok en d :
+    op (node_at G n) = DFG_Sample p tok en ->
+    Definitions.sample_drive ctx cost_limit act n = Some d -> d < n.
+  Proof.
+    intros Hop Hd.
+    assert (Htok : tok < n)
+      by (apply (arg_below n tok); [ rewrite Hop; discriminate
+                                   | unfold get_args; rewrite Hop; left; reflexivity ]).
+    unfold Definitions.sample_drive, Definitions.node_op in Hd.
+    change (op (node_at G n)) with (op (nth n (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      in Hop.
+    rewrite Hop in Hd.
+    assert (Hhead : forall h, Definitions.sample_drive_head ctx cost_limit act p h = Some d -> d <= h).
+    { intros h Hh. unfold Definitions.sample_drive_head, Definitions.node_op in Hh.
+      destruct (op (nth h (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}))
+        as [c | v | v | uop x | bop x y | x | c t e | sl x | dp x den | sp x sen | jd jb | ]
+        eqn:Hoh; try discriminate.
+      - destruct (eq_dec dp p); [ injection Hh as Hhd; lia | discriminate ].
+      - destruct (op (nth jd (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}))
+          as [c | v | v | uop x | bop x y | x | c t e | sl x | dp x den | sp x sen | ja jc | ];
+          try discriminate.
+        destruct (eq_dec dp p); [ injection Hh as Hjd | discriminate ].
+        subst jd. apply Nat.lt_le_incl. apply (arg_below h d).
+        + change (op (node_at G h))
+            with (op (nth h (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})).
+          rewrite Hoh. discriminate.
+        + unfold get_args, node_at. rewrite Hoh. left. reflexivity. }
+    destruct (op (nth tok (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      as [c | v | v | uop x | bop x y | x | c t e | sl hd | dp x den | sp x sen | ja jc | ]
+      eqn:Hot; try (pose proof (Hhead tok Hd); lia).
+    pose proof (Hhead _ Hd) as Hdh.
+    assert (Hht : hd < tok).
+    { apply (arg_below tok hd).
+      + change (op (node_at G tok))
+          with (op (nth tok (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})).
+        rewrite Hot. discriminate.
+      + unfold get_args, node_at. rewrite Hot. left. reflexivity. }
+    lia.
+  Qed.
+
+  Lemma sample_lits_below n p tok en l :
+    op (node_at G n) = DFG_Sample p tok en -> In l en -> fst l < n.
+  Proof.
+    intros Hop Hl.
+    destruct (sample_has_drive ctx cost_limit act n p tok en Hop) as [d [arg [Hsd Hdop]]].
+    pose proof (sample_drive_below n p tok en d Hop Hsd) as Hdn.
+    assert (Hld : fst l < d).
+    { apply (arg_below d (fst l)).
+      + change (op (node_at G d)) with (Definitions.node_op ctx cost_limit act d).
+        rewrite Hdop. discriminate.
+      + unfold get_args. change (op (node_at G d)) with (Definitions.node_op ctx cost_limit act d).
+        rewrite Hdop. right. exact (in_map fst en l Hl). }
+    lia.
+  Qed.
+
+  Lemma payload_below n p tok en a :
+    op (node_at G n) = DFG_Sample p tok en -> payload_of (p_eq := peq) G n = Some a -> a < n.
+  Proof.
+    intros Hop Hpl. unfold payload_of in Hpl. rewrite drive_of_sample_drive in Hpl.
+    destruct (Definitions.sample_drive ctx cost_limit act n) as [d |] eqn:Hsd;
+      [ | discriminate ].
+    pose proof (sample_drive_below n p tok en d Hop Hsd) as Hdn.
+    destruct (op (node_at G d)) eqn:Hdop; try discriminate.
+    injection Hpl as ->.
+    assert (Had : a < d).
+    { apply (arg_below d a); [ rewrite Hdop; discriminate | ].
+      unfold get_args. rewrite Hdop. left. reflexivity. }
+    lia.
+  Qed.
+
+  Lemma videal_f_irrel : forall n f, n < f -> videal_f f n = videal n.
+  Proof.
+    intro n. induction n as [n IH] using lt_wf_ind. intros f Hf.
+    unfold videal. destruct f as [| f]; [ lia | ]. cbn [videal_f].
+    destruct (op (node_at G n)) as [c | iv | [sv | ov] | uop a | bop a b | a | cnd t e
+                                   | slat sa | dp a den | sp tok en | ja jb | ] eqn:Hop;
+      try reflexivity.
+    all: assert (Hne : op (node_at G n) <> DFG_Empty) by (rewrite Hop; discriminate).
+    all: try (assert (Ha : a < n) by (apply (arg_below n a Hne); unfold get_args; rewrite Hop;
+                                      left; reflexivity);
+              rewrite (IH a Ha f ltac:(lia)), (IH a Ha n ltac:(lia))).
+    - reflexivity.
+    - assert (Hb : b < n) by (apply (arg_below n b Hne); unfold get_args; rewrite Hop;
+                              right; left; reflexivity).
+      rewrite (IH b Hb f ltac:(lia)), (IH b Hb n ltac:(lia)). reflexivity.
+    - reflexivity.
+    - assert (Hc : cnd < n) by (apply (arg_below n cnd Hne); unfold get_args; rewrite Hop;
+                                left; reflexivity).
+      assert (Ht : t < n) by (apply (arg_below n t Hne); unfold get_args; rewrite Hop;
+                              right; left; reflexivity).
+      assert (He : e < n) by (apply (arg_below n e Hne); unfold get_args; rewrite Hop;
+                              right; right; left; reflexivity).
+      rewrite (IH cnd Hc f ltac:(lia)), (IH cnd Hc n ltac:(lia)),
+              (IH t Ht f ltac:(lia)), (IH t Ht n ltac:(lia)),
+              (IH e He f ltac:(lia)), (IH e He n ltac:(lia)).
+      reflexivity.
+    - reflexivity.
+    - rewrite (guard_true_ext G (videal_f f) (videal_f n) en).
+      + destruct (guard_true G (videal_f n) en); [ | reflexivity ].
+        destruct (payload_of G n) as [a |] eqn:Hpl; [ | reflexivity ].
+        pose proof (payload_below n sp tok en a Hop Hpl) as Ha.
+        rewrite (IH a Ha f ltac:(lia)), (IH a Ha n ltac:(lia)). reflexivity.
+      + intros l Hl. pose proof (sample_lits_below n sp tok en l Hop Hl) as Hln.
+        rewrite (IH (fst l) Hln f ltac:(lia)), (IH (fst l) Hln n ltac:(lia)). reflexivity.
+  Qed.
+
+  (* ---- the ideal values obey the graph ---- *)
+
+  Lemma videal_unfold n :
+    videal n = videal_f (S n) n.
+  Proof. reflexivity. Qed.
+
+  Lemma videal_consistent : consistent G videal.
+  Proof.
+    intro n.
+    destruct (op (node_at G n)) as [c | iv | dv | uop a | bop a b | a | cnd t e
+                                   | slat sa | dp darg den | sp tok en | ja jb | ] eqn:Hop;
+      try exact I.
+    all: assert (Hne : op (node_at G n) <> DFG_Empty) by (rewrite Hop; discriminate).
+    all: rewrite videal_unfold; cbn [videal_f]; rewrite Hop; cbn beta iota.
+    - reflexivity.
+    - assert (Ha : a < n) by (apply (arg_below n a Hne); unfold get_args; rewrite Hop;
+                              left; reflexivity).
+      rewrite (videal_f_irrel a n Ha). reflexivity.
+    - assert (Ha : a < n) by (apply (arg_below n a Hne); unfold get_args; rewrite Hop;
+                              left; reflexivity).
+      assert (Hb : b < n) by (apply (arg_below n b Hne); unfold get_args; rewrite Hop;
+                              right; left; reflexivity).
+      rewrite (videal_f_irrel a n Ha), (videal_f_irrel b n Hb). reflexivity.
+    - assert (Ha : a < n) by (apply (arg_below n a Hne); unfold get_args; rewrite Hop;
+                              left; reflexivity).
+      rewrite (videal_f_irrel a n Ha). reflexivity.
+    - assert (Hc : cnd < n) by (apply (arg_below n cnd Hne); unfold get_args; rewrite Hop;
+                                left; reflexivity).
+      assert (Ht : t < n) by (apply (arg_below n t Hne); unfold get_args; rewrite Hop;
+                              right; left; reflexivity).
+      assert (He : e < n) by (apply (arg_below n e Hne); unfold get_args; rewrite Hop;
+                              right; right; left; reflexivity).
+      rewrite (videal_f_irrel cnd n Hc), (videal_f_irrel t n Ht), (videal_f_irrel e n He).
+      reflexivity.
+  Qed.
+
+  Lemma videal_guard n sp tok en :
+    op (node_at G n) = DFG_Sample sp tok en ->
+    guard_true G (videal_f n) en = guard_true G videal en.
+  Proof.
+    intro Hop. apply guard_true_ext. intros l Hl.
+    exact (videal_f_irrel (fst l) n (sample_lits_below n sp tok en l Hop Hl)).
+  Qed.
+
+  Lemma videal_sample_off n sp tok en :
+    op (node_at G n) = DFG_Sample sp tok en ->
+    guard_true G videal en = false -> videal n = Bits.zero.
+  Proof.
+    intros Hop Hg. rewrite videal_unfold. cbn [videal_f]. rewrite Hop. cbn beta iota.
+    rewrite (videal_guard n sp tok en Hop), Hg. reflexivity.
+  Qed.
+
+  Lemma videal_sample_on n sp tok en a :
+    op (node_at G n) = DFG_Sample sp tok en ->
+    guard_true G videal en = true ->
+    payload_of (p_eq := peq) G n = Some a ->
+    videal n = convert (ip_fn (tfs_spec_ip ctx sp) (convert (videal a))).
+  Proof.
+    intros Hop Hg Hpl. rewrite videal_unfold. cbn [videal_f]. rewrite Hop. cbn beta iota.
+    rewrite (videal_guard n sp tok en Hop), Hg, Hpl.
+    rewrite (videal_f_irrel a n (payload_below n sp tok en a Hop Hpl)). reflexivity.
+  Qed.
+
+
+  Lemma videal_stall n l a : op (node_at G n) = DFG_Stall l a -> videal n = Bits.zero.
+  Proof. intro Hop. rewrite videal_unfold. cbn [videal_f]. rewrite Hop. reflexivity. Qed.
+
+  Lemma videal_join n a b : op (node_at G n) = DFG_Join a b -> videal n = Bits.zero.
+  Proof. intro Hop. rewrite videal_unfold. cbn [videal_f]. rewrite Hop. reflexivity. Qed.
+
+  Lemma videal_drive n p a en :
+    op (node_at G n) = DFG_Drive p a en -> videal n = convert (videal a).
+  Proof.
+    intro Hop. rewrite videal_unfold. cbn [videal_f]. rewrite Hop. cbv beta iota.
+    rewrite (videal_f_irrel a n); [ reflexivity | ].
+    apply (arg_below n a); [ rewrite Hop; discriminate | ].
+    unfold get_args. rewrite Hop. left. reflexivity.
+  Qed.
+  (* ---- the compiled graph is well-sized ---- *)
+
+  Lemma build_well_sized : well_sized G.
+  Proof.
+    intro n. unfold node_sz, node_at.
+    destruct (Nat.lt_ge_cases n (length (graph G))) as [Hlt | Hge];
+      [ | rewrite nth_overflow by exact Hge; exact I ].
+    pose proof (wfg_build_dfg ctx cost_limit act _
+                  (nth_In _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hlt)) as Hfg.
+    unfold node_args_sz in Hfg.
+    destruct (op (nth n (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}))
+      as [c | iv | dv | uop a | bop a b | a | cnd t e | slat sa | dp darg den
+         | sp tok en | ja jb | ];
+      try exact I.
+    - destruct uop; exact (proj2 (wsz_node_sz ctx cost_limit act _ _ Hfg)).
+    - destruct bop; destruct Hfg as [H1 H2]; split;
+        first [ exact (proj2 (wsz_node_sz ctx cost_limit act _ _ H1))
+              | exact (proj2 (wsz_node_sz ctx cost_limit act _ _ H2)) ].
+    - destruct Hfg as [Hc [Ht He]].
+      split; [ exact (proj2 (wsz_node_sz ctx cost_limit act _ _ Hc)) | ].
+      split; [ exact (proj2 (wsz_node_sz ctx cost_limit act _ _ Ht))
+             | exact (proj2 (wsz_node_sz ctx cost_limit act _ _ He)) ].
+  Qed.
+
+  (* ---- the published bits are ideal values ---- *)
+
+  Lemma seed_sound (post: src_out_env) :
+    (forall o r, tfs_spec_outputs_class ctx o = Public ->
+       In (DFG_OVar o, r) (var_map G) ->
+       convert (szB := node_sz G r) (post.[o]) = videal r) ->
+    sound_known G videal
+      (seed i_sz o_sz G (seen_in ctx (observe ctx input (snd sp0) post))
+                        (seen_pre ctx (observe ctx input (snd sp0) post))
+                        (seen_post ctx (observe ctx input (snd sp0) post))).
+  Proof.
+    intros Hroots n v Hs. unfold seed in Hs.
+    assert (Hroot : find_map
+                      (fun e => match e with
+                                | (DFG_OVar o, r) =>
+                                    if Nat.eqb r n
+                                    then option_map convert
+                                           (seen_post ctx (observe ctx input (snd sp0) post) o)
+                                    else None
+                                | _ => None
+                                end) (var_map G) = Some v -> v = videal n).
+    { intro Hf. apply find_map_some in Hf. destruct Hf as [[[sv | o] r] [Hin Hf]];
+        [ discriminate | ].
+      destruct (Nat.eqb r n) eqn:Hrn; [ | discriminate ]. apply Nat.eqb_eq in Hrn. subst r.
+      cbn [seen_post observe] in Hf.
+      destruct (tfs_spec_outputs_class ctx o) eqn:Hcls; [ | discriminate ].
+      cbn [option_map] in Hf. injection Hf as <-. exact (Hroots o n Hcls Hin). }
+    destruct (op (node_at G n)) as [c | iv | [sv | ov] | uop a | bop a b | a | cnd t e
+                                   | slat sa | dp darg den | sp tok en | ja jb | ] eqn:Hop;
+      try exact (Hroot Hs).
+    - cbn [seen_in observe] in Hs.
+      destruct (tfs_spec_inputs_class ctx iv); [ | exact (Hroot Hs) ].
+      cbn [option_map] in Hs. injection Hs as <-.
+      rewrite videal_unfold. cbn [videal_f]. rewrite Hop. reflexivity.
+    - cbn [seen_pre observe] in Hs.
+      destruct (tfs_spec_outputs_class ctx ov); [ | exact (Hroot Hs) ].
+      cbn [option_map] in Hs. injection Hs as <-.
+      rewrite videal_unfold. cbn [videal_f]. rewrite Hop. reflexivity.
+  Qed.
+End Ideal.
+
+(* ================================================================= *)
+(* THE HARDWARE READS THE IDEAL VALUE WHEREVER A NODE IS READY.        *)
+(* ================================================================= *)
+Section Settled.
+  Context (ctx: TFSchedContext) (cost_limit: nat).
+
+  Local Notation sched := (tfs_schedule ctx cost_limit).
+  Local Notation i_var := (tfs_spec_inputs ctx).
+  Local Notation s_sz := (tfs_spec_states_size ctx).
+  Local Notation i_sz := (tfs_spec_inputs_size ctx).
+  Local Notation o_sz := (tfs_spec_outputs_size ctx).
+  Local Notation src_out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).
+  Local Notation src_sys_state :=
+    (ContextEnv.(env_t) (tf_states_type s_sz) * src_out_env)%type.
+  Local Notation sched_sys_state :=
+    (ContextEnv.(env_t) (tf_states_type (tfs_states_size sched)) * src_out_env)%type.
+  Local Notation input_t := (forall x : i_var, type_denote (tf_inputs_type i_sz x)).
+  Local Notation resp_val :=
+    (forall p : tfs_ips sched, bits_t (ip_resp_sz (tfs_ip sched p))).
   Local Notation spec_run act sp input :=
-    (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx)
-       (tfs_spec_action_ops ctx act) sp input).
+    (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act) sp input).
+  Local Notation a_index := (Vect.index (length (buffer_needs ctx cost_limit))).
   Local Notation rvalid act a_idx pi n ss input :=
     (tf_eval_expr (tfs_states_size sched) (tfs_inputs_size sched)
        (tfs_outputs_size sched) (szB := 1)
@@ -179,1682 +730,865 @@ Section Extract.
                (length (graph (build_dfg ctx act))) a_idx
                (build_dfg ctx act) n (sample_bufs ctx cost_limit act a_idx)))
        ss input) (only parsing).
-  Local Notation decl_instances := (Taint.decl_instances ctx).
-  Local Notation resp_val :=
-    (forall p : tfs_ips sched, bits_t (ip_resp_sz (tfs_ip sched p))).
-  Local Notation bneeds := (buffer_needs ctx cost_limit).
-  Local Notation eval1 e ss input :=
-    (tf_eval_expr (tfs_states_size sched) (tfs_inputs_size sched)
-       (tfs_outputs_size sched) (szB := 1) e ss input) (only parsing).
 
-  (* What the attacker has worked out so far: node ids to bits. *)
-  Definition val_table := list (nid_t * list bool).
+  Context (act: tfs_action sched) (a_idx: a_index) (sp0: src_sys_state)
+          (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val).
+  Hypothesis Halign : act_idx_aligned ctx cost_limit act a_idx.
+  Hypothesis Hstart : start_rel ctx cost_limit sp0 ss0.
+  Hypothesis Hipc : Definitions.ip_contract ctx cost_limit act input resp ss0.
 
-  Definition tbl_get (t: val_table) (n: nid_t) : option (list bool) :=
-    list_assoc t n.
+  Local Notation G := (build_dfg ctx act).
+  Local Notation V := (videal ctx cost_limit act sp0 input).
+  Local Notation ssk k := (run_n ctx cost_limit k act input resp ss0).
+  Local Notation sik k := (sched_input ctx cost_limit input (resp k)).
 
-  (* A guard literal holds when the recovered condition bit matches it. *)
-  Definition lit_ok (f: nid_t -> list bool) (l: Taint.lit) : bool :=
-    match f (fst l) with
-    | [b] => Bool.eqb b (snd l)
-    | _ => false
-    end%list.
+  Lemma op_range n : op (node_at G n) <> DFG_Empty -> 1 <= n /\ n < length (graph G).
+  Proof. exact (node_op_pos ctx cost_limit act n). Qed.
 
-  (* ---- ONE OPERATION, on the bits its arguments carry ----
-     Each clause is [tf_eval_expr]'s own, read at the nodes' declared widths;
-     [node_args_sz] is what makes the casts identities. *)
-  Definition pv_op2 (bop: tf_binary_ops) (w sa sb: nat)
-      (x: bits_t sa) (y: bits_t sb) : bits_t w :=
-    match bop with
-    | tf_and => Bits.and (convert x) (convert y)
-    | tf_or  => Bits.or  (convert x) (convert y)
-    | tf_xor => Bits.xor (convert x) (convert y)
-    | tf_add => Bits.plus  (convert x) (convert y)
-    | tf_sub => Bits.minus (convert x) (convert y)
-    | tf_mul => convert (Bits.mul (convert (szB := w) x) (convert (szB := w) y))
-    | tf_cmp szC cop =>
-        let u := convert (szB := szC) x in
-        let v := convert (szB := szC) y in
-        match cop with
-        | tf_eq  => if beq_dec u v then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
-        | tf_neq => if beq_dec u v then convert (Bits.of_nat 1 0) else convert (Bits.of_nat 1 1)
-        | tf_lt  => if Bits.unsigned_lt u v then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
-        | tf_le  => if Bits.unsigned_le u v then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
-        | tf_gt  => if Bits.unsigned_gt u v then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
-        | tf_ge  => if Bits.unsigned_ge u v then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
-        end
-    | tf_concat hz lz =>
-        convert (Bits.app (convert (szB := hz) x) (convert (szB := lz) y))
-    end.
-
-  (* FORWARD: a node's bits from its arguments' bits.  A leaf comes from the
-     seed instead, and the round trip's own nodes carry no value a table
-     speaks about. *)
-  Definition pstep (act: tfs_action sched) (rec: nid_t -> option (list bool))
-      (n: nid_t) : option (list bool) :=
-    let w := nsz act n in
-    match Definitions.node_op ctx cost_limit act n with
-    | DFG_Const c => Some (vect_to_list (Bits.of_nat w c))
-    | DFG_Unary uop a =>
-        match rec a with
-        | None => None
-        | Some la =>
-            match uop with
-            | tf_not => Some (vect_to_list (Bits.neg (bits_of_list w la)))
-            | tf_resize s =>
-                Some (vect_to_list (convert (szB := w) (bits_of_list s la)))
-            end
-        end
-    | DFG_Resize a =>
-        match rec a with
-        | None => None
-        | Some la =>
-            Some (vect_to_list (convert (szB := w) (bits_of_list (nsz act a) la)))
-        end
-    | DFG_Binary bop a b =>
-        match rec a, rec b with
-        | Some la, Some lb =>
-            Some (vect_to_list (pv_op2 bop w (nsz act a) (nsz act b)
-                                  (bits_of_list (nsz act a) la)
-                                  (bits_of_list (nsz act b) lb)))
-        | _, _ => None
-        end
-    | DFG_Phi c t e =>
-        match rec c with
-        | Some (bb :: nil) => if bb then rec t else rec e
-        | _ => None
-        end
-    | _ => None
-    end.
-
-  (* BACKWARD: the target of a rule whose guard and sources are recovered. *)
-  Definition pback (act: tfs_action sched) (rec: nid_t -> option (list bool))
-      (n: nid_t) : option (list bool) :=
-    find_map
-      (fun i =>
-         if andb (Nat.eqb (di_target i) n)
-                 (forallb (fun l => lit_ok (fun c => match rec c with
-                                                     | Some v => v
-                                                     | None => []
-                                                     end) l)
-                    (di_guard i))
-         then match gather rec (di_sources i) with
-              | Some vs => Some (di_extract i vs)
-              | None => None
-              end
-         else None)
-      (decl_instances (build_dfg ctx act)).
-
-  (* ---- soundness ---- *)
-
-  (* Every entry the attacker starts from is a value the run really has, WHERE
-     THE NODE HAS SETTLED: before that, a published table says nothing about
-     what the buffers behind it hold. *)
-  Definition seed_sound (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t) (seed: val_table) : Prop :=
-    forall n v, tbl_get seed n = Some v ->
-      Definitions.settled_at ctx cost_limit act a_idx ss input n ->
-      vect_to_list (nval ctx cost_limit act a_idx ss input (nsz act n) n) = v.
-
-  Definition decl_guards_sized (act: tfs_action sched) : Prop :=
-    forall i, List.In i (decl_instances (build_dfg ctx act)) ->
-      Definitions.instance_guards_sized ctx cost_limit act i.
-
-  Lemma bits_of_list_nval (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t) (w: nat) (m: nid_t)
-      (l: list bool) :
-    vect_to_list (nval ctx cost_limit act a_idx ss input w m) = l ->
-    bits_of_list w l = nval ctx cost_limit act a_idx ss input w m.
-  Proof. intro H. rewrite <- H. apply bits_of_list_to_list. Qed.
-
-  (* ---- soundness ----
-
-     A table is SOUND when every entry is a value the run really has, where the
-     node has settled: before that, a published table says nothing about what
-     the buffers behind it hold.  [seed_sound] is that property, and the two
-     lemmas below are the two ways a round extends a sound table. *)
-
-  Lemma pstep_sound (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t) (tbl: val_table)
-      (n: nid_t) (w: list bool) :
-    seed_sound act a_idx ss input tbl ->
-    1 <= n ->
-    n < length (graph (build_dfg ctx act)) ->
-    pstep act (tbl_get tbl) n = Some w ->
-    Definitions.settled_at ctx cost_limit act a_idx ss input n ->
-    vect_to_list (nval ctx cost_limit act a_idx ss input (nsz act n) n) = w.
+  Lemma valid_empty n pi ss inp :
+    op (node_at G n) = DFG_Empty -> rvalid act a_idx pi n ss inp <> Bits.ones 1.
   Proof.
-    intros Htbl Hn1 Hnlen Hps Hst.
-    assert (Hnode_in : List.In (nth n (graph (build_dfg ctx act))
-                                  {| nid := 0; op := DFG_Empty; sz := 0 |})
-                         (graph (build_dfg ctx act)))
-      by (apply nth_In; exact Hnlen).
-    pose proof (wfg_build_dfg ctx cost_limit act _ Hnode_in) as Hfg.
-    unfold node_args_sz in Hfg.
-    assert (Hrange : forall x,
-              List.In x (get_args ctx (nth n (graph (build_dfg ctx act))
-                                         {| nid := 0; op := DFG_Empty; sz := 0 |})) ->
-              1 <= x /\ x < n)
-      by (intros x Hx; exact (node_args_range ctx cost_limit act n Hn1 Hnlen x Hx)).
-    unfold pstep in Hps. unfold Definitions.node_op in Hps.
-      destruct (op (nth n (graph (build_dfg ctx act))
-                      {| nid := 0; op := DFG_Empty; sz := 0 |}))
-        as [c | iv | dv | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa
-           | dp darg den | sp stok sen | ja jb | ] eqn:Hop;
-        cbn [fst snd] in Hps; try discriminate.
-      * (* a literal *)
-        injection Hps as <-. unfold nval.
-        rewrite (nre_const ctx cost_limit act a_idx n c Hn1 Hnlen Hop).
-        reflexivity.
-      * (* not, and the resize written as a unary *)
-        destruct (tbl_get tbl arg) as [la |] eqn:Ha; [ | discriminate ].
-        destruct (Hrange arg ltac:(unfold get_args; rewrite Hop; left; reflexivity))
-          as [Ha1 Ha2].
-        assert (Hargst : Definitions.settled_at ctx cost_limit act a_idx ss input arg).
-        { destruct Hst as [pi [Hpi Hv]]. exists pi. split; [ exact Hpi | ].
-          exact (nrv_peel_unary ctx cost_limit act a_idx n uop arg pi ss input
-                   ltac:(unfold Definitions.node_op; rewrite Hop; reflexivity)
-                   Ha1 Hnlen Hv). }
-        pose proof (Htbl arg la Ha Hargst) as Hav.
-        destruct uop as [| source_size].
-        -- injection Hps as <-.
-           destruct (wsz_node_sz ctx cost_limit act arg _ Hfg) as [_ Hasz].
-           rewrite Hasz in Hav.
-           rewrite (bits_of_list_nval act a_idx ss input _ arg la Hav).
-           unfold nval.
-           rewrite (nre_unary ctx cost_limit act a_idx n tf_not arg Hn1 Hnlen Hop).
-           reflexivity.
-        -- injection Hps as <-.
-           destruct (wsz_node_sz ctx cost_limit act arg _ Hfg) as [_ Hasz].
-           rewrite Hasz in Hav.
-           rewrite (bits_of_list_nval act a_idx ss input _ arg la Hav).
-           unfold nval.
-           rewrite (nre_unary ctx cost_limit act a_idx n (tf_resize source_size)
-                      arg Hn1 Hnlen Hop).
-           reflexivity.
-      * (* a binary operation *)
-        destruct (tbl_get tbl a1) as [la |] eqn:Ha; [ | discriminate ].
-        destruct (tbl_get tbl a2) as [lb |] eqn:Hb; [ | discriminate ].
-        injection Hps as <-.
-        destruct (Hrange a1 ltac:(unfold get_args; rewrite Hop; left; reflexivity))
-          as [Ha1 Ha2].
-        destruct (Hrange a2 ltac:(unfold get_args; rewrite Hop; right; left; reflexivity))
-          as [Hb1 Hb2].
-        assert (Hargst : Definitions.settled_at ctx cost_limit act a_idx ss input a1
-                         /\ Definitions.settled_at ctx cost_limit act a_idx ss input a2).
-        { destruct Hst as [pi [Hpi Hv]].
-          destruct (nrv_peel_binary ctx cost_limit act a_idx n bop a1 a2 pi ss input
-                      ltac:(unfold Definitions.node_op; rewrite Hop; reflexivity)
-                      Ha1 Hb1 Hnlen Hv) as [Hv1 Hv2].
-          split; [ exists pi; split; [ exact Hpi | exact Hv1 ]
-                 | exists pi; split; [ exact Hpi | exact Hv2 ] ]. }
-        destruct Hargst as [Hst1 Hst2].
-        pose proof (Htbl a1 la Ha Hst1) as Hav.
-        pose proof (Htbl a2 lb Hb Hst2) as Hbv.
-        rewrite (bits_of_list_nval act a_idx ss input _ a1 la Hav).
-        rewrite (bits_of_list_nval act a_idx ss input _ a2 lb Hbv).
-        unfold nval.
-        rewrite (nre_binary ctx cost_limit act a_idx n bop a1 a2 Hn1 Hnlen Hop).
-        unfold pv_op2.
-        destruct bop as [| | | | | | szC cop | hz lz];
-          [ destruct Hfg as [Hf1 Hf2];
-            destruct (wsz_node_sz ctx cost_limit act a1 _ Hf1) as [_ H1sz];
-            destruct (wsz_node_sz ctx cost_limit act a2 _ Hf2) as [_ H2sz];
-            rewrite H1sz, H2sz; cbn [tf_eval_expr]; rewrite !convert_same;
-            reflexivity .. | | ].
-        -- (* a comparison: the operands are read at the compared width *)
-           destruct Hfg as [Hf1 Hf2].
-           destruct (wsz_node_sz ctx cost_limit act a1 _ Hf1) as [_ H1sz].
-           destruct (wsz_node_sz ctx cost_limit act a2 _ Hf2) as [_ H2sz].
-           rewrite H1sz, H2sz. cbn [tf_eval_expr]. rewrite !convert_same.
-           destruct cop; reflexivity.
-        -- (* a concatenation: each operand at its own declared width *)
-           destruct Hfg as [Hf1 Hf2].
-           destruct (wsz_node_sz ctx cost_limit act a1 _ Hf1) as [_ H1sz].
-           destruct (wsz_node_sz ctx cost_limit act a2 _ Hf2) as [_ H2sz].
-           rewrite H1sz, H2sz. cbn [tf_eval_expr]. rewrite !convert_same.
-           reflexivity.
-      * (* a resize *)
-        destruct (tbl_get tbl arg) as [la |] eqn:Ha; [ | discriminate ].
-        injection Hps as <-.
-        destruct (Hrange arg ltac:(unfold get_args; rewrite Hop; left; reflexivity))
-          as [Ha1 Ha2].
-        assert (Hargst : Definitions.settled_at ctx cost_limit act a_idx ss input arg).
-        { destruct Hst as [pi [Hpi Hv]]. exists pi. split; [ exact Hpi | ].
-          exact (nrv_peel_resize ctx cost_limit act a_idx n arg pi ss input
-                   ltac:(unfold Definitions.node_op; rewrite Hop; reflexivity)
-                   Ha1 Hnlen Hv). }
-        pose proof (Htbl arg la Ha Hargst) as Hav.
-        rewrite (bits_of_list_nval act a_idx ss input _ arg la Hav).
-        unfold nval.
-        rewrite (nre_resize ctx cost_limit act a_idx n arg Hn1 Hnlen Hop).
-        reflexivity.
-      * (* a phi: the condition names the arm, and that arm's bits are it *)
-        destruct (tbl_get tbl cnd) as [lc |] eqn:Hc; [ | discriminate ].
-        destruct lc as [| bb lc0]; [ discriminate | ].
-        destruct lc0 as [| ? ?]; [ | discriminate ].
-        destruct (Hrange cnd ltac:(unfold get_args; rewrite Hop; left; reflexivity))
-          as [Hc1 Hc2].
-        destruct (Hrange tid ltac:(unfold get_args; rewrite Hop; right; left; reflexivity))
-          as [Ht1 Ht2].
-        destruct (Hrange eid ltac:(unfold get_args; rewrite Hop; right; right; left; reflexivity))
-          as [He1 He2].
-        assert (Hopn : Definitions.node_op ctx cost_limit act n = DFG_Phi cnd tid eid)
-          by (unfold Definitions.node_op; rewrite Hop; reflexivity).
-        destruct (IPRProof.phi_args_settled ctx cost_limit act a_idx ss input
-                    n cnd tid eid Hopn
-                    Hc1 Ht1 He1 Hnlen Hst) as [Hstc [Hstt Hste]].
-        pose proof (Htbl cnd _ Hc Hstc) as Hcv.
-        destruct Hfg as [Hfc [Hft Hfe]].
-        destruct (wsz_node_sz ctx cost_limit act cnd 1 Hfc) as [_ Hcsz].
-        destruct (wsz_node_sz ctx cost_limit act tid _ Hft) as [_ Htsz].
-        destruct (wsz_node_sz ctx cost_limit act eid _ Hfe) as [_ Hesz].
-        rewrite Hcsz in Hcv.
-        assert (Hcb : nval ctx cost_limit act a_idx ss input 1 cnd
-                      = Definitions.bit_of bb).
-        { apply (vect_to_list_inj bool 1).
-          rewrite Hcv, bit_of_to_list. reflexivity. }
-        unfold nval.
-        rewrite (nre_phi ctx cost_limit act a_idx n cnd tid eid Hn1 Hnlen Hop).
-        cbn [tf_eval_expr].
-        unfold nval in Hcb. rewrite Hcb.
-        destruct bb.
-        -- assert (Hnz : eval1 (node_ref_expr ctx cost_limit act a_idx cnd) ss input
-                         <> Bits.zero)
-             by (unfold nval in Hcb; rewrite Hcb; exact ones1_neq_zero).
-           pose proof (Htbl tid w Hps (Hstt Hnz)) as Htv.
-           rewrite Htsz in Htv.
-           match goal with
-           | |- context [@beq_dec ?T ?E ?a ?z] =>
-               replace (@beq_dec T E a z) with false
-                 by (symmetry; apply beq_dec_false_iff; exact ones1_neq_zero)
-           end.
-           exact Htv.
-        -- assert (Hz : eval1 (node_ref_expr ctx cost_limit act a_idx cnd) ss input
-                        = Bits.zero)
-             by (unfold nval in Hcb; exact Hcb).
-           pose proof (Htbl eid w Hps (Hste Hz)) as Hev.
-           rewrite Hesz in Hev.
-           rewrite beq_dec_refl.
-           exact Hev.
+    intro Hop. unfold node_at in Hop.
+    assert (Hns : BitsToLists.list_assoc (sample_bufs ctx cost_limit act a_idx) n = None).
+    { apply not_sample_not_in_sample_bufs.
+      unfold Definitions.is_sample_of, Definitions.node_op. rewrite Hop. reflexivity. }
+    destruct (length (graph G)) as [| f]; cbn [compile_dfg_expr_aux].
+    - cbn. discriminate.
+    - rewrite Hns. cbv beta iota zeta. rewrite Hop. cbn. discriminate.
   Qed.
 
-  Lemma pback_sound (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t) (tbl: val_table)
-      (n: nid_t) (v: list bool) :
-    seed_sound act a_idx ss input tbl ->
-    decl_guards_sized act ->
-    (forall i, List.In i (decl_instances (build_dfg ctx act)) ->
-       instance_extracts ctx cost_limit act a_idx i) ->
-    (forall i, List.In i (decl_instances (build_dfg ctx act)) ->
-       Definitions.instance_lifts ctx cost_limit act a_idx i) ->
-    pback act (tbl_get tbl) n = Some v ->
-    Definitions.settled_at ctx cost_limit act a_idx ss input n ->
-    vect_to_list (nval ctx cost_limit act a_idx ss input (nsz act n) n) = v.
+  Lemma nre_join n ja jb :
+    1 <= n -> n < length (graph G) ->
+    op (node_at G n) = DFG_Join ja jb ->
+    node_ref_expr ctx cost_limit act a_idx n = tf_const 0.
   Proof.
-    intros Htbl Hgsz Hinst Hlift Hex Hst.
-      unfold pback in Hex.
-      destruct (find_map_some _ _ _ Hex) as [i [Hin Hfi]].
-      destruct (andb (Nat.eqb (di_target i) n)
-                  (forallb (fun l => lit_ok (fun c => match tbl_get tbl c with
-                                                      | Some w => w
-                                                      | None => []
-                                                      end) l)
-                     (di_guard i))) eqn:Hcond; [ | discriminate ].
-      apply andb_prop in Hcond. destruct Hcond as [Htgt Hguards].
-      apply Nat.eqb_eq in Htgt.
-      destruct (gather (tbl_get tbl) (di_sources i)) as [vs |] eqn:Hg;
-        [ | discriminate ].
-      injection Hfi as <-.
-      assert (Hsttgt : Definitions.settled_at ctx cost_limit act a_idx ss input (di_target i))
-        by (rewrite Htgt; exact Hst).
-      destruct (Hlift i Hin ss input Hsttgt) as [Hgst Hsst].
-      (* the guard the instance records really holds in this state *)
-      assert (Hpi : Definitions.pi_holds ctx cost_limit act a_idx input
-                      (di_guard i) ss).
-      { intros c b Hcb.
-        rewrite forallb_forall in Hguards.
-        pose proof (Hguards (c, b) Hcb) as Hl. unfold lit_ok in Hl.
-        cbn [fst snd] in Hl.
-        destruct (tbl_get tbl c) as [w |] eqn:Hc; [ | discriminate ].
-        destruct w as [| b0 w0]; [ discriminate | ].
-        destruct w0 as [| ? ?]; [ | discriminate ].
-        apply Bool.eqb_prop in Hl. subst b0.
-        pose proof (Hgst c (in_map fst _ _ Hcb)) as Hstc.
-        pose proof (Htbl c _ Hc Hstc) as Hcv.
-        pose proof (Hgsz i Hin (c, b) Hcb) as Hcsz. cbn [fst] in Hcsz.
-        rewrite Hcsz in Hcv.
-        apply (vect_to_list_inj bool 1).
-        rewrite Hcv, bit_of_to_list. reflexivity. }
-      (* and the extraction equation turns the sources' bits into the target's *)
-      pose proof (Hinst i Hin ss input Hpi) as Heq.
-      rewrite Htgt in Heq. rewrite Heq. f_equal.
-      rewrite (gather_some _ _ _ Hg []).
-      apply map_ext_in. intros s Hsin.
-      destruct (tbl_get tbl s) as [w |] eqn:Hsv.
-      * exact (Htbl s _ Hsv (Hsst Hpi s Hsin)).
-      * exfalso. clear - Hg Hsin Hsv.
-        revert Hg Hsin. generalize (di_sources i) as ns. intro ns.
-        revert vs. induction ns as [| m ns IHn]; intros vs Hg Hsin;
-          cbn [gather] in Hg; [ destruct Hsin | ].
-        destruct (tbl_get tbl m) as [w |] eqn:Hm; [ | discriminate ].
-        destruct (gather (tbl_get tbl) ns) as [vs' |] eqn:Hgn;
-          [ | discriminate ].
-        destruct Hsin as [-> | Hsin]; [ congruence | ].
-        exact (IHn vs' eq_refl Hsin).
+    intros H1 H2 Hop. unfold node_at in Hop.
+    rewrite (nre_unfold ctx cost_limit act a_idx n H1 H2).
+    cbn [compile_dfg_expr_aux].
+    rewrite (not_sample_not_in_sample_bufs ctx cost_limit act a_idx n
+              ltac:(unfold Definitions.is_sample_of, Definitions.node_op; rewrite Hop; reflexivity)).
+    cbv beta iota zeta. rewrite Hop.
+    destruct (compile_dfg_expr_aux _ _ _ _ _ _ _ _ ja _).
+    destruct (compile_dfg_expr_aux _ _ _ _ _ _ _ _ jb _). reflexivity.
   Qed.
 
-
-
-  (* ---- THE TABLE THE ATTACKER BUILDS ----
-     One node, filled if the table can fill it: forward from its arguments, or
-     backward through a rule.  An entry once set is never read again, so the
-     table only grows and its entries never move -- which is what makes both
-     the soundness invariant and the coverage argument below one-liners. *)
-  Definition pfill (act: tfs_action sched) (tbl: val_table) (n: nid_t)
-    : val_table :=
-    match tbl_get tbl n with
-    | Some _ => tbl
-    | None =>
-        match pstep act (tbl_get tbl) n with
-        | Some v => (n, v) :: tbl
-        | None =>
-            match pback act (tbl_get tbl) n with
-            | Some v => (n, v) :: tbl
-            | None => tbl
-            end
-        end
-    end.
-
-  (* ONE ROUND over every node of the graph, in id order. *)
-  Definition pround (act: tfs_action sched) (tbl: val_table) : val_table :=
-    fold_left (pfill act)
-      (List.seq 1 (length (graph (build_dfg ctx act)) - 1)) tbl.
-
-  Fixpoint ptable (act: tfs_action sched) (seed: val_table) (rounds: nat)
-    : val_table :=
-    match rounds with
-    | 0 => seed
-    | S r => pround act (ptable act seed r)
-    end.
-
-  (* ---- the table only grows, and its entries never change ---- *)
-
-  Lemma pfill_get (act: tfs_action sched) (tbl: val_table) (m n: nid_t)
-      (v: list bool) :
-    tbl_get tbl n = Some v -> tbl_get (pfill act tbl m) n = Some v.
+  Theorem videal_settled k :
+    (forall i, 1 <= i <= k -> ~ done_set ctx cost_limit (ssk i)) ->
+    forall n pi,
+      pi_holds ctx cost_limit act a_idx (sik k) pi (ssk k) ->
+      rvalid act a_idx pi n (ssk k) (sik k) = Bits.ones 1 ->
+      nval ctx cost_limit act a_idx (ssk k) (sik k) (node_sz G n) n = V n.
   Proof.
-    intro H. unfold pfill.
-    assert (Hcons : forall w, tbl_get tbl m = None ->
-              tbl_get ((m, w) :: tbl) n = Some v).
-    { intros w Hm. unfold tbl_get. cbn [list_assoc].
-      destruct (eq_dec n m) as [-> | Hne]; [ rewrite Hm in H; discriminate | ].
-      exact H. }
-    destruct (tbl_get tbl m) as [w |] eqn:Hm; [ exact H | ].
-    destruct (pstep act (tbl_get tbl) m) as [w |] eqn:Hps;
-      [ exact (Hcons w eq_refl) | ].
-    destruct (pback act (tbl_get tbl) m) as [w |] eqn:Hpb;
-      [ exact (Hcons w eq_refl) | exact H ].
-  Qed.
-
-  Lemma pround_get (act: tfs_action sched) (tbl: val_table) (n: nid_t)
-      (v: list bool) :
-    tbl_get tbl n = Some v -> tbl_get (pround act tbl) n = Some v.
-  Proof.
-    unfold pround.
-    generalize (List.seq 1 (length (graph (build_dfg ctx act)) - 1)) as l.
-    intro l. revert tbl.
-    induction l as [| m l IH]; intros tbl H; [ exact H | ].
-    cbn [fold_left]. exact (IH _ (pfill_get act tbl m n v H)).
-  Qed.
-
-  Lemma ptable_get (act: tfs_action sched) (seed: val_table) (r r': nat)
-      (n: nid_t) (v: list bool) :
-    r <= r' ->
-    tbl_get (ptable act seed r) n = Some v ->
-    tbl_get (ptable act seed r') n = Some v.
-  Proof.
-    intro Hle. induction Hle as [| r' Hle IH]; intro H; [ exact H | ].
-    cbn [ptable]. exact (pround_get act _ n v (IH H)).
-  Qed.
-
-  (* ---- a round keeps the table sound ---- *)
-
-  Lemma pfill_sound (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t) (tbl: val_table) (m: nid_t) :
-    decl_guards_sized act ->
-    (forall i, List.In i (decl_instances (build_dfg ctx act)) ->
-       instance_extracts ctx cost_limit act a_idx i) ->
-    (forall i, List.In i (decl_instances (build_dfg ctx act)) ->
-       Definitions.instance_lifts ctx cost_limit act a_idx i) ->
-    1 <= m ->
-    m < length (graph (build_dfg ctx act)) ->
-    seed_sound act a_idx ss input tbl ->
-    seed_sound act a_idx ss input (pfill act tbl m).
-  Proof.
-    intros Hgsz Hinst Hlift Hm1 Hmlen Htbl.
-    assert (Hcons : forall w,
-              vect_to_list (nval ctx cost_limit act a_idx ss input
-                              (nsz act m) m) = w ->
-              Definitions.settled_at ctx cost_limit act a_idx ss input m ->
-              seed_sound act a_idx ss input ((m, w) :: tbl)).
-    { intros w Hw _ n v Hget Hst. unfold tbl_get in Hget. cbn [list_assoc] in Hget.
-      destruct (eq_dec n m) as [-> | Hne];
-        [ injection Hget as <-; exact Hw | exact (Htbl n v Hget Hst) ]. }
-    unfold pfill.
-    destruct (tbl_get tbl m) as [w |] eqn:Hm; [ exact Htbl | ].
-    destruct (pstep act (tbl_get tbl) m) as [w |] eqn:Hps.
-    - intros n v Hget Hst. unfold tbl_get in Hget. cbn [list_assoc] in Hget.
-      destruct (eq_dec n m) as [-> | Hne]; [ | exact (Htbl n v Hget Hst) ].
-      injection Hget as <-.
-      exact (pstep_sound act a_idx ss input tbl m w Htbl Hm1 Hmlen Hps Hst).
-    - destruct (pback act (tbl_get tbl) m) as [w |] eqn:Hpb; [ | exact Htbl ].
-      intros n v Hget Hst. unfold tbl_get in Hget. cbn [list_assoc] in Hget.
-      destruct (eq_dec n m) as [-> | Hne]; [ | exact (Htbl n v Hget Hst) ].
-      injection Hget as <-.
-      exact (pback_sound act a_idx ss input tbl m w Htbl Hgsz Hinst Hlift Hpb Hst).
-  Qed.
-
-  Theorem ptable_sound (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t) (seed: val_table) :
-    seed_sound act a_idx ss input seed ->
-    decl_guards_sized act ->
-    (forall i, List.In i (decl_instances (build_dfg ctx act)) ->
-       instance_extracts ctx cost_limit act a_idx i) ->
-    (forall i, List.In i (decl_instances (build_dfg ctx act)) ->
-       Definitions.instance_lifts ctx cost_limit act a_idx i) ->
-    forall rounds, seed_sound act a_idx ss input (ptable act seed rounds).
-  Proof.
-    intros Hseed Hgsz Hinst Hlift rounds.
-    induction rounds as [| r IH]; [ exact Hseed | ].
-    cbn [ptable]. unfold pround.
-    assert (Hgen : forall l tbl,
-              (forall m, List.In m l ->
-                 1 <= m /\ m < length (graph (build_dfg ctx act))) ->
-              seed_sound act a_idx ss input tbl ->
-              seed_sound act a_idx ss input (fold_left (pfill act) l tbl)).
-    { induction l as [| m l IHl]; intros tbl Hl Ht; [ exact Ht | ].
-      cbn [fold_left].
-      destruct (Hl m (or_introl eq_refl)) as [Hm1 Hmlen].
-      exact (IHl _ (fun x Hx => Hl x (or_intror Hx))
-               (pfill_sound act a_idx ss input tbl m Hgsz Hinst Hlift
-                  Hm1 Hmlen Ht)). }
-    apply Hgen; [ | exact IH ].
-    intros m Hm. apply in_seq in Hm. split; lia.
-  Qed.
-
-
-  (* ---- coverage: what the table ends up holding ---- *)
-
-  Definition tbl_has (tbl: val_table) (n: nid_t) : Prop :=
-    exists v, tbl_get tbl n = Some v.
-
-  Lemma find_map_not_none {A B} (f: A -> option B) (l: list A) (a: A) :
-    List.In a l -> f a <> None -> exists b, find_map f l = Some b.
-  Proof.
-    induction l as [| x l IH]; intro Hin; [ destruct Hin | ].
-    intro Hfa. cbn [find_map].
-    destruct (f x) as [b |] eqn:Hfx; [ exists b; reflexivity | ].
-    destruct Hin as [-> | Hin]; [ congruence | exact (IH Hin Hfa) ].
-  Qed.
-
-  Lemma gather_mono {A} (f g: nid_t -> option A) (ns: list nid_t) (vs: list A) :
-    (forall x w, f x = Some w -> g x = Some w) ->
-    gather f ns = Some vs -> gather g ns = Some vs.
-  Proof.
-    intro Hm. revert vs.
-    induction ns as [| m ns IH]; intros vs H; [ exact H | ].
-    cbn [gather] in H |- *.
-    destruct (f m) as [w |] eqn:Hm'; [ | discriminate ].
-    destruct (gather f ns) as [ws |] eqn:Hg; [ | discriminate ].
-    rewrite (Hm m w Hm'), (IH ws eq_refl). exact H.
-  Qed.
-
-  (* A bigger table fills everything a smaller one did: an entry never moves,
-     so every lookup the step made reads the same value. *)
-  Lemma pstep_mono (act: tfs_action sched) (tbl tbl': val_table) (n: nid_t)
-      (v: list bool) :
-    (forall x w, tbl_get tbl x = Some w -> tbl_get tbl' x = Some w) ->
-    pstep act (tbl_get tbl) n = Some v ->
-    pstep act (tbl_get tbl') n = Some v.
-  Proof.
-    intros Hm Hps. unfold pstep in Hps |- *.
-    destruct (Definitions.node_op ctx cost_limit act n)
-      as [c | iv | dv | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa
-         | dp darg den | sp stok sen | ja jb | ] eqn:Hop;
-      try discriminate; try exact Hps.
-    - destruct (tbl_get tbl arg) as [la |] eqn:Ha; [ | discriminate ].
-      rewrite (Hm arg la Ha). exact Hps.
-    - destruct (tbl_get tbl a1) as [la |] eqn:Ha; [ | discriminate ].
-      destruct (tbl_get tbl a2) as [lb |] eqn:Hb; [ | discriminate ].
-      rewrite (Hm a1 la Ha), (Hm a2 lb Hb). exact Hps.
-    - destruct (tbl_get tbl arg) as [la |] eqn:Ha; [ | discriminate ].
-      rewrite (Hm arg la Ha). exact Hps.
-    - destruct (tbl_get tbl cnd) as [lc |] eqn:Hc; [ | discriminate ].
-      rewrite (Hm cnd lc Hc).
-      destruct lc as [| bb lc0]; [ discriminate | ].
-      destruct lc0 as [| ? ?]; [ | discriminate ].
-      destruct bb.
-      + destruct (tbl_get tbl tid) as [lt |] eqn:Ht; [ | discriminate ].
-        rewrite (Hm tid lt Ht). exact Hps.
-      + destruct (tbl_get tbl eid) as [le |] eqn:He; [ | discriminate ].
-        rewrite (Hm eid le He). exact Hps.
-  Qed.
-
-  Lemma pback_mono (act: tfs_action sched) (tbl tbl': val_table) (n: nid_t)
-      (v: list bool) :
-    (forall x w, tbl_get tbl x = Some w -> tbl_get tbl' x = Some w) ->
-    pback act (tbl_get tbl) n = Some v ->
-    exists v', pback act (tbl_get tbl') n = Some v'.
-  Proof.
-    intros Hm Hex. unfold pback in Hex |- *.
-    destruct (find_map_some _ _ _ Hex) as [i [Hin Hfi]].
-    apply (find_map_not_none _ _ i Hin).
-    destruct (andb (Nat.eqb (di_target i) n)
-                (forallb (fun l => lit_ok (fun c => match tbl_get tbl c with
-                                                    | Some w => w
-                                                    | None => []
-                                                    end) l)
-                   (di_guard i))) eqn:Hcond; [ | discriminate ].
-    apply andb_prop in Hcond. destruct Hcond as [Htgt Hguards].
-    destruct (gather (tbl_get tbl) (di_sources i)) as [vs |] eqn:Hg;
-      [ | discriminate ].
-    assert (Hguards' : forallb (fun l => lit_ok (fun c => match tbl_get tbl' c with
-                                                          | Some w => w
-                                                          | None => []
-                                                          end) l)
-                         (di_guard i) = true).
-    { rewrite forallb_forall in Hguards |- *. intros l Hl.
-      pose proof (Hguards l Hl) as Hl'. unfold lit_ok in Hl' |- *.
-      destruct (tbl_get tbl (fst l)) as [w |] eqn:Hw; [ | discriminate ].
-      rewrite (Hm (fst l) w Hw). exact Hl'. }
-    rewrite Htgt, Hguards'. cbn [andb].
-    rewrite (gather_mono _ _ _ _ Hm Hg). discriminate.
-  Qed.
-
-  Lemma fold_pfill_get (act: tfs_action sched) (l: list nid_t)
-      (tbl: val_table) (n: nid_t) (v: list bool) :
-    tbl_get tbl n = Some v ->
-    tbl_get (fold_left (pfill act) l tbl) n = Some v.
-  Proof.
-    revert tbl. induction l as [| m l IH]; intros tbl H; [ exact H | ].
-    cbn [fold_left]. exact (IH _ (pfill_get act tbl m n v H)).
-  Qed.
-
-  (* ONE ROUND fills every node the table could already fill. *)
-  Lemma pround_fills (act: tfs_action sched) (tbl: val_table) (m: nid_t) :
-    1 <= m ->
-    m < length (graph (build_dfg ctx act)) ->
-    ((exists v, pstep act (tbl_get tbl) m = Some v)
-     \/ (exists v, pback act (tbl_get tbl) m = Some v)) ->
-    tbl_has (pround act tbl) m.
-  Proof.
-    intros Hm1 Hmlen Hfill.
-    assert (Hin : List.In m (List.seq 1 (length (graph (build_dfg ctx act)) - 1)))
-      by (apply in_seq; lia).
-    destruct (in_split _ _ Hin) as [l1 [l2 Hsplit]].
-    unfold pround. rewrite Hsplit, fold_left_app. cbn [fold_left].
-    set (tbl1 := fold_left (pfill act) l1 tbl) in *.
-    assert (Hmono : forall x w, tbl_get tbl x = Some w -> tbl_get tbl1 x = Some w)
-      by (intros x w Hx; exact (fold_pfill_get act l1 tbl x w Hx)).
-    assert (Hfilled : tbl_has (pfill act tbl1 m) m).
-    { unfold pfill.
-      destruct (tbl_get tbl1 m) as [w |] eqn:H1; [ exists w; exact H1 | ].
-      destruct (pstep act (tbl_get tbl1) m) as [w |] eqn:Hps.
-      { exists w. unfold tbl_get. cbn [list_assoc].
-        destruct (eq_dec m m) as [_ | Hne]; [ reflexivity | congruence ]. }
-      destruct (pback act (tbl_get tbl1) m) as [w |] eqn:Hpb.
-      { exists w. unfold tbl_get. cbn [list_assoc].
-        destruct (eq_dec m m) as [_ | Hne]; [ reflexivity | congruence ]. }
-      exfalso. destruct Hfill as [[w Hw] | [w Hw]].
-      - rewrite (pstep_mono act tbl tbl1 m w Hmono Hw) in Hps. discriminate.
-      - destruct (pback_mono act tbl tbl1 m w Hmono Hw) as [w' Hw'].
-        rewrite Hw' in Hpb. discriminate. }
-    destruct Hfilled as [w Hw]. exists w.
-    exact (fold_pfill_get act l2 _ m w Hw).
-  Qed.
-
-
-  Lemma gather_total {A} (f: nid_t -> option A) (ns: list nid_t) :
-    (forall x, List.In x ns -> exists w, f x = Some w) ->
-    exists vs, gather f ns = Some vs.
-  Proof.
-    induction ns as [| m ns IH]; intro H; [ exists []; reflexivity | ].
-    destruct (H m (or_introl eq_refl)) as [w Hw].
-    destruct (IH (fun x Hx => H x (or_intror Hx))) as [vs Hvs].
-    exists (w :: vs). cbn [gather]. rewrite Hw, Hvs. reflexivity.
-  Qed.
-
-  (* ONE INSTANCE, mirrored on the table: an unconditional instance whose
-     sources the table holds fills its target in the next round. *)
-  Lemma uncond_filled (act: tfs_action sched) (seed: val_table) (r: nat)
-      (i: decl_instance) :
-    Definitions.decl_in_range ctx cost_limit act ->
-    List.In i (Taint.uncond_instances ctx (build_dfg ctx act)) ->
-    (forall x, List.In x (di_sources i) -> tbl_has (ptable act seed r) x) ->
-    tbl_has (ptable act seed (S r)) (di_target i).
-  Proof.
-    intros Hrng Hi Hsrc.
-    assert (Hin_decl : List.In i (Taint.decl_instances ctx (build_dfg ctx act)))
-      by (exact (proj1 (proj1 (filter_In _ i _) Hi))).
-    assert (Hguard : di_guard i = []).
-    { pose proof (proj2 (proj1 (filter_In _ i _) Hi)) as Hg. cbv beta in Hg.
-      revert Hg. destruct (di_guard i) as [| l0 ls]; intro Hg;
-        [ reflexivity | discriminate Hg ]. }
-    destruct (Hrng i Hin_decl (di_target i) (or_introl eq_refl)) as [Ht1 Htlen].
-    cbn [ptable]. apply (pround_fills act _ (di_target i) Ht1 Htlen). right.
-    destruct (gather_total (tbl_get (ptable act seed r)) (di_sources i) Hsrc)
-      as [vs Hvs].
-    unfold pback.
-    apply (find_map_not_none _ _ i Hin_decl).
-    rewrite Nat.eqb_refl, Hguard. cbn [forallb andb].
-    rewrite Hvs. discriminate.
-  Qed.
-
-  (* ONE SATURATION STEP: at most one round per instance it folds over. *)
-  Lemma saturate_step_filled (act: tfs_action sched) (seed: val_table)
-      (r0: nat) (acc: list nid_t) :
-    Definitions.decl_in_range ctx cost_limit act ->
-    (forall x, List.In x acc -> tbl_has (ptable act seed r0) x) ->
-    forall n, List.In n (Taint.saturate_step ctx (build_dfg ctx act) acc) ->
-      tbl_has (ptable act seed
-                 (r0 + length (Taint.uncond_instances ctx (build_dfg ctx act)))) n.
-  Proof.
-    intros Hrng Hacc.
-    assert (Hlater : forall r x, tbl_has (ptable act seed r) x ->
-              tbl_has (ptable act seed (S r)) x).
-    { intros r x [v Hv]. exists v.
-      exact (ptable_get act seed r (S r) x v (Nat.le_succ_diag_r r) Hv). }
-    unfold Taint.saturate_step.
-    assert (Hgen : forall l acc0 r,
-              (forall j, List.In j l ->
-                 List.In j (Taint.uncond_instances ctx (build_dfg ctx act))) ->
-              (forall x, List.In x acc0 -> tbl_has (ptable act seed r) x) ->
-              forall n, List.In n
-                (fold_left (fun acc i =>
-                              if forallb (fun s => Taint.mem_nid s acc)
-                                   (di_sources i)
-                                 && negb (Taint.mem_nid (di_target i) acc)
-                              then di_target i :: acc else acc) l acc0) ->
-                tbl_has (ptable act seed (r + length l)) n).
-    { induction l as [| i l IH]; intros acc0 r Hsub Hacc0 n Hin.
-      - cbn [length]. rewrite Nat.add_0_r. exact (Hacc0 n Hin).
-      - cbn [fold_left] in Hin.
-        replace (r + length (i :: l)) with (S r + length l)
-          by (cbn [length]; lia).
-        destruct (forallb (fun s => Taint.mem_nid s acc0) (di_sources i)
-                  && negb (Taint.mem_nid (di_target i) acc0)) eqn:Hf.
-        + apply andb_prop in Hf. destruct Hf as [Hf _].
-          refine (IH (di_target i :: acc0) (S r)
-                    (fun j Hj => Hsub j (or_intror Hj)) _ n Hin).
-          intros x Hx. destruct Hx as [<- | Hx]; [ | exact (Hlater r x (Hacc0 x Hx)) ].
-          apply (uncond_filled act seed r i Hrng (Hsub i (or_introl eq_refl))).
-          intros y Hy. rewrite forallb_forall in Hf.
-          exact (Hacc0 y (IPRProof.mem_nid_In y acc0 (Hf y Hy))).
-        + refine (IH acc0 (S r) (fun j Hj => Hsub j (or_intror Hj)) _ n Hin).
-          intros x Hx. exact (Hlater r x (Hacc0 x Hx)). }
-    intros n Hin.
-    exact (Hgen (Taint.uncond_instances ctx (build_dfg ctx act)) acc r0
-             (fun i Hi => Hi) Hacc n Hin).
-  Qed.
-
-  Lemma saturate_filled (act: tfs_action sched) (seed: val_table) :
-    Definitions.decl_in_range ctx cost_limit act ->
-    forall fuel r0 acc,
-      (forall x, List.In x acc -> tbl_has (ptable act seed r0) x) ->
-      forall n, List.In n (Taint.saturate ctx fuel (build_dfg ctx act) acc) ->
-        tbl_has (ptable act seed
-                   (r0 + fuel
-                         * length (Taint.uncond_instances ctx
-                                     (build_dfg ctx act)))) n.
-  Proof.
-    intros Hrng fuel. induction fuel as [| f IH]; intros r0 acc Hacc n Hin.
-    - cbn [Taint.saturate] in Hin. rewrite Nat.mul_0_l, Nat.add_0_r.
-      exact (Hacc n Hin).
-    - cbn [Taint.saturate] in Hin. cbv zeta in Hin.
-      destruct (Nat.eqb
-                  (length (Taint.saturate_step ctx (build_dfg ctx act) acc))
-                  (length acc)) eqn:Heq.
-      + destruct (Hacc n Hin) as [v Hv]. exists v.
-        apply (ptable_get act seed r0); [ lia | exact Hv ].
-      + destruct (IH (r0 + length (Taint.uncond_instances ctx (build_dfg ctx act)))
-                    (Taint.saturate_step ctx (build_dfg ctx act) acc)
-                    (saturate_step_filled act seed r0 acc Hrng Hacc) n Hin)
-          as [v Hv].
-        exists v.
-        apply (ptable_get act seed
-                 (r0 + length (Taint.uncond_instances ctx (build_dfg ctx act))
-                  + f * length (Taint.uncond_instances ctx
-                                  (build_dfg ctx act))));
-          [ lia | exact Hv ].
-  Qed.
-
-
-  (* ---- THE SEED: bits the published tables give outright ---- *)
-
-  Definition pub_in_b (v: i_var) : bool :=
-    match tfs_spec_inputs_class ctx v with Public => true | Secret => false end.
-  Definition pub_out_b (o: o_var) : bool :=
-    match tfs_spec_outputs_class ctx o with Public => true | Secret => false end.
-
-  (* Keyed by the variable's own index, so a table carries bits and nothing a
-     secret could sit in. *)
-  Definition in_key (v: i_var) : nat := @finite_index _ (tfs_spec_inputs_fin ctx) v.
-  Definition out_key (o: o_var) : nat := @finite_index _ (tfs_spec_outputs_fin ctx) o.
-
-  Definition seed_node (act: tfs_action sched)
-      (pv_in pv_pre: list (nat * list bool)) (n: nid_t)
-    : option (nid_t * list bool) :=
-    match Definitions.node_op ctx cost_limit act n with
-    | DFG_Const c => Some (n, vect_to_list (Bits.of_nat (nsz act n) c))
-    | DFG_Input v =>
-        if pub_in_b v
-        then match list_assoc pv_in (in_key v) with
-             | Some bs => Some (n, resize_bits (nsz act n) bs)
-             | None => None
-             end
-        else None
-    | DFG_Var (DFG_OVar o) =>
-        if pub_out_b o
-        then match list_assoc pv_pre (out_key o) with
-             | Some bs => Some (n, resize_bits (nsz act n) bs)
-             | None => None
-             end
-        else None
-    | _ => None
-    end.
-
-  Definition seed_local (act: tfs_action sched)
-      (pv_in pv_pre: list (nat * list bool)) : val_table :=
-    flat_map (fun n => match seed_node act pv_in pv_pre n with
-                       | Some e => [e]
-                       | None => []
-                       end)
-             (List.seq 1 (length (graph (build_dfg ctx act)) - 1)).
-
-  Lemma seed_node_key (act: tfs_action sched) pv_in pv_pre m k v :
-    seed_node act pv_in pv_pre m = Some (k, v) -> k = m.
-  Proof.
-    unfold seed_node.
-    destruct (Definitions.node_op ctx cost_limit act m)
-      as [c | iv | dv | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa
-         | dp darg den | sp stok sen | ja jb | ];
-      try discriminate.
-    - intro H; injection H as <- _; reflexivity.
-    - destruct (pub_in_b iv); [ | discriminate ].
-      destruct (list_assoc pv_in (in_key iv)); [ | discriminate ].
-      intro H; injection H as <- _; reflexivity.
-    - destruct dv as [sv | ov]; [ discriminate | ].
-      destruct (pub_out_b ov); [ | discriminate ].
-      destruct (list_assoc pv_pre (out_key ov)); [ | discriminate ].
-      intro H; injection H as <- _; reflexivity.
-  Qed.
-
-
-  Lemma seed_local_entry (act: tfs_action sched) pv_in pv_pre n v :
-    List.In (n, v) (seed_local act pv_in pv_pre) ->
-    1 <= n
-    /\ n < length (graph (build_dfg ctx act))
-    /\ seed_node act pv_in pv_pre n = Some (n, v).
-  Proof.
-    intro H. unfold seed_local in H. apply in_flat_map in H.
-    destruct H as [m [Hseq Hm]].
-    destruct (seed_node act pv_in pv_pre m) as [[k w] |] eqn:Hsn;
-      [ | destruct Hm ].
-    destruct Hm as [He | []].
-    pose proof (seed_node_key act pv_in pv_pre m k w Hsn) as Hk.
-    inversion He; subst.
-    apply in_seq in Hseq. destruct Hseq as [Hm1 Hm2].
-    split; [ exact Hm1 | split; [ lia | exact Hsn ] ].
-  Qed.
-
-  (* The tables ARE this run's published data. *)
-  Definition in_published (input: sched_input_t)
-      (pv_in: list (nat * list bool)) : Prop :=
-    forall v, pub_in_b v = true ->
-      list_assoc pv_in (in_key v) = Some (vect_to_list (input (inl v))).
-
-  Definition pre_published (ss: sched_sys_state)
-      (pv_pre: list (nat * list bool)) : Prop :=
-    forall o, pub_out_b o = true ->
-      list_assoc pv_pre (out_key o) = Some (vect_to_list ((snd ss).[o])).
-
-  (* No validity anywhere: a literal, an input and an output read are stable
-     for the whole action, so their bits are a fact about the run, not a cycle. *)
-  Theorem seed_local_sound (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t)
-      (pv_in pv_pre: list (nat * list bool)) :
-    in_published input pv_in ->
-    pre_published ss pv_pre ->
-    seed_sound act a_idx ss input (seed_local act pv_in pv_pre).
-  Proof.
-    intros Hin Hpre n v Hget _.
-    unfold tbl_get in Hget. apply list_assoc_In in Hget.
-    destruct (seed_local_entry act pv_in pv_pre n v Hget) as [Hn1 [Hlen Hsn]].
-    unfold seed_node in Hsn. unfold Definitions.node_op in Hsn.
-    destruct (op (nth n (graph (build_dfg ctx act))
-                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | iv | dv | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa
-         | dp darg den | sp stok sen | ja jb | ] eqn:Hop;
-      try discriminate.
-    - (* a literal *)
-      injection Hsn as <-.
-      unfold nval.
-      rewrite (nre_const ctx cost_limit act a_idx n c Hn1 Hlen Hop).
+    intros Hnd n. induction n as [n IH] using lt_wf_ind. intros pi Hpi Hv.
+    pose proof (videal_consistent ctx cost_limit act sp0 input n) as Hc.
+    pose proof (build_well_sized ctx cost_limit act n) as Hw.
+    destruct Hstart as [Hoo [Hmm Hzz]].
+    revert Hc Hw.
+    destruct (op (node_at G n)) as [c | iv | [sv | ov] | uop a | bop a b | a | cnd t e
+                                   | slat sa | dp darg den | sp tok en | ja jb | ] eqn:Hop;
+      intros Hc Hw.
+    all: try (exfalso; exact (valid_empty n pi _ _ Hop Hv)).
+    all: destruct (op_range n ltac:(rewrite Hop; discriminate)) as [Hn1 Hnlen].
+    all: assert (Hop' := Hop); unfold node_at in Hop'.
+    - (* constant *)
+      rewrite Hc. unfold nval. rewrite (nre_const ctx cost_limit act a_idx n c Hn1 Hnlen Hop').
       reflexivity.
-    - (* a public input, read live or latched -- either way one value *)
-      destruct (pub_in_b iv) eqn:Hpub; [ | discriminate ].
-      destruct (list_assoc pv_in (in_key iv)) as [bs |] eqn:Hbs;
-        [ | discriminate ].
-      injection Hsn as <-.
-      rewrite (Hin iv Hpub) in Hbs. injection Hbs as <-.
-      unfold nval.
-      rewrite (nre_input ctx cost_limit act a_idx n iv Hn1 Hlen Hop).
-      cbn [tf_eval_expr]. apply convert_to_list.
-    - (* a public output as it stood before the action *)
-      destruct dv as [sv | ov]; [ discriminate | ].
-      destruct (pub_out_b ov) eqn:Hpub; [ | discriminate ].
-      destruct (list_assoc pv_pre (out_key ov)) as [bs |] eqn:Hbs;
-        [ | discriminate ].
-      injection Hsn as <-.
-      rewrite (Hpre ov Hpub) in Hbs. injection Hbs as <-.
-      unfold nval.
-      rewrite (nre_ovar ctx cost_limit act a_idx n ov Hn1 Hlen Hop).
-      cbn [tf_eval_expr]. apply convert_to_list.
+    - (* input *)
+      rewrite videal_unfold. cbn [videal_f]. rewrite Hop.
+      unfold nval. rewrite (nre_input ctx cost_limit act a_idx n iv Hn1 Hnlen Hop').
+      reflexivity.
+    - (* state read: the register still holds the start value *)
+      rewrite videal_unfold. cbn [videal_f]. rewrite Hop. cbv beta iota.
+      unfold nval. rewrite (nre_svar ctx cost_limit act a_idx n sv Hn1 Hnlen Hop').
+      cbn [tf_eval_expr].
+      match goal with
+      | |- @convert ?w1 ?w2 _ = _ =>
+          transitivity (@convert w1 w2 ((fst ss0).[tf_dfg_s sv]));
+            [ f_equal; exact (run_preserves_svar ctx cost_limit act input resp ss0 k Hnd sv) | ]
+      end.
+      rewrite <- Hmm, getenv_maps_from. reflexivity.
+    - (* output read: the outputs stand at the start value *)
+      rewrite videal_unfold. cbn [videal_f]. rewrite Hop. cbv beta iota.
+      unfold nval. rewrite (nre_ovar ctx cost_limit act a_idx n ov Hn1 Hnlen Hop').
+      cbn [tf_eval_expr].
+      match goal with
+      | |- @convert ?w1 ?w2 _ = _ =>
+          transitivity (@convert w1 w2 ((snd ss0).[ov]));
+            [ f_equal; exact (run_preserves_ovar ctx cost_limit act input resp ss0 k Hnd ov) | ]
+      end.
+      rewrite Hoo. reflexivity.
+    - (* unary *)
+      destruct (node_args_range ctx cost_limit act n Hn1 Hnlen a
+                  ltac:(unfold get_args; rewrite Hop'; left; reflexivity)) as [Ha1 Ha].
+      pose proof (nrv_peel_unary ctx cost_limit act a_idx n uop a pi (ssk k) (sik k)
+                    Hop' Ha1 Hnlen Hv) as Hva.
+      rewrite Hc, <- (IH a Ha pi Hpi Hva).
+      unfold nval. rewrite (nre_unary ctx cost_limit act a_idx n uop a Hn1 Hnlen Hop').
+      unfold node_sz, node_at in Hw |- *.
+      destruct uop as [| s]; cbn [tf_eval_expr op1_bits]; rewrite Hw, convert_id; reflexivity.
+    - (* binary *)
+      destruct (node_args_range ctx cost_limit act n Hn1 Hnlen a
+                  ltac:(unfold get_args; rewrite Hop'; left; reflexivity)) as [Ha1 Ha].
+      destruct (node_args_range ctx cost_limit act n Hn1 Hnlen b
+                  ltac:(unfold get_args; rewrite Hop'; right; left; reflexivity)) as [Hb1 Hb].
+      destruct (nrv_peel_binary ctx cost_limit act a_idx n bop a b pi (ssk k) (sik k)
+                  Hop' Ha1 Hb1 Hnlen Hv) as [Hva Hvb].
+      rewrite Hc, <- (IH a Ha pi Hpi Hva), <- (IH b Hb pi Hpi Hvb).
+      unfold nval. rewrite (nre_binary ctx cost_limit act a_idx n bop a b Hn1 Hnlen Hop').
+      unfold node_sz, node_at in Hw |- *.
+      destruct bop as [ | | | | | | szC cop | hz lz ]; destruct Hw as [H1 H2];
+        rewrite H1, H2; cbn [tf_eval_expr op2_bits]; rewrite ?convert_id; try reflexivity.
+      all: destruct cop; reflexivity.
+    - (* resize *)
+      destruct (node_args_range ctx cost_limit act n Hn1 Hnlen a
+                  ltac:(unfold get_args; rewrite Hop'; left; reflexivity)) as [Ha1 Ha].
+      pose proof (nrv_peel_resize ctx cost_limit act a_idx n a pi (ssk k) (sik k)
+                    Hop' Ha1 Hnlen Hv) as Hva.
+      rewrite Hc, <- (IH a Ha pi Hpi Hva).
+      unfold nval. rewrite (nre_resize ctx cost_limit act a_idx n a Hn1 Hnlen Hop').
+      reflexivity.
+    - (* phi: the arm the condition selects *)
+      destruct (node_args_range ctx cost_limit act n Hn1 Hnlen cnd
+                  ltac:(unfold get_args; rewrite Hop'; left; reflexivity)) as [Hc1 Hcn].
+      destruct (node_args_range ctx cost_limit act n Hn1 Hnlen t
+                  ltac:(unfold get_args; rewrite Hop'; right; left; reflexivity)) as [Ht1 Htn].
+      destruct (node_args_range ctx cost_limit act n Hn1 Hnlen e
+                  ltac:(unfold get_args; rewrite Hop'; right; right; left; reflexivity))
+        as [He1 Hen].
+      destruct Hw as [Hcsz [Htsz Hesz]].
+      assert (Hvc : rvalid act a_idx pi cnd (ssk k) (sik k) = Bits.ones 1).
+      { destruct (phi_crit (get_tainted ctx G) (decl_facts ctx G) cnd pi) eqn:Hcrit.
+        - exact (proj1 (nrv_peel_phi_crit ctx cost_limit act a_idx n cnd t e pi (ssk k) (sik k)
+                          Hop' Hcrit Hc1 Ht1 He1 Hnlen Hv)).
+        - exact (proj1 (nrv_peel_phi_sel ctx cost_limit act a_idx n cnd t e pi (ssk k) (sik k)
+                          Hop' Hcrit Hc1 Ht1 He1 Hnlen Hv)). }
+      pose proof (IH cnd Hcn pi Hpi Hvc) as IHc.
+      rewrite Hc. unfold nval at 1.
+      rewrite (nre_phi ctx cost_limit act a_idx n cnd t e Hn1 Hnlen Hop'). cbn [tf_eval_expr].
+      match goal with
+      | |- (if @beq_dec ?T ?E ?x ?z then _ else _) = _ =>
+          assert (Hcb : nonzero (V cnd) = negb (@beq_dec T E x z));
+          [ rewrite <- IHc, Hcsz; reflexivity
+          | rewrite Hcb; destruct (@beq_dec T E x z) eqn:Hbz; cbn [negb] ]
+      end.
+      + (* the condition reads false: the else arm *)
+        apply beq_dec_iff in Hbz.
+        assert (IHe : nval ctx cost_limit act a_idx (ssk k) (sik k) (node_sz G e) e = V e).
+        { destruct (phi_crit (get_tainted ctx G) (decl_facts ctx G) cnd pi) eqn:Hcrit.
+          - exact (IH e Hen pi Hpi
+                     (proj2 (proj2 (nrv_peel_phi_crit ctx cost_limit act a_idx n cnd t e pi
+                                      (ssk k) (sik k) Hop' Hcrit Hc1 Ht1 He1 Hnlen Hv)))).
+          - apply (IH e Hen ((cnd, false) :: pi)).
+            + apply (pi_holds_cons ctx cost_limit act a_idx (sik k) cnd false pi (ssk k) Hpi).
+              exact Hbz.
+            + exact (proj2 (proj2 (nrv_peel_phi_sel ctx cost_limit act a_idx n cnd t e pi
+                                     (ssk k) (sik k) Hop' Hcrit Hc1 Ht1 He1 Hnlen Hv)) Hbz). }
+        rewrite <- IHe, Hesz, convert_id. reflexivity.
+      + (* the condition reads true: the then arm *)
+        apply beq_dec_false_iff in Hbz.
+        assert (IHt : nval ctx cost_limit act a_idx (ssk k) (sik k) (node_sz G t) t = V t).
+        { destruct (phi_crit (get_tainted ctx G) (decl_facts ctx G) cnd pi) eqn:Hcrit.
+          - exact (IH t Htn pi Hpi
+                     (proj1 (proj2 (nrv_peel_phi_crit ctx cost_limit act a_idx n cnd t e pi
+                                      (ssk k) (sik k) Hop' Hcrit Hc1 Ht1 He1 Hnlen Hv)))).
+          - apply (IH t Htn ((cnd, true) :: pi)).
+            + apply (pi_holds_cons ctx cost_limit act a_idx (sik k) cnd true pi (ssk k) Hpi).
+              destruct (SchedulerSimulationLemmas.bits1_cases
+                          (nval ctx cost_limit act a_idx (ssk k) (sik k) 1 cnd)) as [Ho | Hz];
+                [ exact Ho | exfalso; exact (Hbz Hz) ].
+            + exact (proj1 (proj2 (nrv_peel_phi_sel ctx cost_limit act a_idx n cnd t e pi
+                                     (ssk k) (sik k) Hop' Hcrit Hc1 Ht1 He1 Hnlen Hv)) Hbz). }
+        rewrite <- IHt, Htsz, convert_id. reflexivity.
+    - (* stall: a counter, read as zero *)
+      rewrite videal_unfold. cbn [videal_f]. rewrite Hop.
+      unfold nval. rewrite (nre_stall ctx cost_limit act a_idx n slat sa Hn1 Hnlen Hop').
+      reflexivity.
+    - (* drive: its argument's value *)
+      destruct (node_args_range ctx cost_limit act n Hn1 Hnlen darg
+                  ltac:(unfold get_args; rewrite Hop'; left; reflexivity)) as [Ha1 Ha].
+      pose proof (nrv_peel_drive ctx cost_limit act a_idx n dp darg den pi (ssk k) (sik k)
+                    Hop' Ha1 Hnlen Hv) as Hva.
+      pose proof (wfg_build_dfg ctx cost_limit act _ (nth_In _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hnlen))
+        as Hfg.
+      unfold node_args_sz in Hfg. rewrite Hop' in Hfg.
+      destruct (wsz_node_sz ctx cost_limit act darg _ Hfg) as [_ Hdsz].
+      rewrite videal_unfold. cbn [videal_f]. rewrite Hop. cbv beta iota.
+      rewrite (videal_f_irrel ctx cost_limit act sp0 input darg n Ha).
+      rewrite <- (IH darg Ha pi Hpi Hva).
+      unfold nval. rewrite (nre_drive ctx cost_limit act a_idx n dp darg den Hn1 Hnlen Hop').
+      unfold node_sz, node_at. rewrite Hdsz, convert_id. reflexivity.
+    - (* sample: the answer the round trip latched *)
+      assert (Hlen2 : 1 < length (graph G)) by lia.
+      assert (Hsam : is_sample_of ctx cost_limit act n = true)
+        by (unfold Definitions.is_sample_of, Definitions.node_op; rewrite Hop'; reflexivity).
+      destruct (sample_index ctx cost_limit act a_idx n Halign Hsam) as [n_idx Hvid].
+      assert (Hopn : Definitions.node_op ctx cost_limit act n = DFG_Sample sp tok en)
+        by exact Hop'.
+      destruct (sample_has_drive ctx cost_limit act n sp tok en Hopn) as [d [av [Hsd Hdop]]].
+      pose proof (sample_drive_below ctx cost_limit act n sp tok en d Hop Hsd) as Hdn.
+      assert (Hpl : payload_of (p_eq := tfs_spec_ips_eq_dec ctx) G n = Some av).
+      { unfold payload_of. rewrite drive_of_sample_drive, Hsd.
+        change (op (node_at G d)) with (Definitions.node_op ctx cost_limit act d).
+        rewrite Hdop. reflexivity. }
+      destruct (node_op_pos ctx cost_limit act d ltac:(rewrite Hdop; discriminate))
+        as [Hd1 Hdlen].
+      unfold Definitions.node_op in Hdop.
+      assert (Hain : In av (get_args ctx (nth d (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})))
+        by (unfold get_args; rewrite Hdop; left; reflexivity).
+      destruct (node_args_range ctx cost_limit act d Hd1 Hdlen av Hain) as [Hav1 Havd].
+      pose proof (wfg_build_dfg ctx cost_limit act _
+                    (nth_In _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hdlen)) as Hfgd.
+      unfold node_args_sz in Hfgd. rewrite Hdop in Hfgd.
+      destruct (wsz_node_sz ctx cost_limit act av _ Hfgd) as [_ Havsz].
+      pose proof (drives_sized_holds ctx cost_limit act d sp av en Hdop) as Hdz.
+      assert (Hreg : (fst (ssk k)).[tf_dfg_v a_idx n_idx] = Bits.ones 1).
+      { rewrite <- Hvid in Hv.
+        rewrite (sample_ref_is_register ctx cost_limit act a_idx n_idx Halign
+                   ltac:(rewrite Hvid; exact Hsam) pi (length (graph G))
+                   ltac:(rewrite Hvid; exact Hnlen)) in Hv.
+        cbn [snd] in Hv. rewrite eval1_svar_v in Hv. exact Hv. }
+      destruct (settled_run ctx cost_limit act a_idx input resp ss0 k Halign Hlen2 Hzz Hnd Hipc)
+        as [Hans [Hzer [Hargs Hgrd]]].
+      assert (Hopv : Definitions.node_op ctx cost_limit act (vreg_nid ctx cost_limit a_idx n_idx)
+                     = DFG_Sample sp tok en) by (rewrite Hvid; exact Hopn).
+      assert (Hsdv : Definitions.sample_drive ctx cost_limit act (vreg_nid ctx cost_limit a_idx n_idx) = Some d)
+        by (rewrite Hvid; exact Hsd).
+      (* the guard's literals are ready, so each reads its ideal bit *)
+      assert (Hlit : forall l, In l en ->
+                nval ctx cost_limit act a_idx (ssk k) (sik k) 1 (fst l)
+                = Definitions.bit_of (nonzero (V (fst l)))).
+      { intros l Hl.
+        apply (bit_of_nonzero
+                 (fun w => nval ctx cost_limit act a_idx (ssk k) (sik k) w (fst l))
+                 (node_sz G (fst l))).
+        - exact (guards_sized_holds ctx cost_limit act d sp av en Hdop l Hl).
+        - apply (IH (fst l) (sample_lits_below ctx cost_limit act n sp tok en l Hop Hl) []).
+          + exact (pi_holds_nil ctx cost_limit act a_idx (sik k) (ssk k)).
+          + exact (Hgrd n_idx sp tok en Hopv Hreg l Hl). }
+      assert (Hguard : guard_true G V en = true
+                       <-> pi_holds ctx cost_limit act a_idx (sik k) en (ssk k)).
+      { unfold guard_true. rewrite forallb_forall. split.
+        - intros H c b Hin. pose proof (Hlit (c, b) Hin) as Hl. cbn [fst] in Hl. rewrite Hl.
+          specialize (H (c, b) Hin). cbn [fst snd] in H. apply Bool.eqb_prop in H.
+          rewrite H. reflexivity.
+        - intros H [c b] Hin. cbn [fst snd]. pose proof (H c b Hin) as Hcb.
+          pose proof (Hlit (c, b) Hin) as Hl. cbn [fst] in Hl. rewrite Hl in Hcb.
+          destruct (nonzero (V c)), b; first [ reflexivity | discriminate Hcb ]. }
+      assert (Hnre : node_ref_expr ctx cost_limit act a_idx n = tf_svar (tf_dfg_b a_idx n_idx)).
+      { rewrite <- Hvid. apply (nre_sample ctx cost_limit act a_idx n_idx Halign).
+        rewrite Hvid. exact Hsam. }
+      destruct (guard_true G V en) eqn:Hg.
+      + (* the call ran: the latch holds [ip_fn] of the request *)
+        pose proof (proj1 Hguard eq_refl) as Hgh.
+        rewrite (videal_sample_on ctx cost_limit act sp0 input n sp tok en av Hop Hg Hpl).
+        pose proof (Hargs n_idx sp tok en d av en Hopv Hsdv Hdop Hreg) as Hvav.
+        rewrite <- (IH av ltac:(lia) [] (pi_holds_nil ctx cost_limit act a_idx (sik k) (ssk k))
+                      Hvav).
+        pose proof (Hans n_idx sp tok en d av en Hopv Hsdv Hdop Hdz Hreg Hgh) as Hb.
+        unfold nval at 1. rewrite Hnre. cbn [tf_eval_expr].
+        match goal with
+        | |- @convert ?w1 ?w2 ?r = _ =>
+            transitivity (@convert w1 w2 (convert (szB := w1) (ip_fn (tfs_spec_ip ctx sp)
+               (tf_eval_expr (tfs_states_size sched) (tfs_inputs_size sched)
+                  (tfs_outputs_size sched) (szB := ip_req_sz (tfs_spec_ip ctx sp))
+                  (node_ref_expr ctx cost_limit act a_idx av) (ssk k) (sik k)))));
+            [ f_equal; exact Hb | ]
+        end.
+        rewrite convert_twice
+          by (rewrite (buffer_register_node_size ctx cost_limit act a_idx n_idx Halign), Hvid;
+              reflexivity).
+        unfold nval, node_sz, node_at. rewrite Havsz, Hdz, convert_id. reflexivity.
+      + (* the call was skipped: the latch still reads zero *)
+        assert (Hng : ~ pi_holds ctx cost_limit act a_idx (sik k) en (ssk k))
+          by (intro H; apply Hguard in H; discriminate H).
+        rewrite (videal_sample_off ctx cost_limit act sp0 input n sp tok en Hop Hg).
+        pose proof (Hzer n_idx sp tok en Hopv Hreg Hng) as Hz.
+        unfold nval. rewrite Hnre. cbn [tf_eval_expr].
+        match goal with
+        | |- @convert ?w1 ?w2 ?r = _ =>
+            transitivity (@convert w1 w2 (@Bits.zero w1)); [ f_equal; exact Hz | ]
+        end.
+        rewrite convert_zero
+          by (rewrite (buffer_register_node_size ctx cost_limit act a_idx n_idx Halign), Hvid;
+              reflexivity).
+        reflexivity.
+    - (* join: an ordering edge, read as zero *)
+      rewrite videal_unfold. cbn [videal_f]. rewrite Hop.
+      unfold nval. rewrite (nre_join n ja jb Hn1 Hnlen Hop).
+      reflexivity.
   Qed.
 
-
-  (* ---- THE ONE CONDITIONAL ENTRY: an output's value AFTER the action ----
-     A root's cone may contain a sample buffer, whose logical value does move
-     in time, so this entry alone is read at a cycle where the root is valid. *)
-
-  Definition seed_roots (act: tfs_action sched)
-      (pv_post: list (nat * list bool)) : val_table :=
-    flat_map (fun e : @dfg_vars_t s_var o_var * nid_t =>
-                match e with
-                | (DFG_OVar o, r) =>
-                    if pub_out_b o
-                    then match list_assoc pv_post (out_key o) with
-                         | Some bs => [(r, resize_bits (nsz act r) bs)]
-                         | None => []
-                         end
-                    else []
-                | _ => []
-                end)
-             (var_map (build_dfg ctx act)).
-
-  Definition roots_published (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t)
-      (pv_post: list (nat * list bool)) : Prop :=
-    forall o r, pub_out_b o = true ->
-      List.In (DFG_OVar o, r) (var_map (build_dfg ctx act)) ->
-      Definitions.settled_at ctx cost_limit act a_idx ss input r ->
-      list_assoc pv_post (out_key o)
-        = Some (vect_to_list (nval ctx cost_limit act a_idx ss input (nsz act r) r)).
-
-  Lemma seed_roots_entry (act: tfs_action sched) pv_post n v :
-    List.In (n, v) (seed_roots act pv_post) ->
-    exists o bs, pub_out_b o = true
-              /\ List.In (DFG_OVar o, n) (var_map (build_dfg ctx act))
-              /\ list_assoc pv_post (out_key o) = Some bs
-              /\ v = resize_bits (nsz act n) bs.
+  (* A public output's root, wherever it is ready, holds the output's value
+     after the action. *)
+  Lemma root_post k o r pi :
+    (forall i, 1 <= i <= k -> ~ done_set ctx cost_limit (ssk i)) ->
+    1 < length (graph G) ->
+    In (DFG_OVar o, r) (var_map G) ->
+    pi_holds ctx cost_limit act a_idx (sik k) pi (ssk k) ->
+    rvalid act a_idx pi r (ssk k) (sik k) = Bits.ones 1 ->
+    convert (szB := node_sz G r) ((snd (spec_run act sp0 input)).[o]) = V r.
   Proof.
-    intro H. unfold seed_roots in H. apply in_flat_map in H.
-    destruct H as [[dv r] [Hvm Hin]].
-    destruct dv as [sv | o]; [ destruct Hin | ].
-    destruct (pub_out_b o) eqn:Hpub; [ | destruct Hin ].
-    destruct (list_assoc pv_post (out_key o)) as [bs |] eqn:Hbs;
-      [ | destruct Hin ].
-    destruct Hin as [He | []]. inversion He; subst.
-    exists o, bs. split; [ exact Hpub | split; [ exact Hvm | split; [ exact Hbs | reflexivity ] ] ].
-  Qed.
-
-  Lemma seed_roots_sound (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t)
-      (pv_post: list (nat * list bool)) :
-    roots_published act a_idx ss input pv_post ->
-    seed_sound act a_idx ss input (seed_roots act pv_post).
-  Proof.
-    intros Hrp n v Hget Hst.
-    unfold tbl_get in Hget. apply list_assoc_In in Hget.
-    destruct (seed_roots_entry act pv_post n v Hget) as [o [bs [Hpub [Hvm [Hbs ->]]]]].
-    rewrite (Hrp o n Hpub Hvm Hst) in Hbs. injection Hbs as <-.
-    symmetry. apply resize_bits_id. apply vect_to_list_length.
-  Qed.
-
-
-  (* [roots_published] from the run itself: the DFG root really does carry the
-     output the spec computes, where it has settled. *)
-  Theorem roots_published_of_run (act: tfs_action sched) (a_idx: a_index)
-      (sp: src_sys_state) (ss: sched_sys_state)
-      (input: input_t) (sinput: sched_input_t)
-      (pv_post: list (nat * list bool)) :
-    act_idx_aligned ctx cost_limit act a_idx ->
-    (forall v, sinput (inl v) = input v) ->
-    Definitions.settled ctx cost_limit act a_idx ss sinput ->
-    (forall sv, (fst ss).[tf_dfg_s sv] = (fst sp).[sv]) ->
-    (forall ov, (snd ss).[ov] = (snd sp).[ov]) ->
-    (forall o, pub_out_b o = true ->
-       list_assoc pv_post (out_key o)
-         = Some (vect_to_list ((snd (spec_run act sp input)).[o]))) ->
-    roots_published act a_idx ss sinput pv_post.
-  Proof.
-    intros Halign Hsi Hst Hs Ho Hpub o r Hpo Hvm [pi [Hpi Hrv]].
-    destruct Hst as [Hans [_ [Hargs _]]].
-    destruct (dfg_action_semantics ctx cost_limit act a_idx sp ss input sinput
-                Halign Hsi
+    intros Hnd Hlen Hvm Hpi Hrv.
+    rewrite <- (videal_settled k Hnd r pi Hpi Hrv).
+    destruct Hstart as [Hoo [Hmm Hzz]].
+    destruct (settled_run ctx cost_limit act a_idx input resp ss0 k Halign Hlen Hzz Hnd Hipc)
+      as [Hans [_ [Hargs _]]].
+    destruct (dfg_action_semantics ctx cost_limit act a_idx sp0 (ssk k) input (sik k)
+                Halign (fun v => eq_refl)
                 ltac:(intros n_idx p tok en d av en' Ho1 Ho2 Ho3 Ho4 Hg Hv;
                       exact (Hans n_idx p tok en d av en' Ho1 Ho2 Ho3 Ho4 Hv
-                               (IPRProof.guard_pi_holds ctx cost_limit act a_idx
-                                  sinput en ss Hg)))
-                Hargs Hs Ho) as [_ [Hout _]].
-    rewrite (Hpub o Hpo). f_equal.
-    unfold nval, node_ref_expr.
-    rewrite (IPRProof.pub_eq_root_width ctx cost_limit act o r Hvm).
-    f_equal. symmetry.
-    exact (Hout o r pi Hvm
-             (IPRProof.pi_holds_guard ctx cost_limit act a_idx sinput pi ss Hpi) Hrv).
+                               (guard_pi_holds ctx cost_limit act a_idx (sik k) en (ssk k) Hg)))
+                Hargs
+                ltac:(intro sv; rewrite (run_preserves_svar ctx cost_limit act input resp ss0 k Hnd sv);
+                      rewrite <- Hmm, getenv_maps_from; reflexivity)
+                ltac:(intro ov; rewrite (run_preserves_ovar ctx cost_limit act input resp ss0 k Hnd ov);
+                      rewrite Hoo; reflexivity))
+      as [_ [Hout _]].
+    pose proof (Hout o r pi Hvm (pi_holds_guard ctx cost_limit act a_idx (sik k) pi (ssk k) Hpi) Hrv)
+      as Ho.
+    unfold nval, node_ref_expr, node_sz, node_at.
+    rewrite (pub_eq_root_width ctx cost_limit act o r Hvm), convert_id.
+    symmetry. exact Ho.
   Qed.
 
-  (* ---- what the seed holds ---- *)
-
-  Lemma list_assoc_in_some {V} (l: list (nat * V)) (k: nat) (v: V) :
-    List.In (k, v) l -> exists w, list_assoc l k = Some w.
+  (* The roots were ready on the cycle before done, so each holds its output. *)
+  Lemma roots_ideal o r :
+    tfs_spec_outputs_class ctx o = Public ->
+    In (DFG_OVar o, r) (var_map G) ->
+    convert (szB := node_sz G r) ((snd (spec_run act sp0 input)).[o]) = V r.
   Proof.
-    induction l as [| [k1 v1] l IH]; intro H; [ destruct H | ].
-    cbn [list_assoc].
-    destruct (eq_dec k k1) as [-> | Hne]; [ exists v1; reflexivity | ].
-    apply IH. destruct H as [He | H]; [ injection He as -> ->; congruence | exact H ].
+    intros _ Hvm.
+    pose proof Hstart as Hst. destruct Hst as [Hoo [Hmm Hzz]].
+    destruct (L_first_done ctx cost_limit act sp0 ss0 input resp Hstart) as [Hdone Hbefore].
+    destruct (Definitions.L ctx cost_limit act input resp ss0) as [| m].
+    - exfalso. apply Hdone. exact (Hzz (tfs_done_signal sched) I).
+    - assert (Hnd : forall i, 1 <= i <= m -> ~ done_set ctx cost_limit (ssk i))
+        by (intros i Hi; apply Hbefore; lia).
+      pose proof (proj1 (build_dfg_args_pos ctx cost_limit act) _ r Hvm) as Hr1.
+      pose proof (proj1 (wsz_node_sz ctx cost_limit act r _
+                           (wvsz_build_dfg ctx cost_limit act _ r Hvm))) as Hrlen.
+      pose proof (sched_step_done_valid ctx cost_limit act a_idx (ssk m) (sik m) r Halign Hdone
+                    (in_map snd _ _ Hvm)) as Hfull.
+      destruct (valid_settled_run ctx cost_limit act a_idx input resp ss0 m Halign
+                  (fun q => Hzz (tf_dfg_v a_idx q) I)) as [_ [Hrefs Hvs]].
+      destruct (full_table_sample_bufs ctx cost_limit act a_idx Halign) as [Hft1 Hft2].
+      pose proof (compile_subst_ref_valid_gen_at ctx cost_limit act a_idx (ssk m) (sik m)
+                    Halign Hvs Hrefs (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
+                    (fun e He => He) (length (graph G)) r []
+                    (fun x _ Hx => Hft1 x Hx) (fun x mm msz _ Hx Hs => Hft2 x mm msz Hx Hs)
+                    Hr1 Hrlen Hrlen Hfull) as Hrv.
+      exact (root_post m o r [] Hnd ltac:(lia) Hvm
+               (pi_holds_nil ctx cost_limit act a_idx (sik m) (ssk m)) Hrv).
   Qed.
 
-  Lemma seed_flat_get (f: nid_t -> option (nid_t * list bool)) (l: list nid_t)
-      (n: nid_t) (v: list bool) :
-    (forall m k w, f m = Some (k, w) -> k = m) ->
-    List.In n l -> f n = Some (n, v) ->
-    list_assoc (flat_map (fun m => match f m with
-                                   | Some e => [e]
-                                   | None => []
-                                   end) l) n = Some v.
+  Local Notation view := (observe ctx input (snd sp0) (snd (spec_run act sp0 input))).
+
+  (* EVERYTHING THE RECIPE RECOVERS IS AN IDEAL VALUE. *)
+  Lemma recovered_ideal n v :
+    recovered ctx cost_limit act view n = Some v -> v = V n.
   Proof.
-    intros Hkey. induction l as [| m l IH]; intros Hin Hfn; [ destruct Hin | ].
-    cbn [flat_map].
-    destruct (f m) as [[k w] |] eqn:Hfm.
-    - pose proof (Hkey m k w Hfm) as Hk. subst k.
-      cbn [List.app list_assoc].
-      destruct (eq_dec n m) as [-> | Hne]; [ congruence | ].
-      apply IH; [ destruct Hin as [-> | Hin]; [ congruence | exact Hin ] | exact Hfn ].
-    - cbn [List.app].
-      apply IH; [ destruct Hin as [-> | Hin]; [ congruence | exact Hin ] | exact Hfn ].
+    apply (recover_sound (p_eq := tfs_spec_ips_eq_dec ctx) (tfs_spec_ip ctx) (tfs_spec_decls ctx)
+             G V (build_well_sized ctx cost_limit act)
+             (videal_consistent ctx cost_limit act sp0 input)
+             (videal_sample_off ctx cost_limit act sp0 input)
+             (videal_sample_on ctx cost_limit act sp0 input)
+             (videal_stall ctx cost_limit act sp0 input)
+             (videal_join ctx cost_limit act sp0 input)
+             (videal_drive ctx cost_limit act sp0 input)).
+    exact (seed_sound ctx cost_limit act sp0 input _ roots_ideal).
   Qed.
 
-  Lemma seed_local_get (act: tfs_action sched)
-      (pv_in pv_pre: list (nat * list bool)) (n: nid_t) (v: list bool) :
-    1 <= n -> n < length (graph (build_dfg ctx act)) ->
-    seed_node act pv_in pv_pre n = Some (n, v) ->
-    tbl_get (seed_local act pv_in pv_pre) n = Some v.
+  Theorem recovered_vals_sound k :
+    (forall i, 1 <= i <= k -> ~ done_set ctx cost_limit (ssk i)) ->
+    vals_sound ctx cost_limit act a_idx (recovered ctx cost_limit act view) (ssk k) (sik k).
   Proof.
-    intros Hn1 Hnlen Hsn. unfold tbl_get, seed_local.
-    apply (seed_flat_get (seed_node act pv_in pv_pre) _ n v);
-      [ intros m k w Hm; exact (seed_node_key act pv_in pv_pre m k w Hm)
-      | apply in_seq; lia
-      | exact Hsn ].
+    intros Hnd n v pi Hval Hpi Hrv.
+    rewrite (recovered_ideal n v Hval). exact (videal_settled k Hnd n pi Hpi Hrv).
   Qed.
 
-  Lemma seed_roots_get (act: tfs_action sched)
-      (pv_post: list (nat * list bool)) (o: o_var) (r: nid_t) (bs: list bool) :
-    pub_out_b o = true ->
-    List.In (DFG_OVar o, r) (var_map (build_dfg ctx act)) ->
-    list_assoc pv_post (out_key o) = Some bs ->
-    exists w, tbl_get (seed_roots act pv_post) r = Some w.
+  (* ================================================================= *)
+  (* COVERAGE: the recipe reaches every value the hardware reads.        *)
+  (* ================================================================= *)
+
+  Local Notation peq := (tfs_spec_ips_eq_dec ctx).
+  Local Notation seedv := (Recover.seed i_sz o_sz G (seen_in ctx view) (seen_pre ctx view)
+                                        (seen_post ctx view)).
+  Local Notation Kf f := (recover (p_eq := peq) (tfs_spec_ip ctx) (tfs_spec_decls ctx) G seedv f).
+
+  Lemma seedv_sound : sound_known G V seedv.
+  Proof. exact (seed_sound ctx cost_limit act sp0 input _ roots_ideal). Qed.
+
+  Lemma seedv_range n : seedv n <> None -> n < length (graph G).
   Proof.
-    intros Hpub Hvm Hbs. unfold tbl_get.
-    apply (list_assoc_in_some _ r (resize_bits (nsz act r) bs)).
-    unfold seed_roots. apply in_flat_map.
-    exists (DFG_OVar o, r). split; [ exact Hvm | ].
-    rewrite Hpub, Hbs. left; reflexivity.
-  Qed.
-
-  Lemma tbl_get_app_some (t1 t2: val_table) (n: nid_t) (v: list bool) :
-    tbl_get t1 n = Some v \/ (exists w, tbl_get t2 n = Some w) ->
-    exists w, tbl_get (t1 ++ t2) n = Some w.
-  Proof.
-    unfold tbl_get.
-    induction t1 as [| [k1 v1] t1 IH]; intro H;
-      [ destruct H as [H | H]; [ cbn in H; discriminate | exact H ] | ].
-    cbn [List.app list_assoc] in H |- *.
-    destruct (eq_dec n k1) as [-> | Hne]; [ exists v1; reflexivity | ].
-    exact (IH H).
-  Qed.
-
-  (* ---- the seed of the taint saturation is filled ---- *)
-
-  Lemma trivially_public_filled (act: tfs_action sched) (seed: val_table)
-      (pv_in pv_pre: list (nat * list bool)) (n: nid_t) :
-    (forall v, pub_in_b v = true -> exists bs, list_assoc pv_in (in_key v) = Some bs) ->
-    (forall m w, tbl_get (seed_local act pv_in pv_pre) m = Some w ->
-       tbl_get seed m = Some w) ->
-    List.In n (Taint.trivially_public ctx (build_dfg ctx act)) ->
-    tbl_has (ptable act seed 1) n.
-  Proof.
-    intros Htot Hsub Hin.
-    unfold Taint.trivially_public in Hin. apply filter_In in Hin.
-    destruct Hin as [Hseq Hop]. apply in_seq in Hseq. destruct Hseq as [Hn1 Hn2].
-    assert (Hnlen : n < length (graph (build_dfg ctx act))) by lia.
-    revert Hop.
-    destruct (op (nth n (graph (build_dfg ctx act))
-                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | iv | dv | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa
-         | dp darg den | sp stok sen | ja jb | ] eqn:Hop; intro Hfil;
-      try discriminate.
-    - (* a literal: one round fills it from nothing *)
-      cbn [ptable]. apply (pround_fills act _ n Hn1 Hnlen). left.
-      exists (vect_to_list (Bits.of_nat (nsz act n) c)).
-      unfold pstep, Definitions.node_op. rewrite Hop. reflexivity.
-    - (* a public input: the seed holds it *)
-      assert (Hpub : pub_in_b iv = true)
-        by (unfold pub_in_b; destruct (tfs_spec_inputs_class ctx iv);
-            [ reflexivity | discriminate Hfil ]).
-      destruct (Htot iv Hpub) as [bs Hbs].
-      exists (resize_bits (nsz act n) bs).
-      apply (ptable_get act seed 0 1 n _ ltac:(lia)).
-      cbn [ptable]. apply Hsub.
-      apply (seed_local_get act pv_in pv_pre n _ Hn1 Hnlen).
-      unfold seed_node, Definitions.node_op. rewrite Hop, Hpub, Hbs. reflexivity.
-  Qed.
-
-  Lemma public_dsts_filled (act: tfs_action sched) (seed: val_table)
-      (pv_post: list (nat * list bool)) (n: nid_t) :
-    (forall o, pub_out_b o = true -> exists bs, list_assoc pv_post (out_key o) = Some bs) ->
-    (forall m w, tbl_get (seed_roots act pv_post) m = Some w ->
-       exists w', tbl_get seed m = Some w') ->
-    List.In n (Taint.public_dsts ctx (build_dfg ctx act)) ->
-    tbl_has (ptable act seed 1) n.
-  Proof.
-    intros Htot Hsub Hin.
-    unfold Taint.public_dsts in Hin.
-    apply in_map_iff in Hin. destruct Hin as [[dv r] [Hsnd Hfil]].
-    cbn [snd] in Hsnd. subst r.
-    apply filter_In in Hfil. destruct Hfil as [Hvm Hcls].
-    destruct dv as [sv | ov]; [ discriminate Hcls | ].
-    assert (Hpub : pub_out_b ov = true)
-      by (unfold pub_out_b; destruct (tfs_spec_outputs_class ctx ov);
-          [ reflexivity | discriminate Hcls ]).
-    destruct (Htot ov Hpub) as [bs Hbs].
-    destruct (seed_roots_get act pv_post ov n bs Hpub Hvm Hbs) as [w Hw].
-    destruct (Hsub n w Hw) as [w' Hw'].
-    exists w'. apply (ptable_get act seed 0 1 n _ ltac:(lia)). exact Hw'.
-  Qed.
-
-  Definition sat_rounds (act: tfs_action sched) : nat :=
-    1 + length (graph (build_dfg ctx act))
-        * length (Taint.uncond_instances ctx (build_dfg ctx act)).
-
-  Lemma untainted_roots_filled (act: tfs_action sched) (seed: val_table)
-      (pv_in pv_pre pv_post: list (nat * list bool)) :
-    Definitions.decl_in_range ctx cost_limit act ->
-    (forall v, pub_in_b v = true -> exists bs, list_assoc pv_in (in_key v) = Some bs) ->
-    (forall o, pub_out_b o = true -> exists bs, list_assoc pv_post (out_key o) = Some bs) ->
-    (forall m w, tbl_get (seed_local act pv_in pv_pre) m = Some w ->
-       tbl_get seed m = Some w) ->
-    (forall m w, tbl_get (seed_roots act pv_post) m = Some w ->
-       exists w', tbl_get seed m = Some w') ->
-    forall n, List.In n (Taint.untainted_roots ctx (build_dfg ctx act)) ->
-      tbl_has (ptable act seed (sat_rounds act)) n.
-  Proof.
-    intros Hrng Hin_tot Hout_tot Hsub1 Hsub2 n Hin.
-    unfold Taint.untainted_roots in Hin.
-    exact (saturate_filled act seed Hrng
-             (length (graph (build_dfg ctx act))) 1 _
-             ltac:(intros x Hx; apply in_app_or in Hx;
-                   destruct Hx as [Hx | Hx];
-                   [ exact (public_dsts_filled act seed pv_post x Hout_tot Hsub2 Hx)
-                   | exact (trivially_public_filled act seed pv_in pv_pre x
-                              Hin_tot Hsub1 Hx) ])
-             n Hin).
-  Qed.
-
-  (* An op the evaluator knows: the round trip's own nodes carry no value a
-     published table speaks about, so an untainted node that is not a
-     declassified root must not be one of them. *)
-  Definition pstep_knows (act: tfs_action sched) (n: nid_t) : bool :=
-    match Definitions.node_op ctx cost_limit act n with
-    | DFG_Stall _ _ | DFG_Drive _ _ _ | DFG_Sample _ _ _ | DFG_Join _ _
-    | DFG_Empty => false
-    | _ => true
+    intro H. destruct (Nat.lt_ge_cases n (length (graph G))) as [Hlt | Hge]; [ exact Hlt | exfalso ].
+    unfold Recover.seed, node_at in H. rewrite nth_overflow in H by exact Hge. cbn beta iota in H.
+    match type of H with
+    | context [find_map ?F ?L] => destruct (find_map F L) as [y |] eqn:Hf; [ | apply H; reflexivity ]
     end.
-
-  (* THE COVERAGE: the table holds every untainted node, so it holds every
-     selector the analysis did not call critical. *)
-  Theorem untainted_filled (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t) (seed: val_table)
-      (pv_in pv_pre pv_post: list (nat * list bool)) :
-    seed_sound act a_idx ss input seed ->
-    decl_guards_sized act ->
-    (forall i, List.In i (decl_instances (build_dfg ctx act)) ->
-       instance_extracts ctx cost_limit act a_idx i) ->
-    (forall i, List.In i (decl_instances (build_dfg ctx act)) ->
-       Definitions.instance_lifts ctx cost_limit act a_idx i) ->
-    Definitions.decl_in_range ctx cost_limit act ->
-    (forall v, pub_in_b v = true ->
-       exists bs, list_assoc pv_in (in_key v) = Some bs) ->
-    (forall o, pub_out_b o = true ->
-       exists bs, list_assoc pv_pre (out_key o) = Some bs) ->
-    (forall o, pub_out_b o = true ->
-       exists bs, list_assoc pv_post (out_key o) = Some bs) ->
-    (forall m w, tbl_get (seed_local act pv_in pv_pre) m = Some w ->
-       tbl_get seed m = Some w) ->
-    (forall m w, tbl_get (seed_roots act pv_post) m = Some w ->
-       exists w', tbl_get seed m = Some w') ->
-    (forall m, 1 <= m -> m < length (graph (build_dfg ctx act)) ->
-       ~ List.In m (get_tainted ctx (build_dfg ctx act)) ->
-       ~ List.In m (Taint.untainted_roots ctx (build_dfg ctx act)) ->
-       pstep_knows act m = true) ->
-    forall n, 1 <= n -> n < length (graph (build_dfg ctx act)) ->
-      ~ List.In n (get_tainted ctx (build_dfg ctx act)) ->
-      Definitions.settled_at ctx cost_limit act a_idx ss input n ->
-      tbl_has (ptable act seed (n + sat_rounds act)) n.
-  Proof.
-    intros Hseed Hgsz Hinst Hlift Hrng Hin_tot Hpre_tot Hout_tot Hsub1 Hsub2
-      Hknows n.
-    induction n as [n IH] using (well_founded_induction lt_wf).
-    intros Hn1 Hnlen Hnt Hst.
-    pose proof (ptable_sound act a_idx ss input seed Hseed Hgsz Hinst Hlift)
-      as Hsnd.
-    destruct (Taint.mem_nid n (Taint.untainted_roots ctx (build_dfg ctx act)))
-      eqn:Hmem.
-    { (* a declassified root: the saturation reaches it *)
-      destruct (untainted_roots_filled act seed pv_in pv_pre pv_post Hrng
-                  Hin_tot Hout_tot Hsub1 Hsub2 n
-                  (IPRProof.mem_nid_In n _ Hmem)) as [v Hv].
-      exists v. apply (ptable_get act seed (sat_rounds act)); [ lia | exact Hv ]. }
-    assert (Hnr : ~ List.In n (Taint.untainted_roots ctx (build_dfg ctx act)))
-      by (exact (IPRProof.mem_nid_not_In n _ Hmem)).
-    assert (Hnode_in : List.In (nth n (graph (build_dfg ctx act))
-                                  {| nid := 0; op := DFG_Empty; sz := 0 |})
-                         (graph (build_dfg ctx act)))
-      by (apply nth_In; exact Hnlen).
-    pose proof (node_nid_at ctx cost_limit act n Hnlen) as Hnid.
-    pose proof (wfg_build_dfg ctx cost_limit act _ Hnode_in) as Hfg.
-    unfold node_args_sz in Hfg.
-    assert (Hnt' : ~ List.In (nid (nth n (graph (build_dfg ctx act))
-                                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-                     (get_tainted ctx (build_dfg ctx act)))
-      by (rewrite Hnid; exact Hnt).
-    assert (Hnr' : ~ List.In (nid (nth n (graph (build_dfg ctx act))
-                                     {| nid := 0; op := DFG_Empty; sz := 0 |}))
-                     (Taint.untainted_roots ctx (build_dfg ctx act)))
-      by (rewrite Hnid; exact Hnr).
-    pose proof (Hknows n Hn1 Hnlen Hnt Hnr) as Hkn.
-    unfold pstep_knows, Definitions.node_op in Hkn.
-    (* every argument is filled by the round before this one *)
-    set (r := pred n + sat_rounds act) in *.
-    assert (Hround : n + sat_rounds act = S r) by (unfold r; lia).
-    assert (Harg : forall x,
-              List.In x (get_args ctx (nth n (graph (build_dfg ctx act))
-                                         {| nid := 0; op := DFG_Empty; sz := 0 |})) ->
-              Definitions.settled_at ctx cost_limit act a_idx ss input x ->
-              exists w, tbl_get (ptable act seed r) x = Some w).
-    { intros x Hx Hstx.
-      destruct (node_args_range ctx cost_limit act n Hn1 Hnlen x Hx) as [Hx1 Hxn].
-      assert (Hxt : ~ List.In x (get_tainted ctx (build_dfg ctx act)))
-        by (exact (IPRProof.arg_untainted ctx cost_limit act n x Hnlen Hnt Hnr Hx)).
-      destruct (IH x Hxn Hx1 ltac:(lia) Hxt Hstx) as [w Hw].
-      exists w. apply (ptable_get act seed (x + sat_rounds act));
-        [ unfold r; lia | exact Hw ]. }
-    rewrite Hround.
-    destruct (op (nth n (graph (build_dfg ctx act))
-                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | iv | dv | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa
-         | dp darg den | sp stok sen | ja jb | ] eqn:Hop;
-      try discriminate Hkn.
-    - (* a literal *)
-      cbn [ptable]. apply (pround_fills act _ n Hn1 Hnlen). left.
-      exists (vect_to_list (Bits.of_nat (nsz act n) c)).
-      unfold pstep, Definitions.node_op. rewrite Hop. reflexivity.
-    - (* an input: a secret one would be tainted *)
-      assert (Hpub : pub_in_b iv = true).
-      { unfold pub_in_b. destruct (tfs_spec_inputs_class ctx iv) eqn:Hcls;
-          [ reflexivity | exfalso ].
-        exact (Hnt' (IPRProof.input_secret_tainted ctx cost_limit act _ iv
-                       Hnode_in Hop Hcls Hnr')). }
-      destruct (Hin_tot iv Hpub) as [bs Hbs].
-      exists (resize_bits (nsz act n) bs).
-      apply (ptable_get act seed 0); [ lia | ]. cbn [ptable]. apply Hsub1.
-      apply (seed_local_get act pv_in pv_pre n _ Hn1 Hnlen).
-      unfold seed_node, Definitions.node_op. rewrite Hop, Hpub, Hbs. reflexivity.
-    - (* a variable read: the state is secret, an output takes its class *)
-      destruct dv as [sv | ov].
-      { exfalso.
-        exact (Hnt' (IPRProof.svar_tainted ctx cost_limit act _ sv
-                       Hnode_in Hop Hnr')). }
-      assert (Hpub : pub_out_b ov = true).
-      { unfold pub_out_b. destruct (tfs_spec_outputs_class ctx ov) eqn:Hcls;
-          [ reflexivity | exfalso ].
-        exact (Hnt' (IPRProof.ovar_secret_tainted ctx cost_limit act _ ov
-                       Hnode_in Hop Hcls Hnr')). }
-      destruct (Hpre_tot ov Hpub) as [bs Hbs].
-      exists (resize_bits (nsz act n) bs).
-      apply (ptable_get act seed 0); [ lia | ]. cbn [ptable]. apply Hsub1.
-      apply (seed_local_get act pv_in pv_pre n _ Hn1 Hnlen).
-      unfold seed_node, Definitions.node_op. rewrite Hop, Hpub, Hbs. reflexivity.
-    - (* a unary operation *)
-      destruct (Harg arg ltac:(unfold get_args; rewrite Hop; left; reflexivity)
-                  ltac:(destruct Hst as [pi [Hpi Hv]]; exists pi; split;
-                        [ exact Hpi | ];
-                        exact (nrv_peel_unary ctx cost_limit act a_idx n uop arg
-                                 pi ss input
-                                 ltac:(unfold Definitions.node_op; rewrite Hop;
-                                       reflexivity)
-                                 (proj1 (node_args_range ctx cost_limit act n Hn1
-                                           Hnlen arg
-                                           ltac:(unfold get_args; rewrite Hop;
-                                                 left; reflexivity)))
-                                 Hnlen Hv)))
-        as [la Hla].
-      cbn [ptable]. apply (pround_fills act _ n Hn1 Hnlen). left.
-      unfold pstep, Definitions.node_op. rewrite Hop, Hla.
-      destruct uop as [| source_size];
-        [ exists (vect_to_list (Bits.neg (bits_of_list (nsz act n) la)))
-        | exists (vect_to_list (convert (szB := nsz act n)
-                                  (bits_of_list source_size la))) ];
-        reflexivity.
-    - (* a binary operation *)
-      assert (Hpeel : Definitions.settled_at ctx cost_limit act a_idx ss input a1
-                      /\ Definitions.settled_at ctx cost_limit act a_idx ss input a2).
-      { destruct Hst as [pi [Hpi Hv]].
-        destruct (node_args_range ctx cost_limit act n Hn1 Hnlen a1
-                    ltac:(unfold get_args; rewrite Hop; left; reflexivity))
-          as [Ha11 _].
-        destruct (node_args_range ctx cost_limit act n Hn1 Hnlen a2
-                    ltac:(unfold get_args; rewrite Hop; right; left; reflexivity))
-          as [Ha21 _].
-        destruct (nrv_peel_binary ctx cost_limit act a_idx n bop a1 a2 pi ss input
-                    ltac:(unfold Definitions.node_op; rewrite Hop; reflexivity)
-                    Ha11 Ha21 Hnlen Hv) as [Hv1 Hv2].
-        split; [ exists pi; split; [ exact Hpi | exact Hv1 ]
-               | exists pi; split; [ exact Hpi | exact Hv2 ] ]. }
-      destruct (Harg a1 ltac:(unfold get_args; rewrite Hop; left; reflexivity)
-                  (proj1 Hpeel)) as [la Hla].
-      destruct (Harg a2 ltac:(unfold get_args; rewrite Hop; right; left; reflexivity)
-                  (proj2 Hpeel)) as [lb Hlb].
-      cbn [ptable]. apply (pround_fills act _ n Hn1 Hnlen). left.
-      unfold pstep, Definitions.node_op. rewrite Hop, Hla, Hlb.
-      eexists. reflexivity.
-    - (* a resize *)
-      destruct (Harg arg ltac:(unfold get_args; rewrite Hop; left; reflexivity)
-                  ltac:(destruct Hst as [pi [Hpi Hv]]; exists pi; split;
-                        [ exact Hpi | ];
-                        exact (nrv_peel_resize ctx cost_limit act a_idx n arg
-                                 pi ss input
-                                 ltac:(unfold Definitions.node_op; rewrite Hop;
-                                       reflexivity)
-                                 (proj1 (node_args_range ctx cost_limit act n Hn1
-                                           Hnlen arg
-                                           ltac:(unfold get_args; rewrite Hop;
-                                                 left; reflexivity)))
-                                 Hnlen Hv)))
-        as [la Hla].
-      cbn [ptable]. apply (pround_fills act _ n Hn1 Hnlen). left.
-      unfold pstep, Definitions.node_op. rewrite Hop, Hla.
-      eexists. reflexivity.
-    - (* a phi: the condition names the arm, and the table holds both *)
-      destruct (node_args_range ctx cost_limit act n Hn1 Hnlen cnd
-                  ltac:(unfold get_args; rewrite Hop; left; reflexivity))
-        as [Hc1 Hc2].
-      destruct (node_args_range ctx cost_limit act n Hn1 Hnlen tid
-                  ltac:(unfold get_args; rewrite Hop; right; left; reflexivity))
-        as [Ht1 Ht2].
-      destruct (node_args_range ctx cost_limit act n Hn1 Hnlen eid
-                  ltac:(unfold get_args; rewrite Hop; right; right; left; reflexivity))
-        as [He1 He2].
-      assert (Hopn : Definitions.node_op ctx cost_limit act n = DFG_Phi cnd tid eid)
-        by (unfold Definitions.node_op; rewrite Hop; reflexivity).
-      destruct (IPRProof.phi_args_settled ctx cost_limit act a_idx ss input
-                  n cnd tid eid Hopn Hc1 Ht1 He1 Hnlen Hst) as [Hstc [Hstt Hste]].
-      destruct (Harg cnd ltac:(unfold get_args; rewrite Hop; left; reflexivity)
-                  Hstc) as [lc Hlc].
-      (* the condition's entry is its one bit, because the table is sound *)
-      pose proof (Hsnd r cnd lc Hlc Hstc) as Hcv.
-      destruct Hfg as [Hfc [Hft Hfe]].
-      destruct (wsz_node_sz ctx cost_limit act cnd 1 Hfc) as [_ Hcsz].
-      rewrite Hcsz in Hcv.
-      assert (Hlen1 : length lc = 1)
-        by (rewrite <- Hcv; apply vect_to_list_length).
-      destruct lc as [| bb lc0]; [ cbn in Hlen1; lia | ].
-      destruct lc0 as [| ? ?]; [ | cbn in Hlen1; lia ].
-      assert (Hcb : nval ctx cost_limit act a_idx ss input 1 cnd
-                    = Definitions.bit_of bb)
-        by (apply (vect_to_list_inj bool 1);
-            rewrite Hcv, bit_of_to_list; reflexivity).
-      cbn [ptable]. apply (pround_fills act _ n Hn1 Hnlen). left.
-      unfold pstep, Definitions.node_op. rewrite Hop, Hlc.
-      destruct bb.
-      + destruct (Harg tid ltac:(unfold get_args; rewrite Hop; right; left;
-                                 reflexivity)
-                    (Hstt ltac:(unfold nval in Hcb; rewrite Hcb;
-                                exact ones1_neq_zero))) as [lt Hlt].
-        exists lt. exact Hlt.
-      + destruct (Harg eid ltac:(unfold get_args; rewrite Hop; right; right; left;
-                                 reflexivity)
-                    (Hste ltac:(unfold nval in Hcb; exact Hcb))) as [le Hle].
-        exists le. exact Hle.
+    apply find_map_some in Hf. destruct Hf as [[[sv | o] r] [Hin Hf]]; [ discriminate | ].
+    destruct (Nat.eqb r n) eqn:Hrn; [ | discriminate ]. apply Nat.eqb_eq in Hrn. subst r.
+    pose proof (proj1 (wsz_node_sz ctx cost_limit act n _
+                         (wvsz_build_dfg ctx cost_limit act _ n Hin))). lia.
   Qed.
 
-  Lemma seed_sound_app (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t) (t1 t2: val_table) :
-    seed_sound act a_idx ss input t1 ->
-    seed_sound act a_idx ss input t2 ->
-    seed_sound act a_idx ss input (t1 ++ t2).
+  Local Ltac recipe_hyps :=
+    exact (build_well_sized ctx cost_limit act)
+    || exact (videal_consistent ctx cost_limit act sp0 input)
+    || exact (videal_sample_off ctx cost_limit act sp0 input)
+    || exact (videal_sample_on ctx cost_limit act sp0 input)
+    || exact (videal_stall ctx cost_limit act sp0 input)
+    || exact (videal_join ctx cost_limit act sp0 input)
+    || exact (videal_drive ctx cost_limit act sp0 input).
+
+  Lemma Kf_mono_le f f' n x : f <= f' -> Kf f n = Some x -> Kf f' n = Some x.
   Proof.
-    intros H1 H2 n v Hget Hst. unfold tbl_get in Hget.
-    destruct (list_assoc_app t1 t2 n v Hget) as [Hg | Hg];
-      [ exact (H1 n v Hg Hst) | exact (H2 n v Hg Hst) ].
+    apply (recover_mono_le (p_eq := peq) (tfs_spec_ip ctx) (tfs_spec_decls ctx) G V);
+      try recipe_hyps; exact seedv_sound.
   Qed.
 
-  (* ================================================================= *)
-  (* THE ATTACKER'S VALUES, over the published tables alone.             *)
-  (* ================================================================= *)
+  Definition reached (n: nid_t) : Prop := exists f x, Kf f n = Some x.
 
-  Definition pub_seed (act: tfs_action sched)
-      (pv_in pv_pre pv_post: list (nat * list bool)) : val_table :=
-    seed_local act pv_in pv_pre ++ seed_roots act pv_post.
-
-  (* A forward chain descends node ids, and a declassification chain is the
-     taint saturation's own, so this many rounds fill everything either
-     reaches. *)
-  Definition pub_rounds (act: tfs_action sched) : nat :=
-    length (graph (build_dfg ctx act)) + sat_rounds act.
-
-  Definition pub_vals (act: tfs_action sched)
-      (pv_in pv_pre pv_post: list (nat * list bool)) (n: nid_t)
-    : option (list bool) :=
-    tbl_get (ptable act (pub_seed act pv_in pv_pre pv_post) (pub_rounds act)) n.
-
-  Lemma pub_seed_sound (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t)
-      (pv_in pv_pre pv_post: list (nat * list bool)) :
-    in_published input pv_in ->
-    pre_published ss pv_pre ->
-    roots_published act a_idx ss input pv_post ->
-    seed_sound act a_idx ss input (pub_seed act pv_in pv_pre pv_post).
+  Lemma reached_rounds n : reached n -> exists y, recovered ctx cost_limit act view n = Some y.
   Proof.
-    intros Hin Hpre Hroots. unfold pub_seed.
-    exact (seed_sound_app act a_idx ss input _ _
-             (seed_local_sound act a_idx ss input pv_in pv_pre Hin Hpre)
-             (seed_roots_sound act a_idx ss input pv_post Hroots)).
+    intros [f [x H]].
+    pose proof (recover_closed (p_eq := peq) (tfs_spec_ip ctx) (tfs_spec_decls ctx) G V
+                  ltac:(recipe_hyps) ltac:(recipe_hyps) ltac:(recipe_hyps) ltac:(recipe_hyps)
+                  ltac:(recipe_hyps) ltac:(recipe_hyps) ltac:(recipe_hyps)
+                  seedv seedv_sound seedv_range f n x H) as Hc.
+    exists x. unfold recovered.
+    apply (Kf_mono_le (S (length (universe (tfs_spec_decls ctx) G))) _ n x); [ | exact Hc ].
+    unfold rounds, universe. rewrite app_length, seq_length, map_length. nia.
   Qed.
 
-  Theorem pub_vals_sound (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t)
-      (pv_in pv_pre pv_post: list (nat * list bool)) :
-    in_published input pv_in ->
-    pre_published ss pv_pre ->
-    roots_published act a_idx ss input pv_post ->
-    decl_guards_sized act ->
-    (forall i, List.In i (decl_instances (build_dfg ctx act)) ->
-       instance_extracts ctx cost_limit act a_idx i) ->
-    (forall i, List.In i (decl_instances (build_dfg ctx act)) ->
-       Definitions.instance_lifts ctx cost_limit act a_idx i) ->
-    Definitions.vals_sound ctx cost_limit act a_idx
-      (pub_vals act pv_in pv_pre pv_post) ss input.
+  Lemma reached_all (l: list nid_t) :
+    (forall m, In m l -> reached m) -> exists f, forall m, In m l -> exists x, Kf f m = Some x.
   Proof.
-    intros Hin Hpre Hroots Hgsz Hinst Hlift n v pi Hval Hpi Hrv.
-    exact (ptable_sound act a_idx ss input _
-             (pub_seed_sound act a_idx ss input pv_in pv_pre pv_post
-                Hin Hpre Hroots)
-             Hgsz Hinst Hlift (pub_rounds act) n v Hval
-             (ex_intro _ pi (conj Hpi Hrv))).
+    induction l as [| a l IH]; intro H; [ exists 0; intros m [] | ].
+    destruct (H a (or_introl eq_refl)) as [fa [xa Ha]].
+    destruct (IH (fun m Hm => H m (or_intror Hm))) as [fl Hl].
+    exists (Nat.max fa fl). intros m [<- | Hm].
+    - exists xa. exact (Kf_mono_le fa (Nat.max fa fl) a xa ltac:(lia) Ha).
+    - destruct (Hl m Hm) as [x Hx]. exists x. exact (Kf_mono_le fl (Nat.max fa fl) m x ltac:(lia) Hx).
   Qed.
 
-  (* THE DESIGN CONDITION ON THE SELECTORS: a phi the analysis does not call
-     critical reads a condition the attacker can recover.  A tainted condition
-     is recovered only through a GUARDED declassification, which this rules
-     out, so the condition is an untainted one -- and those the table holds. *)
-  Definition selectors_known (act: tfs_action sched) : Prop :=
-    forall n c t e,
-      Definitions.node_op ctx cost_limit act n = DFG_Phi c t e ->
-      Taint.mem_nid c (get_tainted ctx (build_dfg ctx act)) = true ->
-      Taint.gfacts_of (decl_facts ctx (build_dfg ctx act)) c = [].
-
-  Theorem pub_selectors_extractable (act: tfs_action sched) (a_idx: a_index)
-      (ss: sched_sys_state) (input: sched_input_t)
-      (pv_in pv_pre pv_post: list (nat * list bool)) :
-    in_published input pv_in ->
-    pre_published ss pv_pre ->
-    roots_published act a_idx ss input pv_post ->
-    decl_guards_sized act ->
-    (forall i, List.In i (decl_instances (build_dfg ctx act)) ->
-       instance_extracts ctx cost_limit act a_idx i) ->
-    (forall i, List.In i (decl_instances (build_dfg ctx act)) ->
-       Definitions.instance_lifts ctx cost_limit act a_idx i) ->
-    Definitions.decl_in_range ctx cost_limit act ->
-    (forall v, pub_in_b v = true ->
-       exists bs, list_assoc pv_in (in_key v) = Some bs) ->
-    (forall o, pub_out_b o = true ->
-       exists bs, list_assoc pv_pre (out_key o) = Some bs) ->
-    (forall o, pub_out_b o = true ->
-       exists bs, list_assoc pv_post (out_key o) = Some bs) ->
-    (forall m, 1 <= m -> m < length (graph (build_dfg ctx act)) ->
-       ~ List.In m (get_tainted ctx (build_dfg ctx act)) ->
-       ~ List.In m (Taint.untainted_roots ctx (build_dfg ctx act)) ->
-       pstep_knows act m = true) ->
-    selectors_known act ->
-    Definitions.selectors_extractable ctx cost_limit act a_idx
-      (pub_vals act pv_in pv_pre pv_post) ss input.
+  Lemma reached_of_seed n : seedv n <> None -> reached n.
   Proof.
-    intros Hin Hpre Hroots Hgsz Hinst Hlift Hrng Hin_tot Hpre_tot Hout_tot
-      Hknows Hsk n c t e pi Hop Hcrit Hpi Hrv.
-    pose proof (pub_seed_sound act a_idx ss input pv_in pv_pre pv_post
-                  Hin Hpre Hroots) as Hseed.
-    (* the condition is untainted: a tainted one would have no fact to
-       de-criticalise it *)
-    assert (Hct : ~ List.In c (get_tainted ctx (build_dfg ctx act))).
-    { destruct (Taint.mem_nid c (get_tainted ctx (build_dfg ctx act))) eqn:Hmc;
-        [ | exact (IPRProof.mem_nid_not_In c _ Hmc) ].
-      exfalso. unfold phi_crit in Hcrit. rewrite Hmc in Hcrit.
-      cbn [andb] in Hcrit. apply Bool.negb_false_iff in Hcrit.
-      unfold Taint.declassified_at in Hcrit.
-      rewrite (Hsk n c t e Hop Hmc) in Hcrit. cbn [existsb] in Hcrit.
-      discriminate. }
-    (* and it is a node of the graph *)
-    assert (Hnlen : n < length (graph (build_dfg ctx act))).
-    { destruct (Nat.lt_ge_cases n (length (graph (build_dfg ctx act))))
-        as [H | H]; [ exact H | exfalso ].
-      unfold Definitions.node_op in Hop. rewrite nth_overflow in Hop by lia.
-      discriminate. }
-    assert (Hnode_in : List.In (nth n (graph (build_dfg ctx act))
-                                  {| nid := 0; op := DFG_Empty; sz := 0 |})
-                         (graph (build_dfg ctx act)))
-      by (apply nth_In; exact Hnlen).
-    assert (Hcarg : List.In c (get_args ctx (nth n (graph (build_dfg ctx act))
-                                              {| nid := 0; op := DFG_Empty; sz := 0 |})))
-      by (unfold get_args, Definitions.node_op in Hop |- *;
-          rewrite Hop; left; reflexivity).
-    pose proof (build_dfg_args_pos ctx cost_limit act) as [_ [Hargpos _]].
-    assert (Hc1 : 1 <= c) by (exact (Hargpos _ Hnode_in c Hcarg)).
-    pose proof (args_lt_fwd ctx cost_limit act _ Hnode_in c Hcarg) as Hcn.
-    rewrite (node_nid_at ctx cost_limit act n Hnlen) in Hcn.
-    (* so the table holds it, and soundness says its entry is its one bit *)
-    destruct (untainted_filled act a_idx ss input
-                (pub_seed act pv_in pv_pre pv_post) pv_in pv_pre pv_post
-                Hseed Hgsz Hinst Hlift Hrng Hin_tot Hpre_tot Hout_tot
-                ltac:(intros m w Hm; unfold pub_seed, tbl_get in Hm |- *;
-                      apply list_assoc_app_l; exact Hm)
-                ltac:(intros m w Hm; unfold pub_seed;
-                      apply (tbl_get_app_some _ _ m w); right;
-                      exists w; exact Hm)
-                Hknows c Hc1 ltac:(lia) Hct
-                (ex_intro _ pi (conj Hpi Hrv))) as [w Hw].
-    assert (Hwv : vect_to_list (nval ctx cost_limit act a_idx ss input
-                                  (nsz act c) c) = w).
-    { exact (ptable_sound act a_idx ss input _ Hseed Hgsz Hinst Hlift
-               (c + sat_rounds act) c w Hw
-               (ex_intro _ pi (conj Hpi Hrv))). }
-    pose proof (wfg_build_dfg ctx cost_limit act _ Hnode_in) as Hfg.
-    unfold node_args_sz, Definitions.node_op in Hop, Hfg.
-    rewrite Hop in Hfg. destruct Hfg as [Hfc _].
-    destruct (wsz_node_sz ctx cost_limit act c 1 Hfc) as [_ Hcsz].
-    rewrite Hcsz in Hwv.
-    assert (Hlen1 : length w = 1)
-      by (rewrite <- Hwv; apply vect_to_list_length).
-    destruct w as [| bb w0]; [ cbn in Hlen1; lia | ].
-    destruct w0 as [| ? ?]; [ | cbn in Hlen1; lia ].
-    exists bb. unfold pub_vals.
-    apply (ptable_get act (pub_seed act pv_in pv_pre pv_post)
-             (c + sat_rounds act)); [ unfold pub_rounds; lia | exact Hw ].
+    intro H. destruct (seedv n) as [v |] eqn:Hs; [ | exfalso; apply H; reflexivity ].
+    exists 1, v. rewrite recover_S, Hs. reflexivity.
+  Qed.
+
+  Lemma reached_of_step f n : step (p_eq := peq) (tfs_spec_ip ctx) G (Kf f) n <> None -> reached n.
+  Proof.
+    intro H. exists (S f). rewrite recover_S.
+    destruct (seedv n) as [v |]; [ exists v; reflexivity | ].
+    destruct (step (tfs_spec_ip ctx) G (Kf f) n) as [v |]; [ exists v; reflexivity | ].
+    exfalso. apply H. reflexivity.
+  Qed.
+
+  Lemma reached_of_back f n : back (tfs_spec_decls ctx) G (Kf f) n <> None -> reached n.
+  Proof.
+    intro H. exists (S f). rewrite recover_S.
+    destruct (seedv n) as [v |]; [ exists v; reflexivity | ].
+    destruct (step (tfs_spec_ip ctx) G (Kf f) n) as [v |]; [ exists v; reflexivity | ].
+    destruct (back (tfs_spec_decls ctx) G (Kf f) n) as [v |]; [ exists v; reflexivity | ].
+    exfalso. apply H. reflexivity.
+  Qed.
+
+  Lemma find_map_in {A B} (f: A -> option B) (l: list A) a :
+    In a l -> f a <> None -> find_map f l <> None.
+  Proof.
+    induction l as [| b l IH]; intros Hin Hf; [ destruct Hin | ]. cbn [find_map].
+    destruct (f b) eqn:Hb; [ discriminate | ].
+    destruct Hin as [<- | Hin]; [ exfalso; apply Hf; exact Hb | exact (IH Hin Hf) ].
+  Qed.
+
+  Lemma guard_val_some (k: known G) en :
+    (forall l, In l en -> k (fst l) <> None) -> guard_val G k en <> None.
+  Proof.
+    induction en as [| [c b] en IH]; intro H; cbn [guard_val]; [ discriminate | ].
+    destruct (k c) as [x |] eqn:Hc; [ | exfalso; apply (H (c, b) (or_introl eq_refl)); exact Hc ].
+    destruct (guard_val G k en) as [r |]; [ discriminate | ].
+    exfalso. apply IH; [ intros l Hl; exact (H l (or_intror Hl)) | reflexivity ].
+  Qed.
+
+  Lemma decl_instance_packet i :
+    In i (Taint.decl_instances ctx G) ->
+    exists r, In (r, i) (instances (tfs_spec_decls ctx) G).
+  Proof.
+    unfold Taint.decl_instances. intro Hi. apply filter_In in Hi. destruct Hi as [Hi _].
+    apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
+    exists r. unfold instances. apply in_flat_map. exists r. split; [ exact Hr | ].
+    apply in_map. exact Hi.
+  Qed.
+
+  (* An instance whose guard is known to hold and whose sources are known fires. *)
+  Lemma back_fires f r i :
+    In (r, i) (instances (tfs_spec_decls ctx) G) ->
+    guard_val G (Kf f) (di_guard i) = Some true ->
+    (forall s, In s (di_sources i) -> Kf f s <> None) ->
+    back (tfs_spec_decls ctx) G (Kf f) (di_target i) <> None.
+  Proof.
+    intros Hin Hg Hs. unfold back. apply (find_map_in _ _ (r, i) Hin). cbn [fst snd].
+    destruct (Nat.eq_dec (di_target i) (di_target i)) as [e | ne]; [ | exfalso; apply ne; reflexivity ].
+    rewrite Hg.
+    replace (forallb _ (di_sources i)) with true; [ discriminate | ].
+    symmetry. apply forallb_forall. intros s Hsi.
+    destruct (Kf f s) eqn:E; [ reflexivity | exfalso; exact (Hs s Hsi E) ].
+  Qed.
+
+  Lemma roots_reached n : In n (untainted_roots ctx G) -> reached n.
+  Proof.
+    unfold untainted_roots.
+    assert (Hbase : forall m, In m (public_dsts ctx G ++ trivially_public ctx G) -> reached m).
+    { intros m Hm. apply in_app_or in Hm. destruct Hm as [Hd | Ht].
+      - unfold public_dsts in Hd. apply in_map_iff in Hd.
+        destruct Hd as [[v r] [Hr Hf]]. cbn [snd] in Hr. subst r.
+        apply filter_In in Hf. destruct Hf as [Hvm Hpub].
+        destruct v as [sv | o]; [ discriminate | ].
+        apply reached_of_seed. unfold Recover.seed.
+        destruct (match op (node_at G m) with
+                  | DFG_Input v => _ | DFG_Var (DFG_OVar o0) => _ | _ => None end);
+          [ discriminate | ].
+        apply (find_map_in _ _ (DFG_OVar o, m) Hvm). rewrite Nat.eqb_refl.
+        cbn [seen_post observe]. destruct (tfs_spec_outputs_class ctx o); [ discriminate | ].
+        discriminate Hpub.
+      - unfold trivially_public in Ht. apply filter_In in Ht. destruct Ht as [_ Hop].
+        destruct (op (nth m (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hm;
+          try discriminate.
+        + apply (reached_of_step 0). unfold step, node_at. rewrite Hm. discriminate.
+        + apply reached_of_seed. unfold Recover.seed, node_at. rewrite Hm.
+          cbn [seen_in observe]. destruct (tfs_spec_inputs_class ctx v); [ discriminate | ].
+          discriminate Hop. }
+    revert Hbase. generalize (public_dsts ctx G ++ trivially_public ctx G) as acc.
+    generalize (length (graph G)) as fuel.
+    induction fuel as [| fuel IH]; intros acc Hacc Hin; [ exact (Hacc n Hin) | ].
+    cbn [saturate] in Hin. cbv zeta in Hin.
+    assert (Hstep : forall m, In m (saturate_step ctx G acc) -> reached m).
+    { unfold saturate_step.
+      assert (Hgen : forall l acc0,
+                (forall i, In i l -> In i (uncond_instances ctx G)) ->
+                (forall m, In m acc0 -> reached m) ->
+                forall m, In m (fold_left (fun acc i =>
+                                  if forallb (fun s => mem_nid s acc) (di_sources i)
+                                     && negb (mem_nid (di_target i) acc)
+                                  then di_target i :: acc else acc) l acc0) -> reached m).
+      { induction l as [| i l IHl]; intros acc0 Hsub Hacc0 m Hm; [ exact (Hacc0 m Hm) | ].
+        cbn [fold_left] in Hm.
+        destruct (forallb (fun s => mem_nid s acc0) (di_sources i)
+                  && negb (mem_nid (di_target i) acc0)) eqn:Hf;
+          [ | exact (IHl _ (fun j Hj => Hsub j (or_intror Hj)) Hacc0 m Hm) ].
+        apply andb_prop in Hf. destruct Hf as [Hf _]. rewrite forallb_forall in Hf.
+        apply (IHl (di_target i :: acc0) (fun j Hj => Hsub j (or_intror Hj))); [ | exact Hm ].
+        intros x [<- | Hx]; [ | exact (Hacc0 x Hx) ].
+        pose proof (Hsub i (or_introl eq_refl)) as Hu.
+        unfold uncond_instances in Hu. apply filter_In in Hu. destruct Hu as [Hdi Hng].
+        destruct (decl_instance_packet i Hdi) as [r Hri].
+        destruct (reached_all (di_sources i)
+                    (fun s Hs => Hacc0 s (IPRProof.mem_nid_In s acc0 (Hf s Hs))))
+          as [f Hfs].
+        apply (reached_of_back f). apply (back_fires f r i Hri).
+        - destruct (di_guard i); [ reflexivity | discriminate Hng ].
+        - intros s Hs. destruct (Hfs s Hs) as [x Hx]. rewrite Hx. discriminate. }
+      exact (Hgen _ acc (fun i Hi => Hi) Hacc). }
+    destruct (Nat.eqb (length (saturate_step ctx G acc)) (length acc));
+      [ exact (Hacc n Hin) | exact (IH _ Hstep Hin) ].
+  Qed.
+
+  (* EVERY UNTAINTED NODE IS REACHED: the attacker can compute it. *)
+  Theorem untainted_reached n :
+    1 <= n -> n < length (graph G) -> ~ In n (get_tainted ctx G) -> reached n.
+  Proof.
+    induction n as [n IH] using lt_wf_ind. intros Hn1 Hnlen Hnt.
+    destruct (in_dec Nat.eq_dec n (untainted_roots ctx G)) as [Hr | Hnr];
+      [ exact (roots_reached n Hr) | ].
+    assert (IHa : forall a, In a (get_args ctx (node_at G n)) -> reached a).
+    { intros a Ha.
+      destruct (node_args_range ctx cost_limit act n Hn1 Hnlen a Ha) as [Ha1 Han].
+      exact (IH a Han Ha1 ltac:(lia) (arg_untainted ctx cost_limit act n a Hnlen Hnt Hnr Ha)). }
+    assert (Hnode : In (node_at G n) (graph G)) by (apply nth_In; exact Hnlen).
+    assert (Hnid : nid (node_at G n) = n) by exact (node_nid_at ctx cost_limit act n Hnlen).
+    destruct (op (node_at G n)) as [c | iv | [sv | ov] | uop a | bop a b | a | cnd t e
+                                   | slat sa | dp darg den | sp tok en | ja jb | ] eqn:Hop.
+    - apply (reached_of_step 0). unfold step. rewrite Hop. discriminate.
+    - destruct (tfs_spec_inputs_class ctx iv) eqn:Hcls.
+      + apply reached_of_seed. unfold Recover.seed. rewrite Hop.
+        cbn [seen_in observe]. rewrite Hcls. discriminate.
+      + exfalso. apply Hnt. rewrite <- Hnid.
+        apply (input_secret_tainted ctx cost_limit act _ iv Hnode Hop Hcls). rewrite Hnid. exact Hnr.
+    - exfalso. apply Hnt. rewrite <- Hnid.
+      apply (svar_tainted ctx cost_limit act _ sv Hnode Hop). rewrite Hnid. exact Hnr.
+    - destruct (tfs_spec_outputs_class ctx ov) eqn:Hcls.
+      + apply reached_of_seed. unfold Recover.seed. rewrite Hop.
+        cbn [seen_pre observe]. rewrite Hcls. discriminate.
+      + exfalso. apply Hnt. rewrite <- Hnid.
+        apply (ovar_secret_tainted ctx cost_limit act _ ov Hnode Hop Hcls). rewrite Hnid. exact Hnr.
+    - destruct (reached_all [a] (fun m Hm => IHa m ltac:(unfold get_args; rewrite Hop; exact Hm)))
+        as [f Hf].
+      apply (reached_of_step f). unfold step. rewrite Hop.
+      destruct (Hf a (or_introl eq_refl)) as [x Hx]. rewrite Hx. discriminate.
+    - destruct (reached_all [a; b] (fun m Hm => IHa m ltac:(unfold get_args; rewrite Hop; exact Hm)))
+        as [f Hf].
+      apply (reached_of_step f). unfold step. rewrite Hop.
+      destruct (Hf a (or_introl eq_refl)) as [x Hx]. destruct (Hf b (or_intror (or_introl eq_refl))) as [y Hy].
+      rewrite Hx, Hy. discriminate.
+    - destruct (reached_all [a] (fun m Hm => IHa m ltac:(unfold get_args; rewrite Hop; exact Hm)))
+        as [f Hf].
+      apply (reached_of_step f). unfold step. rewrite Hop.
+      destruct (Hf a (or_introl eq_refl)) as [x Hx]. rewrite Hx. discriminate.
+    - destruct (reached_all [cnd; t; e]
+                  (fun m Hm => IHa m ltac:(unfold get_args; rewrite Hop; exact Hm))) as [f Hf].
+      apply (reached_of_step f). unfold step. rewrite Hop.
+      destruct (Hf cnd (or_introl eq_refl)) as [x Hx]. rewrite Hx.
+      destruct (Hf t (or_intror (or_introl eq_refl))) as [y Hy].
+      destruct (Hf e (or_intror (or_intror (or_introl eq_refl)))) as [z Hz].
+      destruct (nonzero x); [ rewrite Hy | rewrite Hz ]; discriminate.
+    - apply (reached_of_step 0). unfold step. rewrite Hop. discriminate.
+    - destruct (reached_all [darg] (fun m Hm => IHa m ltac:(unfold get_args; rewrite Hop; destruct Hm as [<- | []]; left; reflexivity)))
+        as [f Hf].
+      apply (reached_of_step f). unfold step. rewrite Hop.
+      destruct (Hf darg (or_introl eq_refl)) as [x Hx]. rewrite Hx. discriminate.
+    - (* an IP answer: its request and its path condition are untainted *)
+      assert (Hopn : Definitions.node_op ctx cost_limit act n = DFG_Sample sp tok en) by exact Hop.
+      destruct (sample_has_drive ctx cost_limit act n sp tok en Hopn) as [d [av [Hsd Hdop]]].
+      pose proof (sample_drive_untainted ctx cost_limit act n d
+                    (plumbing_not_root_holds ctx cost_limit act) Hnlen Hsd Hnt Hnr) as Hdt.
+      pose proof (sample_drive_below ctx cost_limit act n sp tok en d Hop Hsd) as Hdn.
+      destruct (node_op_pos ctx cost_limit act d ltac:(rewrite Hdop; discriminate)) as [Hd1 Hdlen].
+      assert (Hdnr : ~ In d (untainted_roots ctx G))
+        by (apply (plumbing_not_root_holds ctx cost_limit act);
+            unfold Definitions.is_plumbing; rewrite Hdop; reflexivity).
+      assert (Hdargs : forall x, In x (av :: map fst en) -> reached x).
+      { intros x Hx.
+        assert (Hxin : In x (get_args ctx (nth d (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})))
+          by (unfold get_args; unfold Definitions.node_op in Hdop; rewrite Hdop; exact Hx).
+        destruct (node_args_range ctx cost_limit act d Hd1 Hdlen x Hxin) as [Hx1 Hxd].
+        exact (IH x ltac:(lia) Hx1 ltac:(lia) (arg_untainted ctx cost_limit act d x Hdlen Hdt Hdnr Hxin)). }
+      destruct (reached_all _ Hdargs) as [f Hf].
+      apply (reached_of_step f). unfold step. rewrite Hop.
+      destruct (guard_val G (Kf f) en) as [[|] |] eqn:Hg.
+      + assert (Hpl : payload_of (p_eq := peq) G n = Some av).
+        { unfold payload_of. rewrite drive_of_sample_drive, Hsd.
+          change (op (node_at G d)) with (Definitions.node_op ctx cost_limit act d).
+          rewrite Hdop. reflexivity. }
+        rewrite Hpl. destruct (Hf av (or_introl eq_refl)) as [x Hx]. rewrite Hx. discriminate.
+      + discriminate.
+      + exfalso. apply (guard_val_some (Kf f) en); [ | exact Hg ].
+        intros l Hl. destruct (Hf (fst l) (or_intror (in_map fst en l Hl))) as [x Hx].
+        rewrite Hx. discriminate.
+    - apply (reached_of_step 0). unfold step. rewrite Hop. discriminate.
+    - exfalso. pose proof (proj2 (proj2 (build_dfg_args_pos ctx cost_limit act)) _ Hnode Hop).
+      lia.
+  Qed.
+
+  Lemma Kf_sound f : sound_known G V (Kf f).
+  Proof.
+    apply (recover_sound (p_eq := peq) (tfs_spec_ip ctx) (tfs_spec_decls ctx) G V);
+      try recipe_hyps; exact seedv_sound.
+  Qed.
+
+  (* ---- recoveries that hold on some paths only ---- *)
+
+  Definition lit_known (l: lit) : Prop := reached (fst l) /\ nonzero (V (fst l)) = snd l.
+
+  Definition facts_ok (base: list gfact) : Prop :=
+    forall c g, In (c, g) base -> (forall l, In l g -> lit_known l) -> reached c.
+
+  Lemma guard_incl_known g gs :
+    guard_incl g gs = true -> (forall l, In l gs -> lit_known l) -> forall l, In l g -> lit_known l.
+  Proof.
+    unfold guard_incl. rewrite forallb_forall. intros Hi H l Hl.
+    specialize (Hi l Hl). apply existsb_exists in Hi. destruct Hi as [l' [Hl' Heq]].
+    unfold lit_eqb in Heq. apply andb_prop in Heq. destruct Heq as [Hc Hb].
+    apply Nat.eqb_eq in Hc. apply Bool.eqb_prop in Hb.
+    destruct l as [c b], l' as [c' b']. cbn [fst snd] in Hc, Hb. subst c' b'. exact (H _ Hl').
+  Qed.
+
+  (* A guard whose literals are known reads true in the recipe. *)
+  Lemma guard_val_known (gd: list lit) :
+    (forall l, In l gd -> lit_known l) -> exists f, guard_val G (Kf f) gd = Some true.
+  Proof.
+    intro H.
+    destruct (reached_all (map fst gd)
+                (fun m Hm => let '(ex_intro _ l (conj Hl Hin)) := proj1 (in_map_iff fst gd m) Hm in
+                             eq_ind (fst l) reached (proj1 (H l Hin)) m Hl)) as [f Hf].
+    exists f. induction gd as [| [c b] gd IHg]; cbn [guard_val]; [ reflexivity | ].
+    destruct (Hf c (or_introl eq_refl)) as [x Hx]. rewrite Hx.
+    rewrite IHg.
+    - destruct (H (c, b) (or_introl eq_refl)) as [_ Hb]. cbn [fst snd] in Hb.
+      rewrite (Kf_sound f c x Hx), Hb, Bool.eqb_reflx. reflexivity.
+    - intros l Hl. exact (H l (or_intror Hl)).
+    - intros m Hm. exact (Hf m (or_intror Hm)).
   Qed.
 
 
-  (* WHAT THE PUBLIC INTERFACE ASKS OF A DESIGN AND ITS TABLES: the standard
-     side conditions, the tables being this run's published data, the four
-     obligations the rule library discharges per declassification instance, and
-     the two conditions that make the attacker's evaluator total where the
-     analysis relies on it. *)
-  Definition clock_readable (act: tfs_action sched) (a_idx: a_index)
-      (sp0: src_sys_state) (ss0: sched_sys_state)
-      (input: input_t) (resp: nat -> resp_val)
-      (pv_in pv_pre pv_post: list (nat * list bool)) : Prop :=
-    act_idx_aligned ctx cost_limit act a_idx
-    /\ 1 < length (graph (build_dfg ctx act))
-    /\ start_rel ctx cost_limit sp0 ss0
-    /\ Definitions.ip_contract ctx cost_limit act input resp ss0
-    (* the tables ARE this run's published data *)
-    /\ (forall v, pub_in_b v = true ->
-          list_assoc pv_in (in_key v) = Some (vect_to_list (input v)))
-    /\ (forall o, pub_out_b o = true ->
-          list_assoc pv_pre (out_key o) = Some (vect_to_list ((snd sp0).[o])))
-    /\ (forall o, pub_out_b o = true ->
-          list_assoc pv_post (out_key o)
-            = Some (vect_to_list ((snd (spec_run act sp0 input)).[o])))
-    (* the rule library's obligations *)
-    /\ decl_guards_sized act
-    /\ (forall i, List.In i (decl_instances (build_dfg ctx act)) ->
-          instance_extracts ctx cost_limit act a_idx i)
-    /\ (forall i, List.In i (decl_instances (build_dfg ctx act)) ->
-          Definitions.instance_lifts ctx cost_limit act a_idx i)
-    /\ Definitions.decl_in_range ctx cost_limit act
-    (* the design is one the clock can read *)
-    /\ (forall m, 1 <= m -> m < length (graph (build_dfg ctx act)) ->
-          ~ List.In m (get_tainted ctx (build_dfg ctx act)) ->
-          ~ List.In m (Taint.untainted_roots ctx (build_dfg ctx act)) ->
-          pstep_knows act m = true)
-    /\ selectors_known act.
-
-  (* ================================================================= *)
-  (* THE HEADLINE, OVER THE PUBLISHED TABLES.                            *)
-  (* The cycle count the design takes is a function of the action, its    *)
-  (* slot, and three tables of bits: the action's public inputs, and its  *)
-  (* public outputs before and after.  No state, no secret input and no   *)
-  (* IP answer appears among the arguments, so none can reach the result. *)
-  (* ================================================================= *)
-  Theorem L_over_tables (act: tfs_action sched) (a_idx: a_index)
-      (sp0: src_sys_state) (ss0: sched_sys_state)
-      (input: input_t) (resp: nat -> resp_val)
-      (pv_in pv_pre pv_post: list (nat * list bool)) :
-    clock_readable act a_idx sp0 ss0 input resp pv_in pv_pre pv_post ->
-    Definitions.L ctx cost_limit act input resp ss0
-    = Definitions.L_pub ctx cost_limit act a_idx
-        (pub_vals act pv_in pv_pre pv_post).
+  Lemma gfold_facts_ok i combos :
+    (forall gs, In gs combos ->
+       (forall l, In l (di_guard i ++ gs) -> lit_known l) -> reached (di_target i)) ->
+    forall acc0, facts_ok acc0 -> facts_ok (fold_left (gadd_of i) combos acc0).
   Proof.
-    intros [Halign [Hlen [Hstart [Hipc [Hpin [Hppre [Hppost [Hgsz [Hinst
-      [Hlift [Hrng [Hknows Hsk]]]]]]]]]]]].
-    pose proof Hstart as Hsr. destruct Hsr as [Hoo [Hmm Hzz]].
-    assert (Hin_k : forall k,
-              in_published (sched_input ctx cost_limit input (resp k)) pv_in)
-      by (intros k v Hpub; exact (Hpin v Hpub)).
-    assert (Hpre_k : forall k,
-              (forall i, 1 <= i <= k ->
-                 ~ done_set ctx cost_limit (run_n ctx cost_limit i act input resp ss0)) ->
-              pre_published (run_n ctx cost_limit k act input resp ss0) pv_pre).
-    { intros k Hnd o Hpub.
-      rewrite (run_preserves_ovar ctx cost_limit act input resp ss0 k Hnd o).
-      rewrite Hoo. exact (Hppre o Hpub). }
-    assert (Htot_in : forall v, pub_in_b v = true ->
-              exists bs, list_assoc pv_in (in_key v) = Some bs)
-      by (intros v Hpub; exists (vect_to_list (input v)); exact (Hpin v Hpub)).
-    assert (Htot_pre : forall o, pub_out_b o = true ->
-              exists bs, list_assoc pv_pre (out_key o) = Some bs)
-      by (intros o Hpub; exists (vect_to_list ((snd sp0).[o])); exact (Hppre o Hpub)).
-    assert (Htot_post : forall o, pub_out_b o = true ->
-              exists bs, list_assoc pv_post (out_key o) = Some bs)
-      by (intros o Hpub;
-          exists (vect_to_list ((snd (spec_run act sp0 input)).[o]));
-          exact (Hppost o Hpub)).
-    assert (Hroots_k : forall k,
-              (forall i, 1 <= i <= k ->
-                 ~ done_set ctx cost_limit (run_n ctx cost_limit i act input resp ss0)) ->
-              roots_published act a_idx
-                (run_n ctx cost_limit k act input resp ss0)
-                (sched_input ctx cost_limit input (resp k)) pv_post).
-    { intros k Hnd.
-      apply (roots_published_of_run act a_idx sp0
-               (run_n ctx cost_limit k act input resp ss0) input
-               (sched_input ctx cost_limit input (resp k)) pv_post Halign
-               ltac:(intro v; reflexivity)
-               (settled_run ctx cost_limit act a_idx input resp ss0 k Halign Hlen
-                  Hzz Hnd Hipc));
-        [ intro sv | intro ov | exact Hppost ].
-      - rewrite (run_preserves_svar ctx cost_limit act input resp ss0 k Hnd sv).
-        rewrite <- Hmm, getenv_maps_from. reflexivity.
-      - rewrite (run_preserves_ovar ctx cost_limit act input resp ss0 k Hnd ov).
-        rewrite Hoo. reflexivity. }
-    exact (IPRProof.L_pub_correct ctx cost_limit act a_idx
-             (pub_vals act pv_in pv_pre pv_post) input resp ss0
-             Halign Hzz
-             (fun k Hnd => pub_selectors_extractable act a_idx
-                 (run_n ctx cost_limit k act input resp ss0)
-                 (sched_input ctx cost_limit input (resp k))
-                 pv_in pv_pre pv_post (Hin_k k) (Hpre_k k Hnd) (Hroots_k k Hnd)
-                 Hgsz Hinst Hlift Hrng Htot_in Htot_pre Htot_post Hknows Hsk)
-             (fun k Hnd => pub_vals_sound act a_idx
-                 (run_n ctx cost_limit k act input resp ss0)
-                 (sched_input ctx cost_limit input (resp k))
-                 pv_in pv_pre pv_post (Hin_k k) (Hpre_k k Hnd) (Hroots_k k Hnd)
-                 Hgsz Hinst Hlift)).
+    induction combos as [| gs combos IHc]; intros Hnew acc0 Hacc0; cbn [fold_left];
+      [ exact Hacc0 | ].
+    apply IHc; [ intros gs' Hgs'; apply Hnew; right; exact Hgs' | ].
+    unfold gadd_of. destruct (gsubsumed acc0 (di_target i) (di_guard i ++ gs)); [ exact Hacc0 | ].
+    intros c g Hin. apply in_app_or in Hin. destruct Hin as [Hin | [Heq | []]].
+    - exact (Hacc0 c g Hin).
+    - injection Heq as <- <-. exact (Hnew gs (or_introl eq_refl)).
+  Qed.
+  Lemma gstep1_facts_ok acc i :
+    In i (Taint.decl_instances ctx G) -> facts_ok acc -> facts_ok (gstep1 acc i).
+  Proof.
+    intros Hi Hacc. unfold gstep1.
+    assert (Hnew : forall gs, In gs (gcombine acc (di_sources i)) ->
+              (forall l, In l (di_guard i ++ gs) -> lit_known l) -> reached (di_target i)).
+    { intros gs Hgs Hlits.
+      assert (Hsrc : forall s, In s (di_sources i) -> reached s).
+      { intros s Hs. destruct (IPRProof.gcombine_sound acc (di_sources i) gs Hgs s Hs)
+          as [g [Hg Hincl]].
+        apply (Hacc s g Hg). apply (guard_incl_known g gs Hincl).
+        intros l Hl. apply Hlits. apply in_or_app. right. exact Hl. }
+      destruct (reached_all (di_sources i) Hsrc) as [f1 Hf1].
+      destruct (guard_val_known (di_guard i)
+                  (fun l Hl => Hlits l (in_or_app _ _ _ (or_introl Hl)))) as [f2 Hf2].
+      destruct (decl_instance_packet i Hi) as [r Hri].
+      apply (reached_of_back (Nat.max f1 f2)). apply (back_fires (Nat.max f1 f2) r i Hri).
+      - apply (guard_val_mono G
+                 (Kf f2) (Kf (Nat.max f1 f2))); [ | exact Hf2 ].
+        intros m x Hx. exact (Kf_mono_le f2 _ m x (Nat.le_max_r _ _) Hx).
+      - intros s Hs. destruct (Hf1 s Hs) as [x Hx].
+        rewrite (Kf_mono_le f1 _ s x (Nat.le_max_l _ _) Hx). discriminate. }
+    exact (gfold_facts_ok i _ Hnew acc Hacc).
   Qed.
 
-  (* ---- and the two statements a reader actually wants, over [L_pub] ---- *)
-
-  (* THE DESIGN COMPLETES AT THE PUBLIC CYCLE: done there, and at no cycle
-     before it. *)
-  Corollary latency_over_tables (act: tfs_action sched) (a_idx: a_index)
-      (sp0: src_sys_state) (ss0: sched_sys_state)
-      (input: input_t) (resp: nat -> resp_val)
-      (pv_in pv_pre pv_post: list (nat * list bool)) :
-    clock_readable act a_idx sp0 ss0 input resp pv_in pv_pre pv_post ->
-    Definitions.first_done ctx cost_limit act input resp ss0
-      (Definitions.L_pub ctx cost_limit act a_idx
-         (pub_vals act pv_in pv_pre pv_post)).
+  Lemma decl_facts_ok : facts_ok (decl_facts ctx G).
   Proof.
-    intro Hcr.
-    rewrite <- (L_over_tables act a_idx sp0 ss0 input resp
-                  pv_in pv_pre pv_post Hcr).
-    exact (IPRProof.L_first_done ctx cost_limit act sp0 ss0 input resp
-             (proj1 (proj2 (proj2 Hcr)))).
+    unfold decl_facts.
+    assert (Hbase : facts_ok (map (fun n => (n, @nil lit)) (untainted_roots ctx G))).
+    { intros c g Hin _. apply in_map_iff in Hin. destruct Hin as [n [Heq Hn]].
+      injection Heq as <- <-. exact (roots_reached n Hn). }
+    revert Hbase. generalize (map (fun n => (n, @nil lit)) (untainted_roots ctx G)) as base.
+    generalize (length (graph G)) as fuel.
+    induction fuel as [| fuel IH]; intros base Hbase; cbn [gsaturate]; [ exact Hbase | ].
+    cbv zeta.
+    assert (Hstep : facts_ok (gsaturate_step ctx G base)).
+    { unfold gsaturate_step.
+      assert (Hgen : forall l b0, (forall i, In i l -> In i (Taint.decl_instances ctx G)) ->
+                       facts_ok b0 -> facts_ok (fold_left gstep1 l b0)).
+      { induction l as [| i l IHl]; intros b0 Hl Hb0; cbn [fold_left]; [ exact Hb0 | ].
+        apply IHl; [ intros j Hj; apply Hl; right; exact Hj | ].
+        exact (gstep1_facts_ok b0 i (Hl i (or_introl eq_refl)) Hb0). }
+      exact (Hgen _ base (fun i Hi => Hi) Hbase). }
+    match goal with |- context [if ?b then _ else _] => destruct b end;
+      [ exact Hbase | exact (IH _ Hstep) ].
   Qed.
 
-  (* THE EMULATOR, OVER THE PUBLISHED TABLES ALONE.  Every cycle up to the
-     cycle the attacker computes, the outputs are what its own two snapshots
-     say: nothing on the right-hand side is data a run keeps to itself. *)
-  Corollary emulator_correct_over_tables (act: tfs_action sched) (a_idx: a_index)
-      (sp0: src_sys_state) (ss0: sched_sys_state)
-      (input: input_t) (resp: nat -> resp_val)
-      (pv_in pv_pre pv_post: list (nat * list bool)) :
-    clock_readable act a_idx sp0 ss0 input resp pv_in pv_pre pv_post ->
-    forall k, k <= Definitions.L_pub ctx cost_limit act a_idx
-                     (pub_vals act pv_in pv_pre pv_post) ->
-      forall ov, (snd (run_n ctx cost_limit k act input resp ss0)).[ov]
-               = Definitions.emulate ctx (snd sp0)
-                   (snd (spec_run act sp0 input))
-                   (Definitions.L_pub ctx cost_limit act a_idx
-                      (pub_vals act pv_in pv_pre pv_post)) k ov.
+  Lemma path_ok_suffix k pre l rest :
+    path_ok ctx cost_limit act a_idx (ssk k) (sik k) (pre ++ l :: rest) ->
+    path_ok ctx cost_limit act a_idx (ssk k) (sik k) rest
+    /\ (exists n t e, Definitions.node_op ctx cost_limit act n = DFG_Phi (fst l) t e
+          /\ phi_crit (get_tainted ctx G) (decl_facts ctx G) (fst l) rest = false)
+    /\ pi_holds ctx cost_limit act a_idx (sik k) rest (ssk k)
+    /\ rvalid act a_idx rest (fst l) (ssk k) (sik k) = Bits.ones 1.
   Proof.
-    intro Hcr.
-    rewrite <- (L_over_tables act a_idx sp0 ss0 input resp
-                  pv_in pv_pre pv_post Hcr).
-    exact (IPRProof.emulator_correct_L ctx cost_limit act sp0 ss0 input resp
-             (proj1 (proj2 (proj2 Hcr)))
-             (proj1 (proj2 (proj2 (proj2 Hcr))))).
+    induction pre as [| [c0 b0] pre IH]; intro Hp.
+    - destruct l as [c b]. exact Hp.
+    - exact (IH (proj1 Hp)).
   Qed.
 
-End Extract.
+  (* A phi condition read at a well-formed path is reached: untainted, or
+     declassified under a guard whose literals the path already settled. *)
+  Theorem selector_reached k :
+    (forall i, 1 <= i <= k -> ~ done_set ctx cost_limit (ssk i)) ->
+    forall len pi c, length pi <= len ->
+      path_ok ctx cost_limit act a_idx (ssk k) (sik k) pi ->
+      (exists n t e, Definitions.node_op ctx cost_limit act n = DFG_Phi c t e
+         /\ phi_crit (get_tainted ctx G) (decl_facts ctx G) c pi = false) ->
+      pi_holds ctx cost_limit act a_idx (sik k) pi (ssk k) ->
+      rvalid act a_idx pi c (ssk k) (sik k) = Bits.ones 1 ->
+      reached c.
+  Proof.
+    intros Hnd len. induction len as [| len IH];
+      intros pi c Hlen Hpok [n [t [e [Hop Hcrit]]]] Hpi Hrv.
+    all: destruct (node_op_pos ctx cost_limit act n ltac:(rewrite Hop; discriminate))
+           as [Hn1 Hnlen].
+    all: assert (Hcin : In c (get_args ctx (nth n (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})))
+           by (unfold get_args; unfold Definitions.node_op in Hop; rewrite Hop; left; reflexivity).
+    all: destruct (node_args_range ctx cost_limit act n Hn1 Hnlen c Hcin) as [Hc1 Hcn].
+    all: destruct (Taint.mem_nid c (get_tainted ctx G)) eqn:Hmt;
+      [ | exact (untainted_reached c Hc1 ltac:(lia) (IPRProof.mem_nid_not_In c _ Hmt)) ].
+    all: unfold phi_crit in Hcrit; rewrite Hmt in Hcrit; cbn [andb] in Hcrit;
+         apply Bool.negb_false_iff in Hcrit; unfold Taint.declassified_at in Hcrit;
+         apply existsb_exists in Hcrit; destruct Hcrit as [g [Hg Hincl]];
+         apply (decl_facts_ok c g (IPRProof.gfacts_of_In _ c g Hg)).
+    all: intros l Hl;
+         assert (Hlp : In l pi)
+           by (unfold guard_incl in Hincl; rewrite forallb_forall in Hincl;
+               specialize (Hincl l Hl); apply existsb_exists in Hincl;
+               destruct Hincl as [l' [Hl' Heq]]; unfold lit_eqb in Heq;
+               apply andb_prop in Heq; destruct Heq as [Hc Hb];
+               apply Nat.eqb_eq in Hc; apply Bool.eqb_prop in Hb;
+               destruct l as [c0 b0], l' as [c1 b1]; cbn [fst snd] in Hc, Hb;
+               subst c1 b1; exact Hl').
+    - destruct pi; [ destruct Hlp | cbn [length] in Hlen; lia ].
+    - destruct (in_split l pi Hlp) as [pre [rest Hsplit]].
+      rewrite Hsplit in Hpok.
+      destruct (path_ok_suffix k pre l rest Hpok) as [Hpr [Hphi [Hpir Hrvl]]].
+      assert (Hrl : length rest <= len)
+        by (rewrite Hsplit, app_length in Hlen; cbn [length] in Hlen; lia).
+      split; [ exact (IH rest (fst l) Hrl Hpr Hphi Hpir Hrvl) | ].
+      (* the path holds the literal, and the literal is settled where it was read *)
+      pose proof (Hpi (fst l) (snd l) ltac:(destruct l; exact Hlp)) as Hbit.
+      pose proof (videal_settled k Hnd (fst l) rest Hpir Hrvl) as Hset.
+      destruct Hphi as [m [tm [em [Hopm _]]]].
+      destruct (node_op_pos ctx cost_limit act m ltac:(rewrite Hopm; discriminate))
+        as [_ Hmlen].
+      pose proof (wfg_build_dfg ctx cost_limit act _
+                    (nth_In _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hmlen)) as Hfg.
+      unfold node_args_sz in Hfg. unfold Definitions.node_op in Hopm. rewrite Hopm in Hfg.
+      destruct Hfg as [Hcw _].
+      pose proof (proj2 (wsz_node_sz ctx cost_limit act _ _ Hcw)) as Hw1.
+      pose proof (bit_of_nonzero
+                    (fun w => nval ctx cost_limit act a_idx (ssk k) (sik k) w (fst l))
+                    (node_sz G (fst l)) (V (fst l)) Hw1 Hset) as Hbit2.
+      cbn beta in Hbit2. rewrite Hbit2 in Hbit.
+      destruct (nonzero (V (fst l))), (snd l); first [ reflexivity | discriminate Hbit ].
+  Qed.
+
+  (* THE RECIPE HAS EVERY SELECTOR A SELECTING PHI READS. *)
+  Theorem recovered_selectors k :
+    (forall i, 1 <= i <= k -> ~ done_set ctx cost_limit (ssk i)) ->
+    selectors_extractable ctx cost_limit act a_idx (recovered ctx cost_limit act view)
+      (ssk k) (sik k).
+  Proof.
+    intros Hnd n c t e pi Hop Hcrit Hpi Hpok Hrv.
+    apply reached_rounds.
+    exact (selector_reached k Hnd (length pi) pi c (le_n _) Hpok
+             (ex_intro _ n (ex_intro _ t (ex_intro _ e (conj Hop Hcrit)))) Hpi Hrv).
+  Qed.
+
+  (* THE CLOCK IS PUBLIC: the design's latency is the one the attacker
+     computes from what it sees. *)
+  Theorem L_is_public :
+    Definitions.L ctx cost_limit act input resp ss0 = L_pub ctx cost_limit act view.
+  Proof.
+    rewrite (L_pub_at_slot ctx cost_limit act a_idx view Halign).
+    exact (L_pub_correct ctx cost_limit act a_idx (recovered ctx cost_limit act view)
+             input resp ss0 Halign (proj2 (proj2 Hstart)) recovered_selectors
+             recovered_vals_sound).
+  Qed.
+End Settled.
+
+(* Every action has its row in the buffer table: the scheduler builds one per
+   action, in the action type's own order. *)
+Lemma act_slot_exists (ctx: TFSchedContext) (cost_limit: nat)
+    (act: tfs_action (tfs_schedule ctx cost_limit)) :
+  exists a_idx, act_idx_aligned ctx cost_limit act a_idx.
+Proof.
+  unfold act_idx_aligned.
+  assert (Hlt : @finite_index _ (tfs_spec_action_fin ctx) act
+                < length (buffer_needs ctx cost_limit)).
+  { unfold buffer_needs. cbv zeta.
+    rewrite map_length, combine_length, !map_length, Nat.min_id.
+    apply nth_error_Some. rewrite finite_surjective. discriminate. }
+  destruct (Vect.index_of_nat_bounded Hlt) as [a_idx Ha].
+  exists a_idx. exact (Vect.index_to_nat_of_nat _ _ Ha).
+Qed.

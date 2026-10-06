@@ -14,7 +14,7 @@ Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
 Require Import Trustformer.Theorems.SchedulerSimulation.
 Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
-Require Import Trustformer.Theorems.IPR.
+Require Import Trustformer.Declassification.PacketLemmas.
 
 Require Import Coq.Lists.List.
 Require Import Lia.
@@ -23,24 +23,56 @@ Import ListNotations.
 (* [DFG_Resize] takes its source width from the argument node, while
    [DFG_Unary (tf_resize source_size)] carries it explicitly; both encodings
    occur, and both are widening exactly when the source width is not larger. *)
-Definition widen_rule {s i o p} : decl_rule s i o p :=
-  fun dfg =>
-    flat_map
-      (fun n =>
-         let dflt := {| nid := 0; op := DFG_Empty; sz := 0 |} in
-         let nd := nth n (graph dfg) dflt in
-         let keep arg source_size :=
-           if Nat.leb source_size (sz nd)
-           then [ {| di_target := arg; di_sources := [n]; di_guard := [];
-                     (* widening pads at the top, so the operand is the low bits *)
-                     di_extract := fun vs => firstn source_size (nth 0 vs []) |} ]
-           else [] in
-         match op nd with
-         | DFG_Resize arg => keep arg (sz (nth arg (graph dfg) dflt))
-         | DFG_Unary (tf_resize source_size) arg => keep arg source_size
-         | _ => []
-         end)
-      (List.seq 1 (length (graph dfg) - 1)).
+Definition widen_rule {s i o p} (dfg: @dfg_state_t s i o p) : list decl_instance :=
+  flat_map
+    (fun n =>
+       let dflt := {| nid := 0; op := DFG_Empty; sz := 0 |} in
+       let nd := nth n (graph dfg) dflt in
+       let keep arg source_size :=
+         if Nat.leb source_size (sz nd)
+         then [ {| di_target := arg; di_sources := [n]; di_guard := [] |} ]
+         else [] in
+       match op nd with
+       | DFG_Resize arg => keep arg (sz (nth arg (graph dfg) dflt))
+       | DFG_Unary (tf_resize source_size) arg => keep arg source_size
+       | _ => []
+       end)
+    (List.seq 1 (length (graph dfg) - 1)).
+
+(* Widening pads at the top, so the operand is the node's low bits. *)
+Definition widen_extract {s i o p} (g: @dfg_state_t s i o p) (inst: decl_instance)
+    (w: valuation g) : bits_t (node_sz g (di_target inst)) :=
+  convert (w (nth 0 (di_sources inst) 0)).
+
+Lemma widen_packet_sound {s i o p} (g: @dfg_state_t s i o p) inst (val w: valuation g) :
+  well_sized g -> In inst (widen_rule g) -> consistent g val ->
+  guard_holds g val (di_guard inst) ->
+  (forall x, In x (di_sources inst) -> w x = val x) ->
+  val (di_target inst) = widen_extract g inst w.
+Proof.
+  intros Hws Hin Hcons _ Hagree.
+  unfold widen_rule in Hin. apply in_flat_map in Hin. destruct Hin as [n [_ Hi]].
+  specialize (Hws n). specialize (Hcons n). cbv zeta in Hi.
+  unfold widen_extract, consistent, well_sized, node_sz, node_at in *.
+  revert Hws Hcons Hi.
+  destruct (op (nth n (graph g) {| nid := 0; op := DFG_Empty; sz := 0 |}))
+    as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dp darg den
+       | sp stok sen | ja jb | ];
+    intros Hws Hcons Hi; try (cbn [List.In] in Hi; contradiction).
+  - destruct uop as [| src]; [ cbn [List.In] in Hi; contradiction | ].
+    destruct (Nat.leb src _) eqn:Hle; cbn [List.In] in Hi; [ | contradiction ].
+    destruct Hi as [<- | []]. cbn [di_target di_sources nth] in *.
+    rewrite (Hagree n (or_introl eq_refl)), Hcons. cbn [op1_bits].
+    subst src. rewrite convert_id.
+    symmetry. apply convert_widen_narrow. apply Nat.leb_le. exact Hle.
+  - destruct (Nat.leb _ _) eqn:Hle; cbn [List.In] in Hi; [ | contradiction ].
+    destruct Hi as [<- | []]. cbn [di_target di_sources nth] in *.
+    rewrite (Hagree n (or_introl eq_refl)), Hcons.
+    symmetry. apply convert_widen_narrow. apply Nat.leb_le. exact Hle.
+Qed.
+
+Definition widen_packet {s i o p} : decl_packet s i o p :=
+  {| dp_rule := widen_rule; dp_extract := widen_extract; dp_sound := widen_packet_sound |}.
 
 Section ConvertInj.
 
@@ -72,22 +104,6 @@ Section ConvertInj.
       exact (List.app_inv_tail _ _ _ Hc).
   Qed.
 
-
-  (* The truncation that undoes the widening, at the bit level. *)
-  Lemma convert_firstn (szA szB: nat) (x: bits_t szA) :
-    szA <= szB ->
-    firstn szA (vect_to_list (convert (szB := szB) x)) = vect_to_list x.
-  Proof.
-    intro Hle. unfold convert.
-    destruct (eq_dec szA szB) as [e | ne].
-    - destruct e.
-      rewrite firstn_all2 by (rewrite vect_to_list_length; lia). reflexivity.
-    - rewrite slice_to_list_widen by exact Hle.
-      rewrite firstn_app, vect_to_list_length.
-      rewrite firstn_all2 by (rewrite vect_to_list_length; lia).
-      replace (szA - szA) with 0 by lia. cbn [firstn].
-      apply app_nil_r.
-  Qed.
 End ConvertInj.
 
 Section Soundness.
@@ -152,8 +168,7 @@ Section Soundness.
                 = tf_op1 (tf_resize src) (node_ref_expr ctx cost_limit act a_idx arg)
               /\ nsz act arg = src
               /\ src <= nsz act n
-              /\ i = {| di_target := arg; di_sources := [n]; di_guard := [];
-                        di_extract := fun vs => firstn src (nth 0 vs []) |}
+              /\ i = {| di_target := arg; di_sources := [n]; di_guard := [] |}
               /\ (forall pi (s: sched_sys_state) (inp: sched_input_t),
                     rvalid act a_idx pi arg s inp = Bits.ones 1 ->
                     rvalid act a_idx pi n   s inp = Bits.ones 1)
@@ -233,88 +248,6 @@ Section Soundness.
                 (Hlift pi ss input Hv) (Hlift pi ss' input' Hv'))).
   Qed.
 
-  (* THE REVERSING FUNCTION IS CORRECT: widening pads at the top, so taking the
-     operand's own width off the bottom gives it back. *)
-  Theorem widen_rule_extracts (act: tfs_action sched) (a_idx: a_index)
-      (i: decl_instance) :
-    List.In i (widen_rule (build_dfg ctx act)) ->
-    instance_extracts ctx cost_limit act a_idx i.
-  Proof.
-    intro Hin.
-    destruct (widen_shape act a_idx i Hin)
-      as [n [arg [src [Hnre [Hsz [Hle [Hieq _]]]]]]]. subst i.
-    intros ss input _.
-    cbn [di_sources di_target di_extract]. cbn [map nth].
-    unfold nval. rewrite Hnre. cbn [tf_eval_expr]. rewrite Hsz.
-    symmetry. apply convert_firstn. exact Hle.
-  Qed.
-
-  (* THE SETTLEDNESS LIFT: the instance reads the widening, which is valid as
-     soon as its operand is -- [widen_shape]'s own lift. *)
-  Theorem widen_rule_lifts (act: tfs_action sched) (a_idx: a_index)
-      (i: decl_instance) :
-    List.In i (widen_rule (build_dfg ctx act)) ->
-    instance_in_range ctx cost_limit act i
-    /\ instance_guards_sized ctx cost_limit act i
-    /\ instance_lifts ctx cost_limit act a_idx i.
-  Proof.
-    unfold widen_rule. intro Hin.
-    apply in_flat_map in Hin. destruct Hin as [n [Hseq Hi]].
-    apply in_seq in Hseq. destruct Hseq as [Hn1 Hn2].
-    assert (Hlen : n < length (graph (build_dfg ctx act))) by lia.
-    cbv zeta in Hi.
-    (* both encodings name the operand and the node, and lift the same way *)
-    assert (Hcase : exists arg src,
-              1 <= arg /\ arg < n
-              /\ i = {| di_target := arg; di_sources := [n]; di_guard := [];
-                        di_extract := fun vs => firstn src (nth 0 vs []) |}
-              /\ (forall pi (s: sched_sys_state) (inp: sched_input_t),
-                    rvalid act a_idx pi arg s inp = Bits.ones 1 ->
-                    rvalid act a_idx pi n s inp = Bits.ones 1)).
-    { destruct (op (nth n (graph (build_dfg ctx act))
-                      {| nid := 0; op := DFG_Empty; sz := 0 |}))
-        as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dp darg den | sp stok sen | ja jb | ] eqn:Hop;
-        cbn [List.In] in Hi; try contradiction.
-      - destruct uop as [| src]; cbn [List.In] in Hi; try contradiction.
-        destruct (Nat.leb src (sz (nth n (graph (build_dfg ctx act))
-                                     {| nid := 0; op := DFG_Empty; sz := 0 |})))
-          eqn:Hle; cbn [List.In] in Hi; try contradiction.
-        destruct Hi as [Hi | []].
-        destruct (node_args_range ctx cost_limit act n Hn1 Hlen arg
-                    ltac:(unfold get_args; rewrite Hop; left; reflexivity))
-          as [Ha1 Ha2].
-        exists arg, src. split; [ exact Ha1 | split; [ exact Ha2 | split; [ exact (eq_sym Hi) | ] ] ].
-        intros pi s inp Hva.
-        exact (nrv_lift_unary ctx cost_limit act a_idx n (tf_resize src) arg pi
-                 s inp ltac:(unfold Definitions.node_op; rewrite Hop; reflexivity)
-                 Ha1 Hlen Hva).
-      - destruct (Nat.leb (sz (nth arg (graph (build_dfg ctx act))
-                                 {| nid := 0; op := DFG_Empty; sz := 0 |}))
-                    (sz (nth n (graph (build_dfg ctx act))
-                           {| nid := 0; op := DFG_Empty; sz := 0 |})))
-          eqn:Hle; cbn [List.In] in Hi; try contradiction.
-        destruct Hi as [Hi | []].
-        destruct (node_args_range ctx cost_limit act n Hn1 Hlen arg
-                    ltac:(unfold get_args; rewrite Hop; left; reflexivity))
-          as [Ha1 Ha2].
-        exists arg, (nsz act arg).
-        split; [ exact Ha1 | split; [ exact Ha2 | split; [ exact (eq_sym Hi) | ] ] ].
-        intros pi s inp Hva.
-        exact (nrv_lift_resize ctx cost_limit act a_idx n arg pi s inp
-                 ltac:(unfold Definitions.node_op; rewrite Hop; reflexivity)
-                 Ha1 Hlen Hva). }
-    destruct Hcase as [arg [src [Ha1 [Ha2 [Hieq Hlift]]]]]. subst i.
-    split; [ | split ].
-    - intros m Hm. cbn [di_target di_sources di_guard map List.app] in Hm.
-      destruct Hm as [<- | [<- | []]]; split; lia.
-    - (* the rule emits no guard *) intros l Hl. destruct Hl.
-    - intros ss input Hst.
-      cbn [di_target di_sources di_guard map] in Hst |- *.
-      split; [ intros c0 [] | ].
-      intros _ s Hs. destruct Hs as [<- | []].
-      destruct Hst as [pi [Hpi Hv]]. exists pi. split; [ exact Hpi | ].
-      exact (Hlift pi ss input Hv).
-  Qed.
 
 End Soundness.
 

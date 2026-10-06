@@ -1262,7 +1262,7 @@ Section SchedulerRoundTrip.
     (* the scheduled input carries the source's, plus the IP responses *)
     Hypothesis Hsin : forall v, sinput (inl v) = input v.
     (* The path condition of the ops being compiled, as the run sees it. *)
-    Definition guard_holds (en: list (nid_t * bool)) : Prop :=
+    Definition en_holds (en: list (nid_t * bool)) : Prop :=
       forall n b, In (n, b) en ->
         (b = true  -> eval1 (node_ref_expr act a_idx n) ss sinput <> Bits.zero) /\
         (b = false -> eval1 (node_ref_expr act a_idx n) ss sinput = Bits.zero).
@@ -1277,7 +1277,7 @@ Section SchedulerRoundTrip.
            {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p) ->
       (* only where the call FIRES: an untaken arm.s sample latches the wire
          the other arm drove, and says nothing *)
-      guard_holds en ->
+      en_holds en ->
       (* and the answer has been latched *)
       (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
       (fst ss).[tf_dfg_b a_idx n_idx]
@@ -1306,7 +1306,7 @@ Section SchedulerRoundTrip.
     (* A node's value is claimed under any path the run agrees with, at which
        its compiled validity reads ones: every sample it needs has latched. *)
     Definition vm_sem (vm: list (dvar * nid_t)) (sp: src_sys_state) : Prop :=
-      forall v n pi, In (v, n) vm -> guard_holds pi ->
+      forall v n pi, In (v, n) vm -> en_holds pi ->
         eval1 (snd (compile_dfg_expr_at ctx bneeds pi
                       (length (graph (build_dfg ctx act))) a_idx
                       (build_dfg ctx act) n (sample_bufs act a_idx))) ss sinput
@@ -1358,7 +1358,7 @@ Section SchedulerRoundTrip.
       wgmono s' F ->
       sem_inv s sp ->
       sem_inv s' sp
-      /\ (forall pi, guard_holds pi ->
+      /\ (forall pi, en_holds pi ->
             eval1 (snd (compile_dfg_expr_at ctx bneeds pi
                           (length (graph (build_dfg ctx act))) a_idx
                           (build_dfg ctx act) id (sample_bufs act a_idx))) ss sinput
@@ -1395,7 +1395,7 @@ Section SchedulerRoundTrip.
         wgmono s' F ->
         sem_inv s sp ->
         sem_inv s' sp
-        /\ (forall pi, guard_holds pi ->
+        /\ (forall pi, en_holds pi ->
               eval1 (snd (compile_dfg_expr_at ctx bneeds pi
                             (length (graph (build_dfg ctx act))) a_idx
                             (build_dfg ctx act) id (sample_bufs act a_idx)))
@@ -1741,7 +1741,7 @@ Section SchedulerRoundTrip.
             -- assert (Hz : tf_eval_expr ss_sz si_sz oo_sz (szB := 1)
                               (node_ref_expr act a_idx cid) ss sinput = Bits.zero)
                  by exact (proj1 (beq_dec_iff _ _ _) Eb).
-               assert (Hgpe : guard_holds ((cid, false) :: pi)).
+               assert (Hgpe : en_holds ((cid, false) :: pi)).
                { intros nn bb Hin. destruct Hin as [Heq | Hin].
                  - injection Heq as H1 H2; subst.
                    split; [ intro Hc; discriminate Hc | intros _; exact Hz ].
@@ -1750,7 +1750,7 @@ Section SchedulerRoundTrip.
             -- assert (Hnz : tf_eval_expr ss_sz si_sz oo_sz (szB := 1)
                                (node_ref_expr act a_idx cid) ss sinput <> Bits.zero).
                { intro Hc. rewrite Hc, beq_dec_refl in Eb. discriminate Eb. }
-               assert (Hgpt : guard_holds ((cid, true) :: pi)).
+               assert (Hgpt : en_holds ((cid, true) :: pi)).
                { intros nn bb Hin. destruct Hin as [Heq | Hin].
                  - injection Heq as H1 H2; subst.
                    split; [ intros _; exact Hnz | intro Hc; discriminate Hc ].
@@ -1791,14 +1791,14 @@ Section SchedulerRoundTrip.
       node_op act phi = DFG_Phi cond_id tv ev ->
       1 <= cond_id -> 1 <= tv -> 1 <= ev ->
       phi < length (graph (build_dfg ctx act)) ->
-      guard_holds pi ->
+      en_holds pi ->
       rvalid act a_idx pi phi ss sinput = Bits.ones 1 ->
       rvalid act a_idx pi cond_id ss sinput = Bits.ones 1
       /\ (b = false ->
-         exists pi', guard_holds pi'
+         exists pi', en_holds pi'
                      /\ rvalid act a_idx pi' tv ss sinput = Bits.ones 1)
       /\ (b = true ->
-         exists pi', guard_holds pi'
+         exists pi', en_holds pi'
                      /\ rvalid act a_idx pi' ev ss sinput = Bits.ones 1).
     Proof.
       intros Hb Hop Hc1 Ht1 He1 Hplen Hgp Hv.
@@ -1846,13 +1846,13 @@ Section SchedulerRoundTrip.
          = if b then tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E2 ss sinput
                 else tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E1 ss sinput) ->
       (* the source picks the same arm exactly where the condition reads valid *)
-      (forall pi, guard_holds pi ->
+      (forall pi, en_holds pi ->
          rvalid act a_idx pi cond_id ss sinput = Bits.ones 1 ->
          forall kk, src_get spf kk = if b then src_get spe kk else src_get spt kk) ->
       (* a key the two arms leave at ONE node carries no condition, and both
          arms hold its entry value *)
       (forall id, vt_opt = Some id -> ve_opt = Some id ->
-         forall pi, guard_holds pi ->
+         forall pi, en_holds pi ->
            rvalid act a_idx pi id ss sinput = Bits.ones 1 ->
            src_get spf k = (if b then src_get spe k else src_get spt k)) ->
       1 <= cond_id ->
@@ -1861,16 +1861,16 @@ Section SchedulerRoundTrip.
       (* only the SELECTED arm: an untaken arm.s call latches the wire the
          other arm drove, so its entries say nothing *)
       (b = false -> forall vt, vt_opt = Some vt ->
-         forall pi, guard_holds pi ->
+         forall pi, en_holds pi ->
            rvalid act a_idx pi vt ss sinput = Bits.ones 1 ->
            NV (dfg_var_size ctx k) vt = src_get spt k) ->
       (b = true  -> forall ve, ve_opt = Some ve ->
-         forall pi, guard_holds pi ->
+         forall pi, en_holds pi ->
            rvalid act a_idx pi ve ss sinput = Bits.ones 1 ->
            NV (dfg_var_size ctx k) ve = src_get spe k) ->
       (b = false -> vt_opt = None -> src_get spt k = src_get sp0 k) ->
       (b = true  -> ve_opt = None -> src_get spe k = src_get sp0 k) ->
-      forall fid pi, res = Some fid -> guard_holds pi ->
+      forall fid pi, res = Some fid -> en_holds pi ->
         rvalid act a_idx pi fid ss sinput = Bits.ones 1 ->
         NV (dfg_var_size ctx k) fid = src_get spf k.
     Proof.
@@ -1965,11 +1965,11 @@ Section SchedulerRoundTrip.
            (tf_expr_if (node_ref_expr act a_idx cond_id) E1 E2) ss sinput
          = if b then tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E2 ss sinput
                 else tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E1 ss sinput) ->
-      (forall pi, guard_holds pi ->
+      (forall pi, en_holds pi ->
          rvalid act a_idx pi cond_id ss sinput = Bits.ones 1 ->
          forall kk, src_get spf kk = if b then src_get spe kk else src_get spt kk) ->
       (forall kk (id: nid_t), In (kk, id) mt -> In (kk, id) me ->
-         forall pi, guard_holds pi ->
+         forall pi, en_holds pi ->
            rvalid act a_idx pi id ss sinput = Bits.ones 1 ->
            src_get spf kk = (if b then src_get spe kk else src_get spt kk)) ->
       1 <= cond_id ->
@@ -2013,7 +2013,7 @@ Section SchedulerRoundTrip.
               by exact (wgmono_trans s1 s' F
                           (merge_loop_gmono cond_id mt me rest
                              ((k0, final_id) :: acc) s1 fin s' Hrun) Hg').
-            assert (Hval : forall pi, guard_holds pi ->
+            assert (Hval : forall pi, en_holds pi ->
                       rvalid act a_idx pi final_id ss sinput = Bits.ones 1 ->
                       NV (dfg_var_size ctx k0) final_id = src_get spf k0).
             { intros pi Hgp Hv.
@@ -2053,11 +2053,11 @@ Section SchedulerRoundTrip.
            (tf_expr_if (node_ref_expr act a_idx cond_id) E1 E2) ss sinput
          = if b then tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E2 ss sinput
                 else tf_eval_expr ss_sz si_sz oo_sz (szB := szB) E1 ss sinput) ->
-      (forall pi, guard_holds pi ->
+      (forall pi, en_holds pi ->
          rvalid act a_idx pi cond_id ss sinput = Bits.ones 1 ->
          forall kk, src_get spf kk = if b then src_get spe kk else src_get spt kk) ->
       (forall kk (id: nid_t), In (kk, id) mt -> In (kk, id) me ->
-         forall pi, guard_holds pi ->
+         forall pi, en_holds pi ->
            rvalid act a_idx pi id ss sinput = Bits.ones 1 ->
            src_get spf kk = (if b then src_get spe kk else src_get spt kk)) ->
       (* a variable neither arm binds keeps its value whichever arm the SOURCE
@@ -2533,11 +2533,11 @@ Section SchedulerRoundTrip.
       0 < length (graph s) ->
       vm_frame (var_map s) sq ->
       (forall v2 n pi', In (v2, n) (var_map s) -> (n < B \/ vnode_at s n) ->
-         guard_holds pi' -> rvalid act a_idx pi' n ss sinput = Bits.ones 1 ->
+         en_holds pi' -> rvalid act a_idx pi' n ss sinput = Bits.ones 1 ->
          NV (dfg_var_size ctx v2) n = src_get sq v2) ->
       get_var ctx v s = (id, s') -> wgmono s' F ->
       (id < B \/ vnode_at s' id) ->
-      guard_holds pi -> rvalid act a_idx pi id ss sinput = Bits.ones 1 ->
+      en_holds pi -> rvalid act a_idx pi id ss sinput = Bits.ones 1 ->
       NV (dfg_var_size ctx v) id = src_get sq v.
     Proof.
       intros Hne Hfr Hvm Hgv Hg' Hlow Hgp Hv.
@@ -2554,11 +2554,11 @@ Section SchedulerRoundTrip.
       0 < length (graph s) -> winv s -> wvsz s -> B <= length (graph s) ->
       vm_frame (var_map s) sq ->
       (forall v2 n pi', In (v2, n) (var_map s) -> (n < B \/ vnode_at s n) ->
-         guard_holds pi' -> rvalid act a_idx pi' n ss sinput = Bits.ones 1 ->
+         en_holds pi' -> rvalid act a_idx pi' n ss sinput = Bits.ones 1 ->
          NV (dfg_var_size ctx v2) n = src_get sq v2) ->
       dataflow_expr ctx e sz s = (id, s') -> wgmono s' F ->
       (id < B \/ vnode_at s' id) ->
-      guard_holds pi -> rvalid act a_idx pi id ss sinput = Bits.ones 1 ->
+      en_holds pi -> rvalid act a_idx pi id ss sinput = Bits.ones 1 ->
       NV sz id = tf_eval_expr s_sz i_sz o_sz (szB := sz) e sq input.
     Proof.
       intros e sz s id s' B sq pi Hne Hinv Hvsz HB Hfr Hvm Hde Hg' Hlow Hgp Hv.
@@ -2698,7 +2698,7 @@ Section SchedulerRoundTrip.
     Qed.
 
     (* ================================================================= *)
-    (* Structural, and free of [guard_holds]: what the builder does to    *)
+    (* Structural, and free of [en_holds]: what the builder does to    *)
     (* [var_map] pins what the source does to the state.  Both arms of a  *)
     (* conditional have these, which is what breaks the circularity there.*)
     (* ================================================================= *)
@@ -2889,7 +2889,7 @@ Section SchedulerRoundTrip.
         B <= length (graph s) ->
         vm_frame (var_map s) sp ->
         (forall v n pi, In (v, n) (var_map s) -> (n < B \/ vnode_at s n) ->
-           guard_holds pi -> rvalid act a_idx pi n ss sinput = Bits.ones 1 ->
+           en_holds pi -> rvalid act a_idx pi n ss sinput = Bits.ones 1 ->
            NV (dfg_var_size ctx v) n = src_get sp v) ->
         let (u, s') := dataflow_ops ctx en ops s in
         wgmono s' F ->
@@ -2902,7 +2902,7 @@ Section SchedulerRoundTrip.
         (* and below the bound no call produced the binding, so its value needs
            no path condition *)
         /\ (forall v n pi, In (v, n) (var_map s') -> (n < B \/ vnode_at s' n) ->
-              guard_holds pi ->
+              en_holds pi ->
               rvalid act a_idx pi n ss sinput = Bits.ones 1 ->
               NV (dfg_var_size ctx v) n
               = src_get (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) ops sp input) v).
@@ -3290,7 +3290,7 @@ Section SchedulerRoundTrip.
         { intros v Hno. apply Hfr. intros n Hin. apply (Hno n).
           rewrite Hvms1. exact Hin. }
         assert (Hvm1 : forall v n pi, In (v, n) (var_map s1) ->
-                   (n < B \/ vnode_at s1 n) -> guard_holds pi ->
+                   (n < B \/ vnode_at s1 n) -> en_holds pi ->
                    rvalid act a_idx pi n ss sinput = Bits.ones 1 ->
                    NV (dfg_var_size ctx v) n = src_get sp v).
         { intros v n pi Hin Hlow Hgp Hv. rewrite Hvms1 in Hin.
@@ -3313,7 +3313,7 @@ Section SchedulerRoundTrip.
         { intros v Hno. apply Hfr. intros n Hin. apply (Hno n).
           rewrite HvmR. exact Hin. }
         assert (HvmR2 : forall v n pi, In (v, n) (var_map sR) ->
-                   (n < B \/ vnode_at sR n) -> guard_holds pi ->
+                   (n < B \/ vnode_at sR n) -> en_holds pi ->
                    rvalid act a_idx pi n ss sinput = Bits.ones 1 ->
                    NV (dfg_var_size ctx v) n = src_get sp v).
         { intros v n pi Hin Hlow Hgp Hv. rewrite HvmR in Hin.
@@ -3389,7 +3389,7 @@ Section SchedulerRoundTrip.
         0 < length (graph s) -> winv s -> wvsz s -> wfg s -> gpos s ->
         (forall x, In x (map fst en) -> wnidwf s x) ->
         (forall x, In x (map fst en) -> 1 <= x) ->
-        guard_holds en ->
+        en_holds en ->
         sem_inv s sp ->
         let (u, s') := dataflow_ops ctx en ops s in
         wgmono s' F -> sem_inv s' (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) ops sp input).
@@ -3643,7 +3643,7 @@ Section SchedulerRoundTrip.
             rewrite <- Hbsz, eval_svar_same.
             exact (Hrt n_idx ip stall_id en drive_id arg_id en
                      Hsmop Hsmdr Hdrop2 MdrSz Hgd Hreg). }
-          assert (Hg0 : guard_holds []) by (intros q bb []).
+          assert (Hg0 : en_holds []) by (intros q bb []).
           rewrite ops_run_call. split.
           * intros v n pi Hin Hgp Hv.
             destruct (Hminv v n Hin) as [[Hveq Hn] | [Hin0 Hnv]].
@@ -3839,7 +3839,7 @@ Section SchedulerRoundTrip.
            so neither arm's binding came from a call and both read the same *)
         assert (Hboth : forall kk (id: nid_t),
                   In (kk, id) (var_map s_then) -> In (kk, id) (var_map s_else) ->
-                  forall pi, guard_holds pi ->
+                  forall pi, en_holds pi ->
                     rvalid act a_idx pi id ss sinput = Bits.ones 1 ->
                   src_get (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) op1 sp input) kk
                   = src_get (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) op2 sp input) kk).
@@ -3875,7 +3875,7 @@ Section SchedulerRoundTrip.
           assert (Hnz : tf_eval_expr ss_sz si_sz oo_sz (szB := 1)
                           (node_ref_expr act a_idx cond_id) ss sinput <> Bits.zero)
             by (rewrite Hhw; exact ones1_neq_zero).
-          assert (Hgd_t : guard_holds ((cond_id, true) :: en)).
+          assert (Hgd_t : en_holds ((cond_id, true) :: en)).
           { intros n bb Hin. cbn [In] in Hin. destruct Hin as [Heq | Hin].
             - injection Heq as H1 H2; subst n; subst bb.
               split; [ intros _; exact Hnz | intro Hc; discriminate Hc ].
@@ -3921,7 +3921,7 @@ Section SchedulerRoundTrip.
           * intro Hc. discriminate Hc.
           * intro Hc. discriminate Hc.
         + (* the HARDWARE takes the ELSE arm *)
-          assert (Hgd_e : guard_holds ((cond_id, false) :: en)).
+          assert (Hgd_e : en_holds ((cond_id, false) :: en)).
           { intros n bb Hin. cbn [In] in Hin. destruct Hin as [Heq | Hin].
             - injection Heq as H1 H2; subst n; subst bb.
               split; [ intro Hc; discriminate Hc | intros _; exact Hhw ].
@@ -3995,7 +3995,7 @@ Section SchedulerRoundTrip.
        node_op act d = DFG_Drive p av en' ->
        sz (nth d (graph (build_dfg ctx act))
             {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p) ->
-       guard_holds act a_idx ss sinput en ->
+       en_holds act a_idx ss sinput en ->
        (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
        (fst ss).[tf_dfg_b a_idx n_idx]
        = convert (ip_fn (tfs_spec_ip ctx p)
@@ -4013,7 +4013,7 @@ Section SchedulerRoundTrip.
     (forall ov, (snd ss).[ov] = (snd sp).[ov]) ->
     let sp1 := tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act) sp input in
     (forall sv n pi, In (DFG_SVar sv, n) (var_map (build_dfg ctx act)) ->
-        guard_holds act a_idx ss sinput pi ->
+        en_holds act a_idx ss sinput pi ->
         eval1 (snd (compile_dfg_expr_at ctx bneeds pi
                       (length (graph (build_dfg ctx act))) a_idx
                       (build_dfg ctx act) n (sample_bufs act a_idx))) ss sinput
@@ -4024,7 +4024,7 @@ Section SchedulerRoundTrip.
           ss sinput
         = (fst sp1).[sv])
     /\ (forall ov n pi, In (DFG_OVar ov, n) (var_map (build_dfg ctx act)) ->
-        guard_holds act a_idx ss sinput pi ->
+        en_holds act a_idx ss sinput pi ->
         eval1 (snd (compile_dfg_expr_at ctx bneeds pi
                       (length (graph (build_dfg ctx act))) a_idx
                       (build_dfg ctx act) n (sample_bufs act a_idx))) ss sinput
@@ -4080,7 +4080,7 @@ Section SchedulerRoundTrip.
                         var_map := [] |} eq_refl)) as Hmain.
     rewrite Ed in Hmain.
     destruct (Hmain (wgmono_refl Fin)) as [Hsem Hfr].
-    assert (Hg0 : guard_holds act a_idx ss sinput []) by (intros q bb []).
+    assert (Hg0 : en_holds act a_idx ss sinput []) by (intros q bb []).
     cbv zeta. split; [ | split; [ | split ] ].
     - intros sv n pi Hin Hg Hv. rewrite Hvm in Hin.
       exact (Hsem (DFG_SVar sv) n pi Hin Hg Hv).
@@ -4119,10 +4119,10 @@ Section SchedulerRoundTrip.
       reflexivity.
   Qed.
 
-  (* [guard_holds] IS the compiled path condition being up. *)
+  (* [en_holds] IS the compiled path condition being up. *)
   Lemma guard_holds_gexpr (act: tfs_action sched) a_idx
         (ss: sched_sys_state) (sinput: sched_input_t) en :
-    guard_holds act a_idx ss sinput en ->
+    en_holds act a_idx ss sinput en ->
     eval1 (gexpr act a_idx (drive_sbufs act a_idx) en) ss sinput <> Bits.zero.
   Proof.
     intro Hgd. rewrite drive_sbufs_eq. apply guard_expr_ones.
@@ -4139,7 +4139,7 @@ Section SchedulerRoundTrip.
   Lemma gexpr_guard_holds (act: tfs_action sched) a_idx
         (ss: sched_sys_state) (sinput: sched_input_t) en :
     eval1 (gexpr act a_idx (drive_sbufs act a_idx) en) ss sinput <> Bits.zero ->
-    guard_holds act a_idx ss sinput en.
+    en_holds act a_idx ss sinput en.
   Proof.
     rewrite drive_sbufs_eq. intros Hnz c b Hin.
     pose proof (SchedulerSimulationLemmas.guard_expr_split ctx cost_limit act a_idx (sample_bufs act a_idx) en ss sinput
@@ -4163,7 +4163,7 @@ Section SchedulerRoundTrip.
   (* A guard that does NOT hold compiles to zero. *)
   Lemma guard_fails_gexpr (act: tfs_action sched) a_idx
         (ss: sched_sys_state) (sinput: sched_input_t) en :
-    ~ guard_holds act a_idx ss sinput en ->
+    ~ en_holds act a_idx ss sinput en ->
     eval1 (gexpr act a_idx (drive_sbufs act a_idx) en) ss sinput = Bits.zero.
   Proof.
     intro Hng.
@@ -4705,9 +4705,9 @@ Section SchedulerRoundTrip.
     (forall l, In l en ->
        eval1 (node_ref_valid act a_idx (fst l)) (run_n t act input resp ss0)
          (sched_input input (resp t)) = Bits.ones 1) ->
-    guard_holds act a_idx (run_n u act input resp ss0)
+    en_holds act a_idx (run_n u act input resp ss0)
       (sched_input input (resp u)) en ->
-    guard_holds act a_idx (run_n t act input resp ss0)
+    en_holds act a_idx (run_n t act input resp ss0)
       (sched_input input (resp t)) en.
   Proof.
     intros Halign Hz0 Hpre Htu Hrange Hval Hgu c b Hin.
@@ -4980,7 +4980,7 @@ Section SchedulerRoundTrip.
   (* Two calls in mutually exclusive branches never hold one port at once --
      now at the level of the RUN, with no assumption about when guards settle.
      A drive that pulses has had its guard's sources settle, and a settled
-     source reads the same at the end of the run, where [guard_holds] pins it. *)
+     source reads the same at the end of the run, where [en_holds] pins it. *)
   Lemma excl_drive_pulse_zero
         (act: tfs_action sched) a_idx (p: p_var) en_s mm arg_m en_m
         (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) u M :
@@ -4991,7 +4991,7 @@ Section SchedulerRoundTrip.
     u <= M ->
     node_op act mm = DFG_Drive p arg_m en_m ->
     guards_disjoint en_m en_s = true ->
-    guard_holds act a_idx (run_n M act input resp ss0)
+    en_holds act a_idx (run_n M act input resp ss0)
       (sched_input input (resp M)) en_s ->
     eval1 (drive_pulse act a_idx mm) (run_n u act input resp ss0)
       (sched_input input (resp u)) = Bits.zero.
@@ -5024,7 +5024,7 @@ Section SchedulerRoundTrip.
       by (unfold get_args; unfold Definitions.node_op in Hm; rewrite Hm; right;
           exact (in_map fst en_m (c1, b1) Hin1)).
     destruct (node_args_range act mm Hm1 Hmlen c1 Hlin) as [Hc1 Hc2].
-    (* ... so it reads the same at the end of the run, where [guard_holds] pins it *)
+    (* ... so it reads the same at the end of the run, where [en_holds] pins it *)
     pose proof (node_ref_stable_run act a_idx input resp ss0 c1 u M 1
                   Halign Hzv Hpre Hu ltac:(lia) Hcv) as Hst.
     destruct (Hgd c1 b2 Hin2) as [Ht Hf].
@@ -5437,7 +5437,7 @@ Section SchedulerRoundTrip.
     forall n_idx (p: p_var) tok en d j,
       node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
       sample_drive act (vreg_nid a_idx n_idx) = Some d ->
-      guard_holds act a_idx (run_n M act input resp ss0)
+      en_holds act a_idx (run_n M act input resp ss0)
         (sched_input input (resp M)) en ->
       j < M ->
       (fst (run_n j act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero ->
@@ -5459,7 +5459,7 @@ Section SchedulerRoundTrip.
         /\ j = t + ip_lat (tfs_ip sched p)
         (* and the guard still holds when the answer is latched: the sources
            were valid at [t] and validity is monotone *)
-        /\ guard_holds act a_idx (run_n j act input resp ss0)
+        /\ en_holds act a_idx (run_n j act input resp ss0)
              (sched_input input (resp j)) en.
 
   (* The one left, at the last cycle before the action reports done. *)
@@ -5730,7 +5730,7 @@ Section SchedulerRoundTrip.
     (forall i, 1 <= i <= M -> ~ done_set (run_n i act input resp ss0)) ->
     node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
     sample_drive act (vreg_nid a_idx n_idx) = Some d ->
-    guard_holds act a_idx (run_n M act input resp ss0)
+    en_holds act a_idx (run_n M act input resp ss0)
       (sched_input input (resp M)) en ->
     j < M ->
     (fst (run_n j act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero ->
@@ -5802,7 +5802,7 @@ Section SchedulerRoundTrip.
     node_op act d = DFG_Drive p av en' ->
     sz (nth d (graph (build_dfg ctx act))
          {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p) ->
-    guard_holds act a_idx (run_n M act input resp ss0)
+    en_holds act a_idx (run_n M act input resp ss0)
       (sched_input input (resp M)) en ->
     j < M ->
     (fst (run_n j act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero ->
@@ -5962,7 +5962,7 @@ Section SchedulerRoundTrip.
     node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
     sample_drive act (vreg_nid a_idx n_idx) = Some d ->
     node_op act d = DFG_Drive p av en' ->
-    guard_holds act a_idx (run_n M act input resp ss0)
+    en_holds act a_idx (run_n M act input resp ss0)
       (sched_input input (resp M)) en ->
     j < M ->
     (fst (run_n j act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero ->
@@ -6093,7 +6093,7 @@ Section SchedulerRoundTrip.
     node_op act d = DFG_Drive p av en' ->
     sz (nth d (graph (build_dfg ctx act))
          {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p) ->
-    guard_holds act a_idx (run_n M act input resp ss0)
+    en_holds act a_idx (run_n M act input resp ss0)
       (sched_input input (resp M)) en ->
     (fst (run_n M act input resp ss0)).[tf_dfg_b a_idx n_idx]
     = convert (ip_fn (tfs_spec_ip ctx p)
@@ -6522,7 +6522,7 @@ Section SchedulerRoundTrip.
             (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
          (run_n t act input resp ss0) (sched_input input (resp t)) = Bits.ones 1
     (* the pulse is the one part that needs the guard to have HELD *)
-    /\ (guard_holds act a_idx (run_n M act input resp ss0)
+    /\ (en_holds act a_idx (run_n M act input resp ss0)
           (sched_input input (resp M)) en ->
         eval1 (drive_pulse act a_idx d) (run_n t act input resp ss0)
           (sched_input input (resp t)) <> Bits.zero)
@@ -6851,7 +6851,7 @@ Section SchedulerRoundTrip.
           exact Hdv. }
     split; [ exact Hcg | split; [ exact Hvgate | split; [| split; [ exact Hdval | exact Hsrc ]]]].
     intro Hgd.
-    assert (Hgd_t : guard_holds act a_idx (run_n t act input resp ss0)
+    assert (Hgd_t : en_holds act a_idx (run_n t act input resp ss0)
                       (sched_input input (resp t)) en).
     { exact (guard_holds_earlier act a_idx input resp ss0 en t M
                Halign Hzv Hpre Htm
@@ -7207,7 +7207,7 @@ Section SchedulerRoundTrip.
     node_op act samp = DFG_Sample p tok en ->
     sample_drive act samp = Some d ->
     node_op act d = DFG_Drive p arg_d en ->
-    guard_holds act a_idx (run_n M act input resp ss0)
+    en_holds act a_idx (run_n M act input resp ss0)
       (sched_input input (resp M)) en ->
     chain_gate ctx (build_dfg ctx act) d = Some (aa, tok) ->
     eval1 (snd (compile_dfg_expr ctx bneeds
@@ -7867,7 +7867,7 @@ Section SchedulerRoundTrip.
     (forall i, 1 <= i <= k -> ~ done_set (run_n i act input resp ss0)) ->
     node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
     (fst (run_n k act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-    ~ guard_holds act a_idx (run_n k act input resp ss0)
+    ~ en_holds act a_idx (run_n k act input resp ss0)
         (sched_input input (resp k)) en ->
     (fst (run_n k act input resp ss0)).[tf_dfg_b a_idx n_idx] = Bits.zero.
   Proof.
@@ -7883,7 +7883,7 @@ Section SchedulerRoundTrip.
     destruct (sample_guard_rise act a_idx input resp ss0 k n_idx p tok en
                 Halign Hlen Hz0 Hpre Hsamp Hvk) as [j [Hjk [Hvdown [HvSj Hval]]]].
     (* the guard's literals read the same at the rise as at [k] *)
-    assert (Hngj : ~ guard_holds act a_idx (run_n j act input resp ss0)
+    assert (Hngj : ~ en_holds act a_idx (run_n j act input resp ss0)
                        (sched_input input (resp j)) en).
     { intro Hgj. apply Hngk. intros c b Hin.
       assert (Hclen : c < length (graph (build_dfg ctx act))).
@@ -8049,7 +8049,7 @@ Section SchedulerRoundTrip.
               sz (nth d (graph (build_dfg ctx act))
                    {| nid := 0; op := DFG_Empty; sz := 0 |})
                 = ip_req_sz (tfs_spec_ip ctx p) ->
-              guard_holds act a_idx ssM (sched_input input (resp M)) en ->
+              en_holds act a_idx ssM (sched_input input (resp M)) en ->
               (fst ssM).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
               (fst ssM).[tf_dfg_b a_idx n_idx]
               = convert (ip_fn (tfs_spec_ip ctx p)

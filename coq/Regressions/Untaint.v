@@ -64,7 +64,7 @@ End FunctionalSpecification.
 
 Section Contrast.
 
-    Definition mk_ctx (decls: list (decl_rule fs_states fs_inputs fs_outputs Empty_set))
+    Definition mk_ctx (decls: list (decl_packet fs_states fs_inputs fs_outputs Empty_set))
         : TFSchedContext := {|
         tfs_spec_states := fs_states;
         tfs_spec_states_fin := _;
@@ -90,7 +90,7 @@ Section Contrast.
     |}.
 
     Definition ctx_blackbox := mk_ctx [].
-    Definition ctx_whitebox := mk_ctx [neg_rule].
+    Definition ctx_whitebox := mk_ctx [neg_packet].
 
     (* Criticality is per phi OCCURRENCE, so the count is taken from the
        compiler's own diagnostic rather than from a per-node approximation. *)
@@ -209,7 +209,7 @@ End GuardedSpecification.
 
 Section GuardedContrast.
 
-    Definition mk_gctx (decls: list (decl_rule gs_states gs_inputs gs_outputs Empty_set))
+    Definition mk_gctx (decls: list (decl_packet gs_states gs_inputs gs_outputs Empty_set))
         : TFSchedContext := {|
         tfs_spec_states := gs_states;
         tfs_spec_states_fin := _;
@@ -238,12 +238,12 @@ Section GuardedContrast.
        the inner phi derivable from the published output -- but only under
        [(outer, true)].  Without a rule for [outer] the compiler never reaches
        that path. *)
-    Definition gctx_guarded := mk_gctx [phibranch_rule; phiconst_rule].
+    Definition gctx_guarded := mk_gctx [phibranch_packet; phiconst_packet].
 
     (* Publishing [!outer] declassifies the outer selector unconditionally, so
        the outer phi is non-critical, the path gains [(outer, true)], and the
        inner guard is then implied. *)
-    Definition gctx_open := mk_gctx [neg_rule; phibranch_rule; phiconst_rule].
+    Definition gctx_open := mk_gctx [neg_packet; phibranch_packet; phiconst_packet].
 
     (* Node 3 is the outer selector, node 5 the inner one.  The inner IS
        declassified -- under three different guards, none of which this

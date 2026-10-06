@@ -75,7 +75,7 @@ End Specification.
 
 Section Contrast.
 
-    Definition mk_rw (decls: list (decl_rule rw_states rw_inputs rw_outputs Empty_set))
+    Definition mk_rw (decls: list (decl_packet rw_states rw_inputs rw_outputs Empty_set))
       : TFSchedContext := {|
       tfs_spec_states := rw_states;
       tfs_spec_states_fin := _;
@@ -101,7 +101,7 @@ Section Contrast.
     |}.
 
     Definition rw_blackbox := mk_rw [].
-    Definition rw_whitebox := mk_rw [xor_rule; widen_rule].
+    Definition rw_whitebox := mk_rw [xor_packet; widen_packet].
 
     (* Both rules actually produce instances on this graph. *)
     Example rules_fire :

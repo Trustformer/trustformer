@@ -82,7 +82,7 @@ Section Taint.
 
   Definition decl_instances (dfg: dfg_state) : list decl_instance :=
     filter (fun i => declassifiable dfg (di_target i))
-           (flat_map (fun r => r dfg) (tfs_spec_decls ctx)).
+           (flat_map (fun r => dp_rule r dfg) (tfs_spec_decls ctx)).
 
   (* Only unconditional instances may seed the taint fold: a node that is
      derivable merely on some path is not unconditionally untainted. *)

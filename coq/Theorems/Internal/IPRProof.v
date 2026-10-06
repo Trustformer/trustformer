@@ -15,6 +15,7 @@ Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
 Require Import Trustformer.Theorems.SchedulerSimulation.
 Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
+Require Import Trustformer.Declassification.Recover.
 
 Require Import Coq.Lists.List.
 Require Import Coq.Arith.PeanoNat.
@@ -127,6 +128,15 @@ Qed.
 Lemma bit_of_to_list (b: bool) : vect_to_list (Definitions.bit_of b) = [b].
 Proof. destruct b; reflexivity. Qed.
 
+(* A one-bit node's value is the bit its condition reading names. *)
+Lemma bit_of_nonzero (f: forall w, bits_t w) (w: nat) (v: bits_t w) :
+  w = 1 -> f w = v -> f 1 = Definitions.bit_of (nonzero v).
+Proof.
+  intros -> <-.
+  destruct (SchedulerSimulationLemmas.bits1_cases (f 1)) as [Ho | Hz];
+    rewrite ?Ho, ?Hz; reflexivity.
+Qed.
+
 (* A conjunction over a list, read as booleans or as one-bit values. *)
 Lemma forallb_fold_and1 {A} (f: A -> bool) (g: A -> bits_t 1) (l: list A) :
   (forall a, List.In a l -> (f a = true <-> g a = Bits.ones 1)) ->
@@ -196,6 +206,7 @@ Section IPRProof.
   Local Notation vals_sound := (Definitions.vals_sound ctx cost_limit).
   Local Notation selectors_extractable :=
     (Definitions.selectors_extractable ctx cost_limit).
+  Local Notation path_ok := (Definitions.path_ok ctx cost_limit).
   Local Notation gate_bufs := (Definitions.gate_bufs ctx cost_limit).
   Local Notation slot_gate := (Definitions.slot_gate ctx cost_limit).
   Local Notation slot_step := (Definitions.slot_step ctx cost_limit).
@@ -204,7 +215,7 @@ Section IPRProof.
   Local Notation srun := (Definitions.srun ctx cost_limit).
   Local Notation adone := (Definitions.adone ctx cost_limit).
   Local Notation pdone_test := (Definitions.pdone_test ctx cost_limit).
-  Local Notation L_pub := (Definitions.L_pub ctx cost_limit).
+  Local Notation L_pub_at := (Definitions.L_pub_at ctx cost_limit).
 
   Local Notation sched := (tfs_schedule ctx cost_limit).
   Local Notation s_var := (tfs_spec_states ctx).
@@ -603,11 +614,11 @@ Section IPRProof.
       apply (proj2 (beq_dec_iff _ _ _)). cbn [fst snd]. exact (H c b Hin).
   Qed.
 
-  (* [pi_holds] is the scheduler's [guard_holds], read at one bit. *)
+  (* [pi_holds] is the scheduler's [en_holds], read at one bit. *)
   Lemma pi_holds_guard (act: tfs_action sched) (a_idx: a_index)
       (input: sched_input_t) (en: list lit) (ss: sched_sys_state) :
     pi_holds act a_idx input en ss ->
-    SchedulerRoundTrip.guard_holds ctx cost_limit act a_idx ss input en.
+    SchedulerRoundTrip.en_holds ctx cost_limit act a_idx ss input en.
   Proof.
     intros H c b Hin. specialize (H c b Hin).
     unfold Definitions.nval, bit_of in H. split.
@@ -617,7 +628,7 @@ Section IPRProof.
 
   Lemma guard_pi_holds (act: tfs_action sched) (a_idx: a_index)
       (input: sched_input_t) (en: list lit) (ss: sched_sys_state) :
-    SchedulerRoundTrip.guard_holds ctx cost_limit act a_idx ss input en ->
+    SchedulerRoundTrip.en_holds ctx cost_limit act a_idx ss input en ->
     pi_holds act a_idx input en ss.
   Proof.
     intros H c b Hin. destruct (H c b Hin) as [Ht Hf].
@@ -1660,7 +1671,7 @@ Section IPRProof.
   Qed.
 
   (* Every pre-done cycle owes the round trip, and pays.  The four parts come
-     from four scheduler lemmas; [pi_holds] and the scheduler's [guard_holds]
+     from four scheduler lemmas; [pi_holds] and the scheduler's [en_holds]
      are the same condition read at one bit. *)
   Lemma settled_run (act: tfs_action sched) (a_idx: a_index)
       (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) k :
@@ -2772,7 +2783,7 @@ Section IPRProof.
      [compile_subst]'s: the reference keeps the sample buffers, so a table the
      gate is read against must keep them at every id the walk reaches. *)
   Definition avalid_agrees (act: tfs_action sched) (a_idx: a_index)
-      (vals: nid_t -> option (list bool)) (vv: vvec)
+      (vals: known (build_dfg ctx act)) (vv: vvec)
       (ss: sched_sys_state) (input: sched_input_t)
       (bufs: list (nid_t * (nat * sz_t))) : Prop :=
     forall fuel (pi: list lit) n,
@@ -2785,6 +2796,7 @@ Section IPRProof.
          BitsToLists.list_assoc (sample_bufs ctx cost_limit act a_idx) x
            = Some (m, msz)) ->
       pi_holds act a_idx input pi ss ->
+      path_ok act a_idx ss input pi ->
       1 <= n ->
       n < length (graph (build_dfg ctx act)) ->
       n < fuel ->
@@ -2793,7 +2805,7 @@ Section IPRProof.
                          (build_dfg ctx act) n bufs)) ss input = Bits.ones 1).
 
   Theorem avalid_correct (act: tfs_action sched) (a_idx: a_index)
-      (vals: nid_t -> option (list bool)) (vv: vvec)
+      (vals: known (build_dfg ctx act)) (vv: vvec)
       (ss: sched_sys_state) (input: sched_input_t)
       (bufs: list (nid_t * (nat * sz_t))) :
     act_idx_aligned ctx cost_limit act a_idx ->
@@ -2808,19 +2820,20 @@ Section IPRProof.
   Proof.
     intros Halign Hvs Hrf Hsub Hvv Hvals Hsel fuel.
     induction fuel as [| fuel IH];
-      intros pi n Hsam_sub Hsam_same Hpi Hn1 Hnlen Hnfuel; [ lia | ].
+      intros pi n Hsam_sub Hsam_same Hpi Hpok Hn1 Hnlen Hnfuel; [ lia | ].
     (* the recursive step, at the ids this node can reach *)
     assert (Hone : forall x p, 1 <= x -> x < n ->
               pi_holds act a_idx input p ss ->
+              path_ok act a_idx ss input p ->
               (avalid act vals vv bufs fuel p x = true
                <-> eval1 (snd (compile_dfg_expr_at ctx bneeds p fuel a_idx
                                  (build_dfg ctx act) x bufs)) ss input
                    = Bits.ones 1))
-      by (intros x p Hx1 Hx2 Hp;
+      by (intros x p Hx1 Hx2 Hp Hpo;
           exact (IH p x
                    ltac:(intros y Hy; exact (Hsam_sub y ltac:(lia)))
                    ltac:(intros y my mszy Hy; exact (Hsam_same y my mszy ltac:(lia)))
-                   Hp Hx1 ltac:(lia) ltac:(lia))).
+                   Hp Hpo Hx1 ltac:(lia) ltac:(lia))).
     destruct (BitsToLists.list_assoc bufs n) as [[j jsz] |] eqn:Hla.
     { destruct (buf_slot_indexed act a_idx bufs n j jsz Halign Hsub Hla)
         as [n_idx Hidx].
@@ -2852,7 +2865,7 @@ Section IPRProof.
         as [Ha1 Ha2].
       destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                   arg bufs) as [ae ve] eqn:E1.
-      pose proof (Hone arg pi Ha1 Ha2 Hpi) as Ha. rewrite E1 in Ha.
+      pose proof (Hone arg pi Ha1 Ha2 Hpi Hpok) as Ha. rewrite E1 in Ha.
       cbn [snd] in Ha |- *. exact Ha.
     - destruct (Hrange a1 ltac:(unfold get_args; rewrite Hop; left; reflexivity))
         as [Hb1 Hb2].
@@ -2862,15 +2875,15 @@ Section IPRProof.
                   a1 bufs) as [a1e v1e] eqn:E1.
       destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                   a2 bufs) as [a2e v2e] eqn:E2.
-      pose proof (Hone a1 pi Hb1 Hb2 Hpi) as Hx1. rewrite E1 in Hx1.
-      pose proof (Hone a2 pi Hd1 Hd2 Hpi) as Hx2. rewrite E2 in Hx2.
+      pose proof (Hone a1 pi Hb1 Hb2 Hpi Hpok) as Hx1. rewrite E1 in Hx1.
+      pose proof (Hone a2 pi Hd1 Hd2 Hpi Hpok) as Hx2. rewrite E2 in Hx2.
       cbn [snd] in Hx1, Hx2 |- *. rewrite valid_and_eval.
       exact (and1_iff _ _ _ _ Hx1 Hx2).
     - destruct (Hrange arg ltac:(unfold get_args; rewrite Hop; left; reflexivity))
         as [Ha1 Ha2].
       destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                   arg bufs) as [ae ve] eqn:E1.
-      pose proof (Hone arg pi Ha1 Ha2 Hpi) as Ha. rewrite E1 in Ha.
+      pose proof (Hone arg pi Ha1 Ha2 Hpi Hpok) as Ha. rewrite E1 in Ha.
       cbn [snd] in Ha |- *. exact Ha.
     - (* a phi: critical reads both arms, selecting reads the condition *)
       destruct (Hrange cnd ltac:(unfold get_args; rewrite Hop; left; reflexivity))
@@ -2890,9 +2903,9 @@ Section IPRProof.
                     tid bufs) as [te tv] eqn:Et.
         destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                     eid bufs) as [ee ev] eqn:Ee.
-        pose proof (Hone cnd pi Hc1 Hc2 Hpi) as Hc. rewrite Ec in Hc.
-        pose proof (Hone tid pi Ht1 Ht2 Hpi) as Ht. rewrite Et in Ht.
-        pose proof (Hone eid pi He1 He2 Hpi) as He. rewrite Ee in He.
+        pose proof (Hone cnd pi Hc1 Hc2 Hpi Hpok) as Hc. rewrite Ec in Hc.
+        pose proof (Hone tid pi Ht1 Ht2 Hpi Hpok) as Ht. rewrite Et in Ht.
+        pose proof (Hone eid pi He1 He2 Hpi Hpok) as He. rewrite Ee in He.
         cbn [snd] in Hc, Ht, He |- *. rewrite !valid_and_eval.
         exact (and1_iff _ _ _ _ (and1_iff _ _ _ _ Ht He) Hc).
       + destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
@@ -2901,7 +2914,7 @@ Section IPRProof.
                     (build_dfg ctx act) tid bufs) as [te tv] eqn:Et.
         destruct (compile_dfg_expr_at ctx bneeds ((cnd, false) :: pi) fuel a_idx
                     (build_dfg ctx act) eid bufs) as [ee ev] eqn:Ee.
-        pose proof (Hone cnd pi Hc1 Hc2 Hpi) as Hc. rewrite Ec in Hc.
+        pose proof (Hone cnd pi Hc1 Hc2 Hpi Hpok) as Hc. rewrite Ec in Hc.
         cbn [snd] in Hc |- *. rewrite valid_and_eval.
         destruct (avalid act vals vv bufs fuel pi cnd) eqn:Hav; cbn [andb].
         * (* the condition has settled, so the arm it names is the one read *)
@@ -2934,18 +2947,24 @@ Section IPRProof.
                      Hc1 Hclen ltac:(lia) Hvalc). }
           destruct (Hsel n cnd tid eid pi
                       ltac:(unfold Definitions.node_op; rewrite Hop; reflexivity)
-                      Hcrit Hpi Hrvc) as [b Hb].
-          rewrite Hb.
-          pose proof (Hvals cnd [b] pi Hb Hpi Hrvc) as Hcl. rewrite Hcsz in Hcl.
+                      Hcrit Hpi Hpok Hrvc) as [v Hb].
+          rewrite Hb. cbn beta iota.
+          pose proof (Hvals cnd v pi Hb Hpi Hrvc) as Hcl.
+          remember (nonzero v) as b eqn:Hbdef.
           assert (Hbv : nval ctx cost_limit act a_idx ss input 1 cnd
                         = Definitions.bit_of b).
-          { apply (vect_to_list_inj bool 1).
-            rewrite Hcl, bit_of_to_list. reflexivity. }
+          { subst b.
+            exact (bit_of_nonzero
+                     (fun w => nval ctx cost_limit act a_idx ss input w cnd)
+                     _ v Hcsz Hcl). }
           assert (Hce : eval1 ce ss input = Definitions.bit_of b).
           { rewrite S1. unfold nval, node_ref_expr in Hbv. exact Hbv. }
           (* the arm the condition names is read under the extended path, and
              that path holds: [b] IS the condition's bit *)
           pose proof (pi_holds_cons act a_idx input cnd b pi ss Hpi Hbv) as Hpib.
+          assert (Hpokb : path_ok act a_idx ss input ((cnd, b) :: pi)).
+          { split; [ exact Hpok | split; [ | split; [ exact Hpi | exact Hrvc ] ] ].
+            exists n, tid, eid. split; [ unfold Definitions.node_op; exact Hop | exact Hcrit ]. }
           assert (Hcase : (tv = tf_const 1 /\ ev = tf_const 1)
                           \/ valid_expr_if ctx bneeds ce tv ev
                              = tf_expr_if ce tv ev).
@@ -2960,10 +2979,10 @@ Section IPRProof.
              rewrite Htc, Hec. cbn [valid_expr_if].
              split; [ intros _; reflexivity | intros _ ].
              destruct b.
-             ++ pose proof (Hone tid ((cnd, true) :: pi) Ht1 Ht2 Hpib) as Ht.
+             ++ pose proof (Hone tid ((cnd, true) :: pi) Ht1 Ht2 Hpib Hpokb) as Ht.
                 rewrite Et in Ht. cbn [snd] in Ht. apply Ht.
                 rewrite Htc. reflexivity.
-             ++ pose proof (Hone eid ((cnd, false) :: pi) He1 He2 Hpib) as He.
+             ++ pose proof (Hone eid ((cnd, false) :: pi) He1 He2 Hpib Hpokb) as He.
                 rewrite Ee in He. cbn [snd] in He. apply He.
                 rewrite Hec. reflexivity.
           -- rewrite Hcs. cbn [tf_eval_expr]. rewrite Hce.
@@ -2974,14 +2993,14 @@ Section IPRProof.
                 end.
                 ** exfalso. apply beq_dec_iff in Hbd.
                    exact (ones1_neq_zero Hbd).
-                ** pose proof (Hone tid ((cnd, true) :: pi) Ht1 Ht2 Hpib) as Ht.
+                ** pose proof (Hone tid ((cnd, true) :: pi) Ht1 Ht2 Hpib Hpokb) as Ht.
                    rewrite Et in Ht. cbn [snd] in Ht. exact Ht.
              ++ match goal with
                 | |- context [@beq_dec ?T ?E ?a ?z] =>
                     replace (@beq_dec T E a z) with true
                       by (symmetry; apply beq_dec_iff; reflexivity)
                 end.
-                pose proof (Hone eid ((cnd, false) :: pi) He1 He2 Hpib) as He.
+                pose proof (Hone eid ((cnd, false) :: pi) He1 He2 Hpib Hpokb) as He.
                 rewrite Ee in He. cbn [snd] in He. exact He.
         * (* the condition has not settled, and nothing downstream has *)
           assert (Hcz : eval1 cv ss input = Bits.zero).
@@ -2995,7 +3014,7 @@ Section IPRProof.
         as [Ha1 Ha2].
       destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                   sa bufs) as [ae ve] eqn:E1.
-      pose proof (Hone sa pi Ha1 Ha2 Hpi) as Ha. rewrite E1 in Ha.
+      pose proof (Hone sa pi Ha1 Ha2 Hpi Hpok) as Ha. rewrite E1 in Ha.
       cbn [snd] in Ha |- *. exact Ha.
     - (* a drive waits on its argument AND on every literal of its guard *)
       destruct (Hrange darg ltac:(unfold get_args; rewrite Hop; left; reflexivity))
@@ -3015,11 +3034,11 @@ Section IPRProof.
           cbn [fold_right]; [ exact Hb | ].
         rewrite valid_and_eval.
         destruct (Hr l (or_introl eq_refl)) as [Hl1 Hl2].
-        exact (and1_iff _ _ _ _ (Hone (fst l) pi Hl1 Hl2 Hpi)
+        exact (and1_iff _ _ _ _ (Hone (fst l) pi Hl1 Hl2 Hpi Hpok)
                  (IHgs bb base ltac:(intros l' Hl'; apply Hr; right; exact Hl') Hb)). }
       destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                   darg bufs) as [ae ve] eqn:E1.
-      pose proof (Hone darg pi Ha1 Ha2 Hpi) as Ha. rewrite E1 in Ha.
+      pose proof (Hone darg pi Ha1 Ha2 Hpi Hpok) as Ha. rewrite E1 in Ha.
       cbn [snd] in Ha |- *.
       apply Hfold; [ | exact Ha ].
       intros l Hl. apply Hrange.
@@ -3028,7 +3047,7 @@ Section IPRProof.
         as [Ha1 Ha2].
       destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                   stok bufs) as [ae ve] eqn:E1.
-      pose proof (Hone stok pi Ha1 Ha2 Hpi) as Ha. rewrite E1 in Ha.
+      pose proof (Hone stok pi Ha1 Ha2 Hpi Hpok) as Ha. rewrite E1 in Ha.
       cbn [snd] in Ha |- *. exact Ha.
     - destruct (Hrange ja ltac:(unfold get_args; rewrite Hop; left; reflexivity))
         as [Hja1 Hja2].
@@ -3038,8 +3057,8 @@ Section IPRProof.
                   ja bufs) as [ae ve] eqn:E1.
       destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
                   jb bufs) as [be vb] eqn:E2.
-      pose proof (Hone ja pi Hja1 Hja2 Hpi) as Hxa. rewrite E1 in Hxa.
-      pose proof (Hone jb pi Hjb1 Hjb2 Hpi) as Hxb. rewrite E2 in Hxb.
+      pose proof (Hone ja pi Hja1 Hja2 Hpi Hpok) as Hxa. rewrite E1 in Hxa.
+      pose proof (Hone jb pi Hjb1 Hjb2 Hpi Hpok) as Hxb. rewrite E2 in Hxb.
       cbn [snd] in Hxa, Hxb |- *. rewrite valid_and_eval.
       exact (and1_iff _ _ _ _ Hxa Hxb).
     - split; [ discriminate | intro H0 ].
@@ -3097,7 +3116,7 @@ Section IPRProof.
   (* Slot [n_idx] of a step is the step of slot [n_idx]: the shadow lists are
      indexed by the slot number, which is the entry's position. *)
   Lemma sstep_slot (act: tfs_action sched) (a_idx: a_index)
-      (vals: nid_t -> option (list bool)) (st: Definitions.sstate)
+      (vals: known (build_dfg ctx act)) (st: Definitions.sstate)
       (n_idx : Vect.index (length (nth (index_to_nat a_idx) bneeds []))) :
     slot_valid (fst (sstep act a_idx vals st)) (index_to_nat n_idx)
       = fst (slot_step act a_idx vals st
@@ -3137,7 +3156,7 @@ Section IPRProof.
      validity bits are the design's, and its counts are the stall counters.
      Values never enter, so this is the whole of what the latency reads. *)
   Theorem srun_matches (act: tfs_action sched) (a_idx: a_index)
-      (vals: nid_t -> option (list bool))
+      (vals: known (build_dfg ctx act))
       (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
     (forall x, Definitions.zeroed_at_start ctx cost_limit x ->
@@ -3238,7 +3257,7 @@ Section IPRProof.
                (fun e He => proj1 (proj1 (filter_In _ e _) He))
                Hvvm (Hvals k Hndk) (Hsel k Hndk)
                (length (graph (build_dfg ctx act))) [] _ Hsub1 Hsame1
-               (pi_holds_nil act a_idx _ _) Hn1 Hnlen Hnlen). }
+               (pi_holds_nil act a_idx _ _) I Hn1 Hnlen Hnlen). }
     (* the gate as the design's own zero test reads it *)
     assert (Hgz : (if beq_dec (eval1 (snd (compile_dfg_expr ctx bneeds
                         (length (graph (build_dfg ctx act))) a_idx
@@ -3340,7 +3359,7 @@ Section IPRProof.
   (* The done register is the AND-fold of the roots' validities, and [adone] is
      the same conjunction taken over booleans. *)
   Lemma adone_matches (act: tfs_action sched) (a_idx: a_index)
-      (vals: nid_t -> option (list bool))
+      (vals: known (build_dfg ctx act))
       (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) (k: nat) :
     act_idx_aligned ctx cost_limit act a_idx ->
     (forall x, Definitions.zeroed_at_start ctx cost_limit x ->
@@ -3387,7 +3406,7 @@ Section IPRProof.
                Halign Hvs Hrf (fun e He => He) Hvvm (Hvals k Hnd) (Hsel k Hnd)
                (length (graph (build_dfg ctx act))) [] r
                (fun x _ => Hsub1 x) (fun x m msz _ => Hsame1 x m msz)
-               (pi_holds_nil act a_idx _ _) Hr1 Hrlen Hrlen). }
+               (pi_holds_nil act a_idx _ _) I Hr1 Hrlen Hrlen). }
     unfold Definitions.adone, ss_done, done_set.
     change (ss_run (S k) act input resp ss0)
       with (ss_step act (ss_run k act input resp ss0)
@@ -3404,7 +3423,7 @@ Section IPRProof.
      and no IP answer -- only the action, its slot, and the values the
      declassification rules recover. *)
   Theorem L_pub_correct (act: tfs_action sched) (a_idx: a_index)
-      (vals: nid_t -> option (list bool))
+      (vals: known (build_dfg ctx act))
       (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
     (forall x, Definitions.zeroed_at_start ctx cost_limit x ->
@@ -3415,7 +3434,7 @@ Section IPRProof.
     (forall j, (forall i, 1 <= i <= j -> ~ ss_done (ss_run i act input resp ss0)) ->
        vals_sound act a_idx vals (ss_run j act input resp ss0)
          (sched_input ctx cost_limit input (resp j))) ->
-    L act input resp ss0 = L_pub act a_idx vals.
+    L act input resp ss0 = L_pub_at act a_idx vals.
   Proof.
     intros Halign Hz Hsel Hvals.
     unfold Definitions.L, Definitions.L_pub.
@@ -3449,7 +3468,7 @@ Section IPRProof.
   (* The completion cycle IS the public one: done at [L_pub], and at no cycle
      before it.  [Theorems/IPR.v] states the emulator over this. *)
   Corollary L_pub_first_done (act: tfs_action sched) (a_idx: a_index)
-      (vals: nid_t -> option (list bool))
+      (vals: known (build_dfg ctx act))
       (sp0: src_sys_state) (ss0: sched_sys_state)
       (input: input_t) (resp: nat -> resp_val) :
     act_idx_aligned ctx cost_limit act a_idx ->
@@ -3460,7 +3479,7 @@ Section IPRProof.
     (forall j, (forall i, 1 <= i <= j -> ~ ss_done (ss_run i act input resp ss0)) ->
        vals_sound act a_idx vals (ss_run j act input resp ss0)
          (sched_input ctx cost_limit input (resp j))) ->
-    first_done act input resp ss0 (L_pub act a_idx vals).
+    first_done act input resp ss0 (L_pub_at act a_idx vals).
   Proof.
     intros Halign Hstart Hsel Hvals.
     rewrite <- (L_pub_correct act a_idx vals input resp ss0 Halign

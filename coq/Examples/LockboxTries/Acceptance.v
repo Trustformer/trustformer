@@ -103,7 +103,7 @@ End Specification.
 Section Contexts.
 
     Definition mk_lb (ops: lb_action -> @tf_ops lb_states lb_inputs lb_outputs Empty_set)
-        (decls: list (decl_rule lb_states lb_inputs lb_outputs Empty_set))
+        (decls: list (decl_packet lb_states lb_inputs lb_outputs Empty_set))
       : TFSchedContext := {|
       tfs_spec_states := lb_states;
       tfs_spec_states_fin := _;
@@ -128,8 +128,8 @@ Section Contexts.
       tfs_spec_decls := decls
     |}.
 
-    Definition lb_rules : list (decl_rule lb_states lb_inputs lb_outputs Empty_set) :=
-      [neg_rule; phibranch_rule; phiconst_rule].
+    Definition lb_rules : list (decl_packet lb_states lb_inputs lb_outputs Empty_set) :=
+      [neg_packet; phibranch_packet; phiconst_packet].
 
     Definition ctx_A := mk_lb lb_secret_tries lb_rules.
     Definition ctx_B := mk_lb lb_public_tries lb_rules.
