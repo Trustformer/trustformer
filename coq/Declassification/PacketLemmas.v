@@ -22,10 +22,6 @@ Lemma convert_roundtrip {a b} (x: bits_t a) :
   a = b -> convert (szA := b) (szB := a) (convert (szB := b) x) = x.
 Proof. intros <-. rewrite !convert_id. reflexivity. Qed.
 
-Lemma convert_cast {a b} (x: bits_t a) (y: bits_t b) (e: a = b) :
-  convert (szB := b) x = y -> x = convert y.
-Proof. destruct e. rewrite !convert_id. auto. Qed.
-
 (* Widening pads at the top and narrowing drops it, so one list-level resize
    covers [convert] in both directions. *)
 Definition resize_bits (w: nat) (l: list bool) : list bool :=

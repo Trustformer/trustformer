@@ -290,28 +290,6 @@ Section SchedulerWorld.
     forall c b, List.In (c, b) pi ->
       nval act a_idx ss input 1 c = bit_of b.
 
-  (* Widths are the nodes' own declared widths throughout ([node_args_sz]), so
-     this is as strong as quantifying over all widths and follows from plain
-     equality of the observable outputs. *)
-  (* The public view over TWO runs: they agree on what an attacker drives or
-     observes and may differ in secret state AND inputs.  The value clauses are
-     gated on the node being VALID at the path it is read under, in both runs:
-     a sample reads a latch, and before that latch there is nothing to compare. *)
-  Definition pub_eq (act: tfs_action sched) (a_idx: a_index)
-      (input input': sched_input_t) (ss ss': sched_sys_state) : Prop :=
-    (forall v : i_var, tfs_spec_inputs_class ctx v = Public -> input (inl v) = input' (inl v))
-    /\ (forall o : o_var, tfs_spec_outputs_class ctx o = Public ->
-        (snd ss).[o] = (snd ss').[o])
-    /\ (forall (o: o_var) (r: nid_t) (pi: list lit),
-          tfs_spec_outputs_class ctx o = Public ->
-          List.In (DFG_OVar o, r) (var_map (build_dfg ctx act)) ->
-          pi_holds act a_idx input  pi ss  ->
-          pi_holds act a_idx input' pi ss' ->
-          rvalid act a_idx pi r ss  input  = Bits.ones 1 ->
-          rvalid act a_idx pi r ss' input' = Bits.ones 1 ->
-          nval act a_idx ss input (nsz act r) r
-          = nval act a_idx ss' input' (nsz act r) r).
-
   (* A node has SETTLED when its reference reads some path's validity as ones:
      every sample buffer it reads has latched, so its bits are a fact about the
      run rather than about a cycle. *)
@@ -320,30 +298,6 @@ Section SchedulerWorld.
     exists pi: list lit,
       pi_holds act a_idx input pi ss
       /\ rvalid act a_idx pi n ss input = Bits.ones 1.
-
-  (* The uniform user obligation on a single declassification instance: it is
-     [uncond_sound]'s premise plus the instance's own guard. *)
-  Definition instance_sound (act: tfs_action sched) (a_idx: a_index)
-      (input: sched_input_t) (i: decl_instance) : Prop :=
-    forall ss ss' input' (pi: list lit),
-      pub_eq act a_idx input input' ss ss' ->
-      pi_holds act a_idx input  (di_guard i) ss ->
-      pi_holds act a_idx input' (di_guard i) ss' ->
-      (* a source's value is given where the source is VALID, at the path it is
-         read under; the rule derives that from its own target's validity *)
-      (forall s (ps: list lit), List.In s (di_sources i) ->
-         pi_holds act a_idx input  ps ss  ->
-         pi_holds act a_idx input' ps ss' ->
-         rvalid act a_idx ps s ss  input  = Bits.ones 1 ->
-         rvalid act a_idx ps s ss' input' = Bits.ones 1 ->
-         nval act a_idx ss  input  (nsz act s) s
-         = nval act a_idx ss' input' (nsz act s) s) ->
-      pi_holds act a_idx input  pi ss  ->
-      pi_holds act a_idx input' pi ss' ->
-      rvalid act a_idx pi (di_target i) ss  input  = Bits.ones 1 ->
-      rvalid act a_idx pi (di_target i) ss' input' = Bits.ones 1 ->
-      nval act a_idx ss  input  (nsz act (di_target i)) (di_target i)
-      = nval act a_idx ss' input' (nsz act (di_target i)) (di_target i).
 
   Definition first_done (act: tfs_action sched) (input: input_t)
       (resp: nat -> resp_val) (ss0: sched_sys_state) (N: nat) : Prop :=
@@ -673,8 +627,7 @@ Section SchedulerWorld.
       eval1 (node_ref_valid act a_idx av) ss input = Bits.ones 1.
 
   (* And the guard's own sources: a latched sample read its guard from nodes
-     that had settled, which is what makes the two runs agree on whether the
-     guard held. *)
+     that had settled, so whether the guard held is fixed by settled values. *)
   Definition sample_guards_settled (act: tfs_action sched) (a_idx: a_index)
       (ss: sched_sys_state) (input: sched_input_t) : Prop :=
     forall n_idx p tok en,
@@ -692,60 +645,6 @@ Section SchedulerWorld.
     /\ samples_zeroed act a_idx ss input
     /\ sample_args_settled act a_idx ss input
     /\ sample_guards_settled act a_idx ss input.
-
-  (* Derivability carries the PATH its gate is read at, because a phi compiles
-     each arm under an extended path and that is where an arm's validity lives.
-     The value itself is path-free ([compile_fst_pi_irrel]).  The path must be
-     one the run TOOK: validity read off an arm the condition did not select
-     says nothing about that arm's value. *)
-  Definition derivable (act: tfs_action sched) (a_idx: a_index) (input: sched_input_t)
-      (n: nid_t) : Prop :=
-    forall ss ss' input' (pi: list lit),
-      pub_eq act a_idx input input' ss ss' ->
-      settled act a_idx ss  input  ->
-      settled act a_idx ss' input' ->
-      pi_holds act a_idx input  pi ss  ->
-      pi_holds act a_idx input' pi ss' ->
-      rvalid act a_idx pi n ss  input  = Bits.ones 1 ->
-      rvalid act a_idx pi n ss' input' = Bits.ones 1 ->
-      nval act a_idx ss input (nsz act n) n
-      = nval act a_idx ss' input' (nsz act n) n.
-
-  Definition uncond_sound (act: tfs_action sched) (a_idx: a_index)
-      (input: sched_input_t) : Prop :=
-    forall i,
-      List.In i (uncond_instances ctx (build_dfg ctx act)) ->
-      (forall s, List.In s (di_sources i) -> derivable act a_idx input s) ->
-      derivable act a_idx input (di_target i).
-
-  (* Guarded derivability, same shape as [derivable]: the second run's input is
-     quantified inside, and each run's guard is evaluated against its OWN
-     input. *)
-  Definition gderivable (act: tfs_action sched) (a_idx: a_index)
-      (input: sched_input_t) (g: list lit) (n: nid_t) : Prop :=
-    forall ss ss' input' (pi: list lit),
-      pub_eq act a_idx input input' ss ss' ->
-      settled act a_idx ss  input  ->
-      settled act a_idx ss' input' ->
-      pi_holds act a_idx input  g ss ->
-      pi_holds act a_idx input' g ss' ->
-      pi_holds act a_idx input  pi ss  ->
-      pi_holds act a_idx input' pi ss' ->
-      rvalid act a_idx pi n ss  input  = Bits.ones 1 ->
-      rvalid act a_idx pi n ss' input' = Bits.ones 1 ->
-      nval act a_idx ss  input  (nsz act n) n
-      = nval act a_idx ss' input' (nsz act n) n.
-
-  (* What the compiler's producer owes the proof: every fact it records is a
-     guarded derivability.  [gderivable] stays conjunctive, so a node derivable
-     on several paths gets one entry per path. *)
-  Definition base_sound (act: tfs_action sched) (a_idx: a_index)
-      (input: sched_input_t) (base: list gfact) : Prop :=
-    forall c g, List.In (c, g) base -> gderivable act a_idx input g c.
-
-  Definition decl_sound (act: tfs_action sched) (a_idx: a_index)
-      (input: sched_input_t) : Prop :=
-    base_sound act a_idx input (decl_facts ctx (build_dfg ctx act)).
 
   (* ================================================================ *)
   (* The confidentiality criterion, over the spec alone.                *)

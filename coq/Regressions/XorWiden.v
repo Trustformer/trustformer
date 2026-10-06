@@ -12,9 +12,6 @@ Require Import Trustformer.Semantics.
 Require Import Trustformer.DFG.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Show.
-Require Import Trustformer.Theorems.IPR.
-Require Import Trustformer.Theorems.Internal.IPRProof.
-Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Declassification.Xor.
 Require Import Trustformer.Declassification.Widening.
 
@@ -118,50 +115,4 @@ Section Contrast.
     Proof. vm_compute. reflexivity. Qed.
 
 End Contrast.
-
-Section Obligations.
-
-    (* No IP attached, so every node reads valid -- which is what the xor rule's
-       settledness obligation asks. *)
-    Lemma rw_xor_settled :
-      forall act a_idx, xor_settled rw_whitebox 10 act a_idx.
-    Proof.
-      intros act a_idx n a1 a2 Hop p ss inp _.
-      destruct (SchedulerRoundTrip.node_op_pos rw_whitebox 10 act n
-                  ltac:(rewrite Hop; discriminate)) as [Hn1 Hnlen].
-      exact (SchedulerRoundTrip.nrv_no_ips_range rw_whitebox 10 act a_idx
-               ltac:(intro x; destruct x) n p ss inp Hn1 Hnlen).
-    Qed.
-
-    Theorem rw_decls_sound :
-      forall act a_idx input, uncond_sound rw_whitebox 10 act a_idx input.
-    Proof.
-      intros act a_idx input.
-      apply (uncond_sound_of_instances rw_whitebox 10).
-      intros i Hi.
-      unfold uncond_instances, decl_instances in Hi.
-      apply filter_In in Hi. destruct Hi as [Hi _].
-      apply filter_In in Hi. destruct Hi as [Hi _].
-      apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
-      cbn in Hr. destruct Hr as [Hr | [Hr | []]]; subst r.
-      - exact (xor_rule_sound rw_whitebox 10 act a_idx input i Hi
-                 (rw_xor_settled act a_idx)).
-      - exact (widen_rule_sound rw_whitebox 10 act a_idx input i Hi).
-    Qed.
-
-    Theorem rw_decl_guard_sound :
-      forall act a_idx input, decl_sound rw_whitebox 10 act a_idx input.
-    Proof.
-      intros act a_idx input.
-      apply (decl_sound_of_instances rw_whitebox 10 rw_decls_sound).
-      intros i Hi. unfold decl_instances in Hi.
-      apply filter_In in Hi. destruct Hi as [Hi _].
-      apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
-      cbn in Hr. destruct Hr as [Hr | [Hr | []]]; subst r.
-      - exact (xor_rule_sound rw_whitebox 10 act a_idx input i Hi
-                 (rw_xor_settled act a_idx)).
-      - exact (widen_rule_sound rw_whitebox 10 act a_idx input i Hi).
-    Qed.
-
-End Obligations.
 

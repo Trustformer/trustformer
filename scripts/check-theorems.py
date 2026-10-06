@@ -42,21 +42,11 @@ HEADLINE = [
 
     ("the declassification rules are sound",
      "each rule widens what may be published; unsound means a real leak",
-     [("Trustformer.Declassification.Negation", "neg_rule_sound"),
-      ("Trustformer.Declassification.PhiBranch", "phibranch_rule_sound"),
-      ("Trustformer.Declassification.PhiConst", "phiconst_rule_sound"),
-      ("Trustformer.Declassification.Widening", "widen_rule_sound"),
-      ("Trustformer.Declassification.Xor", "xor_rule_sound"),
-      ("Trustformer.Declassification.Negation", "neg_rule_extracts"),
-      ("Trustformer.Declassification.PhiBranch", "phibranch_rule_extracts"),
-      ("Trustformer.Declassification.PhiConst", "phiconst_rule_extracts"),
-      ("Trustformer.Declassification.Widening", "widen_rule_extracts"),
-      ("Trustformer.Declassification.Xor", "xor_rule_extracts"),
-      ("Trustformer.Declassification.Negation", "neg_rule_lifts"),
-      ("Trustformer.Declassification.PhiBranch", "phibranch_rule_lifts"),
-      ("Trustformer.Declassification.PhiConst", "phiconst_rule_lifts"),
-      ("Trustformer.Declassification.Widening", "widen_rule_lifts"),
-      ("Trustformer.Declassification.Xor", "xor_rule_lifts")]),
+     [("Trustformer.Declassification.Negation", "neg_packet_sound"),
+      ("Trustformer.Declassification.PhiBranch", "phibranch_packet_sound"),
+      ("Trustformer.Declassification.PhiConst", "phiconst_packet_sound"),
+      ("Trustformer.Declassification.Widening", "widen_packet_sound"),
+      ("Trustformer.Declassification.Xor", "xor_packet_sound")]),
 ]
 
 CLOSED = "Closed under the global context"

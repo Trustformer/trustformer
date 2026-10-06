@@ -6,9 +6,6 @@ Require Import Trustformer.Semantics.
 Require Import Trustformer.DFG.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Show.
-Require Import Trustformer.Theorems.IPR.
-Require Import Trustformer.Theorems.Internal.IPRProof.
-Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Declassification.Negation.
 Require Import Trustformer.Declassification.PhiBranch.
 Require Import Trustformer.Declassification.PhiConst.
@@ -18,9 +15,8 @@ Import ListNotations.
 
 (* Contrast test for whitebox untainting: one specification, two contexts.  Bare,
    the phi on the secret is critical; with the negation rule it is not, the spec
-   already publishing `!secret` for the attacker to invert.  Shows what
-   `Taint.v` cannot -- that a rule changes the analysis and the design
-   still meets the IPR obligation. *)
+   already publishing `!secret` for the attacker to invert.  The timing
+   guarantee holds for both, with no further work. *)
 
 Section FunctionalSpecification.
 
@@ -128,41 +124,6 @@ Section Contrast.
 
 End Contrast.
 
-Section Obligation.
-
-    (* The declassification the whitebox context relies on is discharged by the
-       rule library, so the IPR theorems apply to the variable-latency design. *)
-    Theorem whitebox_decls_sound :
-      forall act a_idx input, uncond_sound ctx_whitebox 10 act a_idx input.
-    Proof.
-      intros act a_idx input.
-      apply (uncond_sound_of_instances ctx_whitebox 10).
-      intros i Hi.
-      unfold uncond_instances, decl_instances in Hi.
-      apply filter_In in Hi. destruct Hi as [Hi _].
-      apply filter_In in Hi. destruct Hi as [Hi _].
-      apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
-      cbn in Hr. destruct Hr as [Hr | []]. subst r.
-      exact (neg_rule_sound ctx_whitebox 10 act a_idx input i Hi).
-    Qed.
-
-    (* Same rule, guarded form: this is what the compiler's per-occurrence
-       criticality test consults. *)
-    Theorem whitebox_decl_guard_sound :
-      forall act a_idx input, decl_sound ctx_whitebox 10 act a_idx input.
-    Proof.
-      intros act a_idx input.
-      apply (decl_sound_of_instances ctx_whitebox 10 whitebox_decls_sound).
-      intros i Hi.
-      unfold decl_instances in Hi.
-      apply filter_In in Hi. destruct Hi as [Hi _].
-      apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
-      cbn in Hr. destruct Hr as [Hr | []]. subst r.
-      exact (neg_rule_sound ctx_whitebox 10 act a_idx input i Hi).
-    Qed.
-
-End Obligation.
-
 
 (* ==================================================================== *)
 (* A GUARDED declassification.  The inner selector is recoverable only    *)
@@ -265,52 +226,4 @@ Section GuardedContrast.
     Proof. vm_compute. reflexivity. Qed.
 
 End GuardedContrast.
-
-Section GuardedObligation.
-
-    (* No IP attached: nothing ever waits, so every node reads valid -- which is
-       what the phi rule's settledness obligation asks. *)
-    Lemma gopen_phibranch_settled :
-      forall act a_idx, phibranch_settled gctx_open 10 act a_idx.
-    Proof.
-      intros act a_idx n cnd tid eid Hop p ss inp _.
-      exact (SchedulerRoundTrip.nrv_no_ips gctx_open 10 act a_idx
-               ltac:(intro x; destruct x)
-               n p ss inp ltac:(rewrite Hop; discriminate)).
-    Qed.
-
-    Theorem gopen_decls_sound :
-      forall act a_idx input, uncond_sound gctx_open 10 act a_idx input.
-    Proof.
-      intros act a_idx input.
-      apply (uncond_sound_of_instances gctx_open 10).
-      intros i Hi.
-      unfold uncond_instances, decl_instances in Hi.
-      apply filter_In in Hi. destruct Hi as [Hi Hg].
-      assert (Hnil : di_guard i = [])
-        by (destruct (di_guard i); [ reflexivity | discriminate Hg ]).
-      apply filter_In in Hi. destruct Hi as [Hi _].
-      apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
-      cbn in Hr. destruct Hr as [Hr | [Hr | [Hr | []]]]; subst r.
-      - exact (neg_rule_sound gctx_open 10 act a_idx input i Hi).
-      - destruct (phibranch_guard_nonempty (build_dfg gctx_open act) i Hi Hnil).
-      - exact (phiconst_rule_sound gctx_open 10 act a_idx input i Hi).
-    Qed.
-
-    Theorem gopen_decl_guard_sound :
-      forall act a_idx input, decl_sound gctx_open 10 act a_idx input.
-    Proof.
-      intros act a_idx input.
-      apply (decl_sound_of_instances gctx_open 10 gopen_decls_sound).
-      intros i Hi. unfold decl_instances in Hi.
-      apply filter_In in Hi. destruct Hi as [Hi _].
-      apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
-      cbn in Hr. destruct Hr as [Hr | [Hr | [Hr | []]]]; subst r.
-      - exact (neg_rule_sound gctx_open 10 act a_idx input i Hi).
-      - exact (phibranch_rule_sound gctx_open 10 act a_idx input i Hi
-                 (gopen_phibranch_settled act a_idx)).
-      - exact (phiconst_rule_sound gctx_open 10 act a_idx input i Hi).
-    Qed.
-
-End GuardedObligation.
 

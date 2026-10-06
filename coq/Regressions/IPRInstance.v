@@ -16,6 +16,7 @@ Require Import Trustformer.Theorems.SchedulerSimulation.
 Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Theorems.IPR.
 Require Import Trustformer.Theorems.Internal.IPRProof.
+Require Trustformer.Declassification.Extract.
 
 Require Import Coq.Lists.List.
 Require Import Lia.
@@ -122,13 +123,9 @@ Section TheoremInstantiation.
 
   Definition reg_L_first_done := L_first_done tfs_ctx cost.
 
-  Definition reg_L_public := L_public tfs_ctx cost.
-
   Definition reg_emulator := emulator_correct_L tfs_ctx cost.
 
-  Definition reg_latency_from_outputs := latency_from_outputs tfs_ctx cost.
-
-  Definition reg_obs_eq_pub_eq := obs_eq_pub_eq tfs_ctx cost.
+  Definition reg_headline := IPR.emulator_correct tfs_ctx cost.
 
   (* This context attaches no IP, so the response stream is a function out of
      [Empty_set] and its datasheet obligation is vacuous. *)
@@ -159,41 +156,28 @@ Section TheoremInstantiation.
       = check_latency fs_check input no_resp ss0'.
   Proof.
     intros a_idx input sp0 sp0' ss0 ss0' Halign Hst Hst' Hpre Hpost.
-    (* this context supplies no declassification rules *)
-    assert (Hdecls : forall act a_idx' input',
-              uncond_sound tfs_ctx cost act a_idx' input').
-    { intros act a_idx' input' i Hi. cbn in Hi. destruct Hi. }
-    assert (Hdguard : forall act a_idx' input',
-              decl_sound tfs_ctx cost act a_idx' input').
-    { intros act a_idx' input'.
-      apply (decl_sound_of_instances tfs_ctx cost Hdecls).
-      intros i Hi. cbn in Hi. destruct Hi. }
-    (* the three V4 side conditions, at this context: no IP means no drive and
-       no guard, and no root is plumbing *)
-    assert (Hpl : plumbing_not_root tfs_ctx cost fs_check).
-    { intros n Hp Hin.
-      assert (Hall : forallb (fun m => negb (is_plumbing tfs_ctx cost fs_check m))
-                       (untainted_roots tfs_ctx (build_dfg tfs_ctx fs_check)) = true)
-        by (vm_compute; reflexivity).
-      rewrite forallb_forall in Hall.
-      pose proof (Hall n Hin) as H. rewrite Hp in H. discriminate. }
-    assert (Hdsz : drives_sized tfs_ctx cost fs_check)
-      by (intros n p; destruct p).
-    assert (Hgsz : guards_sized tfs_ctx cost fs_check)
-      by (intros n p; destruct p).
-    assert (Hlen : 1 < length (graph (build_dfg tfs_ctx fs_check)))
-      by (vm_compute; lia).
-    assert (Hipc : forall ss, Definitions.ip_contract tfs_ctx cost
-                     fs_check input no_resp ss)
+    (* this context attaches no IP, so the datasheet obligation is vacuous *)
+    assert (Hipc : forall ss, Definitions.ip_contract tfs_ctx cost fs_check input no_resp ss)
       by (intros ss p; destruct p).
-    (* Every input and output here is [Public], so these hypotheses are stronger
-       than [L_public] asks for.  Instantiating input' := input and weakening at
-       the use site keeps the regression's statement fixed. *)
-    exact (L_public tfs_ctx cost Hdecls Hdguard fs_check a_idx input input
-             no_resp no_resp sp0 sp0' ss0 ss0' Halign Hlen Hpl Hdsz Hgsz Hst Hst'
-             (Hipc ss0) (Hipc ss0')
-             (fun v _ => eq_refl)
-             (fun ov _ => Hpre ov) (fun ov _ => Hpost ov)).
+    (* both runs show the attacker the same view, so they finish together *)
+    assert (Hpre_eq : snd sp0 = snd sp0') by (apply equiv_eq; exact Hpre).
+    assert (Hpost_eq : snd (tf_ops_run (tfs_spec_states_size tfs_ctx)
+                              (tfs_spec_inputs_size tfs_ctx)
+                              (tfs_spec_outputs_size tfs_ctx)
+                              (tfs_spec_ip tfs_ctx)
+                              (tfs_spec_action_ops tfs_ctx fs_check) sp0 input)
+                       = snd (tf_ops_run (tfs_spec_states_size tfs_ctx)
+                              (tfs_spec_inputs_size tfs_ctx)
+                              (tfs_spec_outputs_size tfs_ctx)
+                              (tfs_spec_ip tfs_ctx)
+                              (tfs_spec_action_ops tfs_ctx fs_check) sp0' input))
+      by (apply equiv_eq; exact Hpost).
+    unfold check_latency.
+    rewrite (Extract.L_is_public tfs_ctx cost fs_check a_idx sp0 ss0 input no_resp
+               Halign Hst (Hipc ss0)),
+            (Extract.L_is_public tfs_ctx cost fs_check a_idx sp0' ss0' input no_resp
+               Halign Hst' (Hipc ss0')).
+    rewrite Hpre_eq, Hpost_eq. reflexivity.
   Qed.
 
 End TheoremInstantiation.

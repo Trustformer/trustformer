@@ -1047,7 +1047,7 @@ Section Settled.
     pose proof (Hout o r pi Hvm (pi_holds_guard ctx cost_limit act a_idx (sik k) pi (ssk k) Hpi) Hrv)
       as Ho.
     unfold nval, node_ref_expr, node_sz, node_at.
-    rewrite (pub_eq_root_width ctx cost_limit act o r Hvm), convert_id.
+    rewrite (root_width ctx cost_limit act o r Hvm), convert_id.
     symmetry. exact Ho.
   Qed.
 

@@ -6,9 +6,6 @@ Require Import Trustformer.Semantics.
 Require Import Trustformer.DFG.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Audit.
-Require Import Trustformer.Theorems.IPR.
-Require Import Trustformer.Theorems.Internal.IPRProof.
-Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Declassification.PhiConst.
 Require Import Trustformer.Declassification.PhiBranch.
 Require Import Trustformer.Examples.LockboxTries.Spec.
@@ -234,57 +231,6 @@ Section FigureB.
     Proof. vm_compute. reflexivity. Qed.
 
 End FigureB.
-
-(*
-    The declassifications fig:dfgB5 relies on are discharged by the rule
-    library, so the IPR theorems apply to the variable-latency lockbox.
- *)
-
-Section Obligation.
-
-    (* No IP attached: nothing ever waits, so every node reads valid -- which is
-       what the phi rule's settledness obligation asks. *)
-    Lemma ltt_phibranch_settled :
-      forall act a_idx, phibranch_settled ctxB_whitebox 10 act a_idx.
-    Proof.
-      intros act a_idx n cnd tid eid Hop p ss inp _.
-      exact (SchedulerRoundTrip.nrv_no_ips ctxB_whitebox 10 act a_idx ltac:(intro x; destruct x)
-               n p ss inp ltac:(rewrite Hop; discriminate)).
-    Qed.
-
-    Theorem lockboxB_uncond_sound :
-      forall act a_idx input, uncond_sound ctxB_whitebox 10 act a_idx input.
-    Proof.
-      intros act a_idx input.
-      apply (uncond_sound_of_instances ctxB_whitebox 10).
-      intros i Hi.
-      unfold uncond_instances, decl_instances in Hi.
-      apply filter_In in Hi. destruct Hi as [Hi Hg].
-      assert (Hnil : di_guard i = [])
-        by (destruct (di_guard i); [ reflexivity | discriminate Hg ]).
-      apply filter_In in Hi. destruct Hi as [Hi _].
-      apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
-      cbn in Hr. destruct Hr as [Hr | [Hr | []]]; subst r.
-      - exact (phiconst_rule_sound ctxB_whitebox 10 act a_idx input i Hi).
-      - destruct (phibranch_guard_nonempty (build_dfg ctxB_whitebox act) i Hi Hnil).
-    Qed.
-
-    Theorem lockboxB_decl_guard_sound :
-      forall act a_idx input, decl_sound ctxB_whitebox 10 act a_idx input.
-    Proof.
-      intros act a_idx input.
-      apply (decl_sound_of_instances ctxB_whitebox 10 lockboxB_uncond_sound).
-      intros i Hi.
-      unfold decl_instances in Hi.
-      apply filter_In in Hi. destruct Hi as [Hi _].
-      apply in_flat_map in Hi. destruct Hi as [r [Hr Hi]].
-      cbn in Hr. destruct Hr as [Hr | [Hr | []]]; subst r.
-      - exact (phiconst_rule_sound ctxB_whitebox 10 act a_idx input i Hi).
-      - exact (phibranch_rule_sound ctxB_whitebox 10 act a_idx input i Hi
-                 (ltt_phibranch_settled act a_idx)).
-    Qed.
-
-End Obligation.
 
 
 (* Cycle bounds: [action_bounds] reports a CIRCUIT's best and worst case, where
