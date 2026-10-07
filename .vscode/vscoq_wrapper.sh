@@ -6,4 +6,4 @@ VSCOQ_BIN="vscoqtop"
 CMD="$VSCOQ_BIN $@"
 
 cd "$SCRIPT_DIR/.."
-nix develop --override-input koika ../koika -c $CMD
+nix develop -c $CMD

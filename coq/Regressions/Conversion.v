@@ -1,0 +1,200 @@
+Require Import Koika.Frontend.
+Require Import Koika.Std.
+Require Koika.KoikaForm.Untyped.UntypedSemantics.
+Require Import Koika.KoikaForm.SimpleVal.
+
+Require Import Trustformer.Syntax.
+Require Import Trustformer.Semantics.
+Require Import Trustformer.Backend.Lowering.
+Require Import Trustformer.Contract.
+Require Import Trustformer.Scheduler.Schedule.
+
+Require Import Coq.Logic.EqdepFacts.
+Require Import Coq.Program.Equality.
+
+Require Import Hammer.Plugin.Hammer.
+Set Hammer GSMode 63.
+
+(* A negator at MISMATCHED widths -- 4-bit state, 6-bit input, 8-bit output --
+   pinning [synth_convert].  Four actions (nop, neg, read, write), triggered
+   through a command register whose first bit marks the command valid. *)
+
+Section FunctionalSpecification.
+
+    Inductive fs_action :=
+    | fs_act_nop
+    | fs_act_neg
+    | fs_act_read
+    | fs_act_write
+    .
+
+    Definition fs_action_encoding (a: fs_action) : bits_t 16 :=
+    match a with
+    | fs_act_nop => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0~0
+    | fs_act_neg => Ob~0~0~0~0~0~0~0~0~0~0~0~0~1~0~1~0
+    | fs_act_read => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~1~1~1
+    | fs_act_write => Ob~0~0~0~0~0~0~0~0~0~0~0~0~0~1~1~0
+    end.
+
+    Lemma fs_action_encoding_inj :
+        forall a1 a2,
+        fs_action_encoding a1 = fs_action_encoding a2 ->
+        a1 = a2.
+    Proof.
+        intros. unfold fs_action_encoding in H.
+        destruct a1; destruct a2; try reflexivity; try discriminate.
+    Qed.
+
+    Inductive fs_states :=
+    | fs_st_val
+    .
+
+    Inductive fs_inputs :=
+    | fs_in_val
+    .
+
+    Inductive fs_outputs :=
+    | fs_out_val
+    .
+
+    Definition fs_states_size (x: fs_states) : nat :=
+    match x with
+    | fs_st_val => 4
+    end.
+
+    Definition fs_inputs_size (x: fs_inputs) : nat := 
+    match x with
+    | fs_in_val => 6
+    end.
+
+    Definition fs_outputs_size (x: fs_outputs) : nat := 
+    match x with
+    | fs_out_val => 8
+    end.
+
+    Definition fs_states_t := tf_states_type fs_states_size. 
+
+    Definition fs_states_init (x: fs_states) : (fs_states_t x) :=
+    match x with
+    | fs_st_val => Bits.zero
+    end.
+
+    Definition fs_transitions
+        (act: fs_action)
+        :
+        (@tf_ops fs_states fs_inputs fs_outputs Empty_set)
+        :=
+        match act with
+        | fs_act_nop => tf_ops_base (tf_nop)
+        | fs_act_neg => tf_ops_base (tf_assign fs_st_val (tf_op1 (tf_not) (tf_svar fs_st_val)))
+        | fs_act_read => tf_ops_base (tf_output fs_out_val (tf_svar fs_st_val)) 
+        | fs_act_write => tf_ops_base (tf_assign fs_st_val (tf_ivar fs_in_val))
+        end.
+
+    Definition fs_step := tf_ops_run fs_states_size fs_inputs_size fs_outputs_size no_ips.
+
+    Section Examples.
+        (* In the initial state "s_init" the "fs_st_val" is zero *)
+        Definition s_init := ContextEnv.(create) fs_states_init.
+        Example s_example : ContextEnv.(getenv) s_init fs_st_val = Bits.zero.
+        Proof. reflexivity. Qed.
+
+        (* Performing a nop in initial state "s_init" leaves state and output unchanged *)
+        Definition s1_trans := fs_transitions fs_act_nop.
+        Definition s1_trans_r := (fs_step s1_trans (s_init, ContextEnv.(create) (fun _ => Bits.zero)) (fun _ => Bits.zero)).
+        Definition s1_state := fst s1_trans_r.
+        Definition s1_output := snd s1_trans_r.
+        Example s1_example_state : ContextEnv.(getenv) s1_state fs_st_val = Bits.zero.
+        Proof. ssimpl. Qed.
+        Example s1_example_output : ContextEnv.(getenv) s1_output fs_out_val = Bits.zero.
+        Proof. ssimpl. Qed.
+
+        (* Performing a write in initial state "s_init" updates the state, (only reads the lowest bits) and leaves output unchanged *)
+        Definition s2_trans := fs_transitions fs_act_write.
+        Definition s2_trans_r := (fs_step s2_trans (s_init, ContextEnv.(create) (fun _ => Bits.zero)) (fun x => match x with fs_in_val => Bits.of_nat 6 20 end)).
+        Definition s2_state := fst s2_trans_r.
+        Definition s2_output := snd s2_trans_r.
+        Example s2_example : ContextEnv.(getenv) s2_state fs_st_val = Bits.of_nat _ 4.
+        Proof. 
+            cbn -[vect_to_list]. sauto.
+        Qed.
+        Example s2_example_output : ContextEnv.(getenv) s2_output fs_out_val = Bits.zero.
+        Proof. ssimpl. Qed.
+        
+        (* Performing a negation in state "s2_state" (val=4), updates the state correctly *)
+        Definition s3_trans := fs_transitions fs_act_neg.
+        Definition s3_trans_r := (fs_step s3_trans (s2_state, ContextEnv.(create) (fun _ => Bits.zero)) (fun _ => Bits.zero)).
+        Definition s3_state := fst s3_trans_r.
+        Definition s3_output := snd s3_trans_r.
+        Example s3_example : ContextEnv.(getenv) s3_state fs_st_val = Ob~1~0~1~1.
+        Proof. 
+            cbn -[vect_to_list Bits.neg]. sauto.
+        Qed.
+        Example s3_example_output : s3_output = s2_output.
+        Proof. ssimpl. Qed.
+
+        (* Performing a read in state "s3_state" (val=11) outputs the state correctly *)
+        Definition s4_trans := fs_transitions fs_act_read.
+        Definition s4_trans_r := (fs_step s4_trans (s3_state, ContextEnv.(create) (fun _ => Bits.zero)) (fun _ => Bits.zero)).
+        Definition s4_state := fst s4_trans_r.
+        Definition s4_output := snd s4_trans_r.
+        Example s4_example : ContextEnv.(getenv) s4_state fs_st_val = Bits.of_nat _ 11.
+        Proof. 
+            cbn -[vect_to_list]. sauto.
+        Qed.
+        Example s4_example_output : ContextEnv.(getenv) s4_output fs_out_val = Bits.of_nat _ 11.
+        Proof.
+            cbn. simpl_eq. reflexivity.
+        Qed.
+
+    End Examples.
+
+End FunctionalSpecification.
+
+
+Section Instance.
+
+    Definition tfs_ctx : TFSchedContext := {|
+        tfs_spec_states := fs_states;
+        tfs_spec_states_fin := _;
+        tfs_spec_states_size := fs_states_size;
+        tfs_spec_states_init := fs_states_init;
+
+        tfs_spec_inputs := fs_inputs;
+        tfs_spec_inputs_fin := _;
+        tfs_spec_inputs_size := fs_inputs_size;
+        tfs_spec_inputs_class := fun _ => Public;
+        tfs_spec_outputs := fs_outputs;
+        tfs_spec_outputs_fin := _;
+        tfs_spec_outputs_size := fs_outputs_size;
+        tfs_spec_outputs_class := fun _ => Public;
+        tfs_spec_action := fs_action;
+        tfs_spec_action_fin := _;
+        tfs_spec_action_ops := fs_transitions;
+        (* no attached IP: no call names a response port here *)
+        (* no IP drives any port here, so nothing can conflict with one *)
+        tfs_spec_ips := Empty_set;
+        tfs_spec_ip := no_ips;
+        tfs_spec_decls := []
+    |}.
+
+    Definition tf_schedule := tfs_schedule tfs_ctx 10.
+
+    Definition tf_ctx : TFSynthContext := {|
+        tf_sched_ctx := tf_schedule;
+
+        tf_action_encoding := fs_action_encoding;
+        tf_action_encoding_inj := fs_action_encoding_inj;
+    |}.
+
+  Definition package := Lowering.package tf_ctx "Regression_ConversionNegator".
+    
+
+End Instance.
+
+(* Extraction *)
+
+Definition prog := Interop.Backends.register package.
+Set Extraction Output Directory "build".
+Extraction "Regression_ConversionNegator.ml" prog.
+

@@ -1,8 +1,15 @@
-
 default: all
 
+# --------------------------------------------------------------------- Rocq
+
 coq:
-	dune build
+	dune build coq/
+
+copy_build: coq
+	@mkdir -p build
+	@rsync -aru _build/default/build/. build
+
+# ------------------------------------------------------------------ Verilog
 
 ML_FILES := $(wildcard build/*.ml)
 
@@ -11,24 +18,28 @@ VERILOG_FILES := $(patsubst build/%.ml,build/%.v,$(ML_FILES))
 build/%.v: build/%.ml
 	cuttlec -T verilog $<
 
-compile: $(VERILOG_FILES)
+compile: copy_build
+	@$(MAKE) --no-print-directory $(VERILOG_FILES)
 
-copy_build:
-	@if [ -d _build/default/build/. ]; then \
-		mkdir -p build; \
-		rsync -aru _build/default/build/. build; \
-	fi
+all: compile
 
-# --
+# -------------------------------------------------------------------- Tests
 
-all: coq copy_build 
-	$(MAKE) compile
+theorems: coq
+	@python3 scripts/check-theorems.py
 
-test: copy_build 
-	$(MAKE) compile
-# For now test just builds & compiles
+check: all
+	@python3 scripts/check-drivers.py build/*.v
+
+sim: all
+	@python3 scripts/run-sim.py
+
+test: all
+	@python3 scripts/check-theorems.py
+	@python3 scripts/check-drivers.py build/*.v
+	@python3 scripts/run-sim.py
 
 clean:
 	rm -rf build/*
 
-.PHONY: coq all test clean copy_build compile
+.PHONY: coq copy_build compile all theorems check sim test clean default
