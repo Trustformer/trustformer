@@ -40,7 +40,7 @@ Section SchedulerRoundTrip.
   Local Notation P_emit_expr_ssucc := (SchedulerSimulationLemmas.P_emit_expr_ssucc ctx).
   Local Notation Q_plain := (SchedulerSimulationLemmas.Q_plain ctx).
   Local Notation Q_plain_succ := (SchedulerSimulationLemmas.Q_plain_succ ctx).
-  Local Notation act_idx_aligned := (Definitions.act_idx_aligned ctx cost_limit).
+  Local Notation act_idx_aligned := (ProofDefinitions.act_idx_aligned ctx cost_limit).
   Local Notation all_bind_at := (SchedulerSimulationLemmas.all_bind_at ctx).
   Local Notation all_nodes := (SchedulerSimulationLemmas.all_nodes ctx).
   Local Notation all_nodes_emit := (SchedulerSimulationLemmas.all_nodes_emit ctx).
@@ -155,7 +155,7 @@ Section SchedulerRoundTrip.
   Local Notation done_ops_no_done := (SchedulerSimulationLemmas.done_ops_no_done ctx cost_limit).
   Local Notation done_ops_no_dup := (SchedulerSimulationLemmas.done_ops_no_dup ctx cost_limit).
   Local Notation done_set := (Definitions.done_set ctx cost_limit).
-  Local Notation done_set_dec := (Definitions.done_set_dec ctx cost_limit).
+  Local Notation done_set_dec := (ProofDefinitions.done_set_dec ctx cost_limit).
   Local Notation done_val_eval := (SchedulerSimulationLemmas.done_val_eval ctx cost_limit).
   Local Notation drive_after_cycle := (SchedulerSimulationLemmas.drive_after_cycle ctx cost_limit).
   Local Notation drive_after_sample := (SchedulerSimulationLemmas.drive_after_sample ctx cost_limit).
@@ -301,7 +301,7 @@ Section SchedulerRoundTrip.
   Local Notation ids_desc_tl := (SchedulerSimulationLemmas.ids_desc_tl ctx).
   Local Notation in_graph_fwd := (SchedulerSimulationLemmas.in_graph_fwd ctx cost_limit).
   Local Notation in_var_node_at := (SchedulerSimulationLemmas.in_var_node_at ctx cost_limit).
-  Local Notation is_sample_of := (Definitions.is_sample_of ctx cost_limit).
+  Local Notation is_sample_of := (ProofDefinitions.is_sample_of ctx cost_limit).
   Local Notation sample_en_of := (SchedulerSimulationLemmas.sample_en_of ctx cost_limit).
   Local Notation join_gate_zero_of_arg := (SchedulerSimulationLemmas.join_gate_zero_of_arg ctx cost_limit).
   Local Notation join_has_stall := (SchedulerSimulationLemmas.join_has_stall ctx cost_limit).
@@ -378,17 +378,17 @@ Section SchedulerRoundTrip.
   Local Notation node_cycle_is_div := (SchedulerSimulationLemmas.node_cycle_is_div ctx cost_limit).
   Local Notation node_cycle_le_max_cycle := (SchedulerSimulationLemmas.node_cycle_le_max_cycle ctx cost_limit).
   Local Notation node_nid_at := (SchedulerSimulationLemmas.node_nid_at ctx cost_limit).
-  Local Notation node_op := (Definitions.node_op ctx cost_limit).
+  Local Notation node_op := (AttackerClock.node_op ctx cost_limit).
   Local Notation node_op_not_empty := (SchedulerSimulationLemmas.node_op_not_empty ctx cost_limit).
   Local Notation node_op_range := (SchedulerSimulationLemmas.node_op_range ctx cost_limit).
-  Local Notation node_rank := (Definitions.node_rank ctx cost_limit).
+  Local Notation node_rank := (AttackerClock.node_rank ctx cost_limit).
   Local Notation node_rank_child := (SchedulerSimulationLemmas.node_rank_child ctx cost_limit).
   Local Notation node_rank_le := (SchedulerSimulationLemmas.node_rank_le ctx cost_limit).
   Local Notation node_rank_mono := (SchedulerSimulationLemmas.node_rank_mono ctx cost_limit).
   Local Notation node_rank_mono_le := (SchedulerSimulationLemmas.node_rank_mono_le ctx cost_limit).
   Local Notation node_rank_stall := (SchedulerSimulationLemmas.node_rank_stall ctx cost_limit).
-  Local Notation node_ref_expr := (Definitions.node_ref_expr ctx cost_limit).
-  Local Notation node_ref_valid := (Definitions.node_ref_valid ctx cost_limit).
+  Local Notation node_ref_expr := (ProofDefinitions.node_ref_expr ctx cost_limit).
+  Local Notation node_ref_valid := (ProofDefinitions.node_ref_valid ctx cost_limit).
   Local Notation not_sample_not_in_sample_bufs := (SchedulerSimulationLemmas.not_sample_not_in_sample_bufs ctx cost_limit).
   Local Notation nre_binary := (SchedulerSimulationLemmas.nre_binary ctx cost_limit).
   Local Notation nre_const := (SchedulerSimulationLemmas.nre_const ctx cost_limit).
@@ -403,7 +403,7 @@ Section SchedulerRoundTrip.
   Local Notation nre_svar := (SchedulerSimulationLemmas.nre_svar ctx cost_limit).
   Local Notation nre_unary := (SchedulerSimulationLemmas.nre_unary ctx cost_limit).
   Local Notation nre_unfold := (SchedulerSimulationLemmas.nre_unfold ctx cost_limit).
-  Local Notation nval := (Definitions.nval ctx cost_limit).
+  Local Notation nval := (ProofDefinitions.nval ctx cost_limit).
   Local Notation nval_fresh_ovar := (SchedulerSimulationLemmas.nval_fresh_ovar ctx cost_limit).
   Local Notation nval_fresh_svar := (SchedulerSimulationLemmas.nval_fresh_svar ctx cost_limit).
   Local Notation nval_var_ovar := (SchedulerSimulationLemmas.nval_var_ovar ctx cost_limit).
@@ -481,12 +481,12 @@ Section SchedulerRoundTrip.
   Local Notation run_preserves_svar := (SchedulerSimulationLemmas.run_preserves_svar ctx cost_limit).
   Local Notation sample_before_drive := (SchedulerSimulationLemmas.sample_before_drive ctx cost_limit).
   Local Notation sample_buffer_frozen := (SchedulerSimulationLemmas.sample_buffer_frozen ctx cost_limit).
-  Local Notation sample_bufs := (Definitions.sample_bufs ctx cost_limit).
+  Local Notation sample_bufs := (ProofDefinitions.sample_bufs ctx cost_limit).
   Local Notation sample_chain_between := (SchedulerSimulationLemmas.sample_chain_between ctx cost_limit).
   Local Notation sample_chain_no_drive := (SchedulerSimulationLemmas.sample_chain_no_drive ctx cost_limit).
   Local Notation sample_chain_no_sample := (SchedulerSimulationLemmas.sample_chain_no_sample ctx cost_limit).
-  Local Notation sample_drive := (Definitions.sample_drive ctx cost_limit).
-  Local Notation sample_drive_head := (Definitions.sample_drive_head ctx cost_limit).
+  Local Notation sample_drive := (ProofDefinitions.sample_drive ctx cost_limit).
+  Local Notation sample_drive_head := (ProofDefinitions.sample_drive_head ctx cost_limit).
   Local Notation sample_drive_head_op := (SchedulerSimulationLemmas.sample_drive_head_op ctx cost_limit).
   Local Notation sample_drive_head_shape := (SchedulerSimulationLemmas.sample_drive_head_shape ctx cost_limit).
   Local Notation sample_drive_in_drive_nodes := (SchedulerSimulationLemmas.sample_drive_in_drive_nodes ctx cost_limit).
@@ -544,7 +544,7 @@ Section SchedulerRoundTrip.
   Local Notation set_var_vm_inv := (SchedulerSimulationLemmas.set_var_vm_inv ctx).
   Local Notation set_var_vm_inv2 := (SchedulerSimulationLemmas.set_var_vm_inv2 ctx).
   Local Notation set_var_vm_keep := (SchedulerSimulationLemmas.set_var_vm_keep ctx).
-  Local Notation settle_bound := (Definitions.settle_bound ctx cost_limit).
+  Local Notation settle_bound := (AttackerClock.settle_bound ctx cost_limit).
   Local Notation slot_keys_nodup := (SchedulerSimulationLemmas.slot_keys_nodup ctx cost_limit).
   Local Notation ssucc_build_dfg := (SchedulerSimulationLemmas.ssucc_build_dfg ctx cost_limit).
   Local Notation stall_cost_gap := (SchedulerSimulationLemmas.stall_cost_gap ctx cost_limit).
@@ -554,13 +554,13 @@ Section SchedulerRoundTrip.
   Local Notation stall_counter_wide := (SchedulerSimulationLemmas.stall_counter_wide ctx cost_limit).
   Local Notation stall_gate_walks := (SchedulerSimulationLemmas.stall_gate_walks ctx cost_limit).
   Local Notation stall_is_buffered := (SchedulerSimulationLemmas.stall_is_buffered ctx cost_limit).
-  Local Notation stall_lat_of := (Definitions.stall_lat_of ctx cost_limit).
+  Local Notation stall_lat_of := (AttackerClock.stall_lat_of ctx cost_limit).
   Local Notation stall_nid_succ := (SchedulerSimulationLemmas.stall_nid_succ ctx cost_limit).
   Local Notation stall_saturated_step := (SchedulerSimulationLemmas.stall_saturated_step ctx cost_limit).
   Local Notation stall_valid_next_inv := (SchedulerSimulationLemmas.stall_valid_next_inv ctx cost_limit).
   Local Notation stall_valid_next_ones := (SchedulerSimulationLemmas.stall_valid_next_ones ctx cost_limit).
   Local Notation stall_wait_start := (SchedulerSimulationLemmas.stall_wait_start ctx cost_limit).
-  Local Notation stall_weight := (Definitions.stall_weight ctx cost_limit).
+  Local Notation stall_weight := (AttackerClock.stall_weight ctx cost_limit).
   Local Notation start_rel := (Definitions.start_rel ctx cost_limit).
   Local Notation succ_arg_node := (SchedulerSimulationLemmas.succ_arg_node ctx).
   Local Notation succ_args_build_dfg := (SchedulerSimulationLemmas.succ_args_build_dfg ctx cost_limit).
@@ -583,7 +583,7 @@ Section SchedulerRoundTrip.
   Local Notation var_map_snd_is_graph_nid := (SchedulerSimulationLemmas.var_map_snd_is_graph_nid ctx cost_limit).
   Local Notation var_node_at := (SchedulerSimulationLemmas.var_node_at ctx cost_limit).
   Local Notation vmg := (SchedulerSimulationLemmas.vmg ctx).
-  Local Notation vreg_nid := (Definitions.vreg_nid ctx cost_limit).
+  Local Notation vreg_nid := (ProofDefinitions.vreg_nid ctx cost_limit).
   Local Notation vreg_nid_in_require_buffer := (SchedulerSimulationLemmas.vreg_nid_in_require_buffer ctx cost_limit).
   Local Notation vreg_nid_inj := (SchedulerSimulationLemmas.vreg_nid_inj ctx cost_limit).
   Local Notation vreg_nid_node_range := (SchedulerSimulationLemmas.vreg_nid_node_range ctx cost_limit).
@@ -690,7 +690,7 @@ Section SchedulerRoundTrip.
     cbn [compile_dfg_expr_aux].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:E;
       [ exfalso; rewrite Hbuf in E; congruence |].
-    cbv beta iota. unfold Definitions.node_op in Hop. rewrite Hop.
+    cbv beta iota. unfold AttackerClock.node_op in Hop. rewrite Hop.
     destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                 (build_dfg ctx act) arg bufs).
     reflexivity.
@@ -710,7 +710,7 @@ Section SchedulerRoundTrip.
     cbn [compile_dfg_expr_aux].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:E;
       [ exfalso; rewrite Hbuf in E; congruence |].
-    cbv beta iota. unfold Definitions.node_op in Hop. rewrite Hop.
+    cbv beta iota. unfold AttackerClock.node_op in Hop. rewrite Hop.
     destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                 (build_dfg ctx act) arg bufs).
     reflexivity.
@@ -733,7 +733,7 @@ Section SchedulerRoundTrip.
     cbn [compile_dfg_expr_aux].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:E;
       [ exfalso; rewrite Hbuf in E; congruence |].
-    cbv beta iota. unfold Definitions.node_op in Hop. rewrite Hop.
+    cbv beta iota. unfold AttackerClock.node_op in Hop. rewrite Hop.
     destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                 (build_dfg ctx act) a1 bufs).
     destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx
@@ -764,7 +764,7 @@ Section SchedulerRoundTrip.
     cbn [Init.Nat.pred]. cbn [compile_dfg_expr_aux].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:E;
       [ exfalso; rewrite Hbuf in E; congruence |].
-    cbv beta iota. unfold Definitions.node_op in Hop. rewrite Hop.
+    cbv beta iota. unfold AttackerClock.node_op in Hop. rewrite Hop.
     unfold phi_path. rewrite Hcrit.
     destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                 (build_dfg ctx act) c bufs).
@@ -800,7 +800,7 @@ Section SchedulerRoundTrip.
     cbn [Init.Nat.pred]. cbn [compile_dfg_expr_aux].
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:E;
       [ exfalso; rewrite Hbuf in E; congruence |].
-    cbv beta iota. unfold Definitions.node_op in Hop. rewrite Hop.
+    cbv beta iota. unfold AttackerClock.node_op in Hop. rewrite Hop.
     unfold phi_path. rewrite Hcrit.
     destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                 (build_dfg ctx act) c bufs).
@@ -861,11 +861,11 @@ Section SchedulerRoundTrip.
     intros Hop Ha1 Hnlen Hval.
     assert (Han : arg < n)
       by (apply (arg_lt_of_op act n arg Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
+          unfold AttackerClock.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
     rewrite (compile_unary_valid act a_idx n uop arg (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold Definitions.is_sample_of; rewrite Hop; reflexivity))
+                  ltac:(unfold ProofDefinitions.is_sample_of; rewrite Hop; reflexivity))
                ltac:(lia)) in Hval.
     exact (nrv_peel_refuel act a_idx arg pi ss input Ha1 ltac:(lia) Hval).
   Qed.
@@ -880,11 +880,11 @@ Section SchedulerRoundTrip.
     intros Hop Ha1 Hnlen Hval.
     assert (Han : arg < n)
       by (apply (arg_lt_of_op act n arg Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
+          unfold AttackerClock.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
     rewrite (compile_resize_valid act a_idx n arg (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold Definitions.is_sample_of; rewrite Hop; reflexivity))
+                  ltac:(unfold ProofDefinitions.is_sample_of; rewrite Hop; reflexivity))
                ltac:(lia)) in Hval.
     exact (nrv_peel_refuel act a_idx arg pi ss input Ha1 ltac:(lia) Hval).
   Qed.
@@ -903,12 +903,12 @@ Section SchedulerRoundTrip.
     intros Hop Ha1 Hnlen Hval.
     assert (Han : arg < n)
       by (apply (arg_lt_of_op act n arg Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args;
+          unfold AttackerClock.node_op in Hop; unfold get_args;
           rewrite Hop; left; reflexivity).
     rewrite (compile_unary_valid act a_idx n uop arg (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold Definitions.is_sample_of;
+                  ltac:(unfold ProofDefinitions.is_sample_of;
                         rewrite Hop; reflexivity))
                ltac:(lia)).
     rewrite (compile_fuel_irrel_gen act a_idx (sample_bufs act a_idx) _ _ arg
@@ -928,12 +928,12 @@ Section SchedulerRoundTrip.
     intros Hop Ha1 Hnlen Hval.
     assert (Han : arg < n)
       by (apply (arg_lt_of_op act n arg Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args;
+          unfold AttackerClock.node_op in Hop; unfold get_args;
           rewrite Hop; left; reflexivity).
     rewrite (compile_resize_valid act a_idx n arg (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold Definitions.is_sample_of;
+                  ltac:(unfold ProofDefinitions.is_sample_of;
                         rewrite Hop; reflexivity))
                ltac:(lia)).
     rewrite (compile_fuel_irrel_gen act a_idx (sample_bufs act a_idx) _ _ arg
@@ -956,8 +956,8 @@ Section SchedulerRoundTrip.
                   (Nat.lt_succ_diag_r n) H2).
     cbn [compile_dfg_expr_aux].
     rewrite (not_sample_not_in_sample_bufs act a_idx n
-              ltac:(unfold Definitions.is_sample_of; rewrite Hop; reflexivity)).
-    cbv beta iota. unfold Definitions.node_op in Hop. rewrite Hop.
+              ltac:(unfold ProofDefinitions.is_sample_of; rewrite Hop; reflexivity)).
+    cbv beta iota. unfold AttackerClock.node_op in Hop. rewrite Hop.
     cbn [snd]. exact (eval1_const1 ss input).
   Qed.
 
@@ -976,19 +976,19 @@ Section SchedulerRoundTrip.
     intros Hop Hopt Hope Hc1 Ht1 He1 Hnlen Hcv.
     assert (Hcn : c < n)
       by (apply (arg_lt_of_op act n c Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args;
+          unfold AttackerClock.node_op in Hop; unfold get_args;
           rewrite Hop; left; reflexivity).
     assert (Htn : t < n)
       by (apply (arg_lt_of_op act n t Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args;
+          unfold AttackerClock.node_op in Hop; unfold get_args;
           rewrite Hop; right; left; reflexivity).
     assert (Hen : e < n)
       by (apply (arg_lt_of_op act n e Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args;
+          unfold AttackerClock.node_op in Hop; unfold get_args;
           rewrite Hop; right; right; left; reflexivity).
     assert (Hnb : BitsToLists.list_assoc (sample_bufs act a_idx) n = None)
       by (apply not_sample_not_in_sample_bufs;
-          unfold Definitions.is_sample_of; rewrite Hop; reflexivity).
+          unfold ProofDefinitions.is_sample_of; rewrite Hop; reflexivity).
     assert (Hcv' : eval1 (snd (compile_dfg_expr_at ctx bneeds pi
                      (pred (length (graph (build_dfg ctx act)))) a_idx
                      (build_dfg ctx act) c (sample_bufs act a_idx))) ss input
@@ -1043,14 +1043,14 @@ Section SchedulerRoundTrip.
     intros Hop H11 H21 Hnlen Hval.
     assert (H1n : a1 < n)
       by (apply (arg_lt_of_op act n a1 Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
+          unfold AttackerClock.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
     assert (H2n : a2 < n)
       by (apply (arg_lt_of_op act n a2 Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args; rewrite Hop; right; left; reflexivity).
+          unfold AttackerClock.node_op in Hop; unfold get_args; rewrite Hop; right; left; reflexivity).
     rewrite (compile_binary_valid act a_idx n bop a1 a2 (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold Definitions.is_sample_of; rewrite Hop; reflexivity))
+                  ltac:(unfold ProofDefinitions.is_sample_of; rewrite Hop; reflexivity))
                ltac:(lia)) in Hval.
     rewrite valid_and_eval in Hval.
     destruct (bits1_and_split _ _ Hval) as [Hv1 Hv2].
@@ -1074,17 +1074,17 @@ Section SchedulerRoundTrip.
     intros Hop Hcrit Hc1 Ht1 He1 Hnlen Hval.
     assert (Hcn : c < n)
       by (apply (arg_lt_of_op act n c Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
+          unfold AttackerClock.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
     assert (Htn : t < n)
       by (apply (arg_lt_of_op act n t Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args; rewrite Hop; right; left; reflexivity).
+          unfold AttackerClock.node_op in Hop; unfold get_args; rewrite Hop; right; left; reflexivity).
     assert (Hen : e < n)
       by (apply (arg_lt_of_op act n e Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args; rewrite Hop; right; right; left; reflexivity).
+          unfold AttackerClock.node_op in Hop; unfold get_args; rewrite Hop; right; right; left; reflexivity).
     rewrite (compile_phi_valid_crit act a_idx n c t e (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold Definitions.is_sample_of; rewrite Hop; reflexivity))
+                  ltac:(unfold ProofDefinitions.is_sample_of; rewrite Hop; reflexivity))
                ltac:(lia) Hcrit) in Hval.
     rewrite valid_and_eval, valid_and_eval in Hval.
     destruct (bits1_and_split _ _ Hval) as [Hte Hcv].
@@ -1112,17 +1112,17 @@ Section SchedulerRoundTrip.
     intros Hop Hcrit Hc1 Ht1 He1 Hnlen Hval.
     assert (Hcn : c < n)
       by (apply (arg_lt_of_op act n c Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
+          unfold AttackerClock.node_op in Hop; unfold get_args; rewrite Hop; left; reflexivity).
     assert (Htn : t < n)
       by (apply (arg_lt_of_op act n t Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args; rewrite Hop; right; left; reflexivity).
+          unfold AttackerClock.node_op in Hop; unfold get_args; rewrite Hop; right; left; reflexivity).
     assert (Hen : e < n)
       by (apply (arg_lt_of_op act n e Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args; rewrite Hop; right; right; left; reflexivity).
+          unfold AttackerClock.node_op in Hop; unfold get_args; rewrite Hop; right; right; left; reflexivity).
     rewrite (compile_phi_valid_sel act a_idx n c t e (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold Definitions.is_sample_of; rewrite Hop; reflexivity))
+                  ltac:(unfold ProofDefinitions.is_sample_of; rewrite Hop; reflexivity))
                ltac:(lia) Hcrit) in Hval.
     rewrite valid_and_eval in Hval.
     destruct (bits1_and_split _ _ Hval) as [Hcv Hif].
@@ -1130,7 +1130,7 @@ Section SchedulerRoundTrip.
                                (pred (length (graph (build_dfg ctx act)))) a_idx
                                (build_dfg ctx act) c (sample_bufs act a_idx))) ss input
                   = eval1 (node_ref_expr act a_idx c) ss input).
-    { unfold Definitions.node_ref_expr.
+    { unfold ProofDefinitions.node_ref_expr.
       rewrite (compile_fst_pi_irrel (get_tainted ctx (build_dfg ctx act))
                  (decl_facts ctx (build_dfg ctx act)) a_idx (build_dfg ctx act)
                  (sample_bufs act a_idx)
@@ -1163,7 +1163,7 @@ Section SchedulerRoundTrip.
     intros Hop Ha1 Hnlen Hval.
     assert (Han : arg < n)
       by (apply (arg_lt_of_op act n arg Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args;
+          unfold AttackerClock.node_op in Hop; unfold get_args;
           rewrite Hop; left; reflexivity).
     rewrite (compile_stall_valid (build_dfg ctx act)
                (get_tainted ctx (build_dfg ctx act))
@@ -1171,7 +1171,7 @@ Section SchedulerRoundTrip.
                a_idx n lat arg (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold Definitions.is_sample_of;
+                  ltac:(unfold ProofDefinitions.is_sample_of;
                         rewrite Hop; reflexivity))
                ltac:(lia)) in Hval.
     exact (nrv_peel_refuel act a_idx arg pi ss input Ha1 ltac:(lia) Hval).
@@ -1187,11 +1187,11 @@ Section SchedulerRoundTrip.
     intros Hop Ha1 Hb1 Hnlen Hval.
     assert (Han : a < n)
       by (apply (arg_lt_of_op act n a Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args;
+          unfold AttackerClock.node_op in Hop; unfold get_args;
           rewrite Hop; left; reflexivity).
     assert (Hbn : b < n)
       by (apply (arg_lt_of_op act n b Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args;
+          unfold AttackerClock.node_op in Hop; unfold get_args;
           rewrite Hop; right; left; reflexivity).
     rewrite (compile_join_valid (build_dfg ctx act)
                (get_tainted ctx (build_dfg ctx act))
@@ -1199,7 +1199,7 @@ Section SchedulerRoundTrip.
                a_idx n a b (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold Definitions.is_sample_of;
+                  ltac:(unfold ProofDefinitions.is_sample_of;
                         rewrite Hop; reflexivity))
                ltac:(lia)) in Hval.
     rewrite valid_and_eval in Hval.
@@ -1219,7 +1219,7 @@ Section SchedulerRoundTrip.
     intros Hop Ha1 Hnlen Hval.
     assert (Han : arg < n)
       by (apply (arg_lt_of_op act n arg Hnlen);
-          unfold Definitions.node_op in Hop; unfold get_args;
+          unfold AttackerClock.node_op in Hop; unfold get_args;
           rewrite Hop; left; reflexivity).
     rewrite (compile_drive_valid (build_dfg ctx act)
                (get_tainted ctx (build_dfg ctx act))
@@ -1227,7 +1227,7 @@ Section SchedulerRoundTrip.
                a_idx n p arg en (sample_bufs act a_idx) pi
                (length (graph (build_dfg ctx act))) Hop
                (not_sample_not_in_sample_bufs act a_idx n
-                  ltac:(unfold Definitions.is_sample_of;
+                  ltac:(unfold ProofDefinitions.is_sample_of;
                         rewrite Hop; reflexivity))
                ltac:(lia)) in Hval.
     (* peel the guard conjuncts off the fold, left to right *)
@@ -1411,7 +1411,7 @@ Section SchedulerRoundTrip.
           as [R1 [R2 [Rop _]]].
         split.
         + apply (sem_inv_vm s s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem ].
-        + unfold Definitions.nval. rewrite (nre_const act a_idx id c R1 R2 Rop). reflexivity.
+        + unfold ProofDefinitions.nval. rewrite (nre_const act a_idx id c R1 R2 Rop). reflexivity.
       - (* tf_svar *)
         cbn [dataflow_expr] in Hde. unfold bind in Hde.
         pose proof (get_var_sz (DFG_SVar sv) s Hinv Hvsz) as Hgv.
@@ -1446,7 +1446,7 @@ Section SchedulerRoundTrip.
             { pose proof (get_var_pos (DFG_SVar sv) s Hpos) as Hp0.
               rewrite Egv in Hp0. exact (proj1 Hp0). }
             intros pi Hgp Hv.
-            unfold Definitions.nval in Hval |- *.
+            unfold ProofDefinitions.nval in Hval |- *.
             rewrite (nre_resize act a_idx id src_id R1 R2 Rop), Hsrcsz.
             cbn [tf_eval_expr].
             rewrite (Hval pi Hgp (nrv_peel_resize act a_idx id src_id pi ss sinput
@@ -1464,7 +1464,7 @@ Section SchedulerRoundTrip.
                       HF Hne Eem Hg') as [R1 [R2 [Rop _]]].
           split.
           * apply (sem_inv_vm s s1); [ exact (emit_vm _ _ _ _ _ Eem) | exact Hsem ].
-          * unfold Definitions.nval. rewrite (nre_input act a_idx src_id iv R1 R2 Rop).
+          * unfold ProofDefinitions.nval. rewrite (nre_input act a_idx src_id iv R1 R2 Rop).
             cbn [tf_eval_expr]. rewrite Hsin. reflexivity.
         + assert (Hg1F : wgmono s1 F)
             by exact (wgmono_trans s1 s' F (emit_gmono _ _ _ _ _ Hde) Hg').
@@ -1476,7 +1476,7 @@ Section SchedulerRoundTrip.
           * apply (sem_inv_vm s s'); [ | exact Hsem ].
             rewrite (emit_vm _ _ _ _ _ Hde). exact (emit_vm _ _ _ _ _ Eem).
           * intros pi Hgp Hv.
-            unfold Definitions.nval.
+            unfold ProofDefinitions.nval.
             rewrite (nre_resize act a_idx id src_id Q1 Q2 Qop), Rsz.
             cbn [tf_eval_expr].
             rewrite (nre_input act a_idx src_id iv R1 R2 Rop).
@@ -1515,7 +1515,7 @@ Section SchedulerRoundTrip.
             { pose proof (get_var_pos (DFG_OVar ov) s Hpos) as Hp0.
               rewrite Egv in Hp0. exact (proj1 Hp0). }
             intros pi Hgp Hv.
-            unfold Definitions.nval in Hval |- *.
+            unfold ProofDefinitions.nval in Hval |- *.
             rewrite (nre_resize act a_idx id src_id R1 R2 Rop), Hsrcsz.
             cbn [tf_eval_expr].
             rewrite (Hval pi Hgp (nrv_peel_resize act a_idx id src_id pi ss sinput
@@ -1542,7 +1542,7 @@ Section SchedulerRoundTrip.
           split.
           * apply (sem_inv_vm s1 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem1 ].
           * intros pi Hgp Hv.
-            unfold Definitions.nval in Hv1 |- *.
+            unfold ProofDefinitions.nval in Hv1 |- *.
             rewrite (nre_unary act a_idx id tf_not src_id R1 R2 Rop).
             cbn [tf_eval_expr].
             rewrite (Hv1 pi Hgp (nrv_peel_unary act a_idx id tf_not src_id pi ss sinput
@@ -1569,7 +1569,7 @@ Section SchedulerRoundTrip.
           split.
           * apply (sem_inv_vm s1 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem1 ].
           * intros pi Hgp Hv.
-            unfold Definitions.nval in Hv1 |- *.
+            unfold ProofDefinitions.nval in Hv1 |- *.
             rewrite (nre_unary act a_idx id (tf_resize source_size) src_id R1 R2 Rop).
             cbn [tf_eval_expr].
             rewrite (Hv1 pi Hgp (nrv_peel_unary act a_idx id (tf_resize source_size)
@@ -1610,7 +1610,7 @@ Section SchedulerRoundTrip.
               | intros pi Hgp Hv;
                 destruct (nrv_peel_binary act a_idx id _ id1 id2 pi ss sinput
                             Rop Hid1p Hid2p R2 Hv) as [Hb1 Hb2];
-                unfold Definitions.nval in Hv1, Hv2 |- *;
+                unfold ProofDefinitions.nval in Hv1, Hv2 |- *;
                 rewrite (nre_binary act a_idx id _ id1 id2 R1 R2 Rop);
                 cbn [tf_eval_expr];
                 rewrite (Hv1 pi Hgp Hb1), (Hv2 pi Hgp Hb2); reflexivity ]).
@@ -1645,7 +1645,7 @@ Section SchedulerRoundTrip.
         | intros pi Hgp Hv;
           destruct (nrv_peel_binary act a_idx id (tf_cmp szC cop) id1 id2 pi ss sinput
                       Rop Hid1p Hid2p R2 Hv) as [Hb1 Hb2];
-          unfold Definitions.nval in Hv1, Hv2 |- *;
+          unfold ProofDefinitions.nval in Hv1, Hv2 |- *;
           rewrite (nre_binary act a_idx id (tf_cmp szC cop) id1 id2 R1 R2 Rop);
           cbn [tf_eval_expr];
           rewrite (Hv1 pi Hgp Hb1), (Hv2 pi Hgp Hb2); reflexivity ].
@@ -1682,7 +1682,7 @@ Section SchedulerRoundTrip.
         | intros pi Hgp Hv;
           destruct (nrv_peel_binary act a_idx id (tf_concat hz lz) id1 id2 pi ss sinput
                       Rop Hid1p Hid2p R2 Hv) as [Hb1 Hb2];
-          unfold Definitions.nval in Hv1, Hv2 |- *;
+          unfold ProofDefinitions.nval in Hv1, Hv2 |- *;
           rewrite (nre_binary act a_idx id (tf_concat hz lz) id1 id2 R1 R2 Rop);
           cbn [tf_eval_expr];
           rewrite (Hv1 pi Hgp Hb1), (Hv2 pi Hgp Hb2); reflexivity ].
@@ -1722,7 +1722,7 @@ Section SchedulerRoundTrip.
         split.
         + apply (sem_inv_vm s3 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem3 ].
         + intros pi Hgp Hv.
-          unfold Definitions.nval in Hvc, Hvt, Hve |- *.
+          unfold ProofDefinitions.nval in Hvc, Hvt, Hve |- *.
           rewrite (nre_phi act a_idx id cid tid eid R1 R2 Rop).
           destruct (phi_crit (get_tainted ctx (build_dfg ctx act))
                       (decl_facts ctx (build_dfg ctx act)) cid pi) eqn:Ecrit.
@@ -1893,7 +1893,7 @@ Section SchedulerRoundTrip.
                       (dfg_var_size ctx k) phi HF Hne Ee Hg1) as [R1 [R2 [Rop _]]].
           destruct (phi_branch_valid cond_id b phi vt ve pi Hb Rop Hc1
                       (Hvtp vt eq_refl) (Hvep ve eq_refl) R2 Hgp Hv) as [Hcv [Hbt Hbe]].
-          unfold Definitions.nval.
+          unfold ProofDefinitions.nval.
           rewrite (nre_phi act a_idx phi cond_id vt ve R1 R2 Rop).
           rewrite Hb, (Hsel pi Hgp Hcv). destruct b.
           * destruct (Hbe eq_refl) as [pi' [Hgp' Hv']].
@@ -1922,7 +1922,7 @@ Section SchedulerRoundTrip.
         assert (Hve0 : b = true -> NV (dfg_var_size ctx k) ve0 = src_get spe k).
         { intro Hbt2. rewrite (nval_fresh s sA k ve0 Hne Ev HgA). symmetry.
           exact (Hven Hbt2 eq_refl). }
-        unfold Definitions.nval.
+        unfold ProofDefinitions.nval.
         rewrite (nre_phi act a_idx phi cond_id vt ve0 R1 R2 Rop).
         rewrite Hb, (Hsel pi Hgp Hcv). destruct b.
         + exact (Hve0 eq_refl).
@@ -1950,7 +1950,7 @@ Section SchedulerRoundTrip.
         assert (Hvt0 : b = false -> NV (dfg_var_size ctx k) vt0 = src_get spt k).
         { intro Hbf. rewrite (nval_fresh s sA k vt0 Hne Ev HgA). symmetry.
           exact (Hvtn Hbf eq_refl). }
-        unfold Definitions.nval.
+        unfold ProofDefinitions.nval.
         rewrite (nre_phi act a_idx phi cond_id vt0 ve R1 R2 Rop).
         rewrite Hb, (Hsel pi Hgp Hcv). destruct b.
         + destruct (Hbe eq_refl) as [pi' [Hgp' Hv']].
@@ -2522,7 +2522,7 @@ Section SchedulerRoundTrip.
       pose proof (in_graph_fwd act F _ HF (Hg _ Hin)) as Hin'.
       destruct (node_at_nid act _ Hin') as [_ Hnth].
       cbn [nid] in Hnth.
-      apply (Hno w). unfold Definitions.node_op.
+      apply (Hno w). unfold AttackerClock.node_op.
       rewrite Hnth. reflexivity.
     Qed.
 
@@ -2573,7 +2573,7 @@ Section SchedulerRoundTrip.
         destruct Hlow as [Hlt | Hvn].
         - rewrite (emit_id o size s1 id s' Hem) in Hlt. lia.
         - apply (vnode_absurd s' id Hg'); [| exact Hvn ].
-          intros w Hc. unfold Definitions.node_op in Hc.
+          intros w Hc. unfold AttackerClock.node_op in Hc.
           rewrite Rop in Hc. exact (Hnv w Hc). }
       destruct e as [ c | sv | iv | ov | uop e1 | bop e1 e2 | ec et ee ].
       - exfalso. exact (ABSURD _ _ s Hne (Nat.le_refl _)
@@ -2746,7 +2746,7 @@ Section SchedulerRoundTrip.
           destruct (emitted_node_at act F s s1 (DFG_Phi cond_id vt ve)
                       (dfg_var_size ctx k) phi HF Hne Ee Hg') as [_ [_ [Rop _]]].
           split; [ rewrite (emit_id _ _ s phi s1 Ee); apply Nat.le_refl | ].
-          intros w Hc. unfold Definitions.node_op in Hc.
+          intros w Hc. unfold AttackerClock.node_op in Hc.
           rewrite Rop in Hc. discriminate Hc.
       - destruct (ensure_var ctx k s) as [ve0 sA] eqn:Ev.
         rewrite (bind_red (ensure_var ctx k) _ s _ _ Ev) in Hrun.
@@ -2764,7 +2764,7 @@ Section SchedulerRoundTrip.
         destruct (emitted_node_at act F sA s1 (DFG_Phi cond_id vt ve0)
                     (dfg_var_size ctx k) phi HF ltac:(lia) Ee Hg') as [_ [_ [Rop _]]].
         split; [ rewrite (emit_id _ _ sA phi s1 Ee); lia | ].
-        intros w Hc. unfold Definitions.node_op in Hc.
+        intros w Hc. unfold AttackerClock.node_op in Hc.
         rewrite Rop in Hc. discriminate Hc.
       - destruct (ensure_var ctx k s) as [vt0 sA] eqn:Ev.
         rewrite (bind_red (ensure_var ctx k) _ s _ _ Ev) in Hrun.
@@ -2782,7 +2782,7 @@ Section SchedulerRoundTrip.
         destruct (emitted_node_at act F sA s1 (DFG_Phi cond_id vt0 ve)
                     (dfg_var_size ctx k) phi HF ltac:(lia) Ee Hg') as [_ [_ [Rop _]]].
         split; [ rewrite (emit_id _ _ sA phi s1 Ee); lia | ].
-        intros w Hc. unfold Definitions.node_op in Hc.
+        intros w Hc. unfold AttackerClock.node_op in Hc.
         rewrite Rop in Hc. discriminate Hc.
       - unfold ret in Hrun. injection Hrun as Hr Hs. subst s'.
         split; [ apply Nat.le_refl | ].
@@ -3136,7 +3136,7 @@ Section SchedulerRoundTrip.
             destruct (Hminv v n Hin) as [[Hveq Hn] | [Hin0 Hnv]].
             -- exfalso. subst n. destruct Hlow as [Hlt | Hvn]; [ lia | ].
                apply (vnode_absurd s' samp_id Hg'); [| exact Hvn ].
-               intros w Hc. unfold Definitions.node_op in Hc.
+               intros w Hc. unfold AttackerClock.node_op in Hc.
                rewrite MsmOp in Hc. discriminate Hc.
             -- rewrite (src_get_put_s_neq sp dst _ v Hnv).
                rewrite Hvm2 in Hin0.
@@ -3551,10 +3551,10 @@ Section SchedulerRoundTrip.
             - intro E.
               destruct (emitted_node_at act F sd sh (DFG_Join drive_id prev) 1
                           head_id HF Hned E GhF) as [_ [_ [MjnOp _]]].
-              unfold SchedulerSimulationLemmas.sample_req_head, Definitions.node_op. rewrite MjnOp.
+              unfold SchedulerSimulationLemmas.sample_req_head, AttackerClock.node_op. rewrite MjnOp.
               split; [ rewrite MdrOp; reflexivity | exact I ].
             - unfold ret. intro E. injection E as <- _.
-              unfold SchedulerSimulationLemmas.sample_req_head, Definitions.node_op. rewrite MdrOp.
+              unfold SchedulerSimulationLemmas.sample_req_head, AttackerClock.node_op. rewrite MdrOp.
               split; [ reflexivity | exact I ]. }
           destruct Hhd as [Hhd1 Hhd2].
           (* the same walk, stopped at the drive and checked to be on [ip] *)
@@ -3563,19 +3563,19 @@ Section SchedulerRoundTrip.
             - intro E.
               destruct (emitted_node_at act F sd sh (DFG_Join drive_id prev) 1
                           head_id HF Hned E GhF) as [_ [_ [MjnOp2 _]]].
-              unfold Definitions.sample_drive_head, Definitions.node_op. rewrite MjnOp2, MdrOp.
+              unfold ProofDefinitions.sample_drive_head, AttackerClock.node_op. rewrite MjnOp2, MdrOp.
               destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) ip ip) as [_ | Hnp];
                 [ reflexivity | exfalso; exact (Hnp eq_refl) ].
             - unfold ret. intro E. injection E as <- _.
-              unfold Definitions.sample_drive_head, Definitions.node_op. rewrite MdrOp.
+              unfold ProofDefinitions.sample_drive_head, AttackerClock.node_op. rewrite MdrOp.
               destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) ip ip) as [_ | Hnp];
                 [ reflexivity | exfalso; exact (Hnp eq_refl) ]. }
           assert (Hdrv : sample_drive act samp_id = Some drive_id).
-          { unfold Definitions.sample_drive, Definitions.node_op. rewrite MsmOp.
+          { unfold ProofDefinitions.sample_drive, AttackerClock.node_op. rewrite MsmOp.
             revert Es1. unfold stall_chain.
             destruct (ip_lat (tfs_spec_ip ctx ip)) as [| l].
             - unfold ret. intro E. injection E as <- _.
-              revert Hhd2 Hdh. unfold Definitions.node_op.
+              revert Hhd2 Hdh. unfold AttackerClock.node_op.
               destruct (op (nth head_id (graph (build_dfg ctx act))
                               {| nid := 0; op := DFG_Empty; sz := 0 |}));
                 try (intros _ H; exact H).
@@ -3584,13 +3584,13 @@ Section SchedulerRoundTrip.
               destruct (emitted_node_at act F sh s1 (DFG_Stall (S l) head_id)
                           (counter_sz (S l)) stall_id HF Hneh E Gt1F)
                 as [_ [_ [MstOp2 _]]].
-              unfold Definitions.node_op. rewrite MstOp2. exact Hdh. }
+              unfold AttackerClock.node_op. rewrite MstOp2. exact Hdh. }
           assert (Hreq : sample_req act samp_id = Some arg_id).
-          { unfold SchedulerSimulationLemmas.sample_req, Definitions.node_op. rewrite MsmOp.
+          { unfold SchedulerSimulationLemmas.sample_req, AttackerClock.node_op. rewrite MsmOp.
             revert Es1. unfold stall_chain.
             destruct (ip_lat (tfs_spec_ip ctx ip)) as [| l].
             - unfold ret. intro E. injection E as <- _.
-              revert Hhd2 Hhd1. unfold Definitions.node_op.
+              revert Hhd2 Hhd1. unfold AttackerClock.node_op.
               destruct (op (nth head_id (graph (build_dfg ctx act))
                               {| nid := 0; op := DFG_Empty; sz := 0 |}));
                 try (intros _ H; exact H).
@@ -3599,7 +3599,7 @@ Section SchedulerRoundTrip.
               destruct (emitted_node_at act F sh s1 (DFG_Stall (S l) head_id)
                           (counter_sz (S l)) stall_id HF Hneh E Gt1F)
                 as [_ [_ [MstOp _]]].
-              unfold Definitions.node_op. rewrite MstOp. exact Hhd1. }
+              unfold AttackerClock.node_op. rewrite MstOp. exact Hhd1. }
           (* --- the semantics --- *)
           destruct (dataflow_expr_sem expr (ip_req_sz (tfs_spec_ip ctx ip)) s sa
                       arg_id sp Hne Hinv Hvsz Hpos Ea GaF Hsem) as [[Hvm1 Hfr1] Hval].
@@ -3620,24 +3620,24 @@ Section SchedulerRoundTrip.
             rewrite Ejp in Hvj. cbn [snd] in Hvj. exact Hvj. }
           (* the sample's reference IS its register, and [Hrt] reads it *)
           assert (Hsampv : is_sample_of act samp_id = true)
-            by (unfold Definitions.is_sample_of, Definitions.node_op; rewrite MsmOp; reflexivity).
+            by (unfold ProofDefinitions.is_sample_of, AttackerClock.node_op; rewrite MsmOp; reflexivity).
           destruct (sample_index act a_idx samp_id Hali Hsampv) as [n_idx Hvn].
           assert (Hbsz : ss_sz (tf_dfg_b a_idx n_idx)
                          = dfg_var_size ctx (DFG_SVar dst))
             by (rewrite (buffer_register_node_size act a_idx n_idx Hali), Hvn;
                 exact MsmSz).
           assert (Hsmop : node_op act (vreg_nid a_idx n_idx) = DFG_Sample ip stall_id en)
-            by (unfold Definitions.node_op; rewrite Hvn, MsmOp; reflexivity).
+            by (unfold AttackerClock.node_op; rewrite Hvn, MsmOp; reflexivity).
           assert (Hsmdr : sample_drive act (vreg_nid a_idx n_idx) = Some drive_id)
             by (rewrite Hvn; exact Hdrv).
           assert (Hdrop2 : node_op act drive_id = DFG_Drive ip arg_id en)
-            by (unfold Definitions.node_op; rewrite MdrOp; reflexivity).
+            by (unfold AttackerClock.node_op; rewrite MdrOp; reflexivity).
           assert (Hsamp : (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
                           NV (dfg_var_size ctx (DFG_SVar dst)) samp_id
                           = convert (ip_fn (tfs_spec_ip ctx ip)
                               (NV (ip_req_sz (tfs_spec_ip ctx ip)) arg_id))).
           { intro Hreg.
-            unfold Definitions.nval. rewrite <- Hvn.
+            unfold ProofDefinitions.nval. rewrite <- Hvn.
             rewrite (nre_sample act a_idx n_idx Hali
                        ltac:(rewrite Hvn; exact Hsampv)).
             rewrite <- Hbsz, eval_svar_same.
@@ -3813,7 +3813,7 @@ Section SchedulerRoundTrip.
         assert (Hg_s1 : wgmono s1 F) by exact (wgmono_trans s1 s_then F Gthen Hg_then).
         destruct (dataflow_expr_sem cond 1 s s1 cond_id sp Hne Hinv Hvsz Hpos Ec Hg_s1 Hsem)
           as [Hsem1 Hvc].
-        unfold Definitions.nval in Hvc.
+        unfold ProofDefinitions.nval in Hvc.
         assert (HsemR : sem_inv sR sp).
         { apply (sem_inv_vm s1 sR); [ unfold sR; simpl; reflexivity | exact Hsem1 ]. }
         assert (HvmF : var_map sF = final_vars) by (unfold sF; reflexivity).
@@ -4130,7 +4130,7 @@ Section SchedulerRoundTrip.
     unfold SchedulerSimulationLemmas.guard_lit. cbv zeta. cbn [fst snd].
     destruct b.
     - exact (Ht eq_refl).
-    - cbn [tf_eval_expr]. unfold Definitions.node_ref_expr in Hf. rewrite (Hf eq_refl).
+    - cbn [tf_eval_expr]. unfold ProofDefinitions.node_ref_expr in Hf. rewrite (Hf eq_refl).
       vm_compute. discriminate.
   Qed.
 
@@ -4146,7 +4146,7 @@ Section SchedulerRoundTrip.
                   Hnz (c, b) Hin) as Hl.
     unfold SchedulerSimulationLemmas.guard_lit in Hl.
     cbv zeta in Hl. cbn [fst snd] in Hl.
-    unfold Definitions.node_ref_expr.
+    unfold ProofDefinitions.node_ref_expr.
     destruct b.
     - split; [ intros _; exact Hl | intro Hb; discriminate Hb ].
     - split; [ intro Hb; discriminate Hb | intros _ ].
@@ -4394,7 +4394,7 @@ Section SchedulerRoundTrip.
     destruct (BitsToLists.list_assoc (sample_bufs act a_idx) n) as [[q qsz] |] eqn:Hq;
       [| exfalso; exact (sample_is_buffered act a_idx n Halign Hsam Hq) ].
     pose proof (wla_in _ _ _ Hq) as Hin.
-    unfold Definitions.sample_bufs in Hin. apply filter_In in Hin. destruct Hin as [Hin _].
+    unfold ProofDefinitions.sample_bufs in Hin. apply filter_In in Hin. destruct Hin as [Hin _].
     assert (Hassoc : BitsToLists.list_assoc
                        (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) n
                      = Some (q, qsz))
@@ -4582,12 +4582,12 @@ Section SchedulerRoundTrip.
   Lemma sample_bufs_no_ips (act: tfs_action sched) a_idx :
     (p_var -> False) -> sample_bufs act a_idx = [].
   Proof.
-    intro Hno. unfold Definitions.sample_bufs.
+    intro Hno. unfold ProofDefinitions.sample_bufs.
     induction (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
       as [| e l IH]; [ reflexivity |].
     cbn [filter]. destruct e as [m msz].
     assert (Hf : is_sample_of act m = false).
-    { unfold Definitions.is_sample_of.
+    { unfold ProofDefinitions.is_sample_of.
       destruct (node_op act m) as [c | iv | v | uop a | bop a b | r | c t e
                                   | lat a | dp da den | sp stok sen | ja jb | ];
         try reflexivity.
@@ -4637,7 +4637,7 @@ Section SchedulerRoundTrip.
                     (build_dfg ctx act) (fst l) bufs)) ss input = Bits.ones 1.
   Proof.
     intros Hop Hbuf Hf Hval l Hin.
-    unfold Definitions.node_op in Hop.
+    unfold AttackerClock.node_op in Hop.
     rewrite (compile_drive_valid (build_dfg ctx act) _ _ a_idx n p arg en bufs pi fuel
                Hop Hbuf Hf) in Hval.
     refine (proj2 (proj1 (fold_valid_and_ones
@@ -4750,7 +4750,7 @@ Section SchedulerRoundTrip.
         try discriminate.
       apply Nat.eqb_eq in Hpred. subst ja.
       exists jb. destruct (node_at_nid act j Hin) as [_ Hnth].
-      unfold Definitions.node_op. rewrite Hnth, Ejop. reflexivity.
+      unfold AttackerClock.node_op. rewrite Hnth, Ejop. reflexivity.
   Qed.
 
 
@@ -4791,7 +4791,7 @@ Section SchedulerRoundTrip.
       destruct (op nd) as [ | | | | | | | l aa | | | | ] eqn:Hop;
         try discriminate Hp.
       apply Nat.eqb_eq in Hp. subst aa.
-      exists l. unfold Definitions.node_op. rewrite Hnth. exact Hop. }
+      exists l. unfold AttackerClock.node_op. rewrite Hnth. exact Hop. }
     unfold chain_gate. cbv zeta.
     destruct (find (fun nd => match op nd with
                               | DFG_Stall _ a => Nat.eqb a n
@@ -4837,10 +4837,10 @@ Section SchedulerRoundTrip.
     set (lt := ip_lat (tfs_spec_ip ctx p)) in *.
     destruct (node_at_nid act t Ht) as [_ Hnth].
     assert (Htok : node_op act tok = DFG_Stall lt aa)
-      by (unfold Definitions.node_op; rewrite <- Htid, Hnth; exact Htop).
+      by (unfold AttackerClock.node_op; rewrite <- Htid, Hnth; exact Htop).
     pose proof (stall_nid_succ act tok lt aa Htok) as Htoks.
     assert (Hsdh : sample_drive_head act p aa = Some d)
-      by (unfold Definitions.sample_drive in Hsd; rewrite Hsamp, Htok in Hsd; exact Hsd).
+      by (unfold ProofDefinitions.sample_drive in Hsd; rewrite Hsamp, Htok in Hsd; exact Hsd).
     (* both heads are [d] itself or the ordering join above it *)
     destruct (sample_drive_head_shape act p aa d Hsdh)
       as [[Hdaa [ar1 [e1 Haadr]]] | [prev' [ar2 [e2 [Haaj Hd2dr]]]]];
@@ -4861,7 +4861,7 @@ Section SchedulerRoundTrip.
     snd (compile_dfg_expr ctx bneeds f a_idx (build_dfg ctx act) x (sample_bufs act a_idx))
     = node_ref_valid act a_idx x.
   Proof.
-    intros H1 H2 H3. unfold Definitions.node_ref_valid.
+    intros H1 H2 H3. unfold ProofDefinitions.node_ref_valid.
     rewrite (compile_fuel_irrel act a_idx (sample_bufs act a_idx) x H1 H2 f
                (length (graph (build_dfg ctx act))) H3 H2).
     reflexivity.
@@ -4899,7 +4899,7 @@ Section SchedulerRoundTrip.
     { intros x Hx. apply list_assoc_key_none. intro Hin2.
       apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
       cbn [fst] in Hxx. subst x2.
-      unfold Definitions.sample_bufs in Hmem2. apply filter_In in Hmem2.
+      unfold ProofDefinitions.sample_bufs in Hmem2. apply filter_In in Hmem2.
       apply (list_assoc_none_key _ _ Hx), in_map_iff.
       exists (x, v2). split; [ reflexivity | exact (proj1 Hmem2) ]. }
     assert (Hsam_same : forall x m msz,
@@ -4909,9 +4909,9 @@ Section SchedulerRoundTrip.
               is_sample_of act x = true ->
               BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)).
     { intros x m msz Hx Hsx. apply list_assoc_nodup_in.
-      - unfold Definitions.sample_bufs. apply nodup_map_fst_filter.
+      - unfold ProofDefinitions.sample_bufs. apply nodup_map_fst_filter.
         exact (slot_keys_nodup act a_idx Halign).
-      - unfold Definitions.sample_bufs. apply filter_In.
+      - unfold ProofDefinitions.sample_bufs. apply filter_In.
         split; [ exact (wla_in _ _ _ Hx) | exact Hsx ]. }
     (* the node whose validity gates the pulse, and that validity *)
     assert (Hgate : exists m, (m = n \/ exists prev, node_op act m = DFG_Join n prev)
@@ -4948,12 +4948,12 @@ Section SchedulerRoundTrip.
     assert (Hnref : eval1 (node_ref_valid act a_idx n) ss input = Bits.ones 1).
     { destruct Hmshape as [-> | [prev Hj]]; [ exact Hmref |].
       pose proof (join_nid_succ act m n prev p arg en Hj Hop) as Hms.
-      unfold Definitions.node_ref_valid in Hmref.
+      unfold ProofDefinitions.node_ref_valid in Hmref.
       rewrite (compile_join_valid (build_dfg ctx act) _ _ a_idx m n prev
                  (sample_bufs act a_idx) [] (length (graph (build_dfg ctx act)))
                  Hj
                  (not_sample_not_in_sample_bufs act a_idx m
-                    ltac:(unfold Definitions.is_sample_of; rewrite Hj; reflexivity))
+                    ltac:(unfold ProofDefinitions.is_sample_of; rewrite Hj; reflexivity))
                  ltac:(lia)) in Hmref.
       rewrite valid_and_eval in Hmref.
       destruct (bits1_and_split _ _ Hmref) as [Hnv _].
@@ -4961,12 +4961,12 @@ Section SchedulerRoundTrip.
                  Hn1 Hnlen ltac:(lia)) in Hnv.
       exact Hnv. }
     (* and on to the literal's own source *)
-    unfold Definitions.node_ref_valid in Hnref.
+    unfold ProofDefinitions.node_ref_valid in Hnref.
     pose proof (compile_guard_sources_valid act a_idx n p arg en
                   (sample_bufs act a_idx) [] (length (graph (build_dfg ctx act)))
                   ss input Hop
                   (not_sample_not_in_sample_bufs act a_idx n
-                     ltac:(unfold Definitions.is_sample_of; rewrite Hop; reflexivity))
+                     ltac:(unfold ProofDefinitions.is_sample_of; rewrite Hop; reflexivity))
                   ltac:(lia) Hnref l Hin) as Hl.
     assert (Hlin : In (fst l) (get_args ctx (nth n (graph (build_dfg ctx act))
                                  {| nid := 0; op := DFG_Empty; sz := 0 |})))
@@ -5021,7 +5021,7 @@ Section SchedulerRoundTrip.
     destruct (node_op_pos act mm ltac:(rewrite Hm; discriminate)) as [Hm1 Hmlen].
     assert (Hlin : In c1 (get_args ctx (nth mm (graph (build_dfg ctx act))
                             {| nid := 0; op := DFG_Empty; sz := 0 |})))
-      by (unfold get_args; unfold Definitions.node_op in Hm; rewrite Hm; right;
+      by (unfold get_args; unfold AttackerClock.node_op in Hm; rewrite Hm; right;
           exact (in_map fst en_m (c1, b1) Hin1)).
     destruct (node_args_range act mm Hm1 Hmlen c1 Hlin) as [Hc1 Hc2].
     (* ... so it reads the same at the end of the run, where [en_holds] pins it *)
@@ -5034,7 +5034,7 @@ Section SchedulerRoundTrip.
       rewrite drive_sbufs_eq.
       apply (guard_expr_zero act a_idx (sample_bufs act a_idx) en_m (c1, b1) _ _ Hin1).
       unfold SchedulerSimulationLemmas.guard_lit. cbv zeta. cbn [fst snd].
-      unfold Definitions.node_ref_expr in Hst, Ht, Hf.
+      unfold ProofDefinitions.node_ref_expr in Hst, Ht, Hf.
       destruct b1; destruct b2; try (exfalso; apply Hsnd; reflexivity).
       - rewrite Hst. exact (Hf eq_refl).
       - cbn [tf_eval_expr]. rewrite Hst.
@@ -5100,8 +5100,8 @@ Section SchedulerRoundTrip.
                       (sched_input input (resp j)) Halign Hnd Hones) as Hgate.
         rewrite Hnjvn in Hgate.
         assert (Hsnj : s <> nid nj).
-        { intro He. rewrite He in Hsam. unfold Definitions.is_sample_of in Hsam.
-          unfold Definitions.node_op in Hsam. rewrite Hopat in Hsam. discriminate Hsam. }
+        { intro He. rewrite He in Hsam. unfold ProofDefinitions.is_sample_of in Hsam.
+          unfold AttackerClock.node_op in Hsam. rewrite Hopat in Hsam. discriminate Hsam. }
         assert (HsubF : forall n0 e,
                   BitsToLists.list_assoc
                     (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (nid nj)))
@@ -5161,8 +5161,8 @@ Section SchedulerRoundTrip.
                       (sched_input input (resp j)) Halign Hnd Hones) as Hgate.
         rewrite Hnjvn in Hgate.
         assert (Hsnj : s <> nid nj).
-        { intro He. rewrite He in Hsam. unfold Definitions.is_sample_of in Hsam.
-          unfold Definitions.node_op in Hsam. rewrite Hopat in Hsam. discriminate Hsam. }
+        { intro He. rewrite He in Hsam. unfold ProofDefinitions.is_sample_of in Hsam.
+          unfold AttackerClock.node_op in Hsam. rewrite Hopat in Hsam. discriminate Hsam. }
         assert (HsubF : forall n0 e,
                   BitsToLists.list_assoc
                     (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (nid nj)))
@@ -5212,7 +5212,7 @@ Section SchedulerRoundTrip.
   Proof.
     intros Halign Hsam.
     destruct (vreg_nid_node_range act a_idx n_idx Halign) as [_ Hnlen].
-    unfold Definitions.node_ref_valid.
+    unfold ProofDefinitions.node_ref_valid.
     rewrite (sample_ref_is_register act a_idx n_idx Halign Hsam []
                (length (graph (build_dfg ctx act))) Hnlen).
     reflexivity.
@@ -5232,7 +5232,7 @@ Section SchedulerRoundTrip.
                   (build_dfg ctx act) arg bufs)) ss input = Bits.ones 1.
   Proof.
     intros Hop Hbuf Hf Hval.
-    unfold Definitions.node_op in Hop.
+    unfold AttackerClock.node_op in Hop.
     rewrite (compile_drive_valid (build_dfg ctx act) _ _ a_idx n p arg en bufs pi fuel
                Hop Hbuf Hf) in Hval.
     exact (proj1 (proj1 (fold_valid_and_ones
@@ -5280,9 +5280,9 @@ Section SchedulerRoundTrip.
       (* the covering leaf is a sample on [p] either way *)
       assert (Hs'sam : is_sample_of act s' = true).
       { destruct Hd as [Hq | [nd [tk [en'' [Hnd [Hnid [Hop _]]]]]]].
-        - subst s'. unfold Definitions.is_sample_of. rewrite Hsamp. reflexivity.
+        - subst s'. unfold ProofDefinitions.is_sample_of. rewrite Hsamp. reflexivity.
         - destruct (node_at_nid act nd Hnd) as [_ Hat].
-          unfold Definitions.is_sample_of, Definitions.node_op. rewrite Hnid in Hat. rewrite Hat, Hop.
+          unfold ProofDefinitions.is_sample_of, AttackerClock.node_op. rewrite Hnid in Hat. rewrite Hat, Hop.
           reflexivity. }
       assert (Hs'op : exists tok2 en3, node_op act s' = DFG_Sample p tok2 en3
                         /\ (s' = samp \/ guards_disjoint en_s en3 = false)).
@@ -5290,7 +5290,7 @@ Section SchedulerRoundTrip.
         - subst s'. exists tok, en_s. split; [ exact Hsamp | left; reflexivity ].
         - destruct (node_at_nid act nd Hnd) as [_ Hat].
           exists tk, en''. rewrite Hnid in Hat.
-          split; [ unfold Definitions.node_op; rewrite Hat; exact Hop | right; exact Hdisj ]. }
+          split; [ unfold AttackerClock.node_op; rewrite Hat; exact Hop | right; exact Hdisj ]. }
       destruct Hs'op as [tok2 [en3 [Hs'sop Hdj]]].
       destruct (sample_slot act a_idx s' Halign Hs'sam)
         as [q0 [qsz [s_idx [Hassoc [Hidx Hvn]]]]].
@@ -5309,7 +5309,7 @@ Section SchedulerRoundTrip.
       assert (Hprevlt : prev < g).
       { pose proof (args_lt_fwd act _ Hgnode prev) as Hal.
         rewrite (node_nid_at act g Hglt) in Hal. apply Hal.
-        unfold get_args. unfold Definitions.node_op in Hg. rewrite Hg. right; left; reflexivity. }
+        unfold get_args. unfold AttackerClock.node_op in Hg. rewrite Hg. right; left; reflexivity. }
       assert (Hpfuel : prev < pred (length (graph (build_dfg ctx act)))) by lia.
       (* the leaf's register is down, so the whole tree above it reads zero *)
       assert (Htree : forall bufs fuel k,
@@ -5358,7 +5358,7 @@ Section SchedulerRoundTrip.
                        Halign Hzv Hpre ltac:(lia)); exact Hpz).
         assert (Hsg : s' <> vreg_nid a_idx g_idx).
         { rewrite Hgvn. intro He. rewrite He in Hs'sam.
-          unfold Definitions.is_sample_of, Definitions.node_op in Hs'sam. unfold Definitions.node_op in Hg.
+          unfold ProofDefinitions.is_sample_of, AttackerClock.node_op in Hs'sam. unfold AttackerClock.node_op in Hg.
           rewrite Hg in Hs'sam. discriminate Hs'sam. }
         assert (Hgnone : BitsToLists.list_assoc
                   (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (vreg_nid a_idx g_idx)))
@@ -5545,9 +5545,9 @@ Section SchedulerRoundTrip.
       set (l := ip_lat (tfs_spec_ip ctx p)) in *.
       destruct (node_at_nid act t Ht) as [_ Hnth].
       assert (Htok2 : node_op act tok2 = DFG_Stall l aa)
-        by (unfold Definitions.node_op; rewrite <- Htid, Hnth; exact Htop).
+        by (unfold AttackerClock.node_op; rewrite <- Htid, Hnth; exact Htop).
       assert (Hsdh : sample_drive_head act p aa = Some d2).
-      { unfold Definitions.sample_drive in Hsd2. rewrite Hs2, Htok2 in Hsd2. exact Hsd2. }
+      { unfold ProofDefinitions.sample_drive in Hsd2. rewrite Hs2, Htok2 in Hsd2. exact Hsd2. }
       assert (Htoklt : tok2 < vreg_nid a_idx s2).
       { pose proof (args_lt_fwd act _ Hs2in tok2) as Hal.
         rewrite (node_nid_at act (vreg_nid a_idx s2) Hs2len) in Hal.
@@ -5598,9 +5598,9 @@ Section SchedulerRoundTrip.
       assert (Hs'le : s' <= prev) by (exact (pleaf_le act prev s' Hpl)).
       assert (Hs'sam : is_sample_of act s' = true).
       { destruct Hd' as [Hq | [nd [tk [en'' [Hnd [Hnid [Hop _]]]]]]].
-        - rewrite Hq. unfold Definitions.is_sample_of. rewrite Hs1. reflexivity.
+        - rewrite Hq. unfold ProofDefinitions.is_sample_of. rewrite Hs1. reflexivity.
         - destruct (node_at_nid act nd Hnd) as [_ Hat].
-          unfold Definitions.is_sample_of, Definitions.node_op. rewrite Hnid in Hat. rewrite Hat, Hop.
+          unfold ProofDefinitions.is_sample_of, AttackerClock.node_op. rewrite Hnid in Hat. rewrite Hat, Hop.
           reflexivity. }
       destruct (sample_slot act a_idx s' Halign Hs'sam)
         as [q0 [qsz [s'_idx [Hassoc [Hidx Hvn]]]]].
@@ -5654,7 +5654,7 @@ Section SchedulerRoundTrip.
           rewrite Hids in Hv. exact (Hfin kk Hkk Hv).
         - destruct (node_at_nid act nd Hnd) as [_ Hat].
           assert (Hs'op : node_op act (vreg_nid a_idx s'_idx) = DFG_Sample p tk en'')
-            by (unfold Definitions.node_op; rewrite Hvn, <- Hnid, Hat; exact Hop).
+            by (unfold AttackerClock.node_op; rewrite Hvn, <- Hnid, Hat; exact Hop).
           assert (Hs'lt : s' < n2) by lia.
           assert (Hbound : vreg_nid a_idx s'_idx <= s') by (rewrite Hvn; lia).
           assert (Hge' : vreg_nid a_idx s1 <= vreg_nid a_idx s'_idx)
@@ -5877,7 +5877,7 @@ Section SchedulerRoundTrip.
     { intros x Hx. apply list_assoc_key_none. intro Hin2.
       apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
       cbn [fst] in Hxx. subst x2.
-      unfold Definitions.sample_bufs in Hmem2. apply filter_In in Hmem2.
+      unfold ProofDefinitions.sample_bufs in Hmem2. apply filter_In in Hmem2.
       apply (list_assoc_none_key _ _ Hx), in_map_iff.
       exists (x, v2). split; [ reflexivity | exact (proj1 Hmem2) ]. }
     assert (Hsam_same : forall x m msz,
@@ -5887,9 +5887,9 @@ Section SchedulerRoundTrip.
               is_sample_of act x = true ->
               BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)).
     { intros x m msz Hx Hsx. apply list_assoc_nodup_in.
-      - unfold Definitions.sample_bufs. apply nodup_map_fst_filter.
+      - unfold ProofDefinitions.sample_bufs. apply nodup_map_fst_filter.
         exact (slot_keys_nodup act a_idx Halign).
-      - unfold Definitions.sample_bufs. apply filter_In.
+      - unfold ProofDefinitions.sample_bufs. apply filter_In.
         split; [ exact (wla_in _ _ _ Hx) | exact Hsx ]. }
     rewrite (compile_subst_valid act a_idx (run_n t act input resp ss0)
                (sched_input input (resp t)) Halign Hinv
@@ -5941,7 +5941,7 @@ Section SchedulerRoundTrip.
                (length (graph (build_dfg ctx act))) d
                (ip_req_sz (tfs_spec_ip ctx p)) Hdlen Hrv).
     pose proof (nre_drive act a_idx d p av en' Hd1 Hdlen Hdop) as Hnre.
-    unfold Definitions.node_ref_expr in Hnre. rewrite Hnre. reflexivity.
+    unfold ProofDefinitions.node_ref_expr in Hnre. rewrite Hnre. reflexivity.
   Qed.
 
   (* THE ROUND TRIP, discharged.  The sample latches on the cycle its validity
@@ -6106,7 +6106,7 @@ Section SchedulerRoundTrip.
     assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
       by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
     assert (Hsamv : is_sample_of act (vreg_nid a_idx n_idx) = true)
-      by (unfold Definitions.is_sample_of; rewrite Hsamp; reflexivity).
+      by (unfold ProofDefinitions.is_sample_of; rewrite Hsamp; reflexivity).
     (* the cycle the answer is latched on *)
     assert (dec : forall k,
               {(fst (run_n k act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1}
@@ -6167,7 +6167,7 @@ Section SchedulerRoundTrip.
       with (vreg_nid a_idx n_idx).
     unfold SchedulerSimulationLemmas.buf_value_expr.
     destruct (stall_lat_of act (vreg_nid a_idx n_idx)) as [l |] eqn:Hst.
-    { exfalso. unfold Definitions.stall_lat_of, Definitions.is_sample_of in Hst, Hsamv.
+    { exfalso. unfold AttackerClock.stall_lat_of, ProofDefinitions.is_sample_of in Hst, Hsamv.
       destruct (node_op act (vreg_nid a_idx n_idx)); discriminate. }
     assert (Hsen : SchedulerSimulationLemmas.sample_en_of ctx cost_limit act
                      (vreg_nid a_idx n_idx) = Some en)
@@ -6253,7 +6253,7 @@ Section SchedulerRoundTrip.
     eval1 (drive_pulse act a_idx n) ss input = Bits.ones 1.
   Proof.
     intros Hop Hcg Hen Hvg Hvf.
-    unfold Definitions.node_op in Hop.
+    unfold AttackerClock.node_op in Hop.
     unfold SchedulerSimulationLemmas.drive_pulse. cbv zeta. rewrite Hop, Hcg.
     cbn [tf_eval_expr].
     change (filter
@@ -6312,9 +6312,9 @@ Section SchedulerRoundTrip.
                (ip_lat (tfs_spec_ip ctx p)) aa Halign
                (nth_In _ _ Hslen) (nth_In _ _ Htlen)).
       - rewrite (node_nid_at act tok Htlen).
-        unfold Definitions.node_op in Hsamp.
+        unfold AttackerClock.node_op in Hsamp.
         unfold get_args. rewrite Hsamp. left. reflexivity.
-      - unfold Definitions.node_op in Htok. exact Htok. }
+      - unfold AttackerClock.node_op in Htok. exact Htok. }
     destruct (BitsToLists.list_assoc
                 (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) tok)
       as [[m msz] |] eqn:Hq; [| exfalso; exact (Hne eq_refl) ].
@@ -6363,7 +6363,7 @@ Section SchedulerRoundTrip.
       by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
     assert (Hjlen : j2 < length (graph (build_dfg ctx act)))
       by (apply node_op_range; rewrite Hjop; discriminate).
-    pose proof Hjop as Hjop'. unfold Definitions.node_op in Hjop'.
+    pose proof Hjop as Hjop'. unfold AttackerClock.node_op in Hjop'.
     assert (Hdin : In d (get_args ctx (nth j2 (graph (build_dfg ctx act))
                      {| nid := 0; op := DFG_Empty; sz := 0 |})))
       by (unfold get_args; rewrite Hjop'; left; reflexivity).
@@ -6548,7 +6548,7 @@ Section SchedulerRoundTrip.
     { rewrite Hsd in Hsd2. injection Hsd2 as He. symmetry. exact He. }
     subst d2.
     assert (Hdh : sample_drive_head act p aa = Some d).
-    { unfold Definitions.sample_drive in Hsd.
+    { unfold ProofDefinitions.sample_drive in Hsd.
       rewrite Hsamp, Htok in Hsd. exact Hsd. }
     assert (HCG : exists g h, chain_gate ctx (build_dfg ctx act) d = Some (g, h)).
     { destruct (sample_drive_head_shape act p aa d Hdh)
@@ -6577,7 +6577,7 @@ Section SchedulerRoundTrip.
       apply (Hargpos (nth tok (graph (build_dfg ctx act))
                         {| nid := 0; op := DFG_Empty; sz := 0 |})
                (nth_In _ _ Htoklen)).
-      unfold get_args. unfold Definitions.node_op in Htok.
+      unfold get_args. unfold AttackerClock.node_op in Htok.
       rewrite Htok. left. reflexivity. }
     rewrite (stall_gate_walks act a_idx t_idx (ip_lat (tfs_spec_ip ctx p)) aa
                Htokstall Haane Hlen0) in Hgt.
@@ -6616,7 +6616,7 @@ Section SchedulerRoundTrip.
     { intros x Hx. apply list_assoc_key_none. intro Hin2.
       apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
       cbn [fst] in Hxx. subst x2.
-      unfold Definitions.sample_bufs in Hmem2. apply filter_In in Hmem2.
+      unfold ProofDefinitions.sample_bufs in Hmem2. apply filter_In in Hmem2.
       apply (list_assoc_none_key _ _ Hx), in_map_iff.
       exists (x, v2). split; [ reflexivity | exact (proj1 Hmem2) ]. }
     assert (Hsam_same : forall x m2 msz2,
@@ -6626,9 +6626,9 @@ Section SchedulerRoundTrip.
               is_sample_of act x = true ->
               BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m2, msz2)).
     { intros x m2 msz2 Hx Hsx. apply list_assoc_nodup_in.
-      - unfold Definitions.sample_bufs. apply nodup_map_fst_filter.
+      - unfold ProofDefinitions.sample_bufs. apply nodup_map_fst_filter.
         exact (slot_keys_nodup act a_idx Halign).
-      - unfold Definitions.sample_bufs. apply filter_In.
+      - unfold ProofDefinitions.sample_bufs. apply filter_In.
         split; [ exact (wla_in _ _ _ Hx) | exact Hsx ]. }
     assert (Haa_ref : eval1 (snd (compile_dfg_expr_at ctx bneeds []
                         (pred (length (graph (build_dfg ctx act)))) a_idx
@@ -6644,7 +6644,7 @@ Section SchedulerRoundTrip.
     assert (Hd_ref : eval1 (node_ref_valid act a_idx d)
                        (run_n t act input resp ss0) (sched_input input (resp t))
                      = Bits.ones 1).
-    { unfold Definitions.node_ref_valid.
+    { unfold ProofDefinitions.node_ref_valid.
       destruct (sample_drive_head_shape act p aa d Hdh)
         as [[Hda _] | [prev [arg2 [en2 [Hjop Hdop2]]]]].
       - subst aa.
@@ -6657,13 +6657,13 @@ Section SchedulerRoundTrip.
         { apply list_assoc_key_none. intro Hin2.
           apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
           cbn [fst] in Hxx. subst x2.
-          unfold Definitions.sample_bufs in Hmem2.
+          unfold ProofDefinitions.sample_bufs in Hmem2.
           apply filter_In in Hmem2. destruct Hmem2 as [_ Hsx].
-          unfold Definitions.is_sample_of,
-                 Definitions.node_op in Hsx.
-          unfold Definitions.node_op in Hjop.
+          unfold ProofDefinitions.is_sample_of,
+                 AttackerClock.node_op in Hsx.
+          unfold AttackerClock.node_op in Hjop.
           rewrite Hjop in Hsx. discriminate Hsx. }
-        unfold Definitions.node_op in Hjop.
+        unfold AttackerClock.node_op in Hjop.
         assert (Hdaa : d < aa).
         { pose proof (args_lt_fwd act (nth aa (graph (build_dfg ctx act))
                         {| nid := 0; op := DFG_Empty; sz := 0 |})
@@ -6686,7 +6686,7 @@ Section SchedulerRoundTrip.
     { intros l Hin.
       assert (Hlin : In (fst l) (get_args ctx (nth d (graph (build_dfg ctx act))
                         {| nid := 0; op := DFG_Empty; sz := 0 |}))).
-      { unfold get_args. unfold Definitions.node_op in Hd2op.
+      { unfold get_args. unfold AttackerClock.node_op in Hd2op.
         rewrite Hd2op. right. exact (in_map fst en l Hin). }
       pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
       split; [ exact (Hargpos _ (nth_In _ _ Hdlen) _ Hlin) |].
@@ -6696,11 +6696,11 @@ Section SchedulerRoundTrip.
     { apply list_assoc_key_none. intro Hin2.
       apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
       cbn [fst] in Hxx. subst x2.
-      unfold Definitions.sample_bufs in Hmem2.
+      unfold ProofDefinitions.sample_bufs in Hmem2.
       apply filter_In in Hmem2. destruct Hmem2 as [_ Hsx].
-      unfold Definitions.is_sample_of,
-             Definitions.node_op in Hsx.
-      unfold Definitions.node_op in Hd2op.
+      unfold ProofDefinitions.is_sample_of,
+             AttackerClock.node_op in Hsx.
+      unfold AttackerClock.node_op in Hd2op.
       rewrite Hd2op in Hsx. discriminate Hsx. }
     assert (Hsrc : forall l, In l en ->
               eval1 (node_ref_valid act a_idx (fst l))
@@ -6714,7 +6714,7 @@ Section SchedulerRoundTrip.
                     (length (graph (build_dfg ctx act)))
                     (run_n t act input resp ss0) (sched_input input (resp t))
                     Hd2op Hnad ltac:(lia) Hd_ref l Hin) as Hl.
-      unfold Definitions.node_ref_valid.
+      unfold ProofDefinitions.node_ref_valid.
       rewrite (compile_fuel_irrel act a_idx (sample_bufs act a_idx) (fst l)
                  Hl1 Hllen (length (graph (build_dfg ctx act)))
                  (pred (length (graph (build_dfg ctx act)))) Hllen Hlpred).
@@ -6734,7 +6734,7 @@ Section SchedulerRoundTrip.
     (* the wait is on its first cycle *)
     assert (Hstlat : stall_lat_of act (vreg_nid a_idx t_idx)
                      = Some (ip_lat (tfs_spec_ip ctx p))).
-    { unfold Definitions.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
+    { unfold AttackerClock.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
     destruct (stall_counter_wide act a_idx t_idx (ip_lat (tfs_spec_ip ctx p))
                 Halign Hstlat) as [Hlt1 Hwide].
     assert (Hbz : (fst (run_n t act input resp ss0)).[tf_dfg_b a_idx t_idx]
@@ -6760,7 +6760,7 @@ Section SchedulerRoundTrip.
     { destruct (sample_drive_head_shape act p aa d Hdh)
         as [[Hda _] | [prev [arg2 [en2 [Hjop Hdop2]]]]].
       - subst aa. exact Hvgate.
-      - unfold Definitions.node_op in Hjop.
+      - unfold AttackerClock.node_op in Hjop.
         assert (Hdaa : d < aa).
         { pose proof (args_lt_fwd act (nth aa (graph (build_dfg ctx act))
                         {| nid := 0; op := DFG_Empty; sz := 0 |})
@@ -6947,7 +6947,7 @@ Section SchedulerRoundTrip.
       apply (Hargpos (nth tok (graph (build_dfg ctx act))
                         {| nid := 0; op := DFG_Empty; sz := 0 |})
                (nth_In _ _ Htoklen)).
-      unfold get_args. unfold Definitions.node_op in Htok.
+      unfold get_args. unfold AttackerClock.node_op in Htok.
       rewrite Htok. left. reflexivity. }
     rewrite (stall_gate_walks act a_idx t_idx (ip_lat (tfs_spec_ip ctx p)) aa
                Htokstall Haane Hlen0) in Hsg.
@@ -6971,7 +6971,7 @@ Section SchedulerRoundTrip.
     (* down to the drive *)
     destruct (node_op_pos act d ltac:(rewrite Hdop; discriminate)) as [Hd1 Hdlen].
     assert (Hdh : sample_drive_head act p aa = Some d).
-    { unfold Definitions.sample_drive in Hsd.
+    { unfold ProofDefinitions.sample_drive in Hsd.
       rewrite Hsamp, Htok in Hsd. exact Hsd. }
     assert (Hdfull : eval1 (snd (compile_dfg_expr ctx bneeds
                        (length (graph (build_dfg ctx act))) a_idx
@@ -6999,7 +6999,7 @@ Section SchedulerRoundTrip.
     { intros x Hx. apply list_assoc_key_none. intro Hin2.
       apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
       cbn [fst] in Hxx. subst x2.
-      unfold Definitions.sample_bufs in Hmem2. apply filter_In in Hmem2.
+      unfold ProofDefinitions.sample_bufs in Hmem2. apply filter_In in Hmem2.
       apply (list_assoc_none_key _ _ Hx), in_map_iff.
       exists (x, v2). split; [ reflexivity | exact (proj1 Hmem2) ]. }
     assert (Hsam_same : forall x m2 msz2,
@@ -7009,9 +7009,9 @@ Section SchedulerRoundTrip.
               is_sample_of act x = true ->
               BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m2, msz2)).
     { intros x m2 msz2 Hx Hsx. apply list_assoc_nodup_in.
-      - unfold Definitions.sample_bufs. apply nodup_map_fst_filter.
+      - unfold ProofDefinitions.sample_bufs. apply nodup_map_fst_filter.
         exact (slot_keys_nodup act a_idx Halign).
-      - unfold Definitions.sample_bufs. apply filter_In.
+      - unfold ProofDefinitions.sample_bufs. apply filter_In.
         split; [ exact (wla_in _ _ _ Hx) | exact Hsx ]. }
     assert (Hd_ref : eval1 (snd (compile_dfg_expr ctx bneeds
                        (length (graph (build_dfg ctx act))) a_idx
@@ -7027,11 +7027,11 @@ Section SchedulerRoundTrip.
     { apply list_assoc_key_none. intro Hin2.
       apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
       cbn [fst] in Hxx. subst x2.
-      unfold Definitions.sample_bufs in Hmem2.
+      unfold ProofDefinitions.sample_bufs in Hmem2.
       apply filter_In in Hmem2. destruct Hmem2 as [_ Hsx].
-      unfold Definitions.is_sample_of,
-             Definitions.node_op in Hsx.
-      unfold Definitions.node_op in Hdop.
+      unfold ProofDefinitions.is_sample_of,
+             AttackerClock.node_op in Hsx.
+      unfold AttackerClock.node_op in Hdop.
       rewrite Hdop in Hsx. discriminate Hsx. }
     pose proof (compile_drive_arg_valid act a_idx d p av en'
                   (sample_bufs act a_idx) [] (length (graph (build_dfg ctx act)))
@@ -7040,7 +7040,7 @@ Section SchedulerRoundTrip.
     (* the argument sits below the drive *)
     assert (Havin : In av (get_args ctx (nth d (graph (build_dfg ctx act))
                       {| nid := 0; op := DFG_Empty; sz := 0 |}))).
-    { unfold get_args. unfold Definitions.node_op in Hdop.
+    { unfold get_args. unfold AttackerClock.node_op in Hdop.
       rewrite Hdop. left. reflexivity. }
     pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
     assert (Hav1 : 1 <= av) by exact (Hargpos _ (nth_In _ _ Hdlen) _ Havin).
@@ -7052,12 +7052,12 @@ Section SchedulerRoundTrip.
                Hav1 Havlen (pred (length (graph (build_dfg ctx act))))
                (length (graph (build_dfg ctx act))) ltac:(lia) Havlen) in Hav.
     (* and validity does not fall *)
-    unfold Definitions.node_ref_valid.
+    unfold ProofDefinitions.node_ref_valid.
     replace (S (S M'')) with (M'' + 2) by lia.
     apply (compile_valid_mono_run act a_idx input resp ss0 (sample_bufs act a_idx)
              (length (graph (build_dfg ctx act))) av [] M'' 2 Halign Hzv);
       [ intros i Hi; apply Hpre; lia
-      | intros e He; unfold Definitions.sample_bufs in He;
+      | intros e He; unfold ProofDefinitions.sample_bufs in He;
         exact (proj1 (proj1 (filter_In _ e _) He))
       | exact Havlen
       | intros x Hx Hsx;
@@ -7129,7 +7129,7 @@ Section SchedulerRoundTrip.
     { intro Heq. rewrite Heq, Hsamp in Htok. discriminate Htok. }
     assert (Hstlat : stall_lat_of act (vreg_nid a_idx t_idx)
                      = Some (ip_lat (tfs_spec_ip ctx p))).
-    { unfold Definitions.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
+    { unfold AttackerClock.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
     destruct (stall_counter_wide act a_idx t_idx (ip_lat (tfs_spec_ip ctx p))
                 Halign Hstlat) as [Hlt1 Hwide].
     (* one cycle back from the sample: its gate is the stall's register *)
@@ -7159,9 +7159,9 @@ Section SchedulerRoundTrip.
                   (ip_lat (tfs_spec_ip ctx p)) aa Halign
                   (nth_In _ _ Hslen) (nth_In _ _ Htoklen)).
          - rewrite (node_nid_at act tok Htoklen).
-           unfold Definitions.node_op in Hsamp.
+           unfold AttackerClock.node_op in Hsamp.
            unfold get_args. rewrite Hsamp. left. reflexivity.
-         - unfold Definitions.node_op in Htok. exact Htok.
+         - unfold AttackerClock.node_op in Htok. exact Htok.
          - rewrite (node_nid_at act tok Htoklen). exact Htnone. }
     assert (Hsid : s_idx = t_idx).
     { apply (vreg_nid_inj act a_idx _ _ Halign). rewrite Hsvn, Htvn. reflexivity. }
@@ -7255,7 +7255,7 @@ Section SchedulerRoundTrip.
       assert (Haalen : aa < length (graph (build_dfg ctx act)))
         by (apply node_op_range; rewrite Haaop; discriminate).
       assert (Hprevlen : prev < length (graph (build_dfg ctx act))).
-      { pose proof Haaop as Haaop'. unfold Definitions.node_op in Haaop'.
+      { pose proof Haaop as Haaop'. unfold AttackerClock.node_op in Haaop'.
         pose proof (args_lt_fwd act _ (nth_In _ _ Haalen) prev
                       ltac:(unfold get_args; rewrite Haaop'; right; left; reflexivity))
           as Hlt.
@@ -7267,13 +7267,13 @@ Section SchedulerRoundTrip.
                              /\ guards_disjoint en_m en'' = false)).
       { destruct Hs'shape as [-> | [nd [tk [en'' [Hin [Hid [Hop Hdj]]]]]]].
         - split; [| left; reflexivity ].
-          unfold Definitions.is_sample_of,
-                 Definitions.node_op in *.
+          unfold ProofDefinitions.is_sample_of,
+                 AttackerClock.node_op in *.
           rewrite Hsm. reflexivity.
         - destruct (node_at_nid act nd Hin) as [_ Hnth].
           assert (Hs'op : node_op act s' = DFG_Sample p tk en'')
-            by (unfold Definitions.node_op; rewrite <- Hid, Hnth; exact Hop).
-          split; [ unfold Definitions.is_sample_of;
+            by (unfold AttackerClock.node_op; rewrite <- Hid, Hnth; exact Hop).
+          split; [ unfold ProofDefinitions.is_sample_of;
                    rewrite Hs'op; reflexivity
                  | right; exists tk, en''; split; [ exact Hs'op | exact Hdj ]]. }
       destruct Hs'sam as [Hs'is Hs'alt].
@@ -7288,7 +7288,7 @@ Section SchedulerRoundTrip.
                  (fun n e H => H) Hprevlen Hprevv). }
       (* so ours' predecessor has latched too *)
       assert (Hsm_is : is_sample_of act samp_m = true)
-        by (unfold Definitions.is_sample_of; rewrite Hsm; reflexivity).
+        by (unfold ProofDefinitions.is_sample_of; rewrite Hsm; reflexivity).
       destruct (sample_slot act a_idx samp_m Halign Hsm_is)
         as [q1 [qsz1 [sm_idx [Hass1 [Hidx1 Hvn1]]]]].
       assert (Hv_sm : (fst (run_n t act input resp ss0)).[tf_dfg_v a_idx sm_idx]
@@ -7321,7 +7321,7 @@ Section SchedulerRoundTrip.
         assert (Hstl : stall_lat_of act (vreg_nid a_idx tm_idx)
                        = Some (ip_lat (tfs_spec_ip ctx p))).
         { destruct (sample_tok_is_stall act samp_m p tok_m en_m Hsm) as [am Htokm].
-          unfold Definitions.stall_lat_of. rewrite Htvn1, Htokm. reflexivity. }
+          unfold AttackerClock.stall_lat_of. rewrite Htvn1, Htokm. reflexivity. }
         destruct (stall_counter_wide act a_idx tm_idx (ip_lat (tfs_spec_ip ctx p))
                     Halign Hstl) as [_ Hwide].
         intro Hc.
@@ -7335,7 +7335,7 @@ Section SchedulerRoundTrip.
       (* and the pulse reads that counter *)
       destruct (sample_tok_is_stall act samp_m p tok_m en_m Hsm) as [am Htokm].
       assert (Hdhm : sample_drive_head act p am = Some mm).
-      { unfold Definitions.sample_drive in Hsdm.
+      { unfold ProofDefinitions.sample_drive in Hsdm.
         rewrite Hsm, Htokm in Hsdm. exact Hsdm. }
       assert (HCGm : exists g h, chain_gate ctx (build_dfg ctx act) mm = Some (g, h)).
       { destruct (sample_drive_head_shape act p am mm Hdhm)
@@ -7415,9 +7415,9 @@ Section SchedulerRoundTrip.
                      {| nid := 0; op := DFG_Empty; sz := 0 |})
                   lt aa Halign (nth_In _ _ Hslen) (nth_In _ _ Htoklen)).
          - rewrite (node_nid_at act tok Htoklen).
-           unfold Definitions.node_op in Hsamp.
+           unfold AttackerClock.node_op in Hsamp.
            unfold get_args. rewrite Hsamp. left. reflexivity.
-         - unfold Definitions.node_op in Htok. exact Htok.
+         - unfold AttackerClock.node_op in Htok. exact Htok.
          - rewrite (node_nid_at act tok Htoklen). exact Htnone. }
     rewrite Hbg, eval1_svar_v in Hgate_j.
     destruct j as [| j'].
@@ -7437,7 +7437,7 @@ Section SchedulerRoundTrip.
                    (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))
       with (vreg_nid a_idx t_idx) in Hgate_j.
     assert (Hstlat : stall_lat_of act (vreg_nid a_idx t_idx) = Some lt).
-    { unfold Definitions.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
+    { unfold AttackerClock.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
     destruct (stall_counter_wide act a_idx t_idx lt Halign Hstlat) as [Hlt1 Hwide].
     destruct (stall_valid_next_inv act a_idx t_idx (run_n j' act input resp ss0)
                 (sched_input input (resp j')) lt _ Hstlat Hwide Hgate_j)
@@ -7562,7 +7562,7 @@ Section SchedulerRoundTrip.
           with (vreg_nid a_idx n_idx).
         unfold SchedulerSimulationLemmas.buf_valid_expr.
         assert (Hnostall : stall_lat_of act (vreg_nid a_idx n_idx) = None)
-          by (unfold Definitions.stall_lat_of; rewrite Hsamp; reflexivity).
+          by (unfold AttackerClock.stall_lat_of; rewrite Hsamp; reflexivity).
         rewrite Hnostall, Hbg, eval1_svar_v. exact HvstallT. }
       assert (Hmono : (fst (run_n (S j') act input resp ss0)).[tf_dfg_v a_idx n_idx]
                       = Bits.ones 1).
@@ -7608,7 +7608,7 @@ Section SchedulerRoundTrip.
     subst d2.
     assert (Hstl : stall_lat_of act (vreg_nid a_idx t_idx)
                    = Some (ip_lat (tfs_spec_ip ctx p))).
-    { unfold Definitions.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
+    { unfold AttackerClock.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
     destruct (stall_counter_wide act a_idx t_idx (ip_lat (tfs_spec_ip ctx p))
                 Halign Hstl) as [_ Hwide].
     exists t.
@@ -7645,7 +7645,7 @@ Section SchedulerRoundTrip.
         { intros l Hin.
           assert (Hlin : In (fst l) (get_args ctx (nth d (graph (build_dfg ctx act))
                             {| nid := 0; op := DFG_Empty; sz := 0 |}))).
-          { unfold get_args. unfold Definitions.node_op in Hd2op.
+          { unfold get_args. unfold AttackerClock.node_op in Hd2op.
             rewrite Hd2op. right. exact (in_map fst en l Hin). }
           pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
           split; [ exact (Hargpos _ (nth_In _ _ Hdlen) _ Hlin) |].
@@ -7658,9 +7658,9 @@ Section SchedulerRoundTrip.
                   is_sample_of act x = true ->
                   BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m2, msz2)).
         { intros x m2 msz2 Hx Hsx. apply list_assoc_nodup_in.
-          - unfold Definitions.sample_bufs. apply nodup_map_fst_filter.
+          - unfold ProofDefinitions.sample_bufs. apply nodup_map_fst_filter.
             exact (slot_keys_nodup act a_idx Halign).
-          - unfold Definitions.sample_bufs. apply filter_In.
+          - unfold ProofDefinitions.sample_bufs. apply filter_In.
             split; [ exact (wla_in _ _ _ Hx) | exact Hsx ]. }
         assert (Hsrc_j : forall l, In l en ->
                   eval1 (node_ref_valid act a_idx (fst l))
@@ -7669,14 +7669,14 @@ Section SchedulerRoundTrip.
         { intros l Hin.
           destruct (Hlrange l Hin) as [_ Hld].
           assert (Hllen : fst l < length (graph (build_dfg ctx act))) by lia.
-          unfold Definitions.node_ref_valid.
+          unfold ProofDefinitions.node_ref_valid.
           replace j with (t + (j - t)) by lia.
           apply (compile_valid_mono_run act a_idx input resp ss0
                    (sample_bufs act a_idx)
                    (length (graph (build_dfg ctx act))) (fst l) [] t (j - t)
                    Halign Hzv);
             [ intros i Hi; apply Hpre; lia
-            | intros e He; unfold Definitions.sample_bufs in He;
+            | intros e He; unfold ProofDefinitions.sample_bufs in He;
               exact (proj1 (proj1 (filter_In _ e _) He))
             | exact Hllen
             | intros x Hx Hsx;
@@ -7737,7 +7737,7 @@ Section SchedulerRoundTrip.
       exact H. }
     assert (Hlin : In (fst l) (get_args ctx (nth d (graph (build_dfg ctx act))
                       {| nid := 0; op := DFG_Empty; sz := 0 |}))).
-    { unfold get_args. unfold Definitions.node_op in Hdop.
+    { unfold get_args. unfold AttackerClock.node_op in Hdop.
       rewrite Hdop. right. exact (in_map fst en l Hin). }
     destruct (node_args_range act d
                 ltac:(destruct (node_op_pos act d
@@ -7751,18 +7751,18 @@ Section SchedulerRoundTrip.
               is_sample_of act x = true ->
               BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m2, msz2)).
     { intros x m2 msz2 Hx Hsx. apply list_assoc_nodup_in.
-      - unfold Definitions.sample_bufs. apply nodup_map_fst_filter.
+      - unfold ProofDefinitions.sample_bufs. apply nodup_map_fst_filter.
         exact (slot_keys_nodup act a_idx Halign).
-      - unfold Definitions.sample_bufs. apply filter_In.
+      - unfold ProofDefinitions.sample_bufs. apply filter_In.
         split; [ exact (wla_in _ _ _ Hx) | exact Hsx ]. }
-    unfold Definitions.node_ref_valid.
+    unfold ProofDefinitions.node_ref_valid.
     replace m with (t + (m - t)) by lia.
     apply (compile_valid_mono_run act a_idx input resp ss0
              (sample_bufs act a_idx)
              (length (graph (build_dfg ctx act))) (fst l) [] t (m - t)
              Halign Hzv);
       [ intros i Hi; apply Hpre; lia
-      | intros e He; unfold Definitions.sample_bufs in He;
+      | intros e He; unfold ProofDefinitions.sample_bufs in He;
         exact (proj1 (proj1 (filter_In _ e _) He))
       | exact Hllen
       | intros x Hx Hsx;
@@ -7803,13 +7803,13 @@ Section SchedulerRoundTrip.
       apply Bool.negb_true_iff. apply Nat.eqb_neq. lia. }
     split.
     - intros x Hx Hnone. rewrite Hkeep in Hnone by exact Hx.
-      unfold Definitions.sample_bufs.
+      unfold ProofDefinitions.sample_bufs.
       exact (list_assoc_filter_none _ _ _ Hnone).
     - intros x m msz Hx Hsome Hsx. rewrite Hkeep in Hsome by exact Hx.
       apply list_assoc_nodup_in.
-      + unfold Definitions.sample_bufs. apply nodup_map_fst_filter.
+      + unfold ProofDefinitions.sample_bufs. apply nodup_map_fst_filter.
         exact (slot_keys_nodup act a_idx Halign).
-      + unfold Definitions.sample_bufs. apply filter_In.
+      + unfold ProofDefinitions.sample_bufs. apply filter_In.
         split; [ exact (wla_in _ _ _ Hsome) | exact Hsx ].
   Qed.
 
@@ -7828,12 +7828,12 @@ Section SchedulerRoundTrip.
           BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)).
   Proof.
     intro Halign. split.
-    - intros x Hnone. unfold Definitions.sample_bufs.
+    - intros x Hnone. unfold ProofDefinitions.sample_bufs.
       exact (list_assoc_filter_none _ _ _ Hnone).
     - intros x m msz Hsome Hsx. apply list_assoc_nodup_in.
-      + unfold Definitions.sample_bufs. apply nodup_map_fst_filter.
+      + unfold ProofDefinitions.sample_bufs. apply nodup_map_fst_filter.
         exact (slot_keys_nodup act a_idx Halign).
-      + unfold Definitions.sample_bufs. apply filter_In.
+      + unfold ProofDefinitions.sample_bufs. apply filter_In.
         split; [ exact (wla_in _ _ _ Hsome) | exact Hsx ].
   Qed.
   Lemma sample_guards_valid_run
@@ -7875,7 +7875,7 @@ Section SchedulerRoundTrip.
     assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
       by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
     assert (Hsam : is_sample_of act (vreg_nid a_idx n_idx) = true)
-      by (unfold Definitions.is_sample_of;
+      by (unfold ProofDefinitions.is_sample_of;
           rewrite Hsamp; reflexivity).
     assert (Hen : sample_en_of act (vreg_nid a_idx n_idx) = Some en)
       by (unfold SchedulerSimulationLemmas.sample_en_of;
@@ -7894,7 +7894,7 @@ Section SchedulerRoundTrip.
           exact H. }
         assert (Hlin : In c (get_args ctx (nth d (graph (build_dfg ctx act))
                           {| nid := 0; op := DFG_Empty; sz := 0 |}))).
-        { unfold get_args. unfold Definitions.node_op in Hdop.
+        { unfold get_args. unfold AttackerClock.node_op in Hdop.
           rewrite Hdop. right. exact (in_map fst en (c, b) Hin). }
         destruct (node_args_range act d
                     ltac:(destruct (node_op_pos act d
@@ -7983,7 +7983,7 @@ Section SchedulerRoundTrip.
     { intros x Hx. apply list_assoc_key_none. intro Hin2.
       apply in_map_iff in Hin2. destruct Hin2 as [[x2 v2] [Hxx Hmem2]].
       cbn [fst] in Hxx. subst x2.
-      unfold Definitions.sample_bufs in Hmem2. apply filter_In in Hmem2.
+      unfold ProofDefinitions.sample_bufs in Hmem2. apply filter_In in Hmem2.
       apply (list_assoc_none_key _ _ Hx), in_map_iff.
       exists (x, v2). split; [ reflexivity | exact (proj1 Hmem2) ]. }
     assert (Hsam_same : forall x m msz,
@@ -7993,9 +7993,9 @@ Section SchedulerRoundTrip.
               is_sample_of act x = true ->
               BitsToLists.list_assoc (sample_bufs act a_idx) x = Some (m, msz)).
     { intros x m msz Hx Hsx. apply list_assoc_nodup_in.
-      + unfold Definitions.sample_bufs. apply nodup_map_fst_filter.
+      + unfold ProofDefinitions.sample_bufs. apply nodup_map_fst_filter.
         exact (slot_keys_nodup act a_idx Halign).
-      + unfold Definitions.sample_bufs. apply filter_In.
+      + unfold ProofDefinitions.sample_bufs. apply filter_In.
         split; [ exact (wla_in _ _ _ Hx) | exact Hsx ]. }
     (* drop the buffers from any var_map node's compiled expression *)
     assert (Hdrop : forall v n szB,

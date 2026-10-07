@@ -8,6 +8,7 @@ Require Import Koika.Frontend.
 Require Import Koika.Std.
 
 Require Import Trustformer.Theorems.Definitions.
+Require Import Trustformer.Theorems.Internal.ProofDefinitions.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.

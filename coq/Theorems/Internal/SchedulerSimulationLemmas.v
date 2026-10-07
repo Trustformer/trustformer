@@ -19,6 +19,7 @@ Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
 Require Import Trustformer.Theorems.Definitions.
+Require Import Trustformer.Theorems.Internal.ProofDefinitions.
 
 Require Import Coq.Lists.List.
 Require Import Coq.Arith.PeanoNat.
@@ -73,32 +74,31 @@ Section SchedulerSimulation.
   Context (ctx: TFSchedContext).
   Context (cost_limit: nat).
 
-  (* Stated in Theorems/Definitions.v; bound at this section's context. *)
-  Local Notation node_ref_valid := (Definitions.node_ref_valid ctx cost_limit).
-  Local Notation sample_drive := (Definitions.sample_drive ctx cost_limit).
-  Local Notation sample_drive_head := (Definitions.sample_drive_head ctx cost_limit).
-  Local Notation vreg_nid := (Definitions.vreg_nid ctx cost_limit).
+  (* Bound at this section's context. *)
+  Local Notation node_ref_valid := (ProofDefinitions.node_ref_valid ctx cost_limit).
+  Local Notation sample_drive := (ProofDefinitions.sample_drive ctx cost_limit).
+  Local Notation sample_drive_head := (ProofDefinitions.sample_drive_head ctx cost_limit).
+  Local Notation vreg_nid := (ProofDefinitions.vreg_nid ctx cost_limit).
 
-  (* The vocabulary the guarantees are stated in lives in Theorems/Definitions.v;
-     these bind it at this section's [ctx] and [cost_limit]. *)
-  Local Notation act_idx_aligned := (Definitions.act_idx_aligned ctx cost_limit).
+  (* These bind the definitions at this section's [ctx] and [cost_limit]. *)
+  Local Notation act_idx_aligned := (ProofDefinitions.act_idx_aligned ctx cost_limit).
   Local Notation done_set := (Definitions.done_set ctx cost_limit).
-  Local Notation done_set_dec := (Definitions.done_set_dec ctx cost_limit).
+  Local Notation done_set_dec := (ProofDefinitions.done_set_dec ctx cost_limit).
   Local Notation drive_payload := (Definitions.drive_payload ctx cost_limit).
   Local Notation ip_contract := (Definitions.ip_contract ctx cost_limit).
-  Local Notation is_sample_of := (Definitions.is_sample_of ctx cost_limit).
-  Local Notation node_op := (Definitions.node_op ctx cost_limit).
-  Local Notation node_rank := (Definitions.node_rank ctx cost_limit).
-  Local Notation node_ref_expr := (Definitions.node_ref_expr ctx cost_limit).
-  Local Notation nval := (Definitions.nval ctx cost_limit).
+  Local Notation is_sample_of := (ProofDefinitions.is_sample_of ctx cost_limit).
+  Local Notation node_op := (AttackerClock.node_op ctx cost_limit).
+  Local Notation node_rank := (AttackerClock.node_rank ctx cost_limit).
+  Local Notation node_ref_expr := (ProofDefinitions.node_ref_expr ctx cost_limit).
+  Local Notation nval := (ProofDefinitions.nval ctx cost_limit).
   Local Notation port_strobe := (Definitions.port_strobe ctx cost_limit).
   Local Notation run_n := (Definitions.run_n ctx cost_limit).
-  Local Notation sample_bufs := (Definitions.sample_bufs ctx cost_limit).
+  Local Notation sample_bufs := (ProofDefinitions.sample_bufs ctx cost_limit).
   Local Notation sched_input := (Definitions.sched_input ctx cost_limit).
   Local Notation sched_step := (Definitions.sched_step ctx cost_limit).
-  Local Notation settle_bound := (Definitions.settle_bound ctx cost_limit).
-  Local Notation stall_lat_of := (Definitions.stall_lat_of ctx cost_limit).
-  Local Notation stall_weight := (Definitions.stall_weight ctx cost_limit).
+  Local Notation settle_bound := (AttackerClock.settle_bound ctx cost_limit).
+  Local Notation stall_lat_of := (AttackerClock.stall_lat_of ctx cost_limit).
+  Local Notation stall_weight := (AttackerClock.stall_weight ctx cost_limit).
   Local Notation start_rel := (Definitions.start_rel ctx cost_limit).
   Local Notation zeroed_at_start := (Definitions.zeroed_at_start ctx cost_limit).
 
@@ -7376,7 +7376,7 @@ Section SchedulerSimulation.
 
   (* The two width facts the round trip's statements take as premises. *)
   Lemma drives_sized_holds (act: tfs_action sched) :
-    Definitions.drives_sized ctx cost_limit act.
+    ProofDefinitions.drives_sized ctx cost_limit act.
   Proof.
     intros n p av en Hop.
     assert (Hlen : n < length (graph (build_dfg ctx act)))
@@ -7385,7 +7385,7 @@ Section SchedulerSimulation.
   Qed.
 
   Lemma guards_sized_holds (act: tfs_action sched) :
-    Definitions.guards_sized ctx cost_limit act.
+    ProofDefinitions.guards_sized ctx cost_limit act.
   Proof.
     intros n p av en Hop l Hl.
     assert (Hlen : n < length (graph (build_dfg ctx act)))
@@ -7830,10 +7830,10 @@ Section SchedulerSimulation.
   (* Every declassified root is a value node: [decl_instances] keeps the rules
      that target values, and the variable map names only values. *)
   Lemma plumbing_not_root_holds (act: tfs_action sched) :
-    Definitions.plumbing_not_root ctx cost_limit act.
+    ProofDefinitions.plumbing_not_root ctx cost_limit act.
   Proof.
     intros n Hpl Hin. unfold untainted_roots in Hin.
-    unfold Definitions.is_plumbing, Definitions.node_op in Hpl.
+    unfold ProofDefinitions.is_plumbing, AttackerClock.node_op in Hpl.
     destruct (saturate_cases _ _ _ n Hin) as [Hin0 | [i [Hi Ht]]].
     - apply in_app_or in Hin0. destruct Hin0 as [Hd | Htp].
       + unfold public_dsts in Hd. apply in_map_iff in Hd.

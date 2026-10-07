@@ -234,7 +234,7 @@ End FigureB.
 
 
 (* Cycle bounds: [action_bounds] reports a CIRCUIT's best and worst case, where
-   [L] in Theorems/IPR.v gives one concrete input's latency for the proofs.
+   [L] gives one concrete input's latency for the proofs.
    [fst = snd] certifies the action is constant time. *)
 
 Section Bounds.

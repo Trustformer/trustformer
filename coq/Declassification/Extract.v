@@ -375,6 +375,7 @@ End RecipeSound.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
 Require Import Trustformer.Theorems.Definitions.
+Require Import Trustformer.Theorems.Internal.ProofDefinitions.
 Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Theorems.Internal.IPRProof.
 
@@ -449,23 +450,23 @@ Section Ideal.
   Qed.
 
   Lemma drive_of_sample_drive n :
-    drive_of (p_eq := peq) G n = Definitions.sample_drive ctx cost_limit act n.
+    drive_of (p_eq := peq) G n = ProofDefinitions.sample_drive ctx cost_limit act n.
   Proof. reflexivity. Qed.
 
   Lemma sample_drive_below n p tok en d :
     op (node_at G n) = DFG_Sample p tok en ->
-    Definitions.sample_drive ctx cost_limit act n = Some d -> d < n.
+    ProofDefinitions.sample_drive ctx cost_limit act n = Some d -> d < n.
   Proof.
     intros Hop Hd.
     assert (Htok : tok < n)
       by (apply (arg_below n tok); [ rewrite Hop; discriminate
                                    | unfold get_args; rewrite Hop; left; reflexivity ]).
-    unfold Definitions.sample_drive, Definitions.node_op in Hd.
+    unfold ProofDefinitions.sample_drive, AttackerClock.node_op in Hd.
     change (op (node_at G n)) with (op (nth n (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}))
       in Hop.
     rewrite Hop in Hd.
-    assert (Hhead : forall h, Definitions.sample_drive_head ctx cost_limit act p h = Some d -> d <= h).
-    { intros h Hh. unfold Definitions.sample_drive_head, Definitions.node_op in Hh.
+    assert (Hhead : forall h, ProofDefinitions.sample_drive_head ctx cost_limit act p h = Some d -> d <= h).
+    { intros h Hh. unfold ProofDefinitions.sample_drive_head, AttackerClock.node_op in Hh.
       destruct (op (nth h (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}))
         as [c | v | v | uop x | bop x y | x | c t e | sl x | dp x den | sp x sen | jd jb | ]
         eqn:Hoh; try discriminate.
@@ -500,9 +501,9 @@ Section Ideal.
     pose proof (sample_drive_below n p tok en d Hop Hsd) as Hdn.
     assert (Hld : fst l < d).
     { apply (arg_below d (fst l)).
-      + change (op (node_at G d)) with (Definitions.node_op ctx cost_limit act d).
+      + change (op (node_at G d)) with (AttackerClock.node_op ctx cost_limit act d).
         rewrite Hdop. discriminate.
-      + unfold get_args. change (op (node_at G d)) with (Definitions.node_op ctx cost_limit act d).
+      + unfold get_args. change (op (node_at G d)) with (AttackerClock.node_op ctx cost_limit act d).
         rewrite Hdop. right. exact (in_map fst en l Hl). }
     lia.
   Qed.
@@ -511,7 +512,7 @@ Section Ideal.
     op (node_at G n) = DFG_Sample p tok en -> payload_of (p_eq := peq) G n = Some a -> a < n.
   Proof.
     intros Hop Hpl. unfold payload_of in Hpl. rewrite drive_of_sample_drive in Hpl.
-    destruct (Definitions.sample_drive ctx cost_limit act n) as [d |] eqn:Hsd;
+    destruct (ProofDefinitions.sample_drive ctx cost_limit act n) as [d |] eqn:Hsd;
       [ | discriminate ].
     pose proof (sample_drive_below n p tok en d Hop Hsd) as Hdn.
     destruct (op (node_at G d)) eqn:Hdop; try discriminate.
@@ -751,7 +752,7 @@ Section Settled.
     intro Hop. unfold node_at in Hop.
     assert (Hns : BitsToLists.list_assoc (sample_bufs ctx cost_limit act a_idx) n = None).
     { apply not_sample_not_in_sample_bufs.
-      unfold Definitions.is_sample_of, Definitions.node_op. rewrite Hop. reflexivity. }
+      unfold ProofDefinitions.is_sample_of, AttackerClock.node_op. rewrite Hop. reflexivity. }
     destruct (length (graph G)) as [| f]; cbn [compile_dfg_expr_aux].
     - cbn. discriminate.
     - rewrite Hns. cbv beta iota zeta. rewrite Hop. cbn. discriminate.
@@ -766,7 +767,7 @@ Section Settled.
     rewrite (nre_unfold ctx cost_limit act a_idx n H1 H2).
     cbn [compile_dfg_expr_aux].
     rewrite (not_sample_not_in_sample_bufs ctx cost_limit act a_idx n
-              ltac:(unfold Definitions.is_sample_of, Definitions.node_op; rewrite Hop; reflexivity)).
+              ltac:(unfold ProofDefinitions.is_sample_of, AttackerClock.node_op; rewrite Hop; reflexivity)).
     cbv beta iota zeta. rewrite Hop.
     destruct (compile_dfg_expr_aux _ _ _ _ _ _ _ _ ja _).
     destruct (compile_dfg_expr_aux _ _ _ _ _ _ _ _ jb _). reflexivity.
@@ -920,19 +921,19 @@ Section Settled.
     - (* sample: the answer the round trip latched *)
       assert (Hlen2 : 1 < length (graph G)) by lia.
       assert (Hsam : is_sample_of ctx cost_limit act n = true)
-        by (unfold Definitions.is_sample_of, Definitions.node_op; rewrite Hop'; reflexivity).
+        by (unfold ProofDefinitions.is_sample_of, AttackerClock.node_op; rewrite Hop'; reflexivity).
       destruct (sample_index ctx cost_limit act a_idx n Halign Hsam) as [n_idx Hvid].
-      assert (Hopn : Definitions.node_op ctx cost_limit act n = DFG_Sample sp tok en)
+      assert (Hopn : AttackerClock.node_op ctx cost_limit act n = DFG_Sample sp tok en)
         by exact Hop'.
       destruct (sample_has_drive ctx cost_limit act n sp tok en Hopn) as [d [av [Hsd Hdop]]].
       pose proof (sample_drive_below ctx cost_limit act n sp tok en d Hop Hsd) as Hdn.
       assert (Hpl : payload_of (p_eq := tfs_spec_ips_eq_dec ctx) G n = Some av).
       { unfold payload_of. rewrite drive_of_sample_drive, Hsd.
-        change (op (node_at G d)) with (Definitions.node_op ctx cost_limit act d).
+        change (op (node_at G d)) with (AttackerClock.node_op ctx cost_limit act d).
         rewrite Hdop. reflexivity. }
       destruct (node_op_pos ctx cost_limit act d ltac:(rewrite Hdop; discriminate))
         as [Hd1 Hdlen].
-      unfold Definitions.node_op in Hdop.
+      unfold AttackerClock.node_op in Hdop.
       assert (Hain : In av (get_args ctx (nth d (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})))
         by (unfold get_args; rewrite Hdop; left; reflexivity).
       destruct (node_args_range ctx cost_limit act d Hd1 Hdlen av Hain) as [Hav1 Havd].
@@ -949,14 +950,14 @@ Section Settled.
         cbn [snd] in Hv. rewrite eval1_svar_v in Hv. exact Hv. }
       destruct (settled_run ctx cost_limit act a_idx input resp ss0 k Halign Hlen2 Hzz Hnd Hipc)
         as [Hans [Hzer [Hargs Hgrd]]].
-      assert (Hopv : Definitions.node_op ctx cost_limit act (vreg_nid ctx cost_limit a_idx n_idx)
+      assert (Hopv : AttackerClock.node_op ctx cost_limit act (vreg_nid ctx cost_limit a_idx n_idx)
                      = DFG_Sample sp tok en) by (rewrite Hvid; exact Hopn).
-      assert (Hsdv : Definitions.sample_drive ctx cost_limit act (vreg_nid ctx cost_limit a_idx n_idx) = Some d)
+      assert (Hsdv : ProofDefinitions.sample_drive ctx cost_limit act (vreg_nid ctx cost_limit a_idx n_idx) = Some d)
         by (rewrite Hvid; exact Hsd).
       (* the guard's literals are ready, so each reads its ideal bit *)
       assert (Hlit : forall l, In l en ->
                 nval ctx cost_limit act a_idx (ssk k) (sik k) 1 (fst l)
-                = Definitions.bit_of (nonzero (V (fst l)))).
+                = ProofDefinitions.bit_of (nonzero (V (fst l)))).
       { intros l Hl.
         apply (bit_of_nonzero
                  (fun w => nval ctx cost_limit act a_idx (ssk k) (sik k) w (fst l))
@@ -1060,7 +1061,7 @@ Section Settled.
     intros _ Hvm.
     pose proof Hstart as Hst. destruct Hst as [Hoo [Hmm Hzz]].
     destruct (L_first_done ctx cost_limit act sp0 ss0 input resp Hstart) as [Hdone Hbefore].
-    destruct (Definitions.L ctx cost_limit act input resp ss0) as [| m].
+    destruct (ProofDefinitions.L ctx cost_limit act input resp ss0) as [| m].
     - exfalso. apply Hdone. exact (Hzz (tfs_done_signal sched) I).
     - assert (Hnd : forall i, 1 <= i <= m -> ~ done_set ctx cost_limit (ssk i))
         by (intros i Hi; apply Hbefore; lia).
@@ -1082,10 +1083,12 @@ Section Settled.
   Qed.
 
   Local Notation view := (observe ctx input (snd sp0) (snd (spec_run act sp0 input))).
+  Local Notation rvals :=
+    (recovered ctx cost_limit act (seen_in ctx view) (seen_pre ctx view) (seen_post ctx view)).
 
   (* EVERYTHING THE RECIPE RECOVERS IS AN IDEAL VALUE. *)
   Lemma recovered_ideal n v :
-    recovered ctx cost_limit act view n = Some v -> v = V n.
+    rvals n = Some v -> v = V n.
   Proof.
     apply (recover_sound (p_eq := tfs_spec_ips_eq_dec ctx) (tfs_spec_ip ctx) (tfs_spec_decls ctx)
              G V (build_well_sized ctx cost_limit act)
@@ -1100,7 +1103,7 @@ Section Settled.
 
   Theorem recovered_vals_sound k :
     (forall i, 1 <= i <= k -> ~ done_set ctx cost_limit (ssk i)) ->
-    vals_sound ctx cost_limit act a_idx (recovered ctx cost_limit act view) (ssk k) (sik k).
+    vals_sound ctx cost_limit act a_idx rvals (ssk k) (sik k).
   Proof.
     intros Hnd n v pi Hval Hpi Hrv.
     rewrite (recovered_ideal n v Hval). exact (videal_settled k Hnd n pi Hpi Hrv).
@@ -1148,7 +1151,7 @@ Section Settled.
 
   Definition reached (n: nid_t) : Prop := exists f x, Kf f n = Some x.
 
-  Lemma reached_rounds n : reached n -> exists y, recovered ctx cost_limit act view n = Some y.
+  Lemma reached_rounds n : reached n -> exists y, rvals n = Some y.
   Proof.
     intros [f [x H]].
     pose proof (recover_closed (p_eq := peq) (tfs_spec_ip ctx) (tfs_spec_decls ctx) G V
@@ -1348,7 +1351,7 @@ Section Settled.
       apply (reached_of_step f). unfold step. rewrite Hop.
       destruct (Hf darg (or_introl eq_refl)) as [x Hx]. rewrite Hx. discriminate.
     - (* an IP answer: its request and its path condition are untainted *)
-      assert (Hopn : Definitions.node_op ctx cost_limit act n = DFG_Sample sp tok en) by exact Hop.
+      assert (Hopn : AttackerClock.node_op ctx cost_limit act n = DFG_Sample sp tok en) by exact Hop.
       destruct (sample_has_drive ctx cost_limit act n sp tok en Hopn) as [d [av [Hsd Hdop]]].
       pose proof (sample_drive_untainted ctx cost_limit act n d
                     (plumbing_not_root_holds ctx cost_limit act) Hnlen Hsd Hnt Hnr) as Hdt.
@@ -1356,11 +1359,11 @@ Section Settled.
       destruct (node_op_pos ctx cost_limit act d ltac:(rewrite Hdop; discriminate)) as [Hd1 Hdlen].
       assert (Hdnr : ~ In d (untainted_roots ctx G))
         by (apply (plumbing_not_root_holds ctx cost_limit act);
-            unfold Definitions.is_plumbing; rewrite Hdop; reflexivity).
+            unfold ProofDefinitions.is_plumbing; rewrite Hdop; reflexivity).
       assert (Hdargs : forall x, In x (av :: map fst en) -> reached x).
       { intros x Hx.
         assert (Hxin : In x (get_args ctx (nth d (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})))
-          by (unfold get_args; unfold Definitions.node_op in Hdop; rewrite Hdop; exact Hx).
+          by (unfold get_args; unfold AttackerClock.node_op in Hdop; rewrite Hdop; exact Hx).
         destruct (node_args_range ctx cost_limit act d Hd1 Hdlen x Hxin) as [Hx1 Hxd].
         exact (IH x ltac:(lia) Hx1 ltac:(lia) (arg_untainted ctx cost_limit act d x Hdlen Hdt Hdnr Hxin)). }
       destruct (reached_all _ Hdargs) as [f Hf].
@@ -1368,7 +1371,7 @@ Section Settled.
       destruct (guard_val G (Kf f) en) as [[|] |] eqn:Hg.
       + assert (Hpl : payload_of (p_eq := peq) G n = Some av).
         { unfold payload_of. rewrite drive_of_sample_drive, Hsd.
-          change (op (node_at G d)) with (Definitions.node_op ctx cost_limit act d).
+          change (op (node_at G d)) with (AttackerClock.node_op ctx cost_limit act d).
           rewrite Hdop. reflexivity. }
         rewrite Hpl. destruct (Hf av (or_introl eq_refl)) as [x Hx]. rewrite Hx. discriminate.
       + discriminate.
@@ -1484,7 +1487,7 @@ Section Settled.
   Lemma path_ok_suffix k pre l rest :
     path_ok ctx cost_limit act a_idx (ssk k) (sik k) (pre ++ l :: rest) ->
     path_ok ctx cost_limit act a_idx (ssk k) (sik k) rest
-    /\ (exists n t e, Definitions.node_op ctx cost_limit act n = DFG_Phi (fst l) t e
+    /\ (exists n t e, AttackerClock.node_op ctx cost_limit act n = DFG_Phi (fst l) t e
           /\ phi_crit (get_tainted ctx G) (decl_facts ctx G) (fst l) rest = false)
     /\ pi_holds ctx cost_limit act a_idx (sik k) rest (ssk k)
     /\ rvalid act a_idx rest (fst l) (ssk k) (sik k) = Bits.ones 1.
@@ -1500,7 +1503,7 @@ Section Settled.
     (forall i, 1 <= i <= k -> ~ done_set ctx cost_limit (ssk i)) ->
     forall len pi c, length pi <= len ->
       path_ok ctx cost_limit act a_idx (ssk k) (sik k) pi ->
-      (exists n t e, Definitions.node_op ctx cost_limit act n = DFG_Phi c t e
+      (exists n t e, AttackerClock.node_op ctx cost_limit act n = DFG_Phi c t e
          /\ phi_crit (get_tainted ctx G) (decl_facts ctx G) c pi = false) ->
       pi_holds ctx cost_limit act a_idx (sik k) pi (ssk k) ->
       rvalid act a_idx pi c (ssk k) (sik k) = Bits.ones 1 ->
@@ -1511,7 +1514,7 @@ Section Settled.
     all: destruct (node_op_pos ctx cost_limit act n ltac:(rewrite Hop; discriminate))
            as [Hn1 Hnlen].
     all: assert (Hcin : In c (get_args ctx (nth n (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})))
-           by (unfold get_args; unfold Definitions.node_op in Hop; rewrite Hop; left; reflexivity).
+           by (unfold get_args; unfold AttackerClock.node_op in Hop; rewrite Hop; left; reflexivity).
     all: destruct (node_args_range ctx cost_limit act n Hn1 Hnlen c Hcin) as [Hc1 Hcn].
     all: destruct (Taint.mem_nid c (get_tainted ctx G)) eqn:Hmt;
       [ | exact (untainted_reached c Hc1 ltac:(lia) (IPRProof.mem_nid_not_In c _ Hmt)) ].
@@ -1543,7 +1546,7 @@ Section Settled.
         as [_ Hmlen].
       pose proof (wfg_build_dfg ctx cost_limit act _
                     (nth_In _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hmlen)) as Hfg.
-      unfold node_args_sz in Hfg. unfold Definitions.node_op in Hopm. rewrite Hopm in Hfg.
+      unfold node_args_sz in Hfg. unfold AttackerClock.node_op in Hopm. rewrite Hopm in Hfg.
       destruct Hfg as [Hcw _].
       pose proof (proj2 (wsz_node_sz ctx cost_limit act _ _ Hcw)) as Hw1.
       pose proof (bit_of_nonzero
@@ -1556,7 +1559,7 @@ Section Settled.
   (* THE RECIPE HAS EVERY SELECTOR A SELECTING PHI READS. *)
   Theorem recovered_selectors k :
     (forall i, 1 <= i <= k -> ~ done_set ctx cost_limit (ssk i)) ->
-    selectors_extractable ctx cost_limit act a_idx (recovered ctx cost_limit act view)
+    selectors_extractable ctx cost_limit act a_idx rvals
       (ssk k) (sik k).
   Proof.
     intros Hnd n c t e pi Hop Hcrit Hpi Hpok Hrv.
@@ -1568,10 +1571,10 @@ Section Settled.
   (* THE CLOCK IS PUBLIC: the design's latency is the one the attacker
      computes from what it sees. *)
   Theorem L_is_public :
-    Definitions.L ctx cost_limit act input resp ss0 = L_pub ctx cost_limit act view.
+    ProofDefinitions.L ctx cost_limit act input resp ss0 = L_pub ctx cost_limit act view.
   Proof.
     rewrite (L_pub_at_slot ctx cost_limit act a_idx view Halign).
-    exact (L_pub_correct ctx cost_limit act a_idx (recovered ctx cost_limit act view)
+    exact (L_pub_correct ctx cost_limit act a_idx rvals
              input resp ss0 Halign (proj2 (proj2 Hstart)) recovered_selectors
              recovered_vals_sound).
   Qed.

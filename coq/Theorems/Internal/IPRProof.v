@@ -8,6 +8,7 @@ Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.
 
 Require Export Trustformer.Theorems.Definitions.
+Require Export Trustformer.Theorems.Internal.ProofDefinitions.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
@@ -88,8 +89,8 @@ End FoldAccum.
 Section FirstTrue.
   Variable f : nat -> bool.
 
-  (* Stated in Theorems/Definitions.v; bound here at this section's context. *)
-  Local Notation first_true := (Definitions.first_true f).
+  (* Bound here at this section's [f]. *)
+  Local Notation first_true := (AttackerClock.first_true f).
 
   Lemma first_true_spec (fuel: nat) :
     forall k n, k <= n -> n <= k + fuel -> f n = true ->
@@ -126,7 +127,7 @@ Qed.
 
 (* A one-bit node's value is the bit its condition reading names. *)
 Lemma bit_of_nonzero (f: forall w, bits_t w) (w: nat) (v: bits_t w) :
-  w = 1 -> f w = v -> f 1 = Definitions.bit_of (nonzero v).
+  w = 1 -> f w = v -> f 1 = ProofDefinitions.bit_of (nonzero v).
 Proof.
   intros -> <-.
   destruct (SchedulerSimulationLemmas.bits1_cases (f 1)) as [Ho | Hz];
@@ -150,10 +151,10 @@ Qed.
 Lemma first_true_ext (f g: nat -> bool) (fuel: nat) :
   forall k,
     (forall j, k <= j -> (forall i, k <= i < j -> f i = false) -> f j = g j) ->
-    Definitions.first_true f fuel k = Definitions.first_true g fuel k.
+    AttackerClock.first_true f fuel k = AttackerClock.first_true g fuel k.
 Proof.
   induction fuel as [| fuel IH]; intros k H; [ reflexivity | ].
-  cbn [Definitions.first_true].
+  cbn [AttackerClock.first_true].
   rewrite <- (H k (le_n k) ltac:(intros i Hi; lia)).
   destruct (f k) eqn:Hk; [ reflexivity | ].
   apply IH. intros j Hj Hbefore.
@@ -166,45 +167,45 @@ Section IPRProof.
   Context (ctx: TFSchedContext).
   Context (cost_limit: nat).
 
-  (* Stated in Theorems/Definitions.v; bound at this section's context. *)
-  Local Notation sample_args_settled := (Definitions.sample_args_settled ctx cost_limit).
-  Local Notation sample_guards_settled := (Definitions.sample_guards_settled ctx cost_limit).
-  Local Notation samples_answered := (Definitions.samples_answered ctx cost_limit).
-  Local Notation samples_zeroed := (Definitions.samples_zeroed ctx cost_limit).
-  Local Notation settled := (Definitions.settled ctx cost_limit).
+  (* Bound at this section's context. *)
+  Local Notation sample_args_settled := (ProofDefinitions.sample_args_settled ctx cost_limit).
+  Local Notation sample_guards_settled := (ProofDefinitions.sample_guards_settled ctx cost_limit).
+  Local Notation samples_answered := (ProofDefinitions.samples_answered ctx cost_limit).
+  Local Notation samples_zeroed := (ProofDefinitions.samples_zeroed ctx cost_limit).
+  Local Notation settled := (ProofDefinitions.settled ctx cost_limit).
 
-  (* Stated in Theorems/Definitions.v; bound here at this section's context. *)
-  Local Notation L := (Definitions.L ctx cost_limit).
-  Local Notation bit_of := Definitions.bit_of.
-  Local Notation done_test := (Definitions.done_test ctx cost_limit).
-  Local Notation drives_sized := (Definitions.drives_sized ctx cost_limit).
+  (* Bound here at this section's context. *)
+  Local Notation L := (ProofDefinitions.L ctx cost_limit).
+  Local Notation bit_of := ProofDefinitions.bit_of.
+  Local Notation done_test := (ProofDefinitions.done_test ctx cost_limit).
+  Local Notation drives_sized := (ProofDefinitions.drives_sized ctx cost_limit).
   Local Notation emulate := (Definitions.emulate ctx).
   Local Notation first_done := (Definitions.first_done ctx cost_limit).
-  Local Notation guards_sized := (Definitions.guards_sized ctx cost_limit).
-  Local Notation is_plumbing := (Definitions.is_plumbing ctx cost_limit).
-  Local Notation pi_holds := (Definitions.pi_holds ctx cost_limit).
-  Local Notation plumbing_not_root := (Definitions.plumbing_not_root ctx cost_limit).
+  Local Notation guards_sized := (ProofDefinitions.guards_sized ctx cost_limit).
+  Local Notation is_plumbing := (ProofDefinitions.is_plumbing ctx cost_limit).
+  Local Notation pi_holds := (ProofDefinitions.pi_holds ctx cost_limit).
+  Local Notation plumbing_not_root := (ProofDefinitions.plumbing_not_root ctx cost_limit).
 
-  (* The attacker's clock, defined in Definitions.v. *)
-  Local Notation vvec := Definitions.vvec.
-  Local Notation sstate := Definitions.sstate.
-  Local Notation slot_valid := Definitions.slot_valid.
-  Local Notation avalid := (Definitions.avalid ctx cost_limit).
-  Local Notation vv_matches := (Definitions.vv_matches ctx cost_limit).
-  Local Notation settled_at := (Definitions.settled_at ctx cost_limit).
-  Local Notation vals_sound := (Definitions.vals_sound ctx cost_limit).
+  (* The attacker's clock, and what the proof says about it. *)
+  Local Notation vvec := AttackerClock.vvec.
+  Local Notation sstate := AttackerClock.sstate.
+  Local Notation slot_valid := AttackerClock.slot_valid.
+  Local Notation avalid := (AttackerClock.avalid ctx cost_limit).
+  Local Notation vv_matches := (ProofDefinitions.vv_matches ctx cost_limit).
+  Local Notation settled_at := (ProofDefinitions.settled_at ctx cost_limit).
+  Local Notation vals_sound := (ProofDefinitions.vals_sound ctx cost_limit).
   Local Notation selectors_extractable :=
-    (Definitions.selectors_extractable ctx cost_limit).
-  Local Notation path_ok := (Definitions.path_ok ctx cost_limit).
-  Local Notation gate_bufs := (Definitions.gate_bufs ctx cost_limit).
-  Local Notation slot_gate := (Definitions.slot_gate ctx cost_limit).
-  Local Notation slot_step := (Definitions.slot_step ctx cost_limit).
-  Local Notation sstep := (Definitions.sstep ctx cost_limit).
-  Local Notation sstart := (Definitions.sstart ctx cost_limit).
-  Local Notation srun := (Definitions.srun ctx cost_limit).
-  Local Notation adone := (Definitions.adone ctx cost_limit).
-  Local Notation pdone_test := (Definitions.pdone_test ctx cost_limit).
-  Local Notation L_pub_at := (Definitions.L_pub_at ctx cost_limit).
+    (ProofDefinitions.selectors_extractable ctx cost_limit).
+  Local Notation path_ok := (ProofDefinitions.path_ok ctx cost_limit).
+  Local Notation gate_bufs := (AttackerClock.gate_bufs ctx cost_limit).
+  Local Notation slot_gate := (AttackerClock.slot_gate ctx cost_limit).
+  Local Notation slot_step := (AttackerClock.slot_step ctx cost_limit).
+  Local Notation sstep := (AttackerClock.sstep ctx cost_limit).
+  Local Notation sstart := (AttackerClock.sstart ctx cost_limit).
+  Local Notation srun := (AttackerClock.srun ctx cost_limit).
+  Local Notation adone := (AttackerClock.adone ctx cost_limit).
+  Local Notation pdone_test := (AttackerClock.pdone_test ctx cost_limit).
+  Local Notation L_pub_at := (AttackerClock.L_pub_at ctx cost_limit).
 
   Local Notation sched := (tfs_schedule ctx cost_limit).
   Local Notation s_var := (tfs_spec_states ctx).
@@ -280,8 +281,8 @@ Section IPRProof.
     d <= h.
   Proof.
     intros Hlen Hsd.
-    unfold Definitions.sample_drive_head,
-           Definitions.node_op in Hsd.
+    unfold ProofDefinitions.sample_drive_head,
+           AttackerClock.node_op in Hsd.
     destruct (op (nth h (graph (build_dfg ctx act))
                    {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hh;
       try discriminate.
@@ -306,8 +307,8 @@ Section IPRProof.
     d < n.
   Proof.
     intros Hlen Hsd.
-    unfold Definitions.sample_drive,
-           Definitions.node_op in Hsd.
+    unfold ProofDefinitions.sample_drive,
+           AttackerClock.node_op in Hsd.
     destruct (op (nth n (graph (build_dfg ctx act))
                    {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hn;
       try discriminate.
@@ -414,8 +415,8 @@ Section IPRProof.
     ~ List.In d (get_tainted ctx (build_dfg ctx act)).
   Proof.
     intros Hpl Hlen Hsd Hht.
-    unfold Definitions.sample_drive_head,
-           Definitions.node_op in Hsd.
+    unfold ProofDefinitions.sample_drive_head,
+           AttackerClock.node_op in Hsd.
     destruct (op (nth h (graph (build_dfg ctx act))
                    {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hh;
       try discriminate.
@@ -427,7 +428,7 @@ Section IPRProof.
       destruct (eq_dec p0 p); [ | discriminate ].
       injection Hsd as Heq. rewrite <- Heq.
       apply (arg_untainted act h a Hlen Hht).
-      + apply Hpl. unfold is_plumbing, Definitions.node_op.
+      + apply Hpl. unfold is_plumbing, AttackerClock.node_op.
         rewrite Hh. reflexivity.
       + unfold get_args. rewrite Hh. left. reflexivity.
   Qed.
@@ -443,8 +444,8 @@ Section IPRProof.
     ~ List.In d (get_tainted ctx (build_dfg ctx act)).
   Proof.
     intros Hpl Hlen Hsd Hnt Hnr.
-    unfold Definitions.sample_drive,
-           Definitions.node_op in Hsd.
+    unfold ProofDefinitions.sample_drive,
+           AttackerClock.node_op in Hsd.
     destruct (op (nth n (graph (build_dfg ctx act))
                    {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hn;
       try discriminate.
@@ -466,7 +467,7 @@ Section IPRProof.
         pose proof (arg_lt_of_op ctx cost_limit act tok hh Htlen Hinh) as Hah;
         assert (Halen : hh < length (graph (build_dfg ctx act))) by lia;
         assert (Hhnr : ~ List.In tok (untainted_roots ctx (build_dfg ctx act)))
-          by (apply Hpl; unfold is_plumbing, Definitions.node_op;
+          by (apply Hpl; unfold is_plumbing, AttackerClock.node_op;
               rewrite H; reflexivity);
         pose proof (arg_untainted act tok hh Htlen Htokt Hhnr Hinh) as Hht;
         exact (sample_drive_head_untainted act p hh d Hpl Halen Hsd Hht)
@@ -591,7 +592,7 @@ Section IPRProof.
     SchedulerRoundTrip.en_holds ctx cost_limit act a_idx ss input en.
   Proof.
     intros H c b Hin. specialize (H c b Hin).
-    unfold Definitions.nval, bit_of in H. split.
+    unfold ProofDefinitions.nval, bit_of in H. split.
     - intro Hb. subst b. rewrite H. exact ones1_neq_zero.
     - intro Hb. subst b. exact H.
   Qed.
@@ -602,7 +603,7 @@ Section IPRProof.
     pi_holds act a_idx input en ss.
   Proof.
     intros H c b Hin. destruct (H c b Hin) as [Ht Hf].
-    unfold Definitions.nval, bit_of. destruct b.
+    unfold ProofDefinitions.nval, bit_of. destruct b.
     - destruct (bits1_cases (eval1 (node_ref_expr ctx cost_limit act a_idx c) ss input))
         as [Ho | Hz]; [ exact Ho | exfalso; exact (Ht eq_refl Hz) ].
     - exact (Hf eq_refl).
@@ -1002,7 +1003,7 @@ Section IPRProof.
                       {| nid := 0; op := DFG_Empty; sz := 0 |}));
         cbn [snd]; rewrite eval1_svar_v; exact (Hvv n j jsz n_idx Hla Hidx). }
     cbn [avalid compile_dfg_expr_aux]. rewrite Hla. cbv beta iota.
-    unfold Definitions.node_op.
+    unfold AttackerClock.node_op.
     assert (Hnode_in : List.In (nth n (graph (build_dfg ctx act))
                                   {| nid := 0; op := DFG_Empty; sz := 0 |})
                          (graph (build_dfg ctx act)))
@@ -1106,25 +1107,25 @@ Section IPRProof.
                      ltac:(intros y my mszy Hy; exact (Hsam_same y my mszy ltac:(lia)))
                      Hc1 Hclen ltac:(lia) Hvalc). }
           destruct (Hsel n cnd tid eid pi
-                      ltac:(unfold Definitions.node_op; rewrite Hop; reflexivity)
+                      ltac:(unfold AttackerClock.node_op; rewrite Hop; reflexivity)
                       Hcrit Hpi Hpok Hrvc) as [v Hb].
           rewrite Hb. cbn beta iota.
           pose proof (Hvals cnd v pi Hb Hpi Hrvc) as Hcl.
           remember (nonzero v) as b eqn:Hbdef.
           assert (Hbv : nval ctx cost_limit act a_idx ss input 1 cnd
-                        = Definitions.bit_of b).
+                        = ProofDefinitions.bit_of b).
           { subst b.
             exact (bit_of_nonzero
                      (fun w => nval ctx cost_limit act a_idx ss input w cnd)
                      _ v Hcsz Hcl). }
-          assert (Hce : eval1 ce ss input = Definitions.bit_of b).
+          assert (Hce : eval1 ce ss input = ProofDefinitions.bit_of b).
           { rewrite S1. unfold nval, node_ref_expr in Hbv. exact Hbv. }
           (* the arm the condition names is read under the extended path, and
              that path holds: [b] IS the condition's bit *)
           pose proof (pi_holds_cons act a_idx input cnd b pi ss Hpi Hbv) as Hpib.
           assert (Hpokb : path_ok act a_idx ss input ((cnd, b) :: pi)).
           { split; [ exact Hpok | split; [ | split; [ exact Hpi | exact Hrvc ] ] ].
-            exists n, tid, eid. split; [ unfold Definitions.node_op; exact Hop | exact Hcrit ]. }
+            exists n, tid, eid. split; [ unfold AttackerClock.node_op; exact Hop | exact Hcrit ]. }
           assert (Hcase : (tv = tf_const 1 /\ ev = tf_const 1)
                           \/ valid_expr_if ctx bneeds ce tv ev
                              = tf_expr_if ce tv ev).
@@ -1239,7 +1240,7 @@ Section IPRProof.
   (* Slot [n_idx] of a step is the step of slot [n_idx]: the shadow lists are
      indexed by the slot number, which is the entry's position. *)
   Lemma sstep_slot (act: tfs_action sched) (a_idx: a_index)
-      (vals: known (build_dfg ctx act)) (st: Definitions.sstate)
+      (vals: known (build_dfg ctx act)) (st: AttackerClock.sstate)
       (n_idx : Vect.index (length (nth (index_to_nat a_idx) bneeds []))) :
     slot_valid (fst (sstep act a_idx vals st)) (index_to_nat n_idx)
       = fst (slot_step act a_idx vals st
@@ -1250,7 +1251,7 @@ Section IPRProof.
                (nth (index_to_nat n_idx) (nth (index_to_nat a_idx) bneeds [])
                   (0, (0, 0)))).
   Proof.
-    unfold Definitions.sstep, Definitions.slot_valid. cbn [fst snd].
+    unfold AttackerClock.sstep, AttackerClock.slot_valid. cbn [fst snd].
     rewrite !map_map. split.
     - apply (nth_map_lt (fun e => fst (slot_step act a_idx vals st e))
                (nth (index_to_nat a_idx) bneeds []) (index_to_nat n_idx)
@@ -1307,8 +1308,8 @@ Section IPRProof.
   Proof.
     intros Halign Hz Hsel Hvals.
     induction k as [| k IH]; intros Hnd n_idx.
-    { cbn [Definitions.srun run_n].
-      unfold Definitions.sstart, Definitions.slot_valid. cbn [fst snd].
+    { cbn [AttackerClock.srun run_n].
+      unfold AttackerClock.sstart, AttackerClock.slot_valid. cbn [fst snd].
       rewrite !nth_repeat. split.
       - rewrite (Hz (tf_dfg_v a_idx n_idx) I). split; [ discriminate | ].
         intro Hc. exfalso. exact (ones1_neq_zero (eq_sym Hc)).
@@ -1325,7 +1326,7 @@ Section IPRProof.
     change (ss_run (S k) act input resp ss0)
       with (ss_step act (ss_run k act input resp ss0)
               (sched_input ctx cost_limit input (resp k))).
-    cbn [Definitions.srun].
+    cbn [AttackerClock.srun].
     destruct (vreg_nid_node_range ctx cost_limit act a_idx n_idx Halign)
       as [Hn1 Hnlen].
     unfold vreg_nid in Hn1, Hnlen.
@@ -1361,14 +1362,14 @@ Section IPRProof.
                   (fun q => Hz (tf_dfg_v a_idx q) I)) as [_ [Hrf Hvs]].
       assert (Hvvm : vv_matches a_idx (fst (srun act a_idx vals k))
                        (ss_run k act input resp ss0)
-                       (Definitions.gate_bufs ctx cost_limit a_idx
+                       (AttackerClock.gate_bufs ctx cost_limit a_idx
                           (fst (nth (index_to_nat n_idx)
                                   (nth (index_to_nat a_idx) bneeds [])
                                   (0, (0, 0)))))).
       { intros m j jsz m_idx Hla Hidx.
         rewrite <- (index_to_nat_of_nat j m_idx Hidx).
         exact (proj1 (IH Hndk m_idx)). }
-      unfold Definitions.slot_gate, Definitions.gate_bufs in Hvvm |- *.
+      unfold AttackerClock.slot_gate, AttackerClock.gate_bufs in Hvvm |- *.
       exact (avalid_correct act a_idx vals (fst (srun act a_idx vals k))
                (ss_run k act input resp ss0)
                (sched_input ctx cost_limit input (resp k))
@@ -1415,7 +1416,7 @@ Section IPRProof.
         exfalso. rewrite (proj1 Hgate eq_refl) in Hzo.
         exact (ones1_neq_zero Hzo). }
     rewrite Hsv, Hsc, Hvv, Hbb.
-    unfold Definitions.slot_step, SchedulerSimulationLemmas.buf_valid_expr.
+    unfold AttackerClock.slot_step, SchedulerSimulationLemmas.buf_valid_expr.
     cbn [fst snd]. rewrite (slot_idx_at act a_idx _ Halign (index_to_nat_bounded n_idx)).
     destruct (stall_lat_of ctx cost_limit act
                 (fst (nth (index_to_nat n_idx)
@@ -1530,7 +1531,7 @@ Section IPRProof.
                (length (graph (build_dfg ctx act))) [] r
                (fun x _ => Hsub1 x) (fun x m msz _ => Hsame1 x m msz)
                (pi_holds_nil act a_idx _ _) I Hr1 Hrlen Hrlen). }
-    unfold Definitions.adone, ss_done, done_set.
+    unfold AttackerClock.adone, ss_done, done_set.
     change (ss_run (S k) act input resp ss0)
       with (ss_step act (ss_run k act input resp ss0)
               (sched_input ctx cost_limit input (resp k))).
@@ -1560,11 +1561,11 @@ Section IPRProof.
     L act input resp ss0 = L_pub_at act a_idx vals.
   Proof.
     intros Halign Hz Hsel Hvals.
-    unfold Definitions.L, Definitions.L_pub.
+    unfold ProofDefinitions.L, Definitions.L_pub.
     apply first_true_ext. intros j _ Hbefore.
     destruct j as [| m].
     - (* cycle zero: the design resets the flag *)
-      unfold Definitions.pdone_test.
+      unfold AttackerClock.pdone_test.
       destruct (done_test act input resp ss0 0) eqn:Hd0; [ | reflexivity ].
       exfalso. apply (proj1 (done_test_true act input resp ss0 0)) in Hd0.
       unfold ss_done, done_set in Hd0. cbn [run_n] in Hd0.
@@ -1575,7 +1576,7 @@ Section IPRProof.
         pose proof (Hbefore i ltac:(lia)) as Hf.
         rewrite (proj2 (done_test_true act input resp ss0 i) Hc) in Hf.
         discriminate Hf. }
-      unfold Definitions.pdone_test.
+      unfold AttackerClock.pdone_test.
       destruct (adone act a_idx vals (fst (srun act a_idx vals m))) eqn:Ha.
       + apply (proj2 (done_test_true act input resp ss0 (S m))).
         exact (proj1 (adone_matches act a_idx vals input resp ss0 m Halign Hz
