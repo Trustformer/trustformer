@@ -41,6 +41,9 @@ BENCHES = {
     "tb_xport":     Bench("Regression_XPortGuard"),
     "tb_mars":      Bench("Example_Mars"),
 
+    # No IP: the macro library of coq/Macros.v, end to end.
+    "tb_macrolib":  Bench("Regression_MacroLib"),
+
     # Against the REAL secworks/sha256 core through external/glue/.
     "tb_mars_v4": Bench(
         "Example_Mars",
