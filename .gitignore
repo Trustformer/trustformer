@@ -17,6 +17,7 @@ firesim/
 # Long-term agent memory (untracked)
 agents/
 paper/
+testbed/
 .claude
 .github/skills
 
