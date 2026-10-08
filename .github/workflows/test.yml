@@ -28,7 +28,7 @@ jobs:
       - name: Headline theorems are proved, axiom-free
         run: nix develop -c make theorems
 
-      - name: No generated net has two different drivers
+      - name: Generated Verilog has no conflicting drivers or out-of-range selects
         run: nix develop -c make check
 
       - name: Testbenches

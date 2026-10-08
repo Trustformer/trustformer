@@ -5,8 +5,9 @@ verdict: it prints `PASS` or `FAIL` and exits non-zero on failure.
 `scripts/run-sim.py` builds and runs them; it judges nothing itself.
 
 Nine drive the generated Verilog against a MODEL of the attached IP, two
-against the real SHA-256 core -- see "Two families" below -- and
-`tb_macrolib.sv` checks the macro library.
+against the real SHA-256 core -- see "Two families" below. `tb_macrolib.sv`
+checks the macro library, and the ten `tb_knox_*.sv` the Knox examples in
+`coq/Examples/Knox/`.
 
 Reading the generated Verilog is not running it. Every bug in the drive/sample
 path so far was invisible at the Coq level -- the cycle assignment was correct
@@ -56,7 +57,8 @@ the design uses the latched value.
 `make test` runs these after building whatever is missing. To run them alone:
 
 ```sh
-scripts/run-sim.py              # all twelve
+scripts/run-sim.py              # all twenty-two, half the CPUs at a time
+scripts/run-sim.py -j 4         # four at a time
 scripts/run-sim.py tb_two         # just one
 ```
 
