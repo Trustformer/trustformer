@@ -10,14 +10,6 @@ Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
 Require Import Trustformer.Macros.
 
-(* Every macro in Macros.v, checked by vm_compute against the DSL semantics,
-   in a design that also goes to Verilog.  The design writes no proof: the
-   action encoding comes from [mk_synth_ctx].
-
-   An array of three bytes behind a 2-bit index (index 3 names no cell), a
-   modulo by a constant above tf_const's range, bit slicing, and constants up
-   to 128 bits.  Every action starts with [mk_clear_outputs]. *)
-
 Section FunctionalSpecification.
 
     Inductive ml_cell := c0 | c1 | c2.
@@ -60,7 +52,6 @@ Section FunctionalSpecification.
           {[ `mk_clear_outputs`;
              `mk_forall (fun k => {[ let $(st_cell k) := #0 ]})` ]}
       | a_mod =>
-          (* 10^6 is above what a tf_const literal can carry *)
           {[ `mk_clear_outputs`;
              let $st_acc := $in_val;
              `mk_urem_const st_acc 32 1000000`;
@@ -110,8 +101,6 @@ Section Checks.
     Definition cells (s: sysst) : list N :=
       List.map (fun k => Bits.to_N (ContextEnv.(getenv) (fst s) (st_cell k))) [c0; c1; c2].
 
-    (* Arrays: a write lands in the indexed cell only (truncated to 8 bits),
-       index 3 writes nothing and reads the default *)
     Definition s1 := run a_write 1 0x1AB initial.
     Example write_one : cells s1 = [0; 0xAB; 0]%N.
     Proof. vm_compute. reflexivity. Qed.
@@ -131,14 +120,12 @@ Section Checks.
       List.map (fun i => val (run a_read i 0 s2)) [0; 1; 2; 3] = [0x17; 0xAB; 0x42; 0]%N.
     Proof. vm_compute. reflexivity. Qed.
 
-    (* [mk_clear_outputs]: a write after a read shows nothing of the read *)
     Example clear_after_read : val (run a_write 0 5 (run a_read 1 0 s2)) = 0%N.
     Proof. vm_compute. reflexivity. Qed.
 
     Example clear_all : cells (run a_clear 0 0 s2) = [0; 0; 0]%N.
     Proof. vm_compute. reflexivity. Qed.
 
-    (* Modulo by a constant: exhaustive at 8 bits, boundaries at 32 bits *)
     Example mod8_exhaustive :
       List.forallb (fun v => N.eqb (val (run a_mod8 0 (N.of_nat v) initial)) (N.of_nat v mod 10))
                    (List.seq 0 256) = true.
@@ -150,15 +137,12 @@ Section Checks.
       = [0; 999999; 0; 1; 456789; 967295]%N.
     Proof. vm_compute. reflexivity. Qed.
 
-    (* Bits: bits 23..8 of 0xAABBCCDD, and bit 31 *)
     Example slice_mid : val (run a_bits 0 0xAABBCCDD initial) = 0xBBCC%N.
     Proof. vm_compute. reflexivity. Qed.
     Example bit_top : List.map (fun v => ok (run a_bits 0 v initial)) [0x80000000; 0x7FFFFFFF]%N
                       = [1; 0]%N.
     Proof. vm_compute. reflexivity. Qed.
 
-    (* Constants: hex with '_', a 128-bit literal, an odd digit count, bytes,
-       and [mk_N] with a partial top chunk (20 bits) *)
     Example const_xor : val (run a_const 0 0 initial) = 0xDFAFBDEB%N.
     Proof. vm_compute. reflexivity. Qed.
     Example const_wide : wide (run a_const 0 0 initial) = 0x0123456789ABCDEFFEDCBA9876543210%N.
@@ -194,10 +178,8 @@ Section Instance.
         tfs_spec_decls := []
     |}.
 
-    (* no proof: encoding and injectivity are derived *)
     Definition tf_ctx : TFSynthContext := mk_synth_ctx (tfs_schedule tfs_ctx 10).
 
-    (* 8 actions: log2 8 + 1 = 4 bits *)
     Example derived_reg_size : tf_action_reg_size tf_ctx = 4.
     Proof. reflexivity. Qed.
 

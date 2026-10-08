@@ -5,8 +5,8 @@ verdict: it prints `PASS` or `FAIL` and exits non-zero on failure.
 `scripts/run-sim.py` builds and runs them; it judges nothing itself.
 
 Nine drive the generated Verilog against a MODEL of the attached IP, two
-against the real SHA-256 core -- see "Two families" below -- and one,
-`tb_macrolib.sv`, has no IP and checks the macro library.
+against the real SHA-256 core -- see "Two families" below -- and
+`tb_macrolib.sv` checks the macro library.
 
 Reading the generated Verilog is not running it. Every bug in the drive/sample
 path so far was invisible at the Coq level -- the cycle assignment was correct
@@ -148,16 +148,3 @@ The captured value is dead -- the phi discards it -- but the ordering join that
 sequences a later call on that port is not gated by the phi, so a capture there
 would be visible in the CYCLE COUNT. That is the leak this testbench holds
 closed.
-
-## tb_macrolib.sv: the macro library
-
-`Regression_MacroLib` uses every macro of `coq/Macros.v`: an array of three
-bytes behind a 2-bit index, modulo by 10^6 (above what a `tf_const` can carry)
-and by 10, bit slicing, and constants up to 128 bits, with the action encoding
-derived by `mk_synth_ctx`. Its Examples prove the values at the Coq level; this
-replays them on the Verilog, plus 200 random values for the modulo and all 256
-for the 8-bit one.
-
-The Verilog needs checking separately because the macros run inside the
-EXTRACTED program, where `nat` and `N` are OCaml ints: a macro that computes a
-number of 2^62 or more passes every Example and still emits a wrong constant.
