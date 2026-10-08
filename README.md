@@ -25,9 +25,9 @@ nix develop --command make all            # the above, then Verilog into build/
 nix develop --command make test           # the above, then every check we have
 ```
 
-`make all` extracts each extraction target under `coq/Examples/`,
-`coq/Regressions/` and `coq/Eval/` to OCaml and runs `cuttlec -T verilog` on
-it. The resulting `build/*.v` files are **Verilog**.
+`make all` extracts each extraction target under `coq/Examples/` and
+`coq/Regressions/` to OCaml and runs `cuttlec -T verilog` on it. The
+resulting `build/*.v` files are **Verilog**.
 
 `make test` adds three checks: that every headline theorem is proved and
 axiom-free (`scripts/check-theorems.py`), that no generated net has two
@@ -52,7 +52,8 @@ is whether the list is the right one.
 | `coq/Scheduler/Codegen.v`                             | step 6: the DFG as `tf_ops` over that register file, and `schedule`                           |
 | `coq/Scheduler/Schedule.v`                            | the `TFSchedule` record and the obligations it carries                                        |
 | `coq/Scheduler/Show.v`, `coq/Scheduler/Audit.v`       | diagnostics: criticality reports, cycle bounds with witnesses, Graphviz output                 |
-| `coq/Scheduler/EvalModes.v`, `coq/Eval/`              | evaluation baselines outside every theorem: every phi critical, or none (no protection)       |
+| `coq/Scheduler/EvalModes.v`                           | evaluation baselines outside every theorem: every phi critical, or none (no protection)       |
+| `coq/Examples/Criticalities/`                         | every example built under each baseline: `AllCrit.v` and `NoCrit.v`                           |
 | `coq/Backend/`                                        | `Lowering.v`, the Kôika register file, rules and scheduler for a `TFSchedule`                 |
 | `coq/Theorems/`                                       | the guarantees: `Synthesis.v`, `SchedulerSimulation.v`, `IPR.v`, `Confidentiality.v`          |
 | `coq/Theorems/Internal/`                              | proof bulk those rest on — machine-checked, not written to be read                            |

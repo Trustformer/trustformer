@@ -2,8 +2,10 @@
     critical (full protection) or NONE (no side-channel protection).  Only the
     taint the code generator reads differs, so they follow the real scheduler. !*)
 
+Require Import Koika.Frontend.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
+Require Import Trustformer.Backend.Lowering.
 
 Require Import Coq.Lists.List.
 Import ListNotations.
@@ -21,3 +23,16 @@ Definition tfs_schedule_eval (m: crit_mode) (ctx: TFSchedContext) (cost_limit: n
                 | NoneCritical => []
                 end)
     (fun _ => []).
+
+(* An example's [tf_ctx] rebuilt on the baseline of its own [tfs_schedule ctx
+   cost], read off [sched]; fails to elaborate if the example stops being so. *)
+Ltac baseline m sched tf name :=
+  let s := eval red in sched in
+  lazymatch s with
+  | tfs_schedule ?ctx ?cost =>
+      exact (Interop.Backends.register (Lowering.package {|
+        tf_sched_ctx := tfs_schedule_eval m ctx cost;
+        tf_action_encoding := tf_action_encoding tf;
+        tf_action_encoding_inj := tf_action_encoding_inj tf;
+        tf_action_names := tf_action_names tf |} name))
+  end.

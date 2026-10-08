@@ -241,7 +241,9 @@ Section Instance.
         tfs_spec_decls := []
     |}.
 
-    Definition tf_schedule := tfs_schedule tfs_ctx 10.
+    (* The paper's configuration: at cost limit 4 [action_test] has the paper's
+       one buffer, [tries - 1], and takes its two cycles (see Taint.v). *)
+    Definition tf_schedule := tfs_schedule tfs_ctx 4.
 
     Definition tf_ctx : TFSynthContext := {|
         tf_sched_ctx := tf_schedule;

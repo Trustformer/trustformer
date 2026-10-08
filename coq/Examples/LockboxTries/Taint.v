@@ -244,7 +244,7 @@ Section Bounds.
     Proof. vm_compute. reflexivity. Qed.
 
     (* At the cost limit the other examples use, the whole action is one
-       combinational cycle -- which is what the emitted Verilog shows. *)
+       combinational cycle; Spec.v therefore builds at the paper's 4. *)
     Example lockbox_is_combinational_at_10 :
       action_bounds ctxA_blackbox 10 (build_dfg ctxA_blackbox fs_act_test) = (1, 1).
     Proof. vm_compute. reflexivity. Qed.
