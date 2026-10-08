@@ -1,7 +1,6 @@
-(*! The vocabulary the guarantees are stated in.  Everything a theorem in
-    coq/Theorems/ mentions is defined here or in the compiler it talks about, so
-    this file plus the four statement files are the whole proof-layer audit.
-    The proofs, and the calculation behind [L_pub], live under Internal/. !*)
+(*! The vocabulary the guarantees are stated in: everything a theorem in
+    coq/Theorems/ mentions is defined here or in the compiler, so this file and
+    the four statement files are the whole proof-layer audit. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.
@@ -94,29 +93,30 @@ Section SchedulerWorld.
              sched_step act ss1 (sched_input input (resp k))
     end.
 
-  (* THE IP's DATASHEET.  A request strobed on the port and left undisturbed for
-     the IP's flight time is answered [ip_lat] cycles after the pulse that sent
-     it; at every other cycle the channel promises nothing. *)
+  (* The done flag is set when the tf_dfg_done register is non-zero. *)
+  Definition done_set (ss: sched_sys_state) : Prop :=
+    (fst ss).[tfs_done_signal sched] <> Bits.zero.
+
+  (* THE IP's DATASHEET, while the action runs: a request left undisturbed for its
+     flight time is answered [ip_lat] cycles after its pulse, unless done by then.
+     Cycles past done belong to the next action, see [queue_ip_contract]. *)
   Definition ip_contract (act: tfs_action sched) (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) : Prop :=
     forall (p: tfs_ips sched) (s: nat),
+      (forall i, 0 < i <= s + pred (ip_lat (tfs_ip sched p)) ->
+         ~ done_set (run_n i act input resp ss0)) ->
       port_strobe (run_n s act input resp ss0) p = Bits.ones 1 ->
       (forall w, s < w -> w < s + pred (ip_lat (tfs_ip sched p)) ->
          port_strobe (run_n w act input resp ss0) p = Bits.zero) ->
       resp (s + pred (ip_lat (tfs_ip sched p))) p
       = ip_fn (tfs_ip sched p) (drive_payload (run_n s act input resp ss0) p).
 
-  (* The done flag is set when the tf_dfg_done register is non-zero. *)
-  Definition done_set (ss: sched_sys_state) : Prop :=
-    (fst ss).[tfs_done_signal sched] <> Bits.zero.
-
-  (* Registers that start zeroed: the done flag, every validity bit and every
-     buffer, as [reset_states] clears them.  A stall's buffer is a counter, so
-     its start value is observable. *)
+  (* Registers that start zeroed, as [reset_states] clears them: every validity bit
+     and buffer (a stall's buffer is a counter, so its start is observable).  Not
+     the done flag: a done cycle leaves it set for the next action. *)
   Definition zeroed_at_start (x: tfs_states sched) : Prop :=
     match x with
     | tf_dfg_b _ _ => True
     | tf_dfg_v _ _ => True
-    | tf_dfg_done  => True
     | _            => False
     end.
 
@@ -140,10 +140,13 @@ Section SchedulerWorld.
   Local Notation run ops sys input :=
     (tf_ops_run s_sz i_sz o_sz ips ops sys input).
 
+  (* Counted from cycle 1: cycle 0 is the start state, whose done flag is
+     whatever the previous action left there. *)
   Definition first_done (act: tfs_action sched) (input: input_t)
       (resp: nat -> resp_val) (ss0: sched_sys_state) (N: nat) : Prop :=
-    ss_done (ss_run N act input resp ss0)
-    /\ forall i, i < N -> ~ ss_done (ss_run i act input resp ss0).
+    0 < N
+    /\ ss_done (ss_run N act input resp ss0)
+    /\ forall i, 0 < i < N -> ~ ss_done (ss_run i act input resp ss0).
 
   (* THE ATTACKER'S MODEL OF A RUN, over the two published snapshots and the
      cycle count: the outputs stand at [pre] until cycle [N] and at [post] from
@@ -176,6 +179,82 @@ Section SchedulerWorld.
 
 
   (* ================================================================ *)
+  (* Several actions in a row.                                        *)
+  (* ================================================================ *)
+
+  (* A command: an action and the inputs it latches when it is accepted. *)
+  Local Notation command := (tfs_action sched * input_t)%type.
+
+  (* ONE CYCLE OF A COMMAND QUEUE: the head command steps, and on the cycle that
+     raises done the next takes over, as [rule_cmd] does once [tf_ready] is up.
+     Commands run back to back; an empty queue holds its state. *)
+  Definition queue_step (q: list command) (r: resp_val) (ss: sched_sys_state)
+    : list command * sched_sys_state :=
+    match q with
+    | [] => ([], ss)
+    | (act, input) :: rest =>
+        let ss' := sched_step act ss (sched_input input r) in
+        if beq_dec (fst ss').[tfs_done_signal sched] Bits.zero
+        then (q, ss')
+        else (rest, ss')
+    end.
+
+  (* [resp k] is what the IPs present during cycle [k], counted from the start
+     of the whole sequence. *)
+  Fixpoint queue_run (n: nat) (q: list command) (resp: nat -> resp_val)
+      (ss: sched_sys_state) : list command * sched_sys_state :=
+    match n with
+    | 0 => (q, ss)
+    | S k => let qs := queue_run k q resp ss in
+             queue_step (fst qs) (resp k) (snd qs)
+    end.
+
+  (* THE IP's DATASHEET over a command sequence: [ip_contract]'s promise, read
+     off the run that actually happens. *)
+  Definition queue_ip_contract (q: list command) (resp: nat -> resp_val)
+      (ss0: sched_sys_state) : Prop :=
+    forall (p: tfs_ips sched) (s: nat),
+      port_strobe (snd (queue_run s q resp ss0)) p = Bits.ones 1 ->
+      (forall w, s < w -> w < s + pred (ip_lat (tfs_ip sched p)) ->
+         port_strobe (snd (queue_run w q resp ss0)) p = Bits.zero) ->
+      resp (s + pred (ip_lat (tfs_ip sched p))) p
+      = ip_fn (tfs_ip sched p) (drive_payload (snd (queue_run s q resp ss0)) p).
+
+  (* Each command with the outputs it leaves, as the specification computes
+     them: the snapshots the attacker reads between commands. *)
+  Fixpoint spec_outputs_seq (q: list command) (sp: src_sys_state)
+    : list (tfs_action sched * input_t * src_out_env) :=
+    match q with
+    | [] => []
+    | (act, input) :: rest =>
+        let sp1 := run (tfs_spec_action_ops ctx act) sp input in
+        (act, input, snd sp1) :: spec_outputs_seq rest sp1
+    end.
+
+  (* THE ATTACKER'S MODEL OF A SEQUENCE: [emulate], one command after the
+     other.  Each command takes [L_pub] of its own public view, so every
+     switch-over cycle is computed from public data alone. *)
+  Fixpoint emulate_seq (pre: src_out_env)
+      (obs: list (tfs_action sched * input_t * src_out_env)) (k: nat) (ov: o_var) :=
+    match obs with
+    | [] => pre.[ov]
+    | (act, input, post) :: rest =>
+        let N := L_pub act (observe input pre post) in
+        if Nat.ltb k N then pre.[ov] else emulate_seq post rest (k - N) ov
+    end.
+
+  (* How many commands the attacker's model has finished by cycle [k]. *)
+  Fixpoint emulate_progress (pre: src_out_env)
+      (obs: list (tfs_action sched * input_t * src_out_env)) (k: nat) : nat :=
+    match obs with
+    | [] => 0
+    | (act, input, post) :: rest =>
+        let N := L_pub act (observe input pre post) in
+        if Nat.ltb k N then 0 else S (emulate_progress post rest (k - N))
+    end.
+
+
+  (* ================================================================ *)
   (* The confidentiality criterion, over the spec alone.                *)
   (* ================================================================ *)
 
@@ -203,10 +282,9 @@ Section SchedulerWorld.
     match ops with
     | tf_ops_base tf_nop => true
     | tf_ops_base (tf_assign _ _) => true    (* a secret register may hold anything *)
-    (* V4 denotes a call as [dst := ip_fn arg], a STATE update: the request port
-       is the scheduler's own and is no declared output, so no [o_cls] applies
-       and the case coincides with [tf_assign].  The IP bus is outside this
-       theorem's attacker view -- see THEOREM-AUDIT.md B5. *)
+    (* V4 denotes a call as [dst := ip_fn arg], a STATE update: its request port is
+       no declared output, so no [o_cls] applies and it is [tf_assign].  The IP bus
+       is outside this attacker view -- see THEOREM-AUDIT.md B5. *)
     | tf_ops_base (tf_call _ _ _) => true
     | tf_ops_base (tf_output o e) =>
         match o_cls o with
@@ -234,8 +312,7 @@ End SchedulerWorld.
 
 
 (* ==================================================================== *)
-(* The synthesis relations: what it means for the Kôika circuit to      *)
-(* implement a scheduled design.                                        *)
+(* The synthesis relations: the Kôika circuit implements a design.      *)
 (* ==================================================================== *)
 
 Section SynthWorld.

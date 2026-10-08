@@ -1,13 +1,6 @@
-(* ==================================================================== *)
-(* Variable-scheduler simulation / correctness                          *)
-(*                                                                      *)
-(* One top-level SOURCE step of an action (tf_ops_run over the whole    *)
-(* program) equals iterating the scheduled per-cycle transition         *)
-(* (tfs_next_cycle) until the tf_dfg_done flag is set, modulo the state *)
-(* mapping maps_to / maps_from.                                         *)
-(*                                                                      *)
-(* See agents/scheduler-simulation/PLAN.md for the campaign plan.       *)
-(* ==================================================================== *)
+(* VARIABLE-SCHEDULER SIMULATION: one SOURCE step of an action ([tf_ops_run] over
+   the program) equals iterating [tfs_next_cycle] until [tf_dfg_done] is set,
+   modulo maps_to / maps_from.  Plan: agents/scheduler-simulation/PLAN.md. *)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.
@@ -617,10 +610,9 @@ Section SchedulerSimulation.
     pose proof (Nat.log2_spec l ltac:(lia)) as [_ Hub]. lia.
   Qed.
 
-  (* A SATURATING COUNTER, as arithmetic: zero at the start, advancing whenever
-     [adv] holds and it has not yet reached [top], never past [top].  Once [adv]
-     holds from cycle [r] on, it reads [top] from cycle [r + top] on.  This is
-     the shape [compile_dfg_buffers] gives a stall's buffer. *)
+  (* A SATURATING COUNTER, the shape [compile_dfg_buffers] gives a stall's buffer:
+     from zero it advances while [adv] holds, never past [top]; once [adv] holds
+     from cycle [r] on, it reads [top] from cycle [r + top] on. *)
   Lemma counter_saturates (sz top r K: nat) (b: nat -> bits_t sz) (adv: nat -> bool) :
     top < pow2 sz ->
     Bits.to_nat (b 0) = 0 ->
@@ -981,15 +973,9 @@ Section SchedulerSimulation.
       apply Hall, Hin.
   Qed.
 
-  (* ==================================================================== *)
-  (* Phase 2 machinery: per-node target cycles + the run's cycle bound.   *)
-  (*                                                                      *)
-  (* For an action, build_dfg produces the dataflow graph; calc_backward_ *)
-  (* cost then calc_target_cycle assign each node the earliest cycle its   *)
-  (* value is available (backward cost / cost_limit).  A node's buffer     *)
-  (* validity bit flips to 1 once the cycle count reaches its target, so   *)
-  (* the whole action is done at the MAX target cycle over its nodes.      *)
-  (* ==================================================================== *)
+  (* PHASE 2 MACHINERY: per-node target cycles (backward cost / cost_limit, the
+     earliest a node's value is available) and the run's bound.  A buffer's bit
+     flips once the cycle reaches its target, so the action is done by the MAX. *)
 
   (* Per-node target-cycle map for an action's DFG. *)
   Local Notation act_cycle_map act :=
@@ -1006,18 +992,9 @@ Section SchedulerSimulation.
   Definition max_cycle (act: tfs_action sched) : nat :=
     fold_left (fun m p => Nat.max m (snd p)) (act_cycle_map act) 0.
 
-  (* ==================================================================== *)
-  (* Phase 2: the cross-cycle buffer / validity invariant.                *)
-  (*                                                                      *)
-  (* Each action's DFG has, per buffered node, a value register tf_dfg_b  *)
-  (* and a validity register tf_dfg_v.  Compiling a buffer inlines its     *)
-  (* predecessors (compile_dfg_expr with the buffer itself removed), so    *)
-  (* the "settled" value a buffer eventually holds is exactly the          *)
-  (* fully-inlined, buffer-free reference expression of that node,         *)
-  (* evaluated against the (constant, pre-done) tf_dfg_s slots and the     *)
-  (* fixed input.  A buffer's validity bit is 1 precisely once the cycle   *)
-  (* count reaches the node's target cycle.                                *)
-  (* ==================================================================== *)
+  (* PHASE 2: the cross-cycle buffer / validity invariant.  A buffer (tf_dfg_b,
+     tf_dfg_v) settles to its node's fully inlined, buffer-free reference over the
+     pre-done tf_dfg_s slots and input; its bit is 1 once its target is reached. *)
 
   (* ---- What a DFG node is, as the buffer compiler asks ---- *)
 
@@ -1048,10 +1025,9 @@ Section SchedulerSimulation.
     destruct (node_op act n); try discriminate; reflexivity.
   Qed.
 
-  (* The node a sample's REQUEST was built from: through its token, through the
-     stall when the IP declares a latency, and through the ordering join when
-     the call was sequenced behind an earlier one.  This mirrors what
-     [dataflow_ops] emits for a [tf_call]. *)
+  (* The node a sample's REQUEST was built from: through its token, the stall when
+     the IP declares a latency, and the ordering join when the call was sequenced
+     behind an earlier one -- as [dataflow_ops] emits a [tf_call]. *)
   Definition sample_req_head (act: tfs_action sched) (h: nid_t) : option nid_t :=
     match node_op act h with
     | DFG_Drive _ a _ => Some a
@@ -1489,10 +1465,9 @@ Section SchedulerSimulation.
                     (0, (0, 0)))))
        (buf_gate act a_idx n_idx) (vreg_nid a_idx n_idx)).
 
-  (* ONE CYCLE of a stall's counter, read off what compile_dfg_buffers emits:
-     it advances exactly when the stall's argument is valid and it has not yet
-     reached [pred l], and holds otherwise.  The range hypothesis is what keeps
-     the increment from wrapping. *)
+  (* ONE CYCLE of a stall's counter, as compile_dfg_buffers emits it: it advances
+     exactly when the argument is valid and [pred l] is not yet reached, else
+     holds.  The range hypothesis keeps the increment from wrapping. *)
   Lemma stall_counter_step
         (act: tfs_action sched) a_idx n_idx
         (ss: sched_sys_state) (input: sched_input_t) l expr valid buffers :
@@ -1611,9 +1586,8 @@ Section SchedulerSimulation.
   Qed.
 
   (* What [compile_dfg_drives] assigns port [p]'s request register: {strobe,
-     payload}, both halves selecting on the PULSE, with the register itself as
-     the base case -- so a request's payload is taken at its own cycle and HELD.
-     Replicates the map body of [compile_dfg_drives]. *)
+     payload}, both selecting on the PULSE, the register itself the base case --
+     so a payload is taken at its own cycle and HELD.  Replicates the map body. *)
   Definition drive_value_expr
       (act: tfs_action sched)
       (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
@@ -2058,16 +2032,9 @@ Section SchedulerSimulation.
       + exact IH.
   Qed.
 
-  (* ---------------------------------------------------------------- *)
-  (* Numeric core of backward-cost monotonicity.                       *)
-  (*                                                                   *)
-  (* calc_backward_cost dfg = fold_left aux (rev (graph dfg)) [] where  *)
-  (* aux sets nid node :: get_args node all to the SAME running-max     *)
-  (* value.  We prove monotonicity (arg cost >= consumer cost) from a   *)
-  (* single structural well-formedness fact about build_dfg: once a     *)
-  (* node is processed, no later-processed node touches its cost key    *)
-  (* (topological ordering + unique nids).                              *)
-  (* ---------------------------------------------------------------- *)
+  (* NUMERIC CORE of backward-cost monotonicity: [calc_backward_cost] folds [aux],
+     setting a node and its args to one running max.  Monotonicity follows from
+     build_dfg's ordering: no later node touches a processed node's cost key. *)
 
   (* cost lookup with 0 default *)
   Local Definition getn (l: list (nid_t * nat)) (k: nid_t) : nat :=
@@ -2223,11 +2190,9 @@ Section SchedulerSimulation.
   Definition args_lt (L : list (@dfg_node_t s_var i_var o_var p_var)) : Prop :=
     forall a, In a L -> forall x, In x (get_args ctx a) -> x < nid a.
 
-  (* ===================================================================== *)
-  (* build_dfg_wf : the builder emits nodes with strictly increasing ids   *)
-  (* and every node's args reference already-emitted (lower) ids.          *)
-  (* Proved by a state-monad invariant [winv] threaded through the builder.*)
-  (* ===================================================================== *)
+  (* BUILD_DFG_WF: the builder emits strictly increasing ids, every node's args
+     naming earlier (lower) ids.  Proved by the state-monad invariant [winv]
+     threaded through the builder. *)
 
   Local Notation wst := (@dfg_state_t s_var i_var o_var p_var).
 
@@ -5149,12 +5114,9 @@ Section SchedulerSimulation.
       + exact Hinv.
   Qed.
 
-  (* ===================================================================== *)
-  (* STI-1: dataflow_expr returns a node whose [sz] equals the DEMANDED     *)
-  (* size.  Supported by [wvsz]: every var_map entry maps to a node whose   *)
-  (* [sz] is the variable's natural [dfg_var_size].  Threaded together      *)
-  (* through dataflow_expr (var_map only grows via ensure_var here).        *)
-  (* ===================================================================== *)
+  (* STI-1: [dataflow_expr] returns a node of the DEMANDED [sz], with [wvsz] --
+     every var_map entry maps to a node of its variable's [dfg_var_size] --
+     threaded alongside (var_map only grows via ensure_var here). *)
 
   Definition wsz (s: wst) (id: nid_t) (size: sz_t) : Prop :=
     exists node, In node (graph s) /\ nid node = id /\ sz node = size.
@@ -5376,18 +5338,9 @@ Section SchedulerSimulation.
       + exact Hvsz.
   Qed.
 
-  (* ===================================================================== *)
-  (* STI-2 (wfg): every node's args are recorded at the size the node's op  *)
-  (* demands of them (which the eval of compile_dfg_expr pushes down).      *)
-  (*  - Unary not a         : a has sz = node.sz                            *)
-  (*  - Unary resize n a    : a has sz = n                                  *)
-  (*  - Binary (cmp szC) a b : a,b have sz = szC                            *)
-  (*  - Binary other  a b    : a,b have sz = node.sz                        *)
-  (*  - Phi c t e            : c has sz 1, t,e have sz = node.sz            *)
-  (*  - DFG_Resize / leaves  : no constraint (handled by op-split in subst) *)
-  (* Threaded through dataflow_expr; each emit establishes the new node's   *)
-  (* constraint from the args' [wsz] returned by the recursive calls.       *)
-  (* ===================================================================== *)
+  (* STI-2 (wfg): every node's args are recorded at the size its op demands
+     (resize: n; cmp: szC; phi: cond 1; else node.sz), as compile_dfg_expr's eval
+     pushes down.  Threaded through dataflow_expr from the args' [wsz]. *)
 
   Definition node_args_sz (s: wst) (node: @dfg_node_t s_var i_var o_var p_var) : Prop :=
     match op node with
@@ -5404,11 +5357,9 @@ Section SchedulerSimulation.
         | _ => wsz s a1 (sz node) /\ wsz s a2 (sz node)
         end
     | DFG_Phi c t e => wsz s c 1 /\ wsz s t (sz node) /\ wsz s e (sz node)
-    (* The round trip is a VALIDITY chain, and only the drive carries a value:
-       the payload IS read at the drive's own width.  A stall's size is its
-       COUNTER's width and it carries no value; a sample reads its token for
-       validity alone, its own value being [tf_ivar (inr p)]; and the ordering
-       join has no value either.  None of the three relates two widths. *)
+    (* The round trip is a VALIDITY chain; only the drive carries a value, read at
+       its own width.  A stall (its COUNTER's width), a sample (token for validity,
+       value [tf_ivar (inr p)]) and the ordering join relate no two widths. *)
     | DFG_Drive _ a _ => wsz s a (sz node)
     (* A stall's own width is its COUNTER's: [stall_chain] emits it at
        [counter_sz lat], and emits nothing at all at latency zero. *)
@@ -6057,11 +6008,8 @@ Section SchedulerSimulation.
         * unfold sF; simpl. exact Habf.
   Qed.
 
-  (* ===================================================================== *)
-  (* STI-2 lifting: thread [wvsz] and [wfg] through the whole operations    *)
-  (* compiler, including the control-flow merge (Phi emission).  Mirrors    *)
-  (* the [_full] chain but additionally carries the size invariants.        *)
-  (* ===================================================================== *)
+  (* STI-2 LIFTING: [wvsz] and [wfg] threaded through the whole operations
+     compiler, Phi emission included; mirrors the [_full] chain. *)
 
   Lemma set_var_fg v id (s: wst) :
     winv s -> wvsz s -> wfg s -> wnidwf s id -> wsz s id (dfg_var_size ctx v) ->
@@ -8848,9 +8796,6 @@ Section SchedulerSimulation.
     - destruct (eq_dec k k0); [ discriminate | apply IH; exact Hin ].
   Qed.
 
-  (* Every sample has a buffer, so a reference expression stops at a register
-     and never inlines to the port: [require_buffer] takes [sample_nodes]
-     outright, whatever the schedule does with the cycles. *)
   (* A sample sits IN the graph: past the end [nth] gives the empty node. *)
   Lemma sample_node_in_range (act: tfs_action sched) n :
     is_sample_of act n = true -> n < length (graph (build_dfg ctx act)).
@@ -8862,6 +8807,9 @@ Section SchedulerSimulation.
     cbn [op] in Hs. discriminate Hs.
   Qed.
 
+  (* Every sample has a buffer, so a reference expression stops at a register
+     and never inlines to the port: [require_buffer] takes [sample_nodes]
+     outright, whatever the schedule does with the cycles. *)
   Lemma sample_is_buffered (act: tfs_action sched) a_idx n :
     act_idx_aligned act a_idx ->
     is_sample_of act n = true ->
@@ -8912,11 +8860,8 @@ Section SchedulerSimulation.
     rewrite beq_dec_refl. reflexivity.
   Qed.
 
-  (* Every op emitted by compile_dfg_buffers is a tf_assign to a tf_dfg_b or
-     tf_dfg_v register — never a base state var tf_dfg_s (nor the done flag). *)
-  (* Every op compile_dfg_drives emits is a [tf_assign (tf_dfg_ov o)], i.e. a
-     SCHEDULER register.  That is what keeps [always_ops_no_out] true: the
-     always half writes registers the scheduler invented, never outputs. *)
+  (* Every op compile_dfg_drives emits is a [tf_assign (tf_dfg_ov o)], a SCHEDULER
+     register, never an output: what keeps [always_ops_no_out] true. *)
   Lemma compile_dfg_drives_no_out
     (a_idx: nat)
     (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var) (outputs_var := o_var) (ips_var := p_var))
@@ -8945,6 +8890,8 @@ Section SchedulerSimulation.
     subst op. intros [e He]; inversion He.
   Qed.
 
+  (* Every op emitted by compile_dfg_buffers is a tf_assign to a tf_dfg_b or
+     tf_dfg_v register — never a base state var tf_dfg_s (nor the done flag). *)
   Lemma compile_dfg_buffers_no_svar
     (a_idx: nat)
     (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var) (outputs_var := o_var) (ips_var := p_var))
@@ -9440,9 +9387,6 @@ Section SchedulerSimulation.
     reflexivity.
   Qed.
 
-  (* A BUFFER-FREE compiled expression reads only base state vars (tf_dfg_s),
-     outputs and the input, so its value only depends on those.  This is what
-     makes a settled value stable across further pre-done cycles. *)
   (* An entry of the slot at index [m] is cached by register [n_idx']. *)
   Lemma vreg_nid_of_entry (act: tfs_action sched) a_idx n m msz n_idx' :
     act_idx_aligned act a_idx ->
@@ -9527,10 +9471,9 @@ Section SchedulerSimulation.
              Halign Hassoc Hidx Hnz).
   Qed.
 
-  (* STATE INDEPENDENCE, gated by VALIDITY.  A sample's buffer latches on
-     [valid && !v], so a validity bit that already reads ones says the register
-     will not move; the gate is what turns that into stability of the whole
-     reference.  An untainted Phi needs only the branch it selects. *)
+  (* STATE INDEPENDENCE, gated by VALIDITY: a sample's buffer latches on [valid &&
+     !v], so a bit already at ones means the register will not move.  An untainted
+     Phi needs only the branch it selects. *)
   Lemma compile_nobuf_state_indep_gen
         (act: tfs_action sched) a_idx (input1 input2: sched_input_t)
         (ss1 ss2: sched_sys_state)
@@ -9716,6 +9659,9 @@ Section SchedulerSimulation.
     - reflexivity.
   Qed.
 
+  (* A BUFFER-FREE compiled expression reads only base state vars (tf_dfg_s),
+     outputs and the input, so its value only depends on those.  This is what
+     makes a settled value stable across further pre-done cycles. *)
   Lemma compile_nobuf_state_indep
         (act: tfs_action sched) a_idx (input1 input2: sched_input_t)
         (ss1 ss2: sched_sys_state) :
@@ -9753,10 +9699,9 @@ Section SchedulerSimulation.
     - intros x _ Hx. exact (sample_is_buffered act a_idx x Halign Hx).
   Qed.
 
-  (* The VALIDITY twin: a validity that fires in one state fires in the other,
-     given that a valid buffer's bit only goes up and its value stays put.  An
-     untainted Phi needs the condition to SELECT alike, which is the value
-     lemma above, gated on the condition's own validity. *)
+  (* The VALIDITY twin: a validity firing in one state fires in the other, since a
+     valid buffer's bit only rises and its value stays.  An untainted Phi needs
+     its condition to SELECT alike: the value lemma above, gated on its validity. *)
   Lemma compile_valid_state_indep_gen
         (act: tfs_action sched) a_idx (input1 input2: sched_input_t)
         (ss1 ss2: sched_sys_state)
@@ -10202,10 +10147,9 @@ Section SchedulerSimulation.
     reflexivity.
   Qed.
 
-  (* And at a drive: the request is as valid as the argument it carries AND as
-     the sources of its path condition.  A drive fires on the one cycle its
-     stall starts, so a guard read before its sources have settled sends the
-     wrong arm's request, or none.  Regression: sim/tb_xport.sv. *)
+  (* At a drive, the request is as valid as its argument AND its path condition's
+     sources: a drive fires on the one cycle its stall starts, so an unsettled
+     guard sends the wrong arm's request, or none.  Regression: sim/tb_xport.sv. *)
   Lemma compile_drive_valid
         (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var)
                 (outputs_var := o_var) (ips_var := p_var))
@@ -10282,10 +10226,9 @@ Section SchedulerSimulation.
     rewrite valid_and_eval, Hz. apply bits1_and_zero_r.
   Qed.
 
-  (* One step of [compile_dfg_expr_aux]'s VALUE at a node that is not a stall:
-     buffered, it is that node's own register.  Stated as a match rather than
-     under hypotheses because [bufs] is typed at [nid_t] here and at [nat]
-     inside the compiler -- convertible, but [rewrite] will not bridge them. *)
+  (* One step of [compile_dfg_expr_aux]'s VALUE at a non-stall node: buffered, its
+     own register.  A match, not hypotheses: [bufs] is at [nid_t] here and [nat]
+     in the compiler, convertible but not bridged by [rewrite]. *)
   Lemma compile_buffered_value
         (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var)
                 (outputs_var := o_var) (ips_var := p_var))
@@ -10380,15 +10323,10 @@ Section SchedulerSimulation.
     rewrite valid_and_eval, Hz. apply bits1_and_zero_r.
   Qed.
 
-  (* ==================================================================== *)
-  (* Phase 3b: the VALID => SETTLED invariant.                            *)
-  (*                                                                      *)
-  (* Saturation by cycle count is the wrong tool for correctness: a done   *)
-  (* cycle may fire EARLY (an untainted Phi validates as soon as the       *)
-  (* runtime-selected branch is ready).  What actually holds of every      *)
-  (* reachable state is that a buffer whose validity bit is set holds its  *)
-  (* settled value -- and the done flag is exactly the conjunction of the  *)
-  (* output nodes' validity bits.                                         *)
+  (* PHASE 3b: the VALID => SETTLED invariant.  A done cycle may fire EARLY (an
+     untainted Phi validates once its selected branch is), so instead of saturation:
+     a buffer whose bit is set holds its settled value, and done ANDs the outputs'. *)
+
   (* ---- the buffer table as a lookup: keys are distinct, filters agree ---- *)
 
   (* A filter that keeps every entry under key [x] is invisible to a lookup of
@@ -10724,12 +10662,9 @@ Section SchedulerSimulation.
       eval_st (tf_dfg_v a_idx n_idx) (buf_valid_next act a_idx n_idx) ss input
       = Bits.ones 1.
 
-  (* SUBSTITUTION, gated by VALIDITY: wherever a node's compiled validity fires,
-     its value agrees with the buffer-free one.  An untainted Phi validates
-     exactly the branch [tf_expr_if] selects, so it reads no unsettled one. *)
-  (* The two sample-table conditions bite only at the ids the expression can
-     reach, so a GATE table -- the full table with the node's own slot removed
-     -- satisfies them: the walk descends by node id and never reaches [n]. *)
+  (* SUBSTITUTION, gated by VALIDITY: where a node's compiled validity fires, its
+     value is the buffer-free one.  The sample-table conditions bite only at ids
+     the walk reaches, so a GATE table (the node's own slot removed) meets them. *)
   Lemma compile_subst_valid_gen_at
         (act: tfs_action sched)
         (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
@@ -11130,10 +11065,9 @@ Section SchedulerSimulation.
              Hsam_sub Hsam_same fuel n szB []).
   Qed.
 
-  (* A valid buffer's REFERENCE is itself valid -- every sample the reference
-     reads has already latched.  Quantified over [pi], since only the VALUE of
-     a node is path-independent (there is no [snd] twin of
-     [compile_fst_pi_irrel]: [phi_crit] reads the path). *)
+  (* A valid buffer's REFERENCE is itself valid: every sample it reads has latched.
+     Quantified over [pi], as only a node's VALUE is path-independent ([phi_crit]
+     reads the path, so [compile_fst_pi_irrel] has no [snd] twin). *)
   Definition valid_refs
       (act: tfs_action sched)
       (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
@@ -11145,13 +11079,9 @@ Section SchedulerSimulation.
                     (vreg_nid a_idx n_idx) (sample_bufs act a_idx))) ss input
       = Bits.ones 1.
 
-  (* VALIDITY substitution: a validity that fires over [bufs] fires over the
-     reference's table too.  The untainted-Phi case is where this needs
-     [valid_settled]: the two tables give two different CONDITION expressions,
-     and the branch that is known valid is the one the condition selects. *)
-  (* As [compile_subst_valid_gen_at]: the sample-table conditions bite only at
-     the ids the expression can reach, which is what lets a GATE table satisfy
-     them. *)
+  (* VALIDITY substitution: a validity firing over [bufs] fires over the reference's
+     table too; the untainted Phi needs [valid_settled], the known-valid branch
+     being the one the condition selects.  GATE tables qualify as above. *)
   Lemma compile_subst_ref_valid_gen_at
         (act: tfs_action sched)
         (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
@@ -11471,40 +11401,9 @@ Section SchedulerSimulation.
       + exact IH.
   Qed.
 
-  (* ==================================================================== *)
-  (* Phase 2/3 decomposition of the top-level theorem.                    *)
-  (*                                                                      *)
-  (* The monolithic correctness statement splits into two obligations:    *)
-  (*  - PROGRESS (Phase 2): from start_rel, the scheduled run reaches a    *)
-  (*    FIRST done cycle N; N is bounded by S (max target cycle), and is   *)
-  (*    obtained as the LEAST cycle at which the done flag fires, so       *)
-  (*    "not done before N" holds by construction (well-ordering).         *)
-  (*  - CORRECTNESS-AT-DONE (Phase 3): at that done cycle the mapped final *)
-  (*    states + outputs equal the one-shot source evaluation, because     *)
-  (*    every buffer then holds the settled DFG value = tf_eval_expr of    *)
-  (*    the source sub-expression under the fixed input.                   *)
-  (*                                                                      *)
-  (* NOTE (soundness): an earlier attempt characterized done exactly as    *)
-  (* [done_set (run_n k) <-> max_cycle <= k].  That biconditional is FALSE *)
-  (* for DFGs with non-secret conditionals: an untainted Phi's compiled    *)
-  (* validity is a data-dependent [if cond then then_val else else_val]    *)
-  (* (see compile_dfg_expr / valid_expr_if), so a Phi can validate EARLY   *)
-  (* when the runtime-selected branch is ready, even though its static     *)
-  (* node_cycle (backward cost / cost_limit, a MAX over both branches) is  *)
-  (* later.  Hence the [validity set -> node_cycle <= k] direction fails.  *)
-  (* We therefore keep only the SOUND one-directional fact                 *)
-  (* [done_by_settle_bound] (all leaves are valid once every buffer has    *)
-  (* saturated) and recover the "first done" witness by well-ordering,     *)
-  (* which needs no sharp lower bound.                                     *)
-  (*                                                                      *)
-  (* NOTE (soundness, 2nd): the saturation bound is NOT [max_cycle].       *)
-  (* [require_buffer] buffers cycle-crossing args AND every var_map output *)
-  (* with a non-zero target cycle, and [compile_dfg_buffers] removes only  *)
-  (* the buffer ITSELF from its slot, so a buffer may read same-cycle      *)
-  (* buffers and the resulting chain can be deeper than [max_cycle].       *)
-  (* Saturation is therefore ranked by NODE ID (args are strictly smaller, *)
-  (* [args_lt_fwd]), giving the bound [settle_bound = |graph|].            *)
-  (* ==================================================================== *)
+  (* PHASE 2/3 SPLIT: PROGRESS reaches a first done cycle by well-ordering, and
+     CORRECTNESS-AT-DONE matches the source there.  Done has no exact cycle (an
+     untainted Phi validates early), so the bound ranks nodes by id, not cycle. *)
 
   (* --- well-ordering: a decidable predicate true at some bound B has a
          least witness N <= B. --- *)
@@ -12249,13 +12148,9 @@ Section SchedulerSimulation.
     - exact Hval.
   Qed.
 
-  (* The ungated value saturation -- [buffers_settled], [compile_subst_gen],
-     [compile_subst], [buffers_settled_run] -- lived here and is GONE.  Nothing
-     consumed it: correctness goes through the VALIDITY-gated [valid_settled],
-     and progress through [valids_ones_run].  V4 would have made it expensive to
-     keep, since a sample's buffer latches and an ungated rank has to carry a
-     "no sample latches this cycle" obligation that the gated version gets for
-     free from validity monotonicity.  Removed rather than re-proved. *)
+  (* The ungated value saturation ([buffers_settled], [compile_subst_gen], ...) is
+     GONE: nothing consumed it, as correctness goes through the VALIDITY-gated
+     [valid_settled] and progress through [valids_ones_run]. *)
 
   (* VALIDITY substitution: if every buffer register caching an id below [bound]
      reads all-ones, then so does the compiled validity expression of any node
@@ -12601,10 +12496,9 @@ Section SchedulerSimulation.
     intro Hz2. rewrite Hz2, beq_dec_refl in Hq. discriminate Hq.
   Qed.
 
-  (* SATURATION (validity).  After [k] pre-done cycles, every buffer whose node
-     ranks below [k] reads all-ones.  The rank is WEIGHTED: a stall's buffer
-     counts, and its validity rises [lat] cycles after its argument's, so the
-     induction needs every earlier cycle rather than the previous one. *)
+  (* SATURATION (validity): after [k] pre-done cycles every buffer ranked below [k]
+     reads all-ones.  The rank is WEIGHTED by stalls, whose validity rises [lat]
+     cycles after their argument's, so the induction uses every earlier cycle. *)
   Lemma valids_ones_run :
     forall (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val)
            (ss0: sched_sys_state) (K: nat),
@@ -12734,20 +12628,25 @@ Section SchedulerSimulation.
   Qed.
 
 
-  (* SOUND semantic core (Phase 2): a done cycle exists by S (settle_bound).
-     Either done fired earlier, which yields an earlier witness, or every buffer
-     settled and validated by settle_bound and the combined validity fires. *)
+  (* SOUND semantic core (Phase 2): a done cycle exists in [1, S settle_bound], an
+     earlier one or the combined validity firing once every buffer has settled.
+     Cycle 0 is the start state, so the search starts at cycle 1. *)
   Lemma done_by_settle_bound :
     forall (act: tfs_action sched) (sp0: src_sys_state)
            (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val),
       start_rel sp0 ss0 ->
-      exists N, N <= S (settle_bound act) /\ done_set (run_n N act input resp ss0).
+      exists N, 0 < N /\ N <= S (settle_bound act)
+                /\ done_set (run_n N act input resp ss0).
   Proof.
     intros act sp0 ss0 input resp Hstart.
-    destruct (bounded_dec (fun k => done_set (run_n k act input resp ss0))
+    destruct (bounded_dec (fun k => done_set (run_n (S k) act input resp ss0))
                 (fun k => done_set_dec _) (settle_bound act)) as [Hearly | Hno].
-    - destruct Hearly as [j [Hjle Hjdone]]. exists j. split; [ lia | exact Hjdone ].
-    - exists (S (settle_bound act)). split; [ apply Nat.le_refl | ].
+    - destruct Hearly as [j [Hjle Hjdone]].
+      exists (S j). split; [ lia | split; [ lia | exact Hjdone ] ].
+    - assert (Hpre : forall i, 1 <= i <= settle_bound act ->
+                       ~ done_set (run_n i act input resp ss0)).
+      { intros [| i] Hi; [ lia | exact (Hno i ltac:(lia)) ]. }
+      exists (S (settle_bound act)). split; [ lia | split; [ apply Nat.le_refl | ] ].
       destruct (exists_act_idx act) as [a_idx Halign].
       unfold done_set. cbn [run_n]. rewrite sched_step_done.
       destruct (done_exprs_concrete act a_idx Halign) as [rest Hsched].
@@ -12777,7 +12676,7 @@ Section SchedulerSimulation.
         rewrite Hseq in Hinm. rewrite in_seq in Hinm. rewrite Hnid in Hinm. lia. }
       apply (compile_valid_ones act a_idx _ _ Halign (settle_bound act)
                (valids_ones_run act a_idx input resp ss0 (settle_bound act) Halign
-                  (proj2 (proj2 Hstart)) (fun i Hi => Hno i (proj2 Hi))
+                  (proj2 (proj2 Hstart)) Hpre
                   (settle_bound act) (Nat.le_refl _))
                _ (fun e He => He)
                (length (graph (build_dfg ctx act))) nd Hnd1 Hndlt Hndlt);
@@ -12785,33 +12684,31 @@ Section SchedulerSimulation.
         [ apply Nat.lt_le_incl | right ]; apply node_rank_mono; exact Hndlt.
   Qed.
 
-  (* PHASE 2 (progress): a FIRST done cycle exists, the least N <= S
-     (settle_bound act) at which done fires (well-ordering over the decidable
-     [done_set (run_n k ...)]), so "not done before N" holds by construction. *)
+  (* PHASE 2 (progress): a FIRST done cycle exists, the least N in [1, S
+     settle_bound] at which done fires, so "not done before N" holds by
+     construction. *)
   Lemma scheduler_reaches_done :
     forall (act: tfs_action sched) (sp0: src_sys_state)
            (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val),
       start_rel sp0 ss0 ->
-      exists N,
-        (forall k, k < N -> ~ done_set (run_n k act input resp ss0)) /\
+      exists N, 0 < N /\
+        (forall k, 0 < k < N -> ~ done_set (run_n k act input resp ss0)) /\
         done_set (run_n N act input resp ss0).
   Proof.
     intros act sp0 ss0 input resp Hstart.
-    destruct (least_witness (fun k => done_set (run_n k act input resp ss0))
-                (fun k => done_set_dec _) (S (settle_bound act)))
-      as [N [Hdone Hbefore]].
-    - apply (done_by_settle_bound act sp0 ss0 input resp Hstart).
-    - exists N. split; [ exact Hbefore | exact Hdone ].
+    destruct (least_witness (fun k => done_set (run_n (S k) act input resp ss0))
+                (fun k => done_set_dec _) (settle_bound act))
+      as [M [Hdone Hbefore]].
+    - destruct (done_by_settle_bound act sp0 ss0 input resp Hstart)
+        as [[| N] [HN0 [HNle HNdone]]]; [ lia | ].
+      exists N. split; [ lia | exact HNdone ].
+    - exists (S M). split; [ lia | split; [ | exact Hdone ] ].
+      intros [| k] Hk; [ lia | exact (Hbefore k ltac:(lia)) ].
   Qed.
 
-  (* ==================================================================== *)
-  (* Phase 3a: what a DONE cycle writes.                                  *)
-  (*                                                                      *)
-  (* On the done cycle tfs_next_cycle takes the reset ++ done ++ always   *)
-  (* branch.  Neither the reset updates nor the always-ops touch a base   *)
-  (* state var or an output, so a tf_dfg_s / output register is resolved  *)
-  (* by the DONE ops, i.e. by compile_dfg_aux over the action's var_map.  *)
-  (* ==================================================================== *)
+  (* PHASE 3a: what a DONE cycle writes.  It takes the reset ++ done ++ always
+     branch, and neither reset updates nor always-ops touch a base state var or an
+     output, so those are resolved by the DONE ops (compile_dfg_aux, var_map). *)
 
   Lemma cycle_updates_done (act: tfs_action sched) (ss: sched_sys_state) (input: sched_input_t) :
     done_set (sched_step act ss input) ->
@@ -13179,6 +13076,33 @@ Section SchedulerSimulation.
     - intros v Hv. exact (tfs_reset_states_init_zero sched v Hv).
   Qed.
 
+  Lemma reset_states_has_b
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (n_idx : Vect.index
+        (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))) :
+    In (tf_dfg_b a_idx n_idx) (reset_states ctx bneeds).
+  Proof.
+    unfold reset_states. rewrite in_flat_map.
+    exists (index_to_nat a_idx). split.
+    - apply in_seq. pose proof (index_to_nat_bounded a_idx). lia.
+    - rewrite index_of_nat_to_nat, in_flat_map.
+      exists (index_to_nat n_idx). split.
+      + apply in_seq. pose proof (index_to_nat_bounded n_idx). lia.
+      + rewrite index_of_nat_to_nat. left; reflexivity.
+  Qed.
+
+  Lemma reset_updates_b
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (n_idx : Vect.index
+        (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))) :
+    find_st_update sched (tf_dfg_b a_idx n_idx)
+      (tfs_reset_updates sched (tfs_reset_states sched)) = Some Bits.zero.
+  Proof.
+    unfold tfs_reset_updates. apply find_st_update_map_init.
+    - exact (reset_states_has_b a_idx n_idx).
+    - intros v Hv. exact (tfs_reset_states_init_zero sched v Hv).
+  Qed.
+
   (* A done cycle resets every validity bit, so the VALID => SETTLED invariant
      is vacuously re-established across it. *)
   Lemma sched_step_done_v (act: tfs_action sched)
@@ -13196,13 +13120,25 @@ Section SchedulerSimulation.
     reflexivity.
   Qed.
 
-  (* THE INVARIANT (Phase 3b): from a state with clear validity bits, at EVERY
-     cycle a buffer whose validity bit is set holds its settled value.  A done
-     cycle clears the bits, so no "not yet done" hypothesis is needed. *)
-  (* THE INVARIANT (Phase 3b), all three conjuncts at once.  They go together:
-     settledness crosses a cycle only if the reference's validity is up, that
-     validity substitutes onto the reference's table only if the VALUES agree,
-     and both lean on the gate still being up. *)
+  (* ... and every buffer too, so a done cycle leaves every [zeroed_at_start]
+     register at zero: the next action starts from a start state. *)
+  Lemma sched_step_done_zeroed (act: tfs_action sched)
+      (ss: sched_sys_state) (input: sched_input_t) :
+    done_set (sched_step act ss input) ->
+    forall x, zeroed_at_start x -> (fst (sched_step act ss input)).[x] = Bits.zero.
+  Proof.
+    intros Hdone x Hx.
+    destruct x as [| s | a_idx n_idx | a_idx n_idx | p]; destruct Hx.
+    - rewrite sched_step_getst, (cycle_updates_done act ss input Hdone).
+      unfold find_st_val.
+      rewrite (find_st_update_app_Some _ _ _ _ (reset_updates_b a_idx n_idx)).
+      reflexivity.
+    - exact (sched_step_done_v act a_idx n_idx ss input Hdone).
+  Qed.
+
+  (* THE INVARIANT (Phase 3b): from clear validity bits, at EVERY cycle a set bit's
+     buffer holds its settled value -- three conjuncts proved together, as each
+     crossing leans on the others; a done cycle clears the bits. *)
   Lemma valid_settled_run :
     forall (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val)
            (ss0: sched_sys_state) (k: nat),
@@ -13581,13 +13517,9 @@ Section SchedulerSimulation.
     apply IH. intros i Hi. apply Hnd. lia.
   Qed.
 
-  (* ==================================================================== *)
-  (* PHASE 3d, STEP 1: syntactic equations for [node_ref_expr].            *)
-  (* The buffer-free compiled expression of a forward-graph node is the    *)
-  (* node's own op applied to the compiled expressions of its args.  These *)
-  (* are the equations that turn "evaluate the compiled DFG" into a        *)
-  (* structural recursion over the graph, mirroring [tf_eval_expr].        *)
-  (* ==================================================================== *)
+  (* PHASE 3d, STEP 1: syntactic equations for [node_ref_expr]: a node's
+     buffer-free compiled expression is its op over its args' ones, so evaluating
+     the compiled DFG is a structural recursion mirroring [tf_eval_expr]. *)
 
   (* A node of the exported forward graph sits at the position given by its own
      [nid] field.  This is the bridge from the builder's [In]-based
@@ -14787,10 +14719,8 @@ Section SchedulerSimulation.
     - apply (nre_fuel act a_idx eid n Hpe Hbe Hle).
   Qed.
 
-  (* ==================================================================== *)
-  (* PHASE 3d, STEP 2: the DENOTATION of a graph node, and the bridge from  *)
-  (* a node EMITTED by the builder to its position in the exported graph.   *)
-  (* ==================================================================== *)
+  (* PHASE 3d, STEP 2: the DENOTATION of a graph node, and the bridge from a node
+     EMITTED by the builder to its position in the exported graph. *)
 
   (* [F] is a builder state whose graph exports to [act]'s forward graph. *)
   Definition exports (act: tfs_action sched) (F: wst) : Prop :=
@@ -14941,13 +14871,9 @@ Section SchedulerSimulation.
     cbn [tf_eval_expr]. exact (convert_same _).
   Qed.
 
-  (* ==================================================================== *)
-  (* PHASE 3d, STEP 3: the semantic invariant of the DFG builder.          *)
-  (* Every [var_map] binding evaluates (buffer-free, in [ss]) to the value  *)
-  (* the SOURCE state holds for that variable; and a variable with no       *)
-  (* binding still holds its initial value.  The second half is the frame   *)
-  (* condition that makes the [merge_maps] / [ensure_var] cases go through. *)
-  (* ==================================================================== *)
+  (* PHASE 3d, STEP 3: the builder's semantic invariant.  Every [var_map] binding
+     evaluates (buffer-free, in [ss]) to the source's value, and an unbound
+     variable holds its initial value -- the frame for [merge_maps]/[ensure_var]. *)
 
   Local Notation dvar := (@dfg_vars_t s_var o_var).
 

@@ -1,8 +1,6 @@
-(* Regression for the IPR / latency-noninterference results over the classic
-   timing side channel: a password check branching on a secret register.  Pins,
-   at a concrete context, that the taint analysis marks the branch condition
-   secret-dependent, that [L] is computable, and that the theorems instantiate
-   for real -- the last catching signature drift at the [Definition]s below. *)
+(* Regression for the IPR results on the classic timing side channel, a password
+   check branching on a secret: pins that the branch is tainted, [L] computable,
+   and the theorems instantiate -- the [Definition]s below catch signature drift. *)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.
@@ -112,11 +110,9 @@ Section TheoremInstantiation.
 
   Local Notation sched := (tfs_schedule tfs_ctx cost).
 
-  (* [L] is a total function into [nat] rather than a relation, which is what
-     lets the paper write [L act input pre post].  It is *not* practically
-     reducible: [vm_compute] on this 2-register/32-bit context exceeds 300s,
-     because each of the [settle_bound] candidate cycles interprets the whole
-     schedule.  Symbolic reasoning via [L_first_done] is the usable route. *)
+  (* [L] is a total function into [nat] (so the paper can write [L act input pre
+     post]) but not practically reducible: [vm_compute] here exceeds 300s, so
+     reason symbolically via [L_first_done]. *)
   Definition check_latency := L tfs_ctx cost.
 
   (* Signature regression.  Each of these fails to type check if the
@@ -127,6 +123,8 @@ Section TheoremInstantiation.
   Definition reg_emulator := emulator_correct_L tfs_ctx cost.
 
   Definition reg_headline := IPR.emulator_correct tfs_ctx cost.
+
+  Definition reg_headline_seq := IPR.emulator_correct_seq tfs_ctx cost.
 
   (* This context attaches no IP, so the response stream is a function out of
      [Empty_set] and its datasheet obligation is vacuous. *)
@@ -179,6 +177,24 @@ Section TheoremInstantiation.
             (Extract.L_is_public tfs_ctx cost fs_check a_idx sp0' ss0' input no_resp
                Halign Hst' (Hipc ss0')).
     rewrite Hpre_eq, Hpost_eq. reflexivity.
+  Qed.
+
+  (* The sequence headline, fully instantiated: with no IP attached the
+     datasheet over the run is vacuous, so any queue of checks run from a start
+     state shows the attacker [emulate_seq], cycle by cycle. *)
+  Theorem checks_emulated :
+    forall (q: list (tfs_action sched
+                     * (forall x : tfs_spec_inputs tfs_ctx,
+                          type_denote (tf_inputs_type (tfs_spec_inputs_size tfs_ctx) x))))
+           sp0 ss0,
+      start_rel tfs_ctx cost sp0 ss0 ->
+      forall k ov,
+        (snd (snd (queue_run tfs_ctx cost k q no_resp ss0))).[ov]
+        = emulate_seq tfs_ctx cost (snd sp0) (spec_outputs_seq tfs_ctx cost q sp0) k ov.
+  Proof.
+    intros q sp0 ss0 Hst k ov.
+    assert (Hq : queue_ip_contract tfs_ctx cost q no_resp ss0) by (intros p; destruct p).
+    exact (proj2 (IPR.emulator_correct_seq tfs_ctx cost q sp0 ss0 no_resp Hst Hq k) ov).
   Qed.
 
 End TheoremInstantiation.
