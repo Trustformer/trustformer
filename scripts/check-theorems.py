@@ -39,7 +39,8 @@ HEADLINE = [
     ("no secret leaks by timing",
      "the project's reason to exist: an output observer learns nothing a run "
      "keeps to itself, and the cycle it learns it on is public",
-     [("Trustformer.Theorems.IPR", "emulator_correct")]),
+     [("Trustformer.Theorems.IPR", "emulator_correct"),
+      ("Trustformer.Theorems.IPR", "emulator_correct_seq")]),
 
     ("the declassification rules are sound",
      "each rule widens what may be published; unsound means a real leak",

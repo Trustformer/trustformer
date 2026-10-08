@@ -128,6 +128,8 @@ Section TheoremInstantiation.
 
   Definition reg_headline := IPR.emulator_correct tfs_ctx cost.
 
+  Definition reg_headline_seq := IPR.emulator_correct_seq tfs_ctx cost.
+
   (* This context attaches no IP, so the response stream is a function out of
      [Empty_set] and its datasheet obligation is vacuous. *)
   Definition no_resp : nat -> forall p : tfs_ips sched,
@@ -179,6 +181,24 @@ Section TheoremInstantiation.
             (Extract.L_is_public tfs_ctx cost fs_check a_idx sp0' ss0' input no_resp
                Halign Hst' (Hipc ss0')).
     rewrite Hpre_eq, Hpost_eq. reflexivity.
+  Qed.
+
+  (* The sequence headline, fully instantiated: with no IP attached the
+     datasheet over the run is vacuous, so any queue of checks run from a start
+     state shows the attacker [emulate_seq], cycle by cycle. *)
+  Theorem checks_emulated :
+    forall (q: list (tfs_action sched
+                     * (forall x : tfs_spec_inputs tfs_ctx,
+                          type_denote (tf_inputs_type (tfs_spec_inputs_size tfs_ctx) x))))
+           sp0 ss0,
+      start_rel tfs_ctx cost sp0 ss0 ->
+      forall k ov,
+        (snd (snd (queue_run tfs_ctx cost k q no_resp ss0))).[ov]
+        = emulate_seq tfs_ctx cost (snd sp0) (spec_outputs_seq tfs_ctx cost q sp0) k ov.
+  Proof.
+    intros q sp0 ss0 Hst k ov.
+    assert (Hq : queue_ip_contract tfs_ctx cost q no_resp ss0) by (intros p; destruct p).
+    exact (proj2 (IPR.emulator_correct_seq tfs_ctx cost q sp0 ss0 no_resp Hst Hq k) ov).
   Qed.
 
 End TheoremInstantiation.

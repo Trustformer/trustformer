@@ -6013,8 +6013,12 @@ Section SchedulerRoundTrip.
       apply (port_strobe_quiet act a_idx p _ _ Halign Hnw).
       intros mm Hin. assert (H1 : t < w') by lia. assert (H2 : w' < j) by lia.
       exact (Hquiet w' H1 H2 mm Hin). }
-    pose proof (Hipc p (S t) Hstrobe Hqs) as Hans.
     assert (Hidx : S t + pred (ip_lat (tfs_ip sched p)) = j) by lia.
+    (* the answer is due at [j < M], while the action still runs *)
+    assert (Hlive : forall i, 0 < i <= S t + pred (ip_lat (tfs_ip sched p)) ->
+              ~ done_set (run_n i act input resp ss0))
+      by (intros i Hi; apply Hpre; lia).
+    pose proof (Hipc p (S t) Hlive Hstrobe Hqs) as Hans.
     rewrite Hidx in Hans. rewrite Hans. f_equal.
     (* the payload has not moved since the pulse *)
     assert (Hhold : forall k, S t + k <= j ->
