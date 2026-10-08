@@ -67,11 +67,9 @@ Section FigureA.
 
 End FigureA.
 
-(*
-    fig:dfgB5: the same module with a *public* [tries] -- the specification lets
-    the user see how many attempts are left.  Per the attacker model
-    (01_functional_spec.tex, footnote), public state is an output variable.
- *)
+(* fig:dfgB5: the same module with a *public* [tries] -- the specification lets
+   the user see how many attempts are left; per the attacker model
+   (01_functional_spec.tex, footnote), public state is an output variable. *)
 
 Section FigureB.
 
@@ -164,10 +162,9 @@ Section FigureB.
       node_at dfgB 1 = DFG_Var (DFG_OVar fsB_out_tries).
     Proof. vm_compute. reflexivity. Qed.
 
-    (* Forward taint plus the blackbox untainting that is already fused into
-       [get_tainted]: the [tries != 0] branch is free, only the pin check is
-       critical.  Exactly the three occurrences the paper counts
-       (03_taint_analysis.tex L127, L203). *)
+    (* Forward taint plus the blackbox untainting fused into [get_tainted]: the
+       [tries != 0] branch is free, only the pin check is critical -- the three
+       occurrences the paper counts (03_taint_analysis.tex L127, L203). *)
     Example only_the_pin_check_is_critical :
       crit_report_all ctxB_blackbox dfgB
       = [CR_no_rule 6; CR_no_rule 6; CR_no_rule 6].
@@ -215,11 +212,9 @@ Section FigureB.
 
     Definition ctxA_whitebox := mk_ctxA [phiconst_packet; phibranch_packet].
 
-    (* 03_taint_analysis.tex L202: untainting must not untaint too much.  The
-       same two rules buy nothing back in fig:dfgA5, and the diagnostic says why
-       per occurrence: [tries] has no rule at all, and the declassification of
-       the pin check needs the path literal [(3, true)], which is unavailable
-       because the phi that would provide it is itself critical. *)
+    (* 03_taint_analysis.tex L202, untainting must not untaint too much: in
+       fig:dfgA5 [tries] has no rule, and the pin check's declassification needs
+       the literal [(3, true)], whose phi is itself critical. *)
     Example secret_tries_defeats_the_same_rules :
       crit_report_all ctxA_whitebox (build_dfg ctxA_whitebox fs_act_test)
       = [CR_no_rule 3;
@@ -241,10 +236,9 @@ Section Bounds.
 
     Definition ctxA_blackbox := mk_ctxA [].
 
-    (* With [tries] secret every phi is critical, so both branches of the
-       decrement are always evaluated and the action is constant time: the two
-       bounds coincide.  03_taint_analysis.tex L129 quotes two cycles for
-       [action_test]; that is what the scheduler produces at a cost limit of 4. *)
+    (* With [tries] secret every phi is critical, so the action is constant time
+       and the two bounds coincide: two cycles at cost limit 4, as
+       03_taint_analysis.tex L129 quotes for [action_test]. *)
     Example lockbox_takes_two_cycles :
       action_bounds ctxA_blackbox 4 (build_dfg ctxA_blackbox fs_act_test) = (2, 2).
     Proof. vm_compute. reflexivity. Qed.
@@ -255,10 +249,9 @@ Section Bounds.
       action_bounds ctxA_blackbox 10 (build_dfg ctxA_blackbox fs_act_test) = (1, 1).
     Proof. vm_compute. reflexivity. Qed.
 
-    (* Making [tries] public separates the bounds: an untainted [tries != 0] lets
-       its phi SELECT rather than AND both branches, so the locked-out case skips
-       the [tries - 1] stage -- one cycle when [tries] is exhausted, two when it
-       is not.  Visible only because source nodes stay buffer-free. *)
+    (* A public [tries] separates the bounds: its untainted phi SELECTS, so the
+       locked-out case skips the [tries - 1] stage -- one cycle when [tries] is
+       exhausted, two otherwise (visible as source nodes stay buffer-free). *)
     Example public_tries_separates_the_bounds :
       action_bounds ctxB_blackbox 4 (build_dfg ctxB_blackbox fs_act_test) = (1, 2)
       /\ action_bounds ctxB_whitebox 4 (build_dfg ctxB_whitebox fs_act_test) = (1, 2).
@@ -274,18 +267,15 @@ Section Bounds.
 
 End Bounds.
 
-(* 04_hardware_generation.tex "Valid signal generation" works its example on
-   this action at this schedule: four valid signals, for [out_secret], [tries],
-   [out_status] and [buf].  At cost limit 4 the one buffer is node 12, the
-   [tries - 1] subtraction, so it IS the paper's [buf]. *)
+(* 04_hardware_generation.tex "Valid signal generation" uses this action: four
+   valid signals, for [out_secret], [tries], [out_status] and [buf].  At cost
+   limit 4 the one buffer is node 12, [tries - 1], so it IS the paper's [buf]. *)
 
 Section ValidSignals.
 
-    (* [valid_expr_and] absorbs [tf_const 1], so a [done] reducing to a single
-       valid variable says every OTHER root's valid signal is [Const 0b1] -- the
-       paper's claim for out_secret, out_status and buf, which holds of [buf]
-       too because source nodes stay buffer-free.  The valid register is bound
-       out of the schedule, so the assertion needs no [Vect.index] literals. *)
+    (* [valid_expr_and] absorbs [tf_const 1], so a [done] reducing to one valid
+       variable says every OTHER root's is [Const 0b1], as the paper claims.  The
+       valid register is read off the schedule: no [Vect.index] literals needed. *)
     Example valid_signals_all_phis_critical :
       match fst (schedule ctxA_blackbox 4 (buffer_needs ctxA_blackbox 4)
                         (Taint.get_tainted ctxA_blackbox) (Taint.decl_facts ctxA_blackbox) fs_act_test) with
@@ -301,10 +291,8 @@ Section ValidSignals.
     Proof. vm_compute. repeat split; reflexivity. Qed.
 
     (* The non-critical case.  The paper inverts the INNER test; the compiler is
-       right: [tries - 1], the only buffered node, sits in the WRONG-pin branch
-       (LockboxTries.v, [fs_act_test]), while the matching-pin branch assigns the
-       source-node constant [tries_reset].  So [buf] is waited on exactly when
-       [tries <> 0] AND [pin <> in_pin]. *)
+       right: [tries - 1], the only buffered node, is in the WRONG-pin branch, so
+       [buf] is waited on exactly when [tries <> 0] AND [pin <> in_pin]. *)
     Example valid_signals_no_phi_critical :
       match fst (schedule ctxB_whitebox 4 (buffer_needs ctxB_whitebox 4)
                         (Taint.get_tainted ctxB_whitebox) (Taint.decl_facts ctxB_whitebox) fs_act_test) with
@@ -326,11 +314,9 @@ Section ValidSignals.
 
 End ValidSignals.
 
-(*
-    ...but the bounds do separate when the branches are unbalanced, and that
-    separation is exactly what criticality removes.  Same design twice, once
-    branching on an input and once on the secret.
- *)
+(* ...but the bounds do separate when the branches are unbalanced, and that
+   separation is exactly what criticality removes.  Same design twice, once
+   branching on an input and once on the secret. *)
 
 Section BoundsContrast.
 

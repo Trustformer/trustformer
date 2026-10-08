@@ -1,7 +1,6 @@
-(*! Step 6 of the variable scheduler: the DFG becomes [tf_ops] over the
-    scheduled register file.  Each buffered node gets an assignment guarded by
-    its validity bit, each IP drive a request pulse, and [schedule] packs the
-    per-action always-half and done-half the [TFSchedule] record carries. !*)
+(*! Step 6 of the variable scheduler: the DFG becomes [tf_ops] over the scheduled
+    register file -- a buffered node an assignment gated by its validity bit, an
+    IP drive a request pulse -- packed by [schedule] into always- and done-halves. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.
@@ -185,14 +184,9 @@ Section Codegen.
           | DFG_Stall _ arg1 =>
               let '(_, v) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers in
               (tf_const 0, v)
-          (* A drive passes its value through: it is the message on its way to
-             the port.  A sample's VALUE is the port and its VALIDITY the
-             token's, which is where the round trip decouples the two.
-             Its validity ALSO waits on the guard, which [get_args] already
-             counts as a dependency: a drive fires on the one cycle its stall
-             starts, and a path condition read before its sources have settled
-             sends the wrong arm's request -- or none.  Regression:
-             sim/tb_xport.sv. *)
+          (* A drive passes its value through; a sample's VALUE is the port and
+             its VALIDITY the token's, also waiting on the guard: a path condition
+             read unsettled sends the wrong arm's request (sim/tb_xport.sv). *)
           | DFG_Drive _ arg1 en =>
               let '(e, v) := compile_dfg_expr_aux tainted dfacts pi fuel' a_idx dfg arg1 buffers in
               (e, fold_right
@@ -279,9 +273,8 @@ Section Codegen.
                       (tf_op2 tf_add cnt (tf_const 1)) cnt
                 | None =>
                   match sample_en with
-                  (* The GUARD is in the latch enable: an arm that was not taken
-                     sent no request, so the channel is carrying another call's
-                     cycle and this buffer keeps its reset value.  [vexpr] is
+                  (* The GUARD is in the latch enable: an untaken arm sent no
+                     request, so this buffer keeps its reset value; [vexpr] is
                      untouched, so the count is unchanged. *)
                   | Some en =>
                       tf_expr_if (tf_op2 tf_and
