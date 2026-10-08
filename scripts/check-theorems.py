@@ -1,18 +1,7 @@
 #!/usr/bin/env python3
-"""Check that every headline theorem is proved, and proved without axioms.
-
-    scripts/check-theorems.py            check them all
-    scripts/check-theorems.py --list     just print the list
-
-A headline theorem is one a reader has to be told about: it states a guarantee
-the project makes, rather than a step on the way to one.  Everything below is
-machine-checked by Rocq, so what needs human attention is whether this LIST is
-the right one -- edit it here.
-
-The check is `Print Assumptions`, which reports every axiom a proof rests on.
-A theorem left `Admitted` shows up the same way, so that is caught too.  Needs
-`dune build coq/` to have run.
-"""
+"""Check every headline theorem is proved axiom-free (`Print Assumptions`, which
+also catches `Admitted`); `--list` just prints them.  Needs `dune build coq/`.
+Rocq checks the proofs, so what needs a human is whether HEADLINE is the right list."""
 import argparse
 import re
 import subprocess
@@ -22,6 +11,7 @@ import os
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# A headline theorem states a guarantee the project makes, not a step to one.
 # (group, why it is headline, [(module, theorem), ...])
 HEADLINE = [
     ("the pipeline is correct",
@@ -67,11 +57,8 @@ def build_probe(pairs):
 
 
 def split_results(out):
-    """One verdict per Print Assumptions, in order.
-
-    Output is either the CLOSED line or an 'Axioms:'/'Assumptions:' block that
-    runs until the next verdict.
-    """
+    """One verdict per Print Assumptions, in order: the CLOSED line, or an
+    'Axioms:'/'Assumptions:' block running until the next verdict."""
     results, current = [], None
     for line in out.splitlines():
         if line.strip() == CLOSED:

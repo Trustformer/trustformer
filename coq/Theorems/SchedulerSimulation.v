@@ -1,8 +1,6 @@
-(*! THE SCHEDULER IS CORRECT.  One source step of an action -- [tf_ops_run]
-    over the whole program -- equals iterating the scheduled per-cycle
-    transition until the done flag fires, with the registers mapped back
-    through [maps_from]; and the state it stops in is a start state for the
-    next action.  Proved in Internal/SchedulerRoundTrip.v. !*)
+(*! THE SCHEDULER IS CORRECT.  One source step of an action equals iterating the
+    scheduled cycle until done, registers mapped back by [maps_from], and it ends
+    in a start state for the next action.  Proof: Internal/SchedulerRoundTrip.v. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.

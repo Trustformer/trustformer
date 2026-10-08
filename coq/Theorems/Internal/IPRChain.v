@@ -1,8 +1,6 @@
-(*! The proofs behind the sequence guarantee in Theorems/IPR.v.  A command
-    queue runs its head command exactly as [run_n] does up to that command's
-    done cycle, and [start_rel_after_done] makes the state it then hands on a
-    start state for the next one, so the per-command guarantee chains by
-    induction over the queue. !*)
+(*! The proofs behind [IPR.emulator_correct_seq]: a queue runs its head command as
+    [run_n] does until done, then hands the next a start state
+    ([start_rel_after_done]), so the per-command guarantee chains by induction. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.
@@ -108,8 +106,7 @@ Section IPRChain.
   Qed.
 
   (* ------------------------------------------------------------------- *)
-  (* The queue's run, cut at a cycle: what follows is a queue run of its  *)
-  (* own, over the responses from that cycle on.                         *)
+  (* A queue run cut at a cycle goes on as a queue run of its own.       *)
   (* ------------------------------------------------------------------- *)
 
   Lemma queue_run_add (q: list command) (resp: nat -> resp_val)
@@ -218,9 +215,7 @@ Section IPRChain.
   Qed.
 
   (* ------------------------------------------------------------------- *)
-  (* THE CHAIN.  By induction over the queue: the head command is the     *)
-  (* single-command guarantee up to its done cycle, and from there the    *)
-  (* rest of the queue runs from a start state.                           *)
+  (* THE CHAIN, by induction over the queue.                             *)
   (* ------------------------------------------------------------------- *)
 
   Theorem queue_emulated (q: list command) :

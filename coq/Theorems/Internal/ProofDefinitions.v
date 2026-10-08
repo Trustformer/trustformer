@@ -69,12 +69,9 @@ Section ProofWorld.
   Definition is_sample_of (act: tfs_action sched) (n: nid_t) : bool :=
     match node_op act n with DFG_Sample _ _ _ => true | _ => false end.
 
-  (* The buffers a reference expression KEEPS: exactly the sample ones.  This
-     is [guard_expr]'s [sbufs] -- "buffers are substituted only for samples,
-     every other source is stable across the action".  A sample reads a LIVE
-     wire and its buffer LATCHES, so inlining through one would compare a
-     latched answer against whatever the port carries now; with two calls on a
-     port those differ, and MARS's Quote has eight samples on one. *)
+  (* The buffers a reference KEEPS: exactly the sample ones, [guard_expr]'s [sbufs].
+     A sample LATCHES a live wire, so inlining through it would compare the latched
+     answer with the port's current one, which differ once a port takes two calls. *)
   Definition sample_bufs
       (act: tfs_action sched)
       (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
@@ -275,10 +272,9 @@ Section ProofWorld.
            (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n
            (sample_bufs act a_idx)).
 
-  (* THE ROUND TRIP, as a property of one state: a sample that LATCHED UNDER
-     ITS GUARD holds [ip_fn] of the request its own drive sent.  [round_trip]
-     discharges it at any pre-done cycle, from [ip_contract] and
-     [requests_sent]. *)
+  (* THE ROUND TRIP for one state: a sample that LATCHED UNDER ITS GUARD holds
+     [ip_fn] of its own drive's request.  [round_trip] discharges it at any
+     pre-done cycle, from [ip_contract] and [requests_sent]. *)
   Definition samples_answered (act: tfs_action sched) (a_idx: a_index)
       (ss: sched_sys_state) (input: sched_input_t) : Prop :=
     forall n_idx p tok en d av en',

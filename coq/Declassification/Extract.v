@@ -26,9 +26,7 @@ Proof.
 Qed.
 
 (* ================================================================= *)
-(* THE RECIPE AIMS AT ANY VALUATION THAT OBEYS THE GRAPH.              *)
-(* Operations, packets and IP functions are all the recipe uses, so     *)
-(* whatever obeys them is what it computes.                             *)
+(* THE RECIPE AIMS AT ANY VALUATION OBEYING OPS, PACKETS, IPs.       *)
 (* ================================================================= *)
 Section RecipeSound.
   Context {s_var i_var o_var p_var: Type} {p_eq: EqDec p_var}.
@@ -389,8 +387,7 @@ Proof.
 Qed.
 
 (* ================================================================= *)
-(* THE RUN'S IDEAL VALUES: each node as it reads once it is ready,     *)
-(* every IP answer [ip_fn] of its request.                              *)
+(* THE RUN'S IDEAL VALUES: nodes once ready, IP answers [ip_fn].     *)
 (* ================================================================= *)
 Section Ideal.
   Context (ctx: TFSchedContext) (cost_limit: nat).

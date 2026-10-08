@@ -1,8 +1,6 @@
-(* Regression for the IPR / latency-noninterference results over the classic
-   timing side channel: a password check branching on a secret register.  Pins,
-   at a concrete context, that the taint analysis marks the branch condition
-   secret-dependent, that [L] is computable, and that the theorems instantiate
-   for real -- the last catching signature drift at the [Definition]s below. *)
+(* Regression for the IPR results on the classic timing side channel, a password
+   check branching on a secret: pins that the branch is tainted, [L] computable,
+   and the theorems instantiate -- the [Definition]s below catch signature drift. *)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.
@@ -112,11 +110,9 @@ Section TheoremInstantiation.
 
   Local Notation sched := (tfs_schedule tfs_ctx cost).
 
-  (* [L] is a total function into [nat] rather than a relation, which is what
-     lets the paper write [L act input pre post].  It is *not* practically
-     reducible: [vm_compute] on this 2-register/32-bit context exceeds 300s,
-     because each of the [settle_bound] candidate cycles interprets the whole
-     schedule.  Symbolic reasoning via [L_first_done] is the usable route. *)
+  (* [L] is a total function into [nat] (so the paper can write [L act input pre
+     post]) but not practically reducible: [vm_compute] here exceeds 300s, so
+     reason symbolically via [L_first_done]. *)
   Definition check_latency := L tfs_ctx cost.
 
   (* Signature regression.  Each of these fails to type check if the

@@ -1,8 +1,6 @@
-(*! The proofs behind Theorems/IPR.v, and the intermediate results they are
-    built from: that taint propagates along arguments, that a node the
-    hardware marks valid holds its reference value, and that a shadow machine
-    over the attacker's recovered values completes on the same cycle as the
-    design.  The latency guarantee itself is stated in Theorems/IPR.v. !*)
+(*! The proofs behind Theorems/IPR.v: taint propagates along arguments, a node the
+    hardware marks valid holds its reference value, and a shadow machine over the
+    attacker's recovered values completes on the same cycle as the design. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.
@@ -48,8 +46,7 @@ Section MemIn.
 End MemIn.
 
 (* ===================================================================== *)
-(* Generic facts about a left fold that only ever conses one designated   *)
-(* element per step.  [get_tainted] is such a fold.                       *)
+(* Left folds that cons one designated element per step: [get_tainted].  *)
 (* ===================================================================== *)
 
 Section FoldAccum.
@@ -83,8 +80,7 @@ Section FoldAccum.
 End FoldAccum.
 
 (* ===================================================================== *)
-(* Bounded search.  [least_witness] lives in Prop, so it cannot produce a *)
-(* latency *function*; this computes the same index.                      *)
+(* Bounded search: [least_witness]'s index, computed.                    *)
 (* ===================================================================== *)
 Section FirstTrue.
   Variable f : nat -> bool.
@@ -236,8 +232,7 @@ Section IPRProof.
   Local Notation bneeds := (buffer_needs ctx cost_limit).
 
   (* ------------------------------------------------------------------- *)
-  (* Node ids increase along the forward graph.  [build_dfg_wf] states    *)
-  (* this on the reversed (emission-order) list; transport it.            *)
+  (* Node ids increase along the forward graph ([build_dfg_wf]).         *)
   (* ------------------------------------------------------------------- *)
 
   Lemma ids_asc_fwd (act: tfs_action sched) :
@@ -265,15 +260,9 @@ Section IPRProof.
     - apply in_or_app. right. left. reflexivity.
   Qed.
 
-  (* ------------------------------------------------------------------- *)
-  (* Issue D (agents/taint-tagging-soundness/PLAN.md): taint propagates   *)
-  (* along arguments.  A node with a tainted argument is itself tainted,  *)
-  (* unless it is declassified by [untainted_roots].                      *)
-  (*                                                                      *)
-  (* The fold decides each node against the accumulator as it reaches it, *)
-  (* so this needs the emission order: [args_lt_fwd] puts the argument    *)
-  (* strictly earlier in the graph, hence already in the accumulator.     *)
-  (* ------------------------------------------------------------------- *)
+  (* ISSUE D: taint propagates along arguments, unless [untainted_roots]
+     declassifies the node.  The fold decides each node as it reaches it, and
+     [args_lt_fwd] puts every argument earlier, so already in the accumulator. *)
 
   Lemma sample_drive_head_le (act: tfs_action sched) (p: p_var) (h d: nid_t) :
     h < length (graph (build_dfg ctx act)) ->
@@ -389,8 +378,7 @@ Section IPRProof.
   Qed.
 
   (* ------------------------------------------------------------------- *)
-  (* Two syntactic facts about a built graph, carried as side conditions   *)
-  (* until they are read off the builder's invariants.                     *)
+  (* Two syntactic facts about a built graph, as side conditions.        *)
   (* ------------------------------------------------------------------- *)
 
   (* One step of the taint walk, read backwards. *)
@@ -678,8 +666,7 @@ Section IPRProof.
   Qed.
 
   (* ------------------------------------------------------------------- *)
-  (* What a pre-done cycle leaves alone.  Output registers
-     hold, and a VALID node keeps its reference value. *)
+  (* What a pre-done cycle leaves alone: outputs, VALID nodes' values.   *)
   (* ------------------------------------------------------------------- *)
 
   Local Notation ss_step := (sched_step ctx cost_limit).
@@ -773,9 +760,7 @@ Section IPRProof.
   Qed.
 
   (* ------------------------------------------------------------------- *)
-  (* The done flag, read off the hardware.                                 *)
-  (* The done register is assigned the AND-fold of the validity            *)
-  (* expressions of the [var_map] roots.                                   *)
+  (* The done flag: the AND of the [var_map] roots' validities.          *)
   (* ------------------------------------------------------------------- *)
 
   Local Notation vm_roots act :=
@@ -819,12 +804,9 @@ Section IPRProof.
   Qed.
 
 
-  (* ------------------------------------------------------------------- *)
-  (* The IPR emulator.  It sees only the inputs, the current outputs and   *)
-  (* the specification: outputs hold until the action completes, then take *)
-  (* the specification's values.  The one free variable is the cycle count *)
-  (* N, which [Extract.L_is_public] pins to public data.                 *)
-  (* ------------------------------------------------------------------- *)
+  (* THE IPR EMULATOR sees only the inputs, the outputs and the specification:
+     outputs hold until the action completes, then take the specification's values.
+     Its one free variable, the cycle count N, [Extract.L_is_public] pins public. *)
 
   Lemma first_done_exists (act: tfs_action sched) (sp0: src_sys_state)
       (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val) :
@@ -860,8 +842,7 @@ Section IPRProof.
   Qed.
 
   (* ------------------------------------------------------------------- *)
-  (* The latency function [L] itself, and its two properties: it is the    *)
-  (* completion cycle, and it depends only on publicly visible data.       *)
+  (* The latency [L]: the completion cycle, and public.                  *)
   (* ------------------------------------------------------------------- *)
 
   Lemma done_test_true (act: tfs_action sched) (input: input_t)
@@ -945,10 +926,9 @@ Section IPRProof.
   Qed.
 
 
-  (* [avalid] is the validity bit the run carries, where the attacker's vector
-     matches the registers and its values are the run's.  The two premises are
-     [compile_subst]'s: the reference keeps the sample buffers, so a table the
-     gate is read against must keep them at every id the walk reaches. *)
+  (* [avalid] is the run's validity bit, where the attacker's vector matches the
+     registers and its values are the run's.  The premises are [compile_subst]'s:
+     a gate's table must keep the sample buffers at every id the walk reaches. *)
   Definition avalid_agrees (act: tfs_action sched) (a_idx: a_index)
       (vals: known (build_dfg ctx act)) (vv: vvec)
       (ss: sched_sys_state) (input: sched_input_t)
@@ -1548,10 +1528,9 @@ Section IPRProof.
     - intro H. apply (proj2 Hroots), (proj1 (bits1_nonzero_ones _)). exact H.
   Qed.
 
-  (* THE HEADLINE, INTENSIONALLY: the cycle count the design takes IS the one
-     the attacker computes from public data.  [L_pub] reads no state, no input
-     and no IP answer -- only the action, its slot, and the values the
-     declassification rules recover. *)
+  (* THE HEADLINE, INTENSIONALLY: the design's cycle count IS the attacker's.
+     [L_pub] reads no state, input or IP answer -- only the action, its slot, and
+     the values the declassification rules recover. *)
   Theorem L_pub_correct (act: tfs_action sched) (a_idx: a_index)
       (vals: known (build_dfg ctx act))
       (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) :

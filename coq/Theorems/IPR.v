@@ -1,9 +1,6 @@
-(*! NO SECRET LEAKS BY TIMING, as an observer sees it.  The action finishes on
-    the cycle [L_pub] computes from what the attacker sees -- the public inputs,
-    and the public outputs before and after -- and up to that cycle the outputs
-    stand at their pre-action values, from it at their post-action ones.  The
-    same holds over any sequence of actions run back to back.  The proofs are
-    in Internal/IPRProof.v, Internal/IPRChain.v and Declassification/Extract.v. !*)
+(*! NO SECRET LEAKS BY TIMING.  An action finishes on the cycle [L_pub] computes
+    from the attacker's view, the outputs at their pre-action values until then
+    and post-action ones after; likewise in sequence.  Proofs: Internal/. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.
@@ -65,11 +62,9 @@ Section IPR.
          (snd (ss_run k act input resp ss0)).[ov] = emulate pre post N k ov.
   Proof. exact (IPRChain.command_emulated ctx cost_limit act sp0 ss0 input resp). Qed.
 
-  (* THE SAME OVER A SEQUENCE.  Commands run back to back from a start state;
-     the IPs keep the datasheet on the run that actually happens.  At every
-     cycle the outputs, and how many commands have finished, are what the
-     attacker computes from each command's public view in turn -- so every
-     command's completion cycle is public too. *)
+  (* THE SAME OVER A SEQUENCE run back to back, the IPs keeping their datasheet on
+     the actual run: at every cycle the outputs and the commands finished are
+     computed from public views, so each command's completion cycle is public. *)
   Theorem emulator_correct_seq (q: list command)
       (sp0: src_sys_state) (ss0: sched_sys_state) (resp: nat -> resp_val) :
     start_rel ctx cost_limit sp0 ss0 ->

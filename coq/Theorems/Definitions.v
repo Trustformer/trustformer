@@ -1,7 +1,6 @@
-(*! The vocabulary the guarantees are stated in.  Everything a theorem in
-    coq/Theorems/ mentions is defined here or in the compiler it talks about, so
-    this file plus the four statement files are the whole proof-layer audit.
-    The proofs, and the calculation behind [L_pub], live under Internal/. !*)
+(*! The vocabulary the guarantees are stated in: everything a theorem in
+    coq/Theorems/ mentions is defined here or in the compiler, so this file and
+    the four statement files are the whole proof-layer audit. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.
@@ -98,13 +97,9 @@ Section SchedulerWorld.
   Definition done_set (ss: sched_sys_state) : Prop :=
     (fst ss).[tfs_done_signal sched] <> Bits.zero.
 
-  (* THE IP's DATASHEET, while the action runs.  A request strobed on the port
-     and left undisturbed for the IP's flight time is answered [ip_lat] cycles
-     after the pulse that sent it, if the action is not done by then; at every
-     other cycle the channel promises nothing.  [run_n] keeps stepping [act]
-     past done, but those cycles belong to whatever runs next, so the contract
-     does not speak of them.  [queue_ip_contract] below, over the run that
-     actually happens, implies it for every command. *)
+  (* THE IP's DATASHEET, while the action runs: a request left undisturbed for its
+     flight time is answered [ip_lat] cycles after its pulse, unless done by then.
+     Cycles past done belong to the next action, see [queue_ip_contract]. *)
   Definition ip_contract (act: tfs_action sched) (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) : Prop :=
     forall (p: tfs_ips sched) (s: nat),
       (forall i, 0 < i <= s + pred (ip_lat (tfs_ip sched p)) ->
@@ -115,10 +110,9 @@ Section SchedulerWorld.
       resp (s + pred (ip_lat (tfs_ip sched p))) p
       = ip_fn (tfs_ip sched p) (drive_payload (run_n s act input resp ss0) p).
 
-  (* Registers that start zeroed: every validity bit and every buffer, as
-     [reset_states] clears them.  A stall's buffer is a counter, so its start
-     value is observable.  The done flag is not among them: a done cycle
-     leaves it set, so the next action starts with it up. *)
+  (* Registers that start zeroed, as [reset_states] clears them: every validity bit
+     and buffer (a stall's buffer is a counter, so its start is observable).  Not
+     the done flag: a done cycle leaves it set for the next action. *)
   Definition zeroed_at_start (x: tfs_states sched) : Prop :=
     match x with
     | tf_dfg_b _ _ => True
@@ -191,11 +185,9 @@ Section SchedulerWorld.
   (* A command: an action and the inputs it latches when it is accepted. *)
   Local Notation command := (tfs_action sched * input_t)%type.
 
-  (* ONE CYCLE OF A COMMAND QUEUE.  The head command takes a cycle; on the cycle
-     that raises done the queue moves on, so the next command runs from the
-     very next cycle, as the lowered [rule_cmd] accepts it once [tf_ready] is
-     up.  An empty queue is idle and holds its state.  Commands follow one
-     another back to back; a gap would only hold the state. *)
+  (* ONE CYCLE OF A COMMAND QUEUE: the head command steps, and on the cycle that
+     raises done the next takes over, as [rule_cmd] does once [tf_ready] is up.
+     Commands run back to back; an empty queue holds its state. *)
   Definition queue_step (q: list command) (r: resp_val) (ss: sched_sys_state)
     : list command * sched_sys_state :=
     match q with
@@ -290,10 +282,9 @@ Section SchedulerWorld.
     match ops with
     | tf_ops_base tf_nop => true
     | tf_ops_base (tf_assign _ _) => true    (* a secret register may hold anything *)
-    (* V4 denotes a call as [dst := ip_fn arg], a STATE update: the request port
-       is the scheduler's own and is no declared output, so no [o_cls] applies
-       and the case coincides with [tf_assign].  The IP bus is outside this
-       theorem's attacker view -- see THEOREM-AUDIT.md B5. *)
+    (* V4 denotes a call as [dst := ip_fn arg], a STATE update: its request port is
+       no declared output, so no [o_cls] applies and it is [tf_assign].  The IP bus
+       is outside this attacker view -- see THEOREM-AUDIT.md B5. *)
     | tf_ops_base (tf_call _ _ _) => true
     | tf_ops_base (tf_output o e) =>
         match o_cls o with
@@ -321,8 +312,7 @@ End SchedulerWorld.
 
 
 (* ==================================================================== *)
-(* The synthesis relations: what it means for the Kôika circuit to      *)
-(* implement a scheduled design.                                        *)
+(* The synthesis relations: the Kôika circuit implements a design.      *)
 (* ==================================================================== *)
 
 Section SynthWorld.

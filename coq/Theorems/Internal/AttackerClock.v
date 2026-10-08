@@ -46,10 +46,9 @@ Section Clock.
   Definition stall_lat_of (act: tfs_action sched) (n: nid_t) : option nat :=
     match node_op act n with DFG_Stall l _ => Some l | _ => None end.
 
-  (* SATURATION RANK.  Ranking by node id alone is unsound in V4: a stall makes
-     its consumer wait [lat] cycles, not one.  The rank is the id plus the extra
-     cycles every stall UP TO AND INCLUDING it costs -- including its own, so a
-     stall's rank already covers its wait and everything above it sits past it. *)
+  (* SATURATION RANK: the node id plus the extra cycles of every stall up to and
+     including it.  A stall makes its consumer wait [lat] cycles, not one, so
+     ranking by id alone is unsound in V4. *)
   Definition stall_weight (act: tfs_action sched) (n: nid_t) : nat :=
     match stall_lat_of act n with Some l => pred l | None => 0 end.
 
@@ -116,9 +115,8 @@ Section Clock.
     end.
 
   (* ---- THE SHADOW MACHINE: the registers an attacker can keep ----
-     Validity bits and stall counts, one per buffer slot.  No value register
-     appears: a validity reads other validities, the counts, and the
-     selectors, and nothing else. *)
+     Validity bits and stall counts, one per buffer slot; no value register, as a
+     validity reads only validities, the counts and the selectors. *)
   Definition sstate := (vvec * list nat)%type.
 
   (* The table a slot's own gate is compiled against: the action's, minus the
