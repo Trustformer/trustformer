@@ -4,6 +4,7 @@
    FAILURE answers leave the state as it is, so only its successes appear here.
    scripts/regen-golden.py --design mars_v2 builds and runs it. */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -90,13 +91,15 @@ int main(void)
     verdict("E_VFY_U_OK", rc, r);
     rc = MARS_SignatureVerify(false, ctx, 32, dig, bad, &r);
     verdict("E_VFY_U_BAD", rc, r);
-    rc = MARS_SignatureVerify(true, ctx, 32, snap3, sig_q3, &r);
-    verdict("E_VFY_R_OK", rc, r);
     rc = MARS_SignatureVerify(true, ctx, 32, dig, sig_u, &r);
     verdict("E_VFY_R_BAD", rc, r);
+    rc = MARS_SignatureVerify(true, ctx, 32, snap3, sig_q3, &r);
+    verdict("E_VFY_R_OK", rc, r);
 
-    /* DpDerive extends DP, so the same Quote signs differently ... */
+    /* DpDerive extends DP, so the same Quote signs differently, before and
+       after the bench's DpDerive REG answer ... */
     must(MARS_DpDerive(3, ctx2, 32), "DpDerive");
+    quote("E_QUOTE_DP", "E_SNAP3", 3, sig, snap);
     quote("E_QUOTE_DP", "E_SNAP3", 3, sig, snap);
 
     /* ... and a NULL ctx resets DP to Init's, so it signs as before. */

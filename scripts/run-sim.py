@@ -48,6 +48,7 @@ BENCHES = {
         defines={"CORE_DIV": 1, "IP_LAT_SHA": 140, "IP_LAT_HMAC": 275},
     ),
     "tb_mars_pcrextend": Bench("Example_MarsSeq", sources=REAL_IP),
+    "tb_mars_v2": Bench("Example_MarsV2", sources=REAL_IP),
 }
 
 

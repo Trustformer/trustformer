@@ -4,7 +4,7 @@ Every testbench in the project lives here and every one decides its own
 verdict: it prints `PASS` or `FAIL` and exits non-zero on failure.
 `scripts/run-sim.py` builds and runs them; it judges nothing itself.
 
-Nine drive the generated Verilog against a MODEL of the attached IP, two
+Nine drive the generated Verilog against a MODEL of the attached IP, three
 against the real SHA-256 core -- see "Two families" below.
 
 Reading the generated Verilog is not running it. Every bug in the drive/sample
@@ -55,7 +55,7 @@ the design uses the latched value.
 `make test` runs these after building whatever is missing. To run them alone:
 
 ```sh
-scripts/run-sim.py              # all eleven
+scripts/run-sim.py              # all twelve
 scripts/run-sim.py tb_two         # just one
 ```
 
@@ -90,22 +90,42 @@ Everything above models the IP: identity or `+1`, latency 3, not pipelined.
 That is what makes the checks sharp and fast, and it is also the limit -- a
 design can pass every one of them and still be wrong about a real digest.
 
-Two testbenches close that gap by attaching the REAL `secworks/sha256` core
+Three testbenches close that gap by attaching the REAL `secworks/sha256` core
 through `external/glue/`:
 
 | testbench | design | what it pins |
 | --- | --- | --- |
 | `tb_mars_v4.sv` | `Example_Mars` | the one-action design's PCRs and Quote signature |
 | `tb_mars_pcrextend.sv` | `Example_MarsSeq` | the same values through the sequential protocol |
+| `tb_mars_v2.sv` | `Example_MarsV2` | every implemented command's result, failure mode via the fault input, and each command's exact latency |
 
-Both carry the expected digests as `localparam`s, so they need nothing at run
-time that the other nine do not. Those values are the TCG C reference
+All three carry the expected values as `localparam`s, so they need nothing at
+run time that the other nine do not. Those values are the TCG C reference
 emulator's output for this stimulus; `scripts/regen-golden.py` rebuilds the
 emulator and reprints them, which is how you check they are still the
 reference's or produce new ones when the Profile or the stimulus changes.
+`--design mars_v2` does the same for `tb_mars_v2.sv`, from the driver
+`sim/golden/mars_v2_vectors.c`.
 
 The two designs agreeing on all six values is the "`Mars.v` is checked against
 `MarsSeq`" claim in `coq/Examples/MarsSeq/Spec.v`, discharged in simulation.
+
+## Fuzzing MarsV2 (opt-in)
+
+`scripts/fuzz-mars.py` compares `Example_MarsV2` with the TCG reference
+emulator command by command: `sim/fuzz/gen_mars_v2.c` draws a seeded stream and
+the expected public state after every command, `sim/fuzz/tb_fuzz_mars_v2.sv`
+replays it on the module with the real IPs. Where the Profile departs from the
+emulator, a named rule supplies the expectation (listed in `gen_mars_v2.c`), and
+the summary counts them. Every public latency class must show one cycle count.
+`make test` never runs it.
+
+```sh
+scripts/fuzz-mars.py --emulator <dir>                     # 4 seeds x 3000, ~30 s
+scripts/fuzz-mars.py --emulator <dir> --seed 10 11 --commands 100000
+```
+
+`--design FILE` fuzzes another copy of the module, e.g. a mutant.
 
 ## tb_xport.sv: a branch whose condition reads another port
 

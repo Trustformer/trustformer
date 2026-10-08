@@ -31,7 +31,7 @@ resulting `build/*.v` files are **Verilog**.
 
 `make test` adds three checks: that every headline theorem is proved and
 axiom-free (`scripts/check-theorems.py`), that no generated net has two
-different drivers (`scripts/check-drivers.py`), and the eleven verilator
+different drivers (`scripts/check-drivers.py`), and the twelve verilator
 testbenches (`scripts/run-sim.py`, see `sim/README.md`).
 
 `scripts/check-theorems.py --list` prints the theorems the project stands on.
