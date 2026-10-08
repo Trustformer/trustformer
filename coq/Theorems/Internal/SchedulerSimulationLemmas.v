@@ -75,25 +75,25 @@ Section SchedulerSimulation.
 
   (* These bind the definitions at this section's [ctx] and [cost_limit]. *)
   Local Notation act_idx_aligned := (ProofDefinitions.act_idx_aligned ctx cost_limit).
-  Local Notation done_set := (Definitions.done_set ctx cost_limit).
+  Local Notation done_set := (IRDefinitions.done_set ctx cost_limit).
   Local Notation done_set_dec := (ProofDefinitions.done_set_dec ctx cost_limit).
-  Local Notation drive_payload := (Definitions.drive_payload ctx cost_limit).
-  Local Notation ip_contract := (Definitions.ip_contract ctx cost_limit).
+  Local Notation drive_payload := (IRDefinitions.drive_payload ctx cost_limit).
+  Local Notation ip_contract := (IRDefinitions.ip_contract ctx cost_limit).
   Local Notation is_sample_of := (ProofDefinitions.is_sample_of ctx cost_limit).
   Local Notation node_op := (AttackerClock.node_op ctx cost_limit).
   Local Notation node_rank := (AttackerClock.node_rank ctx cost_limit).
   Local Notation node_ref_expr := (ProofDefinitions.node_ref_expr ctx cost_limit).
   Local Notation nval := (ProofDefinitions.nval ctx cost_limit).
-  Local Notation port_strobe := (Definitions.port_strobe ctx cost_limit).
-  Local Notation run_n := (Definitions.run_n ctx cost_limit).
+  Local Notation port_strobe := (IRDefinitions.port_strobe ctx cost_limit).
+  Local Notation run_n := (IRDefinitions.run_n ctx cost_limit).
   Local Notation sample_bufs := (ProofDefinitions.sample_bufs ctx cost_limit).
-  Local Notation sched_input := (Definitions.sched_input ctx cost_limit).
-  Local Notation sched_step := (Definitions.sched_step ctx cost_limit).
+  Local Notation sched_input := (IRDefinitions.sched_input ctx cost_limit).
+  Local Notation sched_step := (IRDefinitions.sched_step ctx cost_limit).
   Local Notation settle_bound := (AttackerClock.settle_bound ctx cost_limit).
   Local Notation stall_lat_of := (AttackerClock.stall_lat_of ctx cost_limit).
   Local Notation stall_weight := (AttackerClock.stall_weight ctx cost_limit).
-  Local Notation start_rel := (Definitions.start_rel ctx cost_limit).
-  Local Notation zeroed_at_start := (Definitions.zeroed_at_start ctx cost_limit).
+  Local Notation start_rel := (IRDefinitions.start_rel ctx cost_limit).
+  Local Notation zeroed_at_start := (IRDefinitions.zeroed_at_start ctx cost_limit).
 
   (* The concrete TFSchedule instance built by the variable scheduler. *)
   Local Notation sched := (tfs_schedule ctx cost_limit).

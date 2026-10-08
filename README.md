@@ -53,7 +53,7 @@ is whether the list is the right one.
 | `coq/Scheduler/Schedule.v`                        | the `TFSchedule` record and the obligations it carries                                   |
 | `coq/Scheduler/Show.v`, `coq/Scheduler/Audit.v`   | diagnostics: criticality reports, cycle bounds with witnesses, Graphviz output           |
 | `coq/Backend/`                                    | `Lowering.v`, the Kôika register file, rules and scheduler for a `TFSchedule`            |
-| `coq/Theorems/`                                   | the guarantees: `Synthesis.v`, `SchedulerSimulation.v`, `IPR.v`, `Confidentiality.v`     |
+| `coq/Theorems/`                                   | the guarantees: `IPR.v` over the emitted circuit, `Confidentiality.v` over the spec      |
 | `coq/Theorems/Internal/`                          | proof bulk those rest on — machine-checked, not written to be read                       |
 | `coq/Declassification/`                           | the declassification rule library                                                        |
 | `coq/Examples/`                                   | the worked designs, one folder each: a `Spec.v` and any proofs about it                  |

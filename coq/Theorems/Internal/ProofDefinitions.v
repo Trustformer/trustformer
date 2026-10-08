@@ -11,6 +11,7 @@ Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Backend.Lowering.
 Require Export Trustformer.Theorems.Definitions.
+Require Export Trustformer.Theorems.Internal.IRDefinitions.
 Require Export Trustformer.Theorems.Internal.AttackerClock.
 Require Import Trustformer.Declassification.Recover.
 
@@ -49,8 +50,8 @@ Section ProofWorld.
     (sz (nth n (graph (build_dfg ctx act))
            {| nid := 0; op := DFG_Empty; sz := 0 |})).
 
-  Local Notation done_set := (Definitions.done_set ctx cost_limit).
-  Local Notation ss_run   := (Definitions.run_n ctx cost_limit).
+  Local Notation done_set := (IRDefinitions.done_set ctx cost_limit).
+  Local Notation ss_run   := (IRDefinitions.run_n ctx cost_limit).
   Local Notation L_pub    := (Definitions.L_pub ctx cost_limit).
   Local Notation node_op  := (AttackerClock.node_op ctx cost_limit).
   Local Notation settle_bound := (AttackerClock.settle_bound ctx cost_limit).

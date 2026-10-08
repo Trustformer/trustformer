@@ -9,8 +9,6 @@ Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
 Require Import Trustformer.Macros.
 Require Trustformer.Theorems.IPR.
-Require Trustformer.Theorems.Synthesis.
-Require Trustformer.Theorems.SchedulerSimulation.
 
 Require Import Coq.Lists.List.
 Import ListNotations.
@@ -358,10 +356,8 @@ Section Instance.
     Example derived_reg_size : tf_action_reg_size tf_ctx = 2%nat.
     Proof. reflexivity. Qed.
 
-    Definition ipr_here := IPR.emulator_correct tfs_ctx CL.
-    Definition sched_here := SchedulerSimulation.variable_scheduler_correct tfs_ctx CL.
-    Definition synth_here := Synthesis.synthesis_correct tf_ctx.
-    Definition init_here := Synthesis.initial_state_matches tf_ctx.
+    Definition ipr_here := IPR.circuit_emulated tfs_ctx CL _ _
+      (tf_action_encoding_inj tf_ctx) (tf_action_names tf_ctx).
 
     Definition package := Lowering.package tf_ctx "Knox_Otp".
 

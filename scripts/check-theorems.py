@@ -14,23 +14,16 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # A headline theorem states a guarantee the project makes, not a step to one.
 # (group, why it is headline, [(module, theorem), ...])
 HEADLINE = [
-    ("the pipeline is correct",
-     "the generated circuit computes what the specification says",
-     [("Trustformer.Theorems.Synthesis", "synthesis_correct"),
-      ("Trustformer.Theorems.Synthesis", "initial_state_matches"),
-      ("Trustformer.Theorems.SchedulerSimulation", "variable_scheduler_correct"),
-      ("Trustformer.Theorems.SchedulerSimulation", "start_rel_after_done")]),
+    ("the circuit computes the spec and leaks no secret by timing",
+     "the project's reason to exist: from any state at rest, at every cycle of the "
+     "emitted circuit the outputs are the spec's and the cycle they change on is public",
+     [("Trustformer.Theorems.IPR", "circuit_emulated"),
+      ("Trustformer.Theorems.IPR", "reset_at_rest")]),
 
     ("no secret leaks by value",
      "what the attacker can see never depends on a secret",
      [("Trustformer.Theorems.Confidentiality", "seq_confidential"),
       ("Trustformer.Theorems.Confidentiality", "no_direct_secret_flow")]),
-
-    ("no secret leaks by timing",
-     "the project's reason to exist: an output observer learns nothing a run "
-     "keeps to itself, and the cycle it learns it on is public",
-     [("Trustformer.Theorems.IPR", "emulator_correct"),
-      ("Trustformer.Theorems.IPR", "emulator_correct_seq")]),
 
     ("the declassification rules are sound",
      "each rule widens what may be published; unsound means a real leak",

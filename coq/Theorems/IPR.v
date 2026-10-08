@@ -1,6 +1,6 @@
-(*! NO SECRET LEAKS BY TIMING.  An action finishes on the cycle [L_pub] computes
-    from the attacker's view, the outputs at their pre-action values until then
-    and post-action ones after; likewise in sequence.  Proofs: Internal/. !*)
+(*! NO SECRET LEAKS BY TIMING, ON THE CIRCUIT.  From any state at rest, idle cycles
+    included, the Kôika circuit shows what an emulator with only query access to
+    the spec shows, and it times each command from public views.  Proof: Internal/. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.
@@ -9,11 +9,9 @@ Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
+Require Import Trustformer.Backend.Lowering.
 Require Export Trustformer.Theorems.Definitions.
-Require Trustformer.Theorems.Internal.IPRChain.
-
-Require Import Coq.Lists.List.
-Import ListNotations.
+Require Trustformer.Theorems.Internal.CircuitProof.
 
 Section IPR.
 
@@ -21,59 +19,50 @@ Section IPR.
   Context (cost_limit: nat).
 
   Local Notation sched := (tfs_schedule ctx cost_limit).
-  Local Notation s_sz := (tfs_spec_states_size ctx).
-  Local Notation i_sz := (tfs_spec_inputs_size ctx).
-  Local Notation o_sz := (tfs_spec_outputs_size ctx).
-  Local Notation src_sys_state :=
-    (ContextEnv.(env_t) (tf_states_type s_sz) * ContextEnv.(env_t) (tf_outputs_type o_sz))%type.
-  Local Notation sched_sys_state :=
-    (ContextEnv.(env_t) (tf_states_type (tfs_states_size sched))
-     * ContextEnv.(env_t) (tf_outputs_type o_sz))%type.
+  Context (enc_sz: nat) (enc: tfs_action sched -> bits_t enc_sz)
+          (enc_inj: forall a b, enc a = enc b -> a = b)
+          (names: Show (tfs_action sched)).
+
+  Local Notation synth := (synth ctx cost_limit enc_sz enc enc_inj names).
+  Local Notation tsched := (tf_sched_ctx synth).
+  Local Notation reg_t :=
+    (@_reg_t (tfs_states tsched) (tfs_inputs tsched) (tfs_outputs tsched) (tfs_ips tsched)).
+  Hint Extern 0 (FiniteType reg_t) => exact (_reg_t_finite synth) : typeclass_instances.
+  Local Notation wires := (forall f, Sig_denote (Sigma synth f)).
   Local Notation input_t :=
-    (forall x : tfs_spec_inputs ctx, type_denote (tf_inputs_type i_sz x)).
-  Local Notation resp_val :=
-    (forall p : tfs_ips sched, bits_t (ip_resp_sz (tfs_ip sched p))).
-  Local Notation spec_run act sp input :=
-    (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act)
-       sp input).
-  Local Notation ss_run := (run_n ctx cost_limit).
-
-  Local Notation first_done := (first_done ctx cost_limit).
-  Local Notation emulate := (emulate ctx).
-  Local Notation L_pub := (L_pub ctx cost_limit).
-  Local Notation observe := (observe ctx).
+    (forall x : tfs_spec_inputs ctx, type_denote (tf_inputs_type (tfs_spec_inputs_size ctx) x)).
   Local Notation command := (tfs_action sched * input_t)%type.
-  Local Notation queue_run := (queue_run ctx cost_limit).
-  Local Notation queue_ip_contract := (queue_ip_contract ctx cost_limit).
-  Local Notation spec_outputs_seq := (spec_outputs_seq ctx cost_limit).
-  Local Notation emulate_seq := (emulate_seq ctx cost_limit).
-  Local Notation emulate_progress := (emulate_progress ctx cost_limit).
+  Local Notation circuit_state := (ContextEnv.(env_t) (R synth)).
+  Local Notation src_sys_state :=
+    (ContextEnv.(env_t) (tf_states_type (tfs_spec_states_size ctx))
+     * ContextEnv.(env_t) (tf_outputs_type (tfs_spec_outputs_size ctx)))%type.
 
-  Theorem emulator_correct (act: tfs_action sched)
-      (sp0: src_sys_state) (ss0: sched_sys_state)
-      (input: input_t) (resp: nat -> resp_val) :
-    start_rel ctx cost_limit sp0 ss0 ->
-    Definitions.ip_contract ctx cost_limit act input resp ss0 ->
-    let pre  := snd sp0 in
-    let post := snd (spec_run act sp0 input) in
-    let N    := L_pub act (observe input pre post) in
-    first_done act input resp ss0 N
-    /\ forall k, k <= N -> forall ov,
-         (snd (ss_run k act input resp ss0)).[ov] = emulate pre post N k ov.
-  Proof. exact (IPRChain.command_emulated ctx cost_limit act sp0 ss0 input resp). Qed.
+  Local Notation circuit_run := (circuit_run ctx cost_limit enc_sz enc enc_inj names).
+  Local Notation at_rest := (at_rest ctx cost_limit enc_sz enc enc_inj names).
+  Local Notation presents := (presents ctx cost_limit enc_sz enc enc_inj names).
+  Local Notation ip_contract := (ip_contract ctx cost_limit enc_sz enc enc_inj names).
+  Local Notation ideal_run := (ideal_run ctx cost_limit).
 
-  (* THE SAME OVER A SEQUENCE run back to back, the IPs keeping their datasheet on
-     the actual run: at every cycle the outputs and the commands finished are
-     computed from public views, so each command's completion cycle is public. *)
-  Theorem emulator_correct_seq (q: list command)
-      (sp0: src_sys_state) (ss0: sched_sys_state) (resp: nat -> resp_val) :
-    start_rel ctx cost_limit sp0 ss0 ->
-    queue_ip_contract q resp ss0 ->
-    let obs := spec_outputs_seq q sp0 in
+  (* From any state at rest, with the environment offering [cmds] and every IP
+     keeping its datasheet, the circuit shows the ideal world's ready flag and
+     outputs at every cycle; the emulator there never reads the spec's state. *)
+  Theorem circuit_emulated (c0: circuit_state) (sp0: src_sys_state)
+      (env: nat -> wires) (cmds: nat -> option command) :
+    at_rest c0 sp0 ->
+    (forall k, presents (env k) (cmds k)) ->
+    ip_contract c0 env ->
     forall k,
-      fst (queue_run k q resp ss0) = skipn (emulate_progress (snd sp0) obs k) q
-      /\ forall ov,
-           (snd (snd (queue_run k q resp ss0))).[ov] = emulate_seq (snd sp0) obs k ov.
-  Proof. exact (IPRChain.queue_emulated ctx cost_limit q sp0 ss0 resp). Qed.
+      let e := snd (ideal_run sp0 cmds k) in
+      ((circuit_run c0 env k).[tf_ready] = Ob~1 <-> em_ready e = true)
+      /\ forall ov, (circuit_run c0 env k).[tf_out ov] = (em_shown e).[ov].
+  Proof.
+    exact (CircuitProof.circuit_emulated ctx cost_limit enc_sz enc enc_inj names c0 sp0 env cmds).
+  Qed.
+
+  (* Reset is at rest, holding the spec's initial state. *)
+  Theorem reset_at_rest :
+    at_rest (ContextEnv.(create) (r synth))
+      (ContextEnv.(create) (tfs_spec_states_init ctx), ContextEnv.(create) (fun _ => Bits.zero)).
+  Proof. exact (CircuitProof.reset_at_rest ctx cost_limit enc_sz enc enc_inj names). Qed.
 
 End IPR.

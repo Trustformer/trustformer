@@ -733,7 +733,7 @@ Section Settled.
           (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val).
   Hypothesis Halign : act_idx_aligned ctx cost_limit act a_idx.
   Hypothesis Hstart : start_rel ctx cost_limit sp0 ss0.
-  Hypothesis Hipc : Definitions.ip_contract ctx cost_limit act input resp ss0.
+  Hypothesis Hipc : IRDefinitions.ip_contract ctx cost_limit act input resp ss0.
 
   Local Notation G := (build_dfg ctx act).
   Local Notation V := (videal ctx cost_limit act sp0 input).

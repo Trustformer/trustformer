@@ -11,7 +11,6 @@ Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
-Require Import Trustformer.Theorems.SchedulerSimulation.
 Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Theorems.IPR.
 Require Import Trustformer.Theorems.Internal.IPRProof.
@@ -122,17 +121,13 @@ Section TheoremInstantiation.
 
   Definition reg_emulator := emulator_correct_L tfs_ctx cost.
 
-  Definition reg_headline := IPR.emulator_correct tfs_ctx cost.
-
-  Definition reg_headline_seq := IPR.emulator_correct_seq tfs_ctx cost.
-
   (* This context attaches no IP, so the response stream is a function out of
      [Empty_set] and its datasheet obligation is vacuous. *)
   Definition no_resp : nat -> forall p : tfs_ips sched,
       bits_t (ip_resp_sz (tfs_ip sched p)) :=
     fun _ p => match p with end.
 
-  (* The headline, fully instantiated: for this context, two runs of [fs_check]
+  (* [L_is_public], fully instantiated: for this context, two runs of [fs_check]
      that agree on the outputs before and after finish on the same cycle, no
      matter what [fs_secret] holds. *)
   Theorem check_latency_is_public :
@@ -156,7 +151,7 @@ Section TheoremInstantiation.
   Proof.
     intros a_idx input sp0 sp0' ss0 ss0' Halign Hst Hst' Hpre Hpost.
     (* this context attaches no IP, so the datasheet obligation is vacuous *)
-    assert (Hipc : forall ss, Definitions.ip_contract tfs_ctx cost fs_check input no_resp ss)
+    assert (Hipc : forall ss, IRDefinitions.ip_contract tfs_ctx cost fs_check input no_resp ss)
       by (intros ss p; destruct p).
     (* both runs show the attacker the same view, so they finish together *)
     assert (Hpre_eq : snd sp0 = snd sp0') by (apply equiv_eq; exact Hpre).
@@ -179,23 +174,19 @@ Section TheoremInstantiation.
     rewrite Hpre_eq, Hpost_eq. reflexivity.
   Qed.
 
-  (* The sequence headline, fully instantiated: with no IP attached the
-     datasheet over the run is vacuous, so any queue of checks run from a start
-     state shows the attacker [emulate_seq], cycle by cycle. *)
-  Theorem checks_emulated :
-    forall (q: list (tfs_action sched
-                     * (forall x : tfs_spec_inputs tfs_ctx,
-                          type_denote (tf_inputs_type (tfs_spec_inputs_size tfs_ctx) x))))
-           sp0 ss0,
-      start_rel tfs_ctx cost sp0 ss0 ->
-      forall k ov,
-        (snd (snd (queue_run tfs_ctx cost k q no_resp ss0))).[ov]
-        = emulate_seq tfs_ctx cost (snd sp0) (spec_outputs_seq tfs_ctx cost q sp0) k ov.
-  Proof.
-    intros q sp0 ss0 Hst k ov.
-    assert (Hq : queue_ip_contract tfs_ctx cost q no_resp ss0) by (intros p; destruct p).
-    exact (proj2 (IPR.emulator_correct_seq tfs_ctx cost q sp0 ss0 no_resp Hst Hq k) ov).
-  Qed.
+  Local Instance fs_action_names : Show fs_action := {| show _ := "check"%string |}.
+
+  (* This context attaches no IP, so the circuit's datasheet is vacuous. *)
+  Lemma no_ip_contract c0 env :
+    Definitions.ip_contract tfs_ctx cost 16 fs_action_encoding fs_action_encoding_inj
+      fs_action_names c0 env.
+  Proof. intro p. destruct p. Qed.
+
+  (* The headline, fully instantiated: any command stream, idle gaps included,
+     shows the emulator at every cycle of the circuit, from any state at rest. *)
+  Definition checks_emulated c0 sp0 env cmds Hrest Hpres :=
+    IPR.circuit_emulated tfs_ctx cost 16 fs_action_encoding fs_action_encoding_inj
+      fs_action_names c0 sp0 env cmds Hrest Hpres (no_ip_contract c0 env).
 
 End TheoremInstantiation.
 

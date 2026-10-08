@@ -11,7 +11,6 @@ Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
-Require Import Trustformer.Theorems.SchedulerSimulation.
 Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Declassification.Recover.
 
@@ -175,8 +174,8 @@ Section IPRProof.
   Local Notation bit_of := ProofDefinitions.bit_of.
   Local Notation done_test := (ProofDefinitions.done_test ctx cost_limit).
   Local Notation drives_sized := (ProofDefinitions.drives_sized ctx cost_limit).
-  Local Notation emulate := (Definitions.emulate ctx).
-  Local Notation first_done := (Definitions.first_done ctx cost_limit).
+  Local Notation emulate := (IRDefinitions.emulate ctx).
+  Local Notation first_done := (IRDefinitions.first_done ctx cost_limit).
   Local Notation guards_sized := (ProofDefinitions.guards_sized ctx cost_limit).
   Local Notation is_plumbing := (ProofDefinitions.is_plumbing ctx cost_limit).
   Local Notation pi_holds := (ProofDefinitions.pi_holds ctx cost_limit).
@@ -722,10 +721,10 @@ Section IPRProof.
       (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) k :
     act_idx_aligned ctx cost_limit act a_idx ->
     1 < length (graph (build_dfg ctx act)) ->
-    (forall x, Definitions.zeroed_at_start ctx cost_limit x ->
+    (forall x, IRDefinitions.zeroed_at_start ctx cost_limit x ->
        (fst ss0).[x] = Bits.zero) ->
     (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input resp ss0)) ->
-    Definitions.ip_contract ctx cost_limit act input resp ss0 ->
+    IRDefinitions.ip_contract ctx cost_limit act input resp ss0 ->
     settled act a_idx (ss_run k act input resp ss0)
       (sched_input ctx cost_limit input (resp k)).
   Proof.
@@ -811,7 +810,7 @@ Section IPRProof.
   Lemma first_done_exists (act: tfs_action sched) (sp0: src_sys_state)
       (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val) :
     start_rel ctx cost_limit sp0 ss0 ->
-    Definitions.ip_contract ctx cost_limit act input resp ss0 ->
+    IRDefinitions.ip_contract ctx cost_limit act input resp ss0 ->
     exists N, first_done act input resp ss0 N.
   Proof.
     intros Hstart Hipc.
@@ -823,13 +822,13 @@ Section IPRProof.
   Theorem emulator_correct (act: tfs_action sched) (sp0: src_sys_state)
       (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val) (N: nat) :
     start_rel ctx cost_limit sp0 ss0 ->
-    Definitions.ip_contract ctx cost_limit act input resp ss0 ->
+    IRDefinitions.ip_contract ctx cost_limit act input resp ss0 ->
     first_done act input resp ss0 N ->
     forall k, k <= N ->
       forall ov, (snd (ss_run k act input resp ss0)).[ov]
                = emulate (snd sp0) (snd (spec_run act sp0 input)) N k ov.
   Proof.
-    intros Hstart Hipc [HN0 [Hdone Hbefore]] k Hk ov. unfold Definitions.emulate.
+    intros Hstart Hipc [HN0 [Hdone Hbefore]] k Hk ov. unfold IRDefinitions.emulate.
     destruct (Nat.ltb_spec k N) as [Hlt | Hge].
     - assert (Hnd : forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input resp ss0))
         by (intros i Hi; apply Hbefore; lia).
@@ -885,7 +884,7 @@ Section IPRProof.
   Corollary emulator_correct_L (act: tfs_action sched) (sp0: src_sys_state)
       (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val) :
     start_rel ctx cost_limit sp0 ss0 ->
-    Definitions.ip_contract ctx cost_limit act input resp ss0 ->
+    IRDefinitions.ip_contract ctx cost_limit act input resp ss0 ->
     forall k, k <= L act input resp ss0 ->
       forall ov, (snd (ss_run k act input resp ss0)).[ov]
                = emulate (snd sp0) (snd (spec_run act sp0 input))
@@ -1269,7 +1268,7 @@ Section IPRProof.
       (vals: known (build_dfg ctx act))
       (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
-    (forall x, Definitions.zeroed_at_start ctx cost_limit x ->
+    (forall x, IRDefinitions.zeroed_at_start ctx cost_limit x ->
        (fst ss0).[x] = Bits.zero) ->
     (forall k, (forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input resp ss0)) ->
        selectors_extractable act a_idx vals (ss_run k act input resp ss0)
@@ -1472,7 +1471,7 @@ Section IPRProof.
       (vals: known (build_dfg ctx act))
       (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) (k: nat) :
     act_idx_aligned ctx cost_limit act a_idx ->
-    (forall x, Definitions.zeroed_at_start ctx cost_limit x ->
+    (forall x, IRDefinitions.zeroed_at_start ctx cost_limit x ->
        (fst ss0).[x] = Bits.zero) ->
     (forall j, (forall i, 1 <= i <= j -> ~ ss_done (ss_run i act input resp ss0)) ->
        selectors_extractable act a_idx vals (ss_run j act input resp ss0)
@@ -1535,7 +1534,7 @@ Section IPRProof.
       (vals: known (build_dfg ctx act))
       (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) :
     act_idx_aligned ctx cost_limit act a_idx ->
-    (forall x, Definitions.zeroed_at_start ctx cost_limit x ->
+    (forall x, IRDefinitions.zeroed_at_start ctx cost_limit x ->
        (fst ss0).[x] = Bits.zero) ->
     (forall j, (forall i, 1 <= i <= j -> ~ ss_done (ss_run i act input resp ss0)) ->
        selectors_extractable act a_idx vals (ss_run j act input resp ss0)

@@ -1,6 +1,6 @@
-(*! The vocabulary the guarantees are stated in: everything a theorem in
-    coq/Theorems/ mentions is defined here or in the compiler, so this file and
-    the four statement files are the whole proof-layer audit. !*)
+(*! The vocabulary the guarantees are stated in: the attacker's view and clock,
+    the circuit Lowering emits, and the emulator it is held to.  With the
+    statement files in coq/Theorems/, this is the whole proof-layer audit. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.
@@ -31,128 +31,26 @@ Section SchedulerWorld.
 
   Local Notation sched := (tfs_schedule ctx cost_limit).
 
-  (* ---- Source (spec) world ---- *)
   Local Notation s_var := (tfs_spec_states ctx).
   Local Notation i_var := (tfs_spec_inputs ctx).
   Local Notation o_var := (tfs_spec_outputs ctx).
+  Local Notation p_var := (tfs_spec_ips ctx).
   Local Notation s_sz  := (tfs_spec_states_size ctx).
   Local Notation i_sz  := (tfs_spec_inputs_size ctx).
   Local Notation o_sz  := (tfs_spec_outputs_size ctx).
+  Local Notation o_cls := (tfs_spec_outputs_class ctx).
+  Local Notation ips   := (tfs_spec_ip ctx).
 
-  Local Notation src_st_env  := (ContextEnv.(env_t) (tf_states_type s_sz)).
   Local Notation src_out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).
-  Local Notation src_sys_state := (src_st_env * src_out_env)%type.
-
-  (* ---- Scheduled (target) world ---- *)
-  Local Notation sched_st_env  := (ContextEnv.(env_t) (tf_states_type (tfs_states_size sched))).
-  Local Notation sched_out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).
-  Local Notation sched_sys_state := (sched_st_env * sched_out_env)%type.
-
-  Local Notation p_var  := (tfs_spec_ips ctx).
-  Local Notation bneeds := (buffer_needs ctx cost_limit).
-
-  Local Notation input_t := (forall x : i_var, type_denote (tf_inputs_type i_sz x)).
-  Local Notation sched_input_t :=
-    (forall x : tfs_inputs sched, type_denote (tf_inputs_type (tfs_inputs_size sched) x)).
-
-  (* What each IP presents on its response channel during one cycle. *)
-  Local Notation resp_val :=
-    (forall p : tfs_ips sched, bits_t (ip_resp_sz (tfs_ip sched p))).
-
-
-  (* [tf_dfg_ov p] carries {strobe, payload} with the payload in the low bits,
-     and holds a request's payload from its pulse until the next one. *)
-  Definition drive_payload (ss: sched_sys_state) (p: tfs_ips sched)
-    : bits_t (ip_req_sz (tfs_ip sched p)) :=
-    Bits.slice 0 (ip_req_sz (tfs_ip sched p))
-      ((fst ss).[tfs_drive_reg sched p]).
-
-  (* The request strobe the IP sees on the port: one cycle per pulse. *)
-  Definition port_strobe (ss: sched_sys_state) (p: tfs_ips sched) : bits_t 1 :=
-    Bits.slice (ip_req_sz (tfs_ip sched p)) 1
-      ((fst ss).[tfs_drive_reg sched p]).
-
-  (* A [DFG_Sample] reads the response channel LIVE, so a cycle's inputs are the
-     action's own plus whatever each IP is presenting that cycle. *)
-  Definition sched_input (input: input_t) (r: resp_val) : sched_input_t :=
-    fun x => match x with
-             | inl v => input v
-             | inr p => r p
-             end.
-
-  (* ---- One scheduled cycle and its bounded iteration ---- *)
-  Definition sched_step (act: tfs_action sched) (ss: sched_sys_state) (input: sched_input_t)
-    : sched_sys_state :=
-    tfs_next_cycle sched act ss input.
-
-  (* [resp k] is what the IPs present during cycle [k]. *)
-  Fixpoint run_n (n: nat) (act: tfs_action sched) (input: input_t) (resp: nat -> resp_val) (ss: sched_sys_state) : sched_sys_state :=
-    match n with
-    | 0 => ss
-    | S k => let ss1 := run_n k act input resp ss in
-             sched_step act ss1 (sched_input input (resp k))
-    end.
-
-  (* The done flag is set when the tf_dfg_done register is non-zero. *)
-  Definition done_set (ss: sched_sys_state) : Prop :=
-    (fst ss).[tfs_done_signal sched] <> Bits.zero.
-
-  (* THE IP's DATASHEET, while the action runs: a request left undisturbed for its
-     flight time is answered [ip_lat] cycles after its pulse, unless done by then.
-     Cycles past done belong to the next action, see [queue_ip_contract]. *)
-  Definition ip_contract (act: tfs_action sched) (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) : Prop :=
-    forall (p: tfs_ips sched) (s: nat),
-      (forall i, 0 < i <= s + pred (ip_lat (tfs_ip sched p)) ->
-         ~ done_set (run_n i act input resp ss0)) ->
-      port_strobe (run_n s act input resp ss0) p = Bits.ones 1 ->
-      (forall w, s < w -> w < s + pred (ip_lat (tfs_ip sched p)) ->
-         port_strobe (run_n w act input resp ss0) p = Bits.zero) ->
-      resp (s + pred (ip_lat (tfs_ip sched p))) p
-      = ip_fn (tfs_ip sched p) (drive_payload (run_n s act input resp ss0) p).
-
-  (* Registers that start zeroed, as [reset_states] clears them: every validity bit
-     and buffer (a stall's buffer is a counter, so its start is observable).  Not
-     the done flag: a done cycle leaves it set for the next action. *)
-  Definition zeroed_at_start (x: tfs_states sched) : Prop :=
-    match x with
-    | tf_dfg_b _ _ => True
-    | tf_dfg_v _ _ => True
-    | _            => False
-    end.
-
-  (* Starting relation between a spec state and a scheduled state. *)
-  Definition start_rel (sp: src_sys_state) (ss: sched_sys_state) : Prop :=
-    snd ss = snd sp                                     (* outputs coincide *)
-    /\ maps_from ctx bneeds (fst ss) = fst sp       (* tf_dfg_s slots = spec state *)
-    /\ (forall x, zeroed_at_start x -> (fst ss).[x] = Bits.zero).
-
-  (* ================================================================ *)
-  (* The attacker model: what the timing guarantees are stated over.     *)
-  (* ================================================================ *)
-
-  Local Notation o_cls   := (tfs_spec_outputs_class ctx).
-  Local Notation ips     := (tfs_spec_ip ctx).
-  Local Notation ss_run  := run_n.
-  Local Notation ss_done := done_set.
   Local Notation sys_state :=
-    (ContextEnv.(env_t) (tf_states_type s_sz)
-     * ContextEnv.(env_t) (tf_outputs_type o_sz))%type.
+    (ContextEnv.(env_t) (tf_states_type s_sz) * src_out_env)%type.
+  Local Notation input_t := (forall x : i_var, type_denote (tf_inputs_type i_sz x)).
   Local Notation run ops sys input :=
     (tf_ops_run s_sz i_sz o_sz ips ops sys input).
 
-  (* Counted from cycle 1: cycle 0 is the start state, whose done flag is
-     whatever the previous action left there. *)
-  Definition first_done (act: tfs_action sched) (input: input_t)
-      (resp: nat -> resp_val) (ss0: sched_sys_state) (N: nat) : Prop :=
-    0 < N
-    /\ ss_done (ss_run N act input resp ss0)
-    /\ forall i, 0 < i < N -> ~ ss_done (ss_run i act input resp ss0).
-
-  (* THE ATTACKER'S MODEL OF A RUN, over the two published snapshots and the
-     cycle count: the outputs stand at [pre] until cycle [N] and at [post] from
-     there.  The arguments are the whole of what it may read. *)
-  Definition emulate (pre post: src_out_env) (N k: nat) (ov: o_var) :=
-    if Nat.ltb k N then pre.[ov] else post.[ov].
+  (* ================================================================ *)
+  (* The attacker model: what the timing guarantees are stated over.  *)
+  (* ================================================================ *)
 
   (* WHAT THE ATTACKER SEES: each public input, and each public output before
      and after the action.  A secret port reads [None]. *)
@@ -177,85 +75,8 @@ Section SchedulerWorld.
     AttackerClock.latency ctx cost_limit act
       (seen_in view) (seen_pre view) (seen_post view).
 
-
   (* ================================================================ *)
-  (* Several actions in a row.                                        *)
-  (* ================================================================ *)
-
-  (* A command: an action and the inputs it latches when it is accepted. *)
-  Local Notation command := (tfs_action sched * input_t)%type.
-
-  (* ONE CYCLE OF A COMMAND QUEUE: the head command steps, and on the cycle that
-     raises done the next takes over, as [rule_cmd] does once [tf_ready] is up.
-     Commands run back to back; an empty queue holds its state. *)
-  Definition queue_step (q: list command) (r: resp_val) (ss: sched_sys_state)
-    : list command * sched_sys_state :=
-    match q with
-    | [] => ([], ss)
-    | (act, input) :: rest =>
-        let ss' := sched_step act ss (sched_input input r) in
-        if beq_dec (fst ss').[tfs_done_signal sched] Bits.zero
-        then (q, ss')
-        else (rest, ss')
-    end.
-
-  (* [resp k] is what the IPs present during cycle [k], counted from the start
-     of the whole sequence. *)
-  Fixpoint queue_run (n: nat) (q: list command) (resp: nat -> resp_val)
-      (ss: sched_sys_state) : list command * sched_sys_state :=
-    match n with
-    | 0 => (q, ss)
-    | S k => let qs := queue_run k q resp ss in
-             queue_step (fst qs) (resp k) (snd qs)
-    end.
-
-  (* THE IP's DATASHEET over a command sequence: [ip_contract]'s promise, read
-     off the run that actually happens. *)
-  Definition queue_ip_contract (q: list command) (resp: nat -> resp_val)
-      (ss0: sched_sys_state) : Prop :=
-    forall (p: tfs_ips sched) (s: nat),
-      port_strobe (snd (queue_run s q resp ss0)) p = Bits.ones 1 ->
-      (forall w, s < w -> w < s + pred (ip_lat (tfs_ip sched p)) ->
-         port_strobe (snd (queue_run w q resp ss0)) p = Bits.zero) ->
-      resp (s + pred (ip_lat (tfs_ip sched p))) p
-      = ip_fn (tfs_ip sched p) (drive_payload (snd (queue_run s q resp ss0)) p).
-
-  (* Each command with the outputs it leaves, as the specification computes
-     them: the snapshots the attacker reads between commands. *)
-  Fixpoint spec_outputs_seq (q: list command) (sp: src_sys_state)
-    : list (tfs_action sched * input_t * src_out_env) :=
-    match q with
-    | [] => []
-    | (act, input) :: rest =>
-        let sp1 := run (tfs_spec_action_ops ctx act) sp input in
-        (act, input, snd sp1) :: spec_outputs_seq rest sp1
-    end.
-
-  (* THE ATTACKER'S MODEL OF A SEQUENCE: [emulate], one command after the
-     other.  Each command takes [L_pub] of its own public view, so every
-     switch-over cycle is computed from public data alone. *)
-  Fixpoint emulate_seq (pre: src_out_env)
-      (obs: list (tfs_action sched * input_t * src_out_env)) (k: nat) (ov: o_var) :=
-    match obs with
-    | [] => pre.[ov]
-    | (act, input, post) :: rest =>
-        let N := L_pub act (observe input pre post) in
-        if Nat.ltb k N then pre.[ov] else emulate_seq post rest (k - N) ov
-    end.
-
-  (* How many commands the attacker's model has finished by cycle [k]. *)
-  Fixpoint emulate_progress (pre: src_out_env)
-      (obs: list (tfs_action sched * input_t * src_out_env)) (k: nat) : nat :=
-    match obs with
-    | [] => 0
-    | (act, input, post) :: rest =>
-        let N := L_pub act (observe input pre post) in
-        if Nat.ltb k N then 0 else S (emulate_progress post rest (k - N))
-    end.
-
-
-  (* ================================================================ *)
-  (* The confidentiality criterion, over the spec alone.                *)
+  (* The confidentiality criterion, over the spec alone.              *)
   (* ================================================================ *)
 
   Definition pub_agree (sys sys': sys_state) : Prop :=
@@ -311,70 +132,133 @@ Section SchedulerWorld.
 End SchedulerWorld.
 
 
+
 (* ==================================================================== *)
-(* The synthesis relations: the Kôika circuit implements a design.      *)
+(* The circuit Lowering emits, its environment, and its emulator.       *)
 (* ==================================================================== *)
 
-Section SynthWorld.
+Section CircuitWorld.
 
-  Context (tf_ctx: TFSynthContext).
+  Context (ctx: TFSchedContext).
+  Context (cost_limit: nat).
 
-  Local Notation sched_ctx := (tf_sched_ctx tf_ctx).
-  Local Notation spec_states := (tfs_states sched_ctx).
-  Local Notation spec_states_size := (tfs_states_size sched_ctx).
-  Local Notation spec_inputs := (tfs_inputs sched_ctx).
-  Local Notation spec_inputs_size := (tfs_inputs_size sched_ctx).
-  Local Notation spec_outputs := (tfs_outputs sched_ctx).
-  Local Notation spec_outputs_size := (tfs_outputs_size sched_ctx).
-  Local Notation spec_action := (tfs_action sched_ctx).
-  Local Notation spec_states_init := (tfs_states_init sched_ctx).
-  Local Notation spec_action_encoding := (tf_action_encoding tf_ctx).
-  Local Notation st_env  := (ContextEnv.(env_t) (tf_states_type spec_states_size)).
-  Local Notation out_env := (ContextEnv.(env_t) (tf_outputs_type spec_outputs_size)).
-  Local Notation sys_state_t := (st_env * out_env)%type.
+  Local Notation sched := (tfs_schedule ctx cost_limit).
+
+  (* How [in_cmd] encodes an action.  With it, [synth] is the context Lowering
+     compiles, so [rules synth] are the circuit's rules. *)
+  Context (enc_sz: nat) (enc: tfs_action sched -> bits_t enc_sz)
+          (enc_inj: forall a b, enc a = enc b -> a = b)
+          (names: Show (tfs_action sched)).
+
+  Definition synth : TFSynthContext := {|
+    tf_sched_ctx := sched;
+    tf_action_reg_size := enc_sz;
+    tf_action_encoding := enc;
+    tf_action_encoding_inj := enc_inj;
+    tf_action_names := names |}.
+
+  Local Notation tsched := (tf_sched_ctx synth).
+  Local Notation reg_t :=
+    (@_reg_t (tfs_states tsched) (tfs_inputs tsched) (tfs_outputs tsched) (tfs_ips tsched)).
+  Hint Extern 0 (FiniteType reg_t) => exact (_reg_t_finite synth) : typeclass_instances.
+  Local Notation circuit_state := (ContextEnv.(env_t) (R synth)).
+  Local Notation wires := (forall f, Sig_denote (Sigma synth f)).
+
+  Local Notation s_sz := (tfs_spec_states_size ctx).
+  Local Notation i_sz := (tfs_spec_inputs_size ctx).
+  Local Notation o_sz := (tfs_spec_outputs_size ctx).
+  Local Notation src_out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).
+  Local Notation src_sys_state :=
+    (ContextEnv.(env_t) (tf_states_type s_sz) * src_out_env)%type.
   Local Notation input_t :=
-    (forall x : spec_inputs, type_denote (tf_inputs_type spec_inputs_size x)).
-  Local Notation R := (R tf_ctx).
-  Local Notation r := (r tf_ctx).
-  Local Notation Sigma := (Sigma tf_ctx).
-  Local Notation spec_ips := (tfs_ips sched_ctx).
-  Local Notation reg_t := (@_reg_t spec_states spec_inputs spec_outputs spec_ips).
+    (forall x : tfs_spec_inputs ctx, type_denote (tf_inputs_type i_sz x)).
+  Local Notation run act sp input :=
+    (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act) sp input).
 
-  Hint Extern 0 (FiniteType reg_t) => exact (_reg_t_finite tf_ctx) : typeclass_instances.
+  (* A command: an action and the inputs it latches when it is taken. *)
+  Local Notation command := (tfs_action sched * input_t)%type.
 
-  Definition state_matches (sys: sys_state_t) (r: ContextEnv.(env_t) R) : Prop :=
-    (* State variables map cleanly *)
-    (forall (x: spec_states), r.[tf_reg x] = (fst sys).[x]) /\
-    (* Output variables map cleanly *)
-    (forall (x: spec_outputs), r.[tf_out x] = (snd sys).[x]).
+  (* THE CIRCUIT: Kôika's cycle over the lowered rules, from state [c0], with
+     [env k] what the environment drives in cycle [k]. *)
+  Fixpoint circuit_run (c0: circuit_state) (env: nat -> wires) (n: nat) : circuit_state :=
+    match n with
+    | 0 => c0
+    | S k => interp_cycle (env k) (rules synth) (system_schedule synth) (circuit_run c0 env k)
+    end.
 
-  Definition env_matches (act: spec_action) (input: input_t) (r: ContextEnv.(env_t) R) : Prop :=
-    (* action variable maps cleanly *)
-    (r.[tf_cmd] = spec_action_encoding act) /\
-    (* THE LATCHED inputs map cleanly.  A response port is read live off the
-       wire, so its latch holds the value from the dispatch cycle and
-       [live_inputs_match] below is what pins it. *)
-    (forall (x: spec_inputs),
-       tfs_inputs_resp sched_ctx x = None -> r.[tf_in x] = input x).
+  (* THE CIRCUIT AT REST, holding spec state [sp]: ready, its state slots and
+     outputs are the spec's, and every buffer and validity bit is cleared. *)
+  Definition at_rest (c: circuit_state) (sp: src_sys_state) : Prop :=
+    c.[tf_ready] = Ob~1
+    /\ (forall o, c.[tf_out o] = (snd sp).[o])
+    /\ (forall x: tfs_states tsched,
+          match x with
+          | tf_dfg_s s => c.[tf_reg (tf_dfg_s s)] = (fst sp).[s]
+          | tf_dfg_b _ _ | tf_dfg_v _ _ => c.[tf_reg x] = Bits.zero
+          | _ => True
+          end).
 
-  Definition state_env_matches (sys: sys_state_t) (act: spec_action) (input: input_t) (r: ContextEnv.(env_t) R) : Prop :=
-    state_matches sys r /\
-    env_matches act input r.
+  (* What the environment offers in a cycle while ready is up: [Some (act, input)]
+     is a valid [in_cmd] with the inputs on their ports, [None] an invalid one. *)
+  Definition presents (w: wires) (c: option command) : Prop :=
+    let cmd := w ext_in_cmd Ob~1 in
+    match c with
+    | None => fst cmd = Ob~0
+    | Some (act, input) =>
+        fst cmd = Ob~1 /\ fst (snd cmd) = tf_action_encoding synth act
+        /\ forall v, w (ext_input (inl v)) Ob~1 = input v
+    end.
 
-  Definition input_matches (act: spec_action) (input: input_t) (sigma: forall f, Sig_denote (Sigma f)) : Prop :=
-    let cmd_res := sigma ext_in_cmd Ob~1 in      
-    (fst cmd_res) = Ob~1 /\ (* TODO: implicit params should be given explicitly once known *)
-    (@fst (vect bool (tf_action_reg_size tf_ctx)) unit
-      (@snd (vect_cons_t bool (vect_nil_t bool)) (prod (vect bool (tf_action_reg_size tf_ctx)) unit) cmd_res) = spec_action_encoding act) /\
-    (forall (x: spec_inputs), sigma (ext_input x) (Ob~1) = input x).
+  (* THE IP's DATASHEET on the circuit: a request register raised at cycle [s]
+     and left quiet for the flight time is answered on the response wire. *)
+  Definition ip_contract (c0: circuit_state) (env: nat -> wires) : Prop :=
+    forall (p: tfs_ips tsched) (s: nat),
+      let req k := (circuit_run c0 env k).[tf_reg (tfs_drive_reg tsched p)] in
+      let sz := ip_req_sz (tfs_ip tsched p) in
+      let lat := pred (ip_lat (tfs_ip tsched p)) in
+      Bits.slice sz 1 (req s) = Bits.ones 1 ->
+      (forall w, s < w < s + lat -> Bits.slice sz 1 (req w) = Bits.zero) ->
+      env (s + lat) (ext_input (inr p)) Ob~1 = ip_fn (tfs_ip tsched p) (Bits.slice 0 sz (req s)).
 
-  Definition abstract_init_state (sys: sys_state_t) : Prop :=
-    (forall x, (fst sys).[x] = spec_states_init x) /\
-    (forall x, (snd sys).[x] = Bits.zero).
+  (* THE EMULATOR, which never sees the spec: it shows [em_pre] for [em_left] more
+     cycles, then [em_post].  Taking a command, it is told only the outputs after
+     it, and is busy for [L_pub] cycles of the public view. *)
+  Record emulator := { em_pre : src_out_env; em_post : src_out_env; em_left : nat }.
 
-  (* A response input is sampled off the wire, so its value comes from [sigma]
-     in EVERY cycle -- [env_matches] covers the latched inputs only. *)
-  Definition live_inputs_match (input: input_t) (sigma: forall f, Sig_denote (Sigma f)) : Prop :=
-    forall v p, tfs_inputs_resp (tf_sched_ctx tf_ctx) v = Some p ->
-                sigma (ext_input v) Ob~1 = input v.
-End SynthWorld.
+  Definition em_start (outs: src_out_env) : emulator :=
+    {| em_pre := outs; em_post := outs; em_left := 0 |}.
+
+  Definition em_ready (e: emulator) : bool := Nat.eqb (em_left e) 0.
+
+  Definition em_shown (e: emulator) : src_out_env :=
+    if em_ready e then em_post e else em_pre e.
+
+  Definition em_tick (e: emulator) : emulator :=
+    {| em_pre := em_pre e; em_post := em_post e; em_left := pred (em_left e) |}.
+
+  Definition em_take (e: emulator) (act: tfs_action sched) (input: input_t)
+      (post: src_out_env) : emulator :=
+    {| em_pre := em_post e; em_post := post;
+       em_left := pred (L_pub ctx cost_limit act (observe ctx input (em_post e) post)) |}.
+
+  (* THE IDEAL WORLD: the spec runs beside the emulator from [sp0], a state the
+     emulator never reads, and answers each command it takes with the outputs. *)
+  Fixpoint ideal_run (sp0: src_sys_state) (cmds: nat -> option command) (n: nat)
+    : src_sys_state * emulator :=
+    match n with
+    | 0 => (sp0, em_start (snd sp0))
+    | S k =>
+        let '(sp, e) := ideal_run sp0 cmds k in
+        match cmds k with
+        | Some (act, input) =>
+            if em_ready e
+            then let sp' := run act sp input in (sp', em_take e act input (snd sp'))
+            else (sp, em_tick e)
+        | None => (sp, em_tick e)
+        end
+    end.
+
+End CircuitWorld.
+
+Arguments em_pre {ctx}. Arguments em_post {ctx}. Arguments em_left {ctx}.
+Arguments em_start {ctx}. Arguments em_ready {ctx}. Arguments em_shown {ctx}. Arguments em_tick {ctx}.

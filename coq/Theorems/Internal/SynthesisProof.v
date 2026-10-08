@@ -1,7 +1,6 @@
-(*! The proofs behind Theorems/Synthesis.v: that the lowered Kôika circuit
-    computes what the scheduled design says, one cycle at a time.  The bulk is
-    Kôika log reasoning -- which reads and writes each rule may perform, and
-    what the resulting log says about every register. !*)
+(*! The lowered Kôika circuit computes the scheduled design one cycle at a time,
+    and an idle cycle changes nothing.  The bulk is Kôika log reasoning: which
+    reads and writes each rule may perform, and what the log says per register. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.
@@ -17,6 +16,7 @@ Require Import Trustformer.Semantics.
 Require Import Trustformer.Utils.
 Require Import Trustformer.Internal.UtilsLemmas.
 Require Export Trustformer.Theorems.Definitions.
+Require Export Trustformer.Theorems.Internal.IRDefinitions.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Backend.Lowering.
 Require Trustformer.Theorems.Internal.KoikaLemmas.
@@ -44,12 +44,12 @@ Section SynthesisProof.
   Context (tf_ctx: TFSynthContext).
 
   (* Stated in Theorems/Definitions.v; bound here at this section's context. *)
-  Local Notation abstract_init_state := (Definitions.abstract_init_state tf_ctx).
-  Local Notation env_matches := (Definitions.env_matches tf_ctx).
-  Local Notation input_matches := (Definitions.input_matches tf_ctx).
-  Local Notation live_inputs_match := (Definitions.live_inputs_match tf_ctx).
-  Local Notation state_env_matches := (Definitions.state_env_matches tf_ctx).
-  Local Notation state_matches := (Definitions.state_matches tf_ctx).
+  Local Notation abstract_init_state := (IRDefinitions.abstract_init_state tf_ctx).
+  Local Notation env_matches := (IRDefinitions.env_matches tf_ctx).
+  Local Notation input_matches := (IRDefinitions.input_matches tf_ctx).
+  Local Notation live_inputs_match := (IRDefinitions.live_inputs_match tf_ctx).
+  Local Notation state_env_matches := (IRDefinitions.state_env_matches tf_ctx).
+  Local Notation state_matches := (IRDefinitions.state_matches tf_ctx).
 
   (* ====== Abbreviations ====== *)
   Local Notation sched_ctx := (tf_sched_ctx tf_ctx).
@@ -3758,44 +3758,18 @@ Section SynthesisProof.
     rewrite H, Hready. reflexivity.
   Qed.
  
-  Theorem synthesis_correct :
-    forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
-           (act: spec_action) (input: input_t)
-           (sigma: forall f, Sig_denote (Sigma f)),
-      state_matches sys r ->
-      ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
-      ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
-      live_inputs_match input sigma ->
-      state_env_matches (tfs_next_cycle sched_ctx act sys input) act input (interp_cycle sigma rules system_schedule r).
+  (* The log the busy rule hands the action rules is a good one. *)
+  Lemma good_log_after_busy (r: ContextEnv.(env_t) R) (sigma: forall f, Sig_denote (Sigma f)) :
+    good_log (match interp_rule r sigma log_empty (rules rule_busy) with
+              | Some l => log_app l log_empty
+              | None => log_empty
+              end).
   Proof.
-    intros sys r act input sigma Hstate Hin_rdy Hin_nrdy Hlive.
-    
-    unfold interp_cycle, interp_scheduler, system_schedule in *.
-    cbn [interp_scheduler'].
-
-    (* case destinction on whether hardware is ready or not *)
     destruct (reg_ready_or_not r) as [Hready | Hnotready].
-    - specialize (Hin_rdy Hready) as H_in.
-      
-      (* simplify the busy rule *)
-      specialize (interp_rule_busy_ready r sigma Hready) as H_busy_ready. 
-      rewrite H_busy_ready. clear H_busy_ready.
-
-      apply synthesis_correct_aux; try assumption.
-
-      (* Show that the log is good *)
-      unfold good_log. repeat split; try apply may_read_all_log_empty; try apply may_write_all_log_empty; 
+    - rewrite (interp_rule_busy_ready r sigma Hready).
+      unfold good_log. repeat split; try apply may_read_all_log_empty; try apply may_write_all_log_empty;
       try apply may_read_log_empty; try apply may_write_log_empty.
-
-    - specialize (Hin_nrdy Hnotready) as H_in.
-
-      (* simplify the busy rule *)
-      specialize (interp_rule_busy_not_ready r sigma Hnotready) as H_busy_not_ready.
-      rewrite H_busy_not_ready. clear H_busy_not_ready.
-
-      apply synthesis_correct_aux; try assumption.
-
-      (* Show that the log is good *)
+    - rewrite (interp_rule_busy_not_ready r sigma Hnotready).
       unfold good_log. repeat split.
       + rewrite !SemanticProperties.log_app_empty_l. rewrite !may_read_all_log1_cons_neq.
         * apply may_read_all_log_empty.
@@ -3843,6 +3817,154 @@ Section SynthesisProof.
         * sauto.
         * sauto.
         * sauto.
+  Qed.
+
+  Theorem synthesis_correct :
+    forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
+           (act: spec_action) (input: input_t)
+           (sigma: forall f, Sig_denote (Sigma f)),
+      state_matches sys r ->
+      ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
+      ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
+      live_inputs_match input sigma ->
+      state_env_matches (tfs_next_cycle sched_ctx act sys input) act input (interp_cycle sigma rules system_schedule r).
+  Proof.
+    intros sys r act input sigma Hstate Hin_rdy Hin_nrdy Hlive.
+    unfold interp_cycle, interp_scheduler, system_schedule in *.
+    cbn [interp_scheduler'].
+    pose proof (good_log_after_busy r sigma) as Hgood.
+    destruct (interp_rule r sigma log_empty (rules rule_busy));
+      apply synthesis_correct_aux; assumption.
+  Qed.
+
+  (* ====== Several cycles: idle ones, and the ready flag ====== *)
+
+  (* With ready up and no valid command on [in_cmd], no action rule fires. *)
+  Lemma interp_rule_cmd_idle :
+    forall (r: ContextEnv.(env_t) R) (sigma: forall f, Sig_denote (Sigma f)) log a,
+      r.[tf_ready] = Ob~1 ->
+      fst (sigma ext_in_cmd Ob~1) = Ob~0 ->
+      interp_rule r sigma log (rules (rule_cmd a)) = None.
+  Proof.
+    intros r sigma log a Hready Hidle.
+    unfold interp_rule, rules, rule_cmd_guard. simpl_eq.
+    destruct may_read; try reflexivity. timeout 10 cbn.
+    rewrite Hready. timeout 10 cbn.
+    lazymatch goal with |- context [Bits.single ?T] =>
+      let H := fresh in assert (H : T = Ob~0) by exact Hidle; rewrite H end.
+    reflexivity.
+  Qed.
+
+  (* AN IDLE CYCLE: only the ack registers change. *)
+  Lemma cycle_idle :
+    forall (r: ContextEnv.(env_t) R) (sigma: forall f, Sig_denote (Sigma f)) x,
+      r.[tf_ready] = Ob~1 ->
+      fst (sigma ext_in_cmd Ob~1) = Ob~0 ->
+      match x with tf_out_ack _ | tf_ip_ack _ => False | _ => True end ->
+      (interp_cycle sigma rules system_schedule r).[x] = r.[x].
+  Proof.
+    intros r sigma x Hready Hidle Hx.
+    unfold interp_cycle, interp_scheduler, system_schedule.
+    cbn [interp_scheduler'].
+    rewrite (interp_rule_busy_ready r sigma Hready).
+    unfold commit_update. rewrite getenv_create.
+    unfold system_schedule_actions.
+    induction spec_all_actions as [| a acts IH].
+    - cbn [fold_right]. rewrite latest_write_schedule_outputs by exact Hx.
+      rewrite SemanticProperties.latest_write_empty. reflexivity.
+    - cbn [fold_right interp_scheduler'].
+      rewrite (interp_rule_cmd_idle r sigma log_empty a Hready Hidle). exact IH.
+  Qed.
+
+  (* An active cycle runs the commanded action's rule and no other. *)
+  Lemma interp_actions_one :
+    forall (sys: sys_state_t) (r: ContextEnv.(env_t) R)
+           (act: spec_action) (input: input_t)
+           (sigma: forall f, Sig_denote (Sigma f)) log,
+      state_matches sys r ->
+      ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
+      ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
+      live_inputs_match input sigma ->
+      interp_scheduler' r sigma rules log (system_schedule_actions tf_ctx)
+      = interp_scheduler' r sigma rules
+          match interp_rule r sigma log (rules (rule_cmd act)) with
+          | Some l => log_app l log
+          | None => log
+          end (system_schedule_outputs tf_ctx).
+  Proof.
+    intros sys r act input sigma log Hstate Hrdy Hnrdy Hlive.
+    unfold system_schedule_actions.
+    pose proof nodup_spec_all_actions as Hnodup.
+    pose proof (in_spec_all_actions act) as Hin.
+    revert log. induction spec_all_actions as [| a acts IH]; intro log; [ destruct Hin |].
+    apply NoDup_cons_iff in Hnodup. destruct Hnodup as [Hnot Hnodup].
+    cbn [fold_right interp_scheduler'].
+    destruct Hin as [-> | Hin].
+    - assert (Hskip : forall log', interp_scheduler' r sigma rules log'
+                (fold_right (fun t acc => rule_cmd t |> acc) (system_schedule_outputs tf_ctx) acts)
+              = interp_scheduler' r sigma rules log' (system_schedule_outputs tf_ctx)).
+      { clear IH Hnodup. induction acts as [| b acts IHb]; intro log'; [ reflexivity |].
+        cbn [fold_right interp_scheduler'].
+        rewrite (interp_rule_cmd_wrong sys r act input sigma log' b Hstate Hrdy Hnrdy Hlive)
+          by (intro E; apply Hnot; left; symmetry; exact E).
+        apply (IHb (fun H => Hnot (or_intror H))). }
+      destruct (interp_rule r sigma log (rules (rule_cmd act))); apply Hskip.
+    - rewrite (interp_rule_cmd_wrong sys r act input sigma log a Hstate Hrdy Hnrdy Hlive)
+        by (intro E; subst a; contradiction).
+      exact (IH Hnodup Hin log).
+  Qed.
+
+  (* AN ACTIVE CYCLE leaves ready up exactly when it raises done. *)
+  Lemma cycle_ready :
+    forall (sys: sys_state_t) (r: ContextEnv.(env_t) R)
+           (act: spec_action) (input: input_t)
+           (sigma: forall f, Sig_denote (Sigma f)),
+      state_matches sys r ->
+      ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
+      ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
+      live_inputs_match input sigma ->
+      (interp_cycle sigma rules system_schedule r).[tf_ready]
+      = if beq_dec (find_st_val sched_ctx spec_done_state
+                      (tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input) sys)
+                   Bits.zero
+        then Ob~0 else Ob~1.
+  Proof.
+    intros sys r act input sigma Hstate Hin_rdy Hin_nrdy Hlive.
+    unfold interp_cycle, interp_scheduler, system_schedule.
+    cbn [interp_scheduler'].
+    pose proof (good_log_after_busy r sigma) as Hgood.
+    assert (Hm : forall o : option (Log R REnv),
+      match o with
+      | Some l => interp_scheduler' r sigma rules (log_app l log_empty) (system_schedule_actions tf_ctx)
+      | None => interp_scheduler' r sigma rules log_empty (system_schedule_actions tf_ctx)
+      end
+      = interp_scheduler' r sigma rules
+          (match o with Some l => log_app l log_empty | None => log_empty end)
+          (system_schedule_actions tf_ctx)) by (intros [l|]; reflexivity).
+    rewrite Hm. clear Hm.
+    lazymatch type of Hgood with good_log ?L => set (log := L) in * end.
+    rewrite (interp_actions_one sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hlive).
+    unfold commit_update. rewrite getenv_create.
+    rewrite latest_write_schedule_outputs by exact I.
+    rewrite (interp_rule_correct sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hlive Hgood).
+    cbv zeta. rewrite SemanticProperties.latest_write_app.
+    unfold construct_log. destruct (beq_dec _ _) eqn:Hdone.
+    - rewrite SemanticProperties.latest_write_cons_neq by discriminate.
+      rewrite latest_write_aux_log_neq by discriminate.
+      destruct (reg_ready_or_not r) as [Hready | Hnotready].
+      + rewrite Hready. replace (Bits.single Ob~1) with true by reflexivity. cbv iota.
+        unfold log_after_cmd_guard_rdy. rewrite SemanticProperties.latest_write_cons_eq.
+        reflexivity.
+      + rewrite Hnotready. replace (Bits.single Ob~0) with false by reflexivity. cbv iota.
+        rewrite SemanticProperties.latest_write_cons_neq by discriminate.
+        rewrite KoikaLemmas.latest_write_log_cons_read by reflexivity.
+        rewrite SemanticProperties.latest_write_empty.
+        subst log. rewrite (interp_rule_busy_not_ready r sigma Hnotready).
+        rewrite SemanticProperties.latest_write_app.
+        rewrite SemanticProperties.latest_write_cons_neq by discriminate.
+        rewrite !KoikaLemmas.latest_write_log_cons_read by reflexivity.
+        rewrite !SemanticProperties.latest_write_empty. reflexivity.
+    - rewrite SemanticProperties.latest_write_cons_eq. reflexivity.
   Qed.
 
 End SynthesisProof.
