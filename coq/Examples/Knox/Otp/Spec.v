@@ -119,7 +119,7 @@ Section FunctionalSpecification.
     Fixpoint dt_aux (n: nat) (hs: E) : E :=
       match n with
       | 0 => tf_const 0
-      | S o => tf_expr_if (tf_op2 (tf_cmp 4 tf_eq) hs (tf_const o))
+      | S o => tf_expr_if (tf_op2 (tf_cmp 4 tf_eq) (tf_op1 (tf_resize 4) hs) (tf_const o))
                           (mk_zext 31 CODE_SZ (mk_slice (158 - 8 * o) (128 - 8 * o) hs))
                           (dt_aux o hs)
       end.

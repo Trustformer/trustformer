@@ -1071,6 +1071,10 @@ Section SynthesisProof.
                 let (val_src, log_src) :=
                   (eval_expr_aux (szB:=source_size) src log sys_state input) in
                 (convert val_src, log_src)
+            | tf_slice source_size offset =>
+                let (val_src, log_src) :=
+                  (eval_expr_aux (szB:=source_size) src log sys_state input) in
+                (Bits.slice offset szB (convert (szB:=slice_pad source_size offset szB) val_src), log_src)
             end
         | tf_op2 op src1 src2 =>
             let (val_src1, log_src1) := (eval_expr_aux src1 log sys_state input) in
@@ -1099,6 +1103,8 @@ Section SynthesisProof.
                       if Bits.unsigned_gt val_cmp_src1 val_cmp_src2 then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
                   | tf_ge =>
                       if Bits.unsigned_ge val_cmp_src1 val_cmp_src2 then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
+                  | tf_slt =>
+                      if Bits.signed_lt val_cmp_src1 val_cmp_src2 then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
                   end,
                   log_cmp_src2
                 )
@@ -1108,6 +1114,14 @@ Section SynthesisProof.
                 let (val_hi, log_hi) := (eval_expr_aux (szB:=hi_sz) src1 log sys_state input) in
                 let (val_lo, log_lo) := (eval_expr_aux (szB:=lo_sz) src2 log_hi sys_state input) in
                 (convert (Bits.app val_hi val_lo), log_lo)
+            | tf_lsr => (Bits.lsr (Bits.to_nat val_src2) val_src1, log_src2)
+            | tf_lsl => (Bits.lsl (Bits.to_nat val_src2) val_src1, log_src2)
+            | tf_asr => (Bits.asr (Bits.to_nat val_src2) val_src1, log_src2)
+            | tf_islice src_sz =>
+                let (val_x, log_x) := (eval_expr_aux (szB:=src_sz) src1 log sys_state input) in
+                let (val_o, log_o) := (eval_expr_aux (szB:=Nat.log2_up src_sz) src2 log_x sys_state input) in
+                (Bits.slice (Bits.to_nat (convert (szB:=Nat.log2_up (islice_pad src_sz szB)) val_o)) szB
+                   (convert (szB:=islice_pad src_sz szB) val_x), log_o)
             end
         | tf_expr_if cond then_expr else_expr =>
             let (val_cond, log_cond) := (eval_expr_aux (szB:=1) cond log sys_state input) in
@@ -1131,6 +1145,8 @@ Section SynthesisProof.
         apply IHexpr.
       + cbn. rewrite KoikaLemmas.fst_let_repackage. f_equal.
         apply (IHexpr log1 source_size).
+      + cbn. rewrite KoikaLemmas.fst_let_repackage. f_equal. f_equal.
+        apply (IHexpr log1 source_size).
     - cbn. destruct op.
       + let_to_projs. f_equal. f_equal. 
         * apply IHexpr1.
@@ -1150,11 +1166,21 @@ Section SynthesisProof.
       + let_to_projs. f_equal. f_equal.
         * apply IHexpr1.
         * apply IHexpr2.
+      + let_to_projs. f_equal. f_equal.
+        * apply IHexpr2.
+        * apply IHexpr1.
+      + let_to_projs. f_equal. f_equal.
+        * apply IHexpr2.
+        * apply IHexpr1.
+      + let_to_projs. f_equal. f_equal.
+        * apply IHexpr2.
+        * apply IHexpr1.
       + let_to_projs. destr; match_eq; f_equal; try apply IHexpr1; try apply IHexpr2.
       + (* tf_concat *)
         let_to_projs. f_equal. f_equal.
         * apply IHexpr2.
         * apply IHexpr1.
+      + let_to_projs. repeat f_equal; [ apply IHexpr2 | apply IHexpr1 ].
     - cbn. let_to_projs. extract_match_term_lhs. extract_match_term_rhs.
       assert (MT = MT0). 2: { rewrite H. subst. destr; try apply IHexpr2; try apply IHexpr3. }
       subst. f_equal. apply (IHexpr1 log1 1).
@@ -1182,7 +1208,33 @@ Section SynthesisProof.
         destruct (eval_expr_aux (szB:=source_size) expr log1 sys input).
         destruct (eval_expr_aux (szB:=source_size) expr log2 sys input).
         cbn in *. subst. reflexivity.
+      + cbn.
+        pose proof (IHexpr log1 log2 source_size).
+        destruct (eval_expr_aux (szB:=source_size) expr log1 sys input).
+        destruct (eval_expr_aux (szB:=source_size) expr log2 sys input).
+        cbn in *. subst. reflexivity.
     - destruct op.
+      + cbn.
+        pose proof (IHexpr1 log1 log2 szB).
+        destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr1 log2 sys input). cbn in *. subst.
+        pose proof (IHexpr2 l l0 szB).
+        destruct (eval_expr_aux expr2 l sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr2 l0 sys input). cbn in *. subst. reflexivity.
+      + cbn.
+        pose proof (IHexpr1 log1 log2 szB).
+        destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr1 log2 sys input). cbn in *. subst.
+        pose proof (IHexpr2 l l0 szB).
+        destruct (eval_expr_aux expr2 l sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr2 l0 sys input). cbn in *. subst. reflexivity.
+      + cbn.
+        pose proof (IHexpr1 log1 log2 szB).
+        destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr1 log2 sys input). cbn in *. subst.
+        pose proof (IHexpr2 l l0 szB).
+        destruct (eval_expr_aux expr2 l sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr2 l0 sys input). cbn in *. subst. reflexivity.
       + cbn.
         pose proof (IHexpr1 log1 log2 szB).
         destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
@@ -1254,6 +1306,19 @@ Section SynthesisProof.
         pose proof (IHexpr2 l3 l4 lo_sz).
         destruct (eval_expr_aux expr2 l3 sys input). cbn in *. subst.
         destruct (eval_expr_aux expr2 l4 sys input). cbn in *. subst. reflexivity.
+      + cbn.
+        pose proof (IHexpr1 log1 log2 szB).
+        destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr1 log2 sys input). cbn in *. subst.
+        pose proof (IHexpr2 l l0 szB).
+        destruct (eval_expr_aux expr2 l sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr2 l0 sys input). cbn in *. subst.
+        pose proof (IHexpr1 log1 log2 src_sz).
+        destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr1 log2 sys input). cbn in *. subst.
+        pose proof (IHexpr2 l3 l4 (Nat.log2_up src_sz)).
+        destruct (eval_expr_aux expr2 l3 sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr2 l4 sys input). cbn in *. subst. reflexivity.
     - cbn.
       pose proof (IHexpr1 log1 log2 1).
       destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
@@ -1285,7 +1350,33 @@ Section SynthesisProof.
         destruct (eval_expr_aux (szB:=source_size) expr log1 sys input).
         destruct (eval_expr_aux (szB:=source_size) expr (log1 ++ log2) sys input).
         cbn in *. subst. reflexivity.
+      + cbn.
+        pose proof (IHexpr log1 log2 source_size).
+        destruct (eval_expr_aux (szB:=source_size) expr log1 sys input).
+        destruct (eval_expr_aux (szB:=source_size) expr (log1 ++ log2) sys input).
+        cbn in *. subst. reflexivity.
     - destruct op.
+      + cbn.
+        pose proof (IHexpr1 log1 log2 szB).
+        destruct (eval_expr_aux expr1 (log1 ++ log2) sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
+        pose proof (IHexpr2 l log2 szB).
+        destruct (eval_expr_aux expr2 (l ++ log2) sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr2 l sys input). cbn in *. reflexivity.
+      + cbn.
+        pose proof (IHexpr1 log1 log2 szB).
+        destruct (eval_expr_aux expr1 (log1 ++ log2) sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
+        pose proof (IHexpr2 l log2 szB).
+        destruct (eval_expr_aux expr2 (l ++ log2) sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr2 l sys input). cbn in *. reflexivity.
+      + cbn.
+        pose proof (IHexpr1 log1 log2 szB).
+        destruct (eval_expr_aux expr1 (log1 ++ log2) sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
+        pose proof (IHexpr2 l log2 szB).
+        destruct (eval_expr_aux expr2 (l ++ log2) sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr2 l sys input). cbn in *. reflexivity.
       + cbn.
         pose proof (IHexpr1 log1 log2 szB).
         destruct (eval_expr_aux expr1 (log1 ++ log2) sys input). cbn in *. subst.
@@ -1355,6 +1446,19 @@ Section SynthesisProof.
         pose proof (IHexpr2 l1 log2 lo_sz).
         destruct (eval_expr_aux expr2 (l1 ++ log2) sys input). cbn in *. subst.
         destruct (eval_expr_aux expr2 l1 sys input). cbn in *. subst. reflexivity.
+      + cbn.
+        pose proof (IHexpr1 log1 log2 szB).
+        destruct (eval_expr_aux expr1 (log1 ++ log2) sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
+        pose proof (IHexpr2 l log2 szB).
+        destruct (eval_expr_aux expr2 (l ++ log2) sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr2 l sys input). cbn in *. subst.
+        pose proof (IHexpr1 log1 log2 src_sz).
+        destruct (eval_expr_aux expr1 (log1 ++ log2) sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr1 log1 sys input). cbn in *. subst.
+        pose proof (IHexpr2 l1 log2 (Nat.log2_up src_sz)).
+        destruct (eval_expr_aux expr2 (l1 ++ log2) sys input). cbn in *. subst.
+        destruct (eval_expr_aux expr2 l1 sys input). cbn in *. subst. reflexivity.
     - cbn.
       pose proof (IHexpr1 log1 log2 1).
       pose proof (snd_eval_expr_aux_log_irrelevant expr1 log1 (log1 ++ log2) sys input 1).
@@ -1390,7 +1494,46 @@ Section SynthesisProof.
         destruct (eval_expr_aux (szB:=source_size) expr2 [] sys input).
         destruct (eval_expr_aux (szB:=source_size) expr2 l sys input).
         cbn in *. subst. reflexivity.
+      + cbn.
+        pose proof (IHexpr2 szB1 source_size).
+        destruct (eval_expr_aux expr1 [] sys input).
+        destruct (eval_expr_aux (szB:=source_size) expr2 [] sys input).
+        destruct (eval_expr_aux (szB:=source_size) expr2 l sys input).
+        cbn in *. subst. reflexivity.
     - destruct op.
+      + cbn in *. 
+        pose proof (IHexpr2_1 szB1 szB2).
+        destruct (eval_expr_aux expr1 [] sys input).
+        destruct (eval_expr_aux expr2_1 [] sys input). 
+        destruct (eval_expr_aux expr2_1 l sys input). 
+        cbn in *. subst. 
+        destruct (eval_expr_aux expr2_2 l0 sys input) eqn:Eq1.
+        destruct (eval_expr_aux expr2_2 (l0 ++ l) sys input) eqn:Eq2.
+        apply (f_equal snd) in Eq1.
+        apply (f_equal snd) in Eq2.
+        cbn in *. subst. apply snd_eval_expr_aux_app_log.
+      + cbn in *. 
+        pose proof (IHexpr2_1 szB1 szB2).
+        destruct (eval_expr_aux expr1 [] sys input).
+        destruct (eval_expr_aux expr2_1 [] sys input). 
+        destruct (eval_expr_aux expr2_1 l sys input). 
+        cbn in *. subst. 
+        destruct (eval_expr_aux expr2_2 l0 sys input) eqn:Eq1.
+        destruct (eval_expr_aux expr2_2 (l0 ++ l) sys input) eqn:Eq2.
+        apply (f_equal snd) in Eq1.
+        apply (f_equal snd) in Eq2.
+        cbn in *. subst. apply snd_eval_expr_aux_app_log.
+      + cbn in *. 
+        pose proof (IHexpr2_1 szB1 szB2).
+        destruct (eval_expr_aux expr1 [] sys input).
+        destruct (eval_expr_aux expr2_1 [] sys input). 
+        destruct (eval_expr_aux expr2_1 l sys input). 
+        cbn in *. subst. 
+        destruct (eval_expr_aux expr2_2 l0 sys input) eqn:Eq1.
+        destruct (eval_expr_aux expr2_2 (l0 ++ l) sys input) eqn:Eq2.
+        apply (f_equal snd) in Eq1.
+        apply (f_equal snd) in Eq2.
+        cbn in *. subst. apply snd_eval_expr_aux_app_log.
       + cbn in *. 
         pose proof (IHexpr2_1 szB1 szB2).
         destruct (eval_expr_aux expr1 [] sys input).
@@ -1481,6 +1624,26 @@ Section SynthesisProof.
         cbn in *.
         pose proof (IHexpr2_1 szB1 szB2).
         pose proof (IHexpr2_1 szB1 hi_sz).
+        destruct (eval_expr_aux expr1 [] sys input).
+        destruct (eval_expr_aux expr2_1 [] sys input).
+        destruct (eval_expr_aux expr2_1 l sys input).
+        cbn in *. subst.
+        destruct (eval_expr_aux expr2_2 l0 sys input) eqn:Eq1.
+        destruct (eval_expr_aux expr2_2 (l0 ++ l) sys input) eqn:Eq2.
+        destruct (eval_expr_aux expr2_1 [] sys input).
+        destruct (eval_expr_aux expr2_1 l sys input).
+        cbn in *. subst.
+        destruct (eval_expr_aux expr2_2 l3 sys input) eqn:Eq5.
+        destruct (eval_expr_aux expr2_2 (l3 ++ l) sys input) eqn:Eq6.
+        apply (f_equal snd) in Eq1.
+        apply (f_equal snd) in Eq2.
+        apply (f_equal snd) in Eq5.
+        apply (f_equal snd) in Eq6.
+        cbn in *. subst.
+        apply (snd_eval_expr_aux_app_log expr2_2 _ l sys input).
+      + cbn in *.
+        pose proof (IHexpr2_1 szB1 szB2).
+        pose proof (IHexpr2_1 szB1 src_sz).
         destruct (eval_expr_aux expr1 [] sys input).
         destruct (eval_expr_aux expr2_1 [] sys input).
         destruct (eval_expr_aux expr2_1 l sys input).
@@ -1686,6 +1849,10 @@ Section SynthesisProof.
         unfold expr_log. cbn.
         destruct (eval_expr_aux (szB:=source_size) expr [] sys input).
         reflexivity.
+      * cbn. unfold opt_bind. rewrite interp_synth_convert. rewrite IHexpr; try assumption.
+        unfold expr_log. cbn.
+        destruct (eval_expr_aux (szB:=source_size) expr [] sys input).
+        reflexivity.
     + (* Op2 *)
       destruct op.
       - cbn. unfold opt_bind. rewrite IHexpr1; clear IHexpr1; try assumption. rewrite IHexpr2; clear IHexpr2.
@@ -1731,6 +1898,30 @@ Section SynthesisProof.
       - cbn. rewrite interp_synth_convert.
         cbn. rewrite IHexpr1; clear IHexpr1; try assumption. cbn. rewrite IHexpr2; clear IHexpr2.
         * cbn. f_equal. f_equal. f_equal.
+          unfold expr_log. rewrite <- fold_right_app. simpl. f_equal.
+          destruct (eval_expr_aux expr1 [] sys input) as [val1 log_expr1] eqn:Eq1. 
+          destruct (eval_expr_aux expr2 log_expr1 sys input) as [val2 log_expr2] eqn:Eq2.
+          apply (f_equal snd) in Eq1. apply (f_equal snd) in Eq2. cbn in *. subst.
+          apply snd_eval_expr_aux_app2.
+        * apply inputs_are_buffered_expr_log. exact Hin_buf.
+      - cbn. unfold opt_bind. rewrite IHexpr1; clear IHexpr1; try assumption. rewrite IHexpr2; clear IHexpr2.
+        * f_equal. f_equal. f_equal.
+          unfold expr_log. rewrite <- fold_right_app. simpl. f_equal.
+          destruct (eval_expr_aux expr1 [] sys input) as [val1 log_expr1] eqn:Eq1. 
+          destruct (eval_expr_aux expr2 log_expr1 sys input) as [val2 log_expr2] eqn:Eq2.
+          apply (f_equal snd) in Eq1. apply (f_equal snd) in Eq2. cbn in *. subst.
+          apply snd_eval_expr_aux_app2.
+        * apply inputs_are_buffered_expr_log. exact Hin_buf.
+      - cbn. unfold opt_bind. rewrite IHexpr1; clear IHexpr1; try assumption. rewrite IHexpr2; clear IHexpr2.
+        * f_equal. f_equal. f_equal.
+          unfold expr_log. rewrite <- fold_right_app. simpl. f_equal.
+          destruct (eval_expr_aux expr1 [] sys input) as [val1 log_expr1] eqn:Eq1. 
+          destruct (eval_expr_aux expr2 log_expr1 sys input) as [val2 log_expr2] eqn:Eq2.
+          apply (f_equal snd) in Eq1. apply (f_equal snd) in Eq2. cbn in *. subst.
+          apply snd_eval_expr_aux_app2.
+        * apply inputs_are_buffered_expr_log. exact Hin_buf.
+      - cbn. unfold opt_bind. rewrite IHexpr1; clear IHexpr1; try assumption. rewrite IHexpr2; clear IHexpr2.
+        * f_equal. f_equal. f_equal.
           unfold expr_log. rewrite <- fold_right_app. simpl. f_equal.
           destruct (eval_expr_aux expr1 [] sys input) as [val1 log_expr1] eqn:Eq1. 
           destruct (eval_expr_aux expr2 log_expr1 sys input) as [val2 log_expr2] eqn:Eq2.
@@ -1815,11 +2006,35 @@ Section SynthesisProof.
               apply snd_eval_expr_aux_app2.
             ++ unfold BitFuns.bitfun_of_predicate. destr.
           ** apply inputs_are_buffered_expr_log. exact Hin_buf.
+        * rewrite interp_synth_convert.
+          cbn. rewrite IHexpr1; clear IHexpr1; try assumption. cbn. rewrite IHexpr2; clear IHexpr2.
+          ** cbn. f_equal. f_equal. f_equal.
+            ++ unfold expr_log. rewrite <- fold_right_app. simpl. f_equal.
+              destruct (eval_expr_aux expr1 [] sys input) as [val1 log_expr1] eqn:Eq1. 
+              destruct (eval_expr_aux expr2 log_expr1 sys input) as [val2 log_expr2] eqn:Eq2.
+              apply (f_equal snd) in Eq1. apply (f_equal snd) in Eq2. cbn in *. subst.
+              set (x1 := eval_expr_aux expr1 [] sys input) at 2. destruct x1.
+              destruct (eval_expr_aux expr2 l sys input). cbn in *. 
+              apply snd_eval_expr_aux_app2.
+            ++ unfold BitFuns.bitfun_of_predicate. destr. 
+          ** apply inputs_are_buffered_expr_log. exact Hin_buf.
       - (* tf_concat: two evaluations at different widths like tf_cmp, but with
            no operator sub-case to split on, so the tf_mul skeleton plus tf_cmp's
            extra [set]/[destruct] for the second evaluation. *)
         cbn. rewrite interp_synth_convert.
         cbn. rewrite IHexpr1; clear IHexpr1; try assumption. cbn. rewrite IHexpr2; clear IHexpr2.
+        * cbn. f_equal. f_equal. f_equal.
+          unfold expr_log. rewrite <- fold_right_app. simpl. f_equal.
+          destruct (eval_expr_aux expr1 [] sys input) as [val1 log_expr1] eqn:Eq1.
+          destruct (eval_expr_aux expr2 log_expr1 sys input) as [val2 log_expr2] eqn:Eq2.
+          apply (f_equal snd) in Eq1. apply (f_equal snd) in Eq2. cbn in *. subst.
+          set (x1 := eval_expr_aux expr1 [] sys input) at 2. destruct x1.
+          destruct (eval_expr_aux expr2 l sys input). cbn in *.
+          apply snd_eval_expr_aux_app2.
+        * apply inputs_are_buffered_expr_log. exact Hin_buf.
+      - cbn. unfold opt_bind.
+        cbn. rewrite interp_synth_convert. rewrite IHexpr1; clear IHexpr1; try assumption.
+        cbn. rewrite interp_synth_convert. rewrite IHexpr2; clear IHexpr2.
         * cbn. f_equal. f_equal. f_equal.
           unfold expr_log. rewrite <- fold_right_app. simpl. f_equal.
           destruct (eval_expr_aux expr1 [] sys input) as [val1 log_expr1] eqn:Eq1.

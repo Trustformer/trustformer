@@ -65,6 +65,7 @@ Section Cost.
     | DFG_Unary op _ => match op with
                         | tf_not => 1
                         | tf_resize _ => 0
+                        | tf_slice _ _ => 0
                       end
     | DFG_Binary op _ _ => match op with
                         | tf_and => 1
@@ -76,6 +77,10 @@ Section Cost.
                         | tf_cmp _ _ => 1
                         (* SPIKE: concatenation is pure wiring. *)
                         | tf_concat _ _ => 0
+                        | tf_lsr => 2
+                        | tf_lsl => 2
+                        | tf_asr => 2
+                        | tf_islice _ => 2
                         end
     | DFG_Resize _ => 0
     | DFG_Phi _ _ _ => 1

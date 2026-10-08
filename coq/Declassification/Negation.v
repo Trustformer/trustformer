@@ -45,7 +45,7 @@ Proof.
     as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa | dp darg den
        | sp stok sen | ja jb | ];
     intros Hws Hcons Hi; cbn [List.In] in Hi; try contradiction.
-  destruct uop as [| source_size]; cbn [List.In] in Hi; [ | contradiction ].
+  destruct uop as [| source_size | ss off]; cbn [List.In] in Hi; [ | contradiction | contradiction ].
   destruct Hi as [<- | []]. cbn [di_target di_sources nth] in *.
   rewrite (Hagree n (or_introl eq_refl)), Hcons. cbn [op1_bits].
   rewrite Bits.neg_involutive.

@@ -43,6 +43,7 @@ BENCHES = {
     "tb_xport":     Bench("Regression_XPortGuard"),
     "tb_mars":      Bench("Example_Mars"),
     "tb_macrolib":  Bench("Regression_MacroLib"),
+    "tb_operators": Bench("Regression_Operators"),
 
     # Against the REAL secworks/sha256 core through external/glue/.
     "tb_mars_v4": Bench(

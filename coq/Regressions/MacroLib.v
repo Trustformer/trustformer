@@ -15,14 +15,16 @@ Section FunctionalSpecification.
     Inductive ml_cell := c0 | c1 | c2.
 
     Inductive ml_action :=
-    | a_write | a_read | a_clear | a_mod | a_mod8 | a_bits | a_const | a_const2.
+    | a_write | a_read | a_clear | a_mod | a_mod8 | a_bits | a_const | a_const2
+    | a_loop | a_concat | a_select | a_find | a_shift | a_case | a_sext | a_pset | a_pget
+    | a_pset_wide | a_pget_wide.
 
-    Inductive ml_states := st_cell (k: ml_cell) | st_acc | st_acc8.
+    Inductive ml_states := st_cell (k: ml_cell) | st_acc | st_acc8 | st_pk.
     Inductive ml_inputs := in_idx | in_val.
     Inductive ml_outputs := out_val | out_ok | out_wide.
 
     Definition ml_states_size (x: ml_states) : nat :=
-      match x with st_cell _ => 8 | st_acc => 32 | st_acc8 => 8 end.
+      match x with st_cell _ => 8 | st_acc => 32 | st_acc8 => 8 | st_pk => 32 end.
     Definition ml_inputs_size (x: ml_inputs) : nat :=
       match x with in_idx => 2 | in_val => 32 end.
     Definition ml_outputs_size (x: ml_outputs) : nat :=
@@ -35,6 +37,12 @@ Section FunctionalSpecification.
     Local Notation OPS := (@tf_ops ml_states ml_inputs ml_outputs Empty_set).
 
     Definition in_range : E := {[ $in_idx <[2] #3 ]}.
+    Definition low_byte : E := mk_slice 7 0 (tf_ivar in_val).
+    Definition cell_empty (k: ml_cell) : E := {[ $(st_cell k) ==[8] #0 ]}.
+    Definition cell_full (k: ml_cell) : E := {[ $(st_cell k) !=[8] #0 ]}.
+    Definition store_low (k: ml_cell) : OPS := tf_ops_base (tf_assign (st_cell k) low_byte).
+    Definition set_out (n: nat) : OPS := tf_ops_base (tf_output out_val (tf_const n)).
+    Definition wide_idx : E := mk_slice 2 0 (tf_ivar in_val).
 
     Definition ml_ops (a: ml_action) : OPS :=
       match a with
@@ -74,6 +82,44 @@ Section FunctionalSpecification.
           {[ `mk_clear_outputs`;
              let $out_val := (`mk_rep 2 92` ++[16,16] `mk_zext 12 16 (mk_hex "abc"%string)`);
              let $out_wide := `mk_zext 20 128 (mk_N 20 703710)` ]}
+      | a_loop =>
+          {[ `mk_clear_outputs`;
+             let $st_acc8 := #0;
+             for i < 8 do let $st_acc8 := $st_acc8 + `mk_zext 1 8 (mk_bit i (tf_ivar in_val))` end;
+             let $out_val := `mk_zext 8 32 (tf_svar st_acc8)`;
+             let $out_ok := `mk_fold 32 (fun i acc => tf_op2 tf_xor acc (mk_bit i (tf_ivar in_val))) (tf_const 0)` ]}
+      | a_concat =>
+          {[ `mk_clear_outputs`;
+             let $out_val := `mk_concat [(8, low_byte); (8, mk_slice 15 8 (tf_ivar in_val)); (16, tf_const 0)]` ]}
+      | a_select =>
+          {[ `mk_clear_outputs`;
+             let $out_val :=
+               `mk_zext 8 32 (mk_select 2 (tf_ivar in_idx) [tf_const 10; tf_const 20; tf_const 30] (tf_const 99))` ]}
+      | a_find =>
+          {[ `mk_clear_outputs`;
+             `mk_first cell_empty store_low (tf_ops_base tf_nop)`;
+             let $out_ok := `mk_all cell_full` ]}
+      | a_shift =>
+          {[ `mk_clear_outputs`; `mk_shift_down st_cell low_byte` ]}
+      | a_case =>
+          {[ `mk_clear_outputs`;
+             `mk_case 32 (tf_ivar in_val) [(5%N, set_out 50); (0xDEADBEEF%N, set_out 1)] (set_out 7)` ]}
+      | a_sext =>
+          {[ `mk_clear_outputs`; let $out_val := `mk_sext 8 32 low_byte` ]}
+      | a_pset =>
+          {[ `mk_clear_outputs`;
+             `mk_packed_set st_pk 32 8 2 (tf_ivar in_idx) (tf_ivar in_val)`;
+             let $out_val := $st_pk ]}
+      | a_pget =>
+          {[ `mk_clear_outputs`;
+             let $out_val := `mk_zext 8 32 (mk_packed_get 32 8 2 (tf_svar st_pk) (tf_ivar in_idx))` ]}
+      | a_pset_wide =>
+          {[ `mk_clear_outputs`;
+             `mk_packed_set st_pk 32 8 3 wide_idx (mk_slice 15 8 (tf_ivar in_val))`;
+             let $out_val := $st_pk ]}
+      | a_pget_wide =>
+          {[ `mk_clear_outputs`;
+             let $out_val := `mk_zext 8 32 (mk_packed_get 32 8 3 (tf_svar st_pk) wide_idx)` ]}
       end.
 
 End FunctionalSpecification.
@@ -180,12 +226,101 @@ Section Instance.
 
     Definition tf_ctx : TFSynthContext := mk_synth_ctx (tfs_schedule tfs_ctx 10).
 
-    Example derived_reg_size : tf_action_reg_size tf_ctx = 4.
+    Example derived_reg_size : tf_action_reg_size tf_ctx = 5.
     Proof. reflexivity. Qed.
 
     Definition package := Lowering.package tf_ctx "Regression_MacroLib".
 
 End Instance.
+
+Section NewMacros.
+
+    Local Open Scope N_scope.
+
+    Definition ins (i v: N) (x: ml_inputs) : N := match x with in_idx => i | in_val => v end.
+    Definition after (l: list (ml_action * N * N)) : sim_state tfs_ctx :=
+      sim_steps tfs_ctx (List.map (fun c => (fst (fst c), ins (snd (fst c)) (snd c))) l) (sim_init tfs_ctx).
+    Definition res (o: ml_outputs) (l: list (ml_action * N * N)) : N := sim_out tfs_ctx (after l) o.
+    Definition cell_vals (l: list (ml_action * N * N)) : list N :=
+      List.map (fun k => sim_reg tfs_ctx (after l) (st_cell k)) [c0; c1; c2].
+
+    Example loop_popcount_parity :
+      List.map (fun v => (res out_val [(a_loop, 0, v)], res out_ok [(a_loop, 0, v)]))
+               [0xB7; 0x80000001; 0x80000003]%N
+      = [(6, 0); (1, 0); (2, 1)]%N.
+    Proof. vm_compute. reflexivity. Qed.
+
+    Example concat_swap : res out_val [(a_concat, 0, 0x1234)] = 0x34120000%N.
+    Proof. vm_compute. reflexivity. Qed.
+
+    Example select_table :
+      List.map (fun i => res out_val [(a_select, i, 0)]) [0; 1; 2; 3]%N = [10; 20; 30; 99]%N.
+    Proof. vm_compute. reflexivity. Qed.
+
+    Example find_first_empty :
+      (cell_vals [(a_find, 0, 0x11); (a_find, 0, 0x22)],
+       res out_ok [(a_find, 0, 0x11); (a_find, 0, 0x22); (a_find, 0, 0x33)],
+       cell_vals [(a_find, 0, 0x11); (a_find, 0, 0x22); (a_find, 0, 0x33); (a_find, 0, 0x44)])
+      = ([0x11; 0x22; 0]%N, 1%N, [0x11; 0x22; 0x33]%N).
+    Proof. vm_compute. reflexivity. Qed.
+
+    Example shift_down :
+      cell_vals [(a_write, 0, 0x11); (a_write, 1, 0x22); (a_write, 2, 0x33); (a_shift, 0, 0x144)]
+      = [0x22; 0x33; 0x44]%N.
+    Proof. vm_compute. reflexivity. Qed.
+
+    Example case_arms :
+      List.map (fun v => res out_val [(a_case, 0, v)]) [5; 0xDEADBEEF; 6]%N = [50; 1; 7]%N.
+    Proof. vm_compute. reflexivity. Qed.
+
+    Example sign_extend :
+      List.map (fun v => res out_val [(a_sext, 0, v)]) [0x7F; 0x80; 0x1FF]%N
+      = [0x7F; 0xFFFFFF80; 0xFFFFFFFF]%N.
+    Proof. vm_compute. reflexivity. Qed.
+
+    Example packed :
+      (res out_val [(a_pset, 1, 0xAB)],
+       res out_val [(a_pset, 1, 0xAB); (a_pset, 3, 0x1CD)],
+       res out_val [(a_pset, 1, 0xAB); (a_pset, 3, 0x1CD); (a_pget, 3, 0)],
+       res out_val [(a_pset, 1, 0xAB); (a_pget, 0, 0)])
+      = (0x0000AB00, 0xCD00AB00, 0xCD, 0)%N.
+    Proof. vm_compute. reflexivity. Qed.
+
+    Example packed_out_of_range :
+      (res out_val [(a_pset_wide, 0, 0xAB01)],
+       res out_val [(a_pset_wide, 0, 0xAB01); (a_pset_wide, 0, 0xCD05)],
+       List.map (fun i => res out_val [(a_pset_wide, 0, 0xAB01); (a_pset_wide, 0, 0xEF00); (a_pget_wide, 0, i)])
+                [0; 1; 4; 5; 7])
+      = (0x0000AB00, 0x0000AB00, [0xEF; 0xAB; 0; 0; 0]).
+    Proof. vm_compute. reflexivity. Qed.
+
+    Example ip_latency :
+      (ip_lat (mk_ip 8 8 3 (fun x => x)), ip_lat (mk_ip 8 8 0 (fun x => x))) = (3, 1)%nat.
+    Proof. reflexivity. Qed.
+
+End NewMacros.
+
+Section LintProbe.
+
+    Definition lint_probe (explicit: bool) : @tf_ops ml_states ml_inputs ml_outputs Empty_set :=
+      if explicit
+      then {[ let $st_acc8 := `tf_op1 (tf_resize 8) (tf_ivar in_val)`;
+              if ($in_val !=[32] #0) then pass else pass;
+              let $out_val := (`mk_N 8 300` ++[8,24] `tf_op1 (tf_resize 24) (tf_ivar in_val)`) ]}
+      else {[ let $st_acc8 := $in_val;
+              if $in_val then pass else pass;
+              let $out_val := (#300 ++[8,24] $in_val) ]}.
+
+    Example lint_findings :
+      lint_ops ml_states_size ml_inputs_size ml_outputs_size no_ips (lint_probe false)
+      = [lint_assign 8 32; lint_condition 32; lint_concat 24 32; lint_const 8 300].
+    Proof. vm_compute. reflexivity. Qed.
+
+    Example lint_explicit :
+      lint_ops ml_states_size ml_inputs_size ml_outputs_size no_ips (lint_probe true) = [].
+    Proof. vm_compute. reflexivity. Qed.
+
+End LintProbe.
 
 Definition prog := Interop.Backends.register package.
 Set Extraction Output Directory "build".

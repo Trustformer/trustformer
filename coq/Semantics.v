@@ -58,6 +58,9 @@ Section Semantics.
           | tf_not => Bits.neg (tf_eval_expr src sys_state input)
           | tf_resize source_size =>
             convert (tf_eval_expr (szB:=source_size) src sys_state input)
+          | tf_slice source_size offset =>
+            Bits.slice offset szB
+              (convert (szB:=slice_pad source_size offset szB) (tf_eval_expr (szB:=source_size) src sys_state input))
             end
         | tf_op2 op src1 src2 =>
             let val_src1 := tf_eval_expr src1 sys_state input in
@@ -85,6 +88,8 @@ Section Semantics.
                     if Bits.unsigned_gt val_cmp_src1 val_cmp_src2 then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
                 | tf_ge =>
                     if Bits.unsigned_ge val_cmp_src1 val_cmp_src2 then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
+                | tf_slt =>
+                    if Bits.signed_lt val_cmp_src1 val_cmp_src2 then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
                 end
             (* Like tf_cmp, operands evaluate at their OWN widths.  [Bits.app x y]
                puts [y] at the low indices, so this reads "hi followed by lo". *)
@@ -92,6 +97,14 @@ Section Semantics.
                 let val_hi := tf_eval_expr (szB:=hi_sz) src1 sys_state input in
                 let val_lo := tf_eval_expr (szB:=lo_sz) src2 sys_state input in
                 convert (Bits.app val_hi val_lo)
+            | tf_lsr => Bits.lsr (Bits.to_nat val_src2) val_src1
+            | tf_lsl => Bits.lsl (Bits.to_nat val_src2) val_src1
+            | tf_asr => Bits.asr (Bits.to_nat val_src2) val_src1
+            | tf_islice src_sz =>
+                let val_x := tf_eval_expr (szB:=src_sz) src1 sys_state input in
+                let val_o := tf_eval_expr (szB:=Nat.log2_up src_sz) src2 sys_state input in
+                Bits.slice (Bits.to_nat (convert (szB:=Nat.log2_up (islice_pad src_sz szB)) val_o)) szB
+                  (convert (szB:=islice_pad src_sz szB) val_x)
             end
         | tf_expr_if cond then_expr else_expr =>
             let cond_val := tf_eval_expr (szB:=1) cond sys_state input in

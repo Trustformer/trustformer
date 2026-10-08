@@ -228,10 +228,11 @@ Section Schedule.
       destruct (Nat.eqb (inputs_var_size iv) sz); [apply preserves_ret | apply emit_vm].
     - apply preserves_bind; [apply get_var_vm|]. intro x.
       destruct (Nat.eqb (dfg_var_size (DFG_OVar ov)) sz); [apply preserves_ret | apply emit_vm].
-    - destruct uop as [| source_size].
+    - destruct uop as [| source_size | ss off].
       + apply preserves_bind; [apply IHe|]. intro x. apply emit_vm.
       + apply preserves_bind; [apply IHe|]. intro x.
         apply emit_vm.
+      + apply preserves_bind; [apply IHe|]. intro x. apply emit_vm.
     - destruct bop;
         (apply preserves_bind; [apply IHe1| intro x1;
          apply preserves_bind; [apply IHe2| intro x2; apply emit_vm]]).

@@ -443,6 +443,9 @@ Section Lowering.
             Unop (PrimTyped.Bits1 (PrimTyped.Not target_size)) src_act
           | tf_resize source_size =>
             synth_convert target_size (expr_to_action src source_size)
+          | tf_slice source_size offset =>
+            Unop (PrimTyped.Bits1 (PrimTyped.Slice (slice_pad source_size offset target_size) offset target_size))
+                 (synth_convert (slice_pad source_size offset target_size) (expr_to_action src source_size))
           end
           
       | tf_op2 op src1 src2 =>
@@ -484,6 +487,7 @@ Section Lowering.
                 | tf_le => synth_convert target_size (in_var_size:=1) (Binop (PrimTyped.Bits2 (PrimTyped.Compare false cLe cmp_sz)) s1 s2)
                 | tf_gt => synth_convert target_size (in_var_size:=1) (Binop (PrimTyped.Bits2 (PrimTyped.Compare false cGt cmp_sz)) s1 s2)
                 | tf_ge => synth_convert target_size (in_var_size:=1) (Binop (PrimTyped.Bits2 (PrimTyped.Compare false cGe cmp_sz)) s1 s2)
+                | tf_slt => synth_convert target_size (in_var_size:=1) (Binop (PrimTyped.Bits2 (PrimTyped.Compare true cLt cmp_sz)) s1 s2)
               end
 
           | tf_concat hi_sz lo_sz =>
@@ -491,6 +495,23 @@ Section Lowering.
               let s2 := expr_to_action src2 lo_sz in
               synth_convert target_size (in_var_size:=(lo_sz + hi_sz))
                 (Binop (PrimTyped.Bits2 (PrimTyped.Concat hi_sz lo_sz)) s1 s2)
+          | tf_lsr =>
+              Binop (PrimTyped.Bits2 (PrimTyped.Lsr target_size target_size))
+                    (expr_to_action src1 target_size)
+                    (expr_to_action src2 target_size)
+          | tf_lsl =>
+              Binop (PrimTyped.Bits2 (PrimTyped.Lsl target_size target_size))
+                    (expr_to_action src1 target_size)
+                    (expr_to_action src2 target_size)
+          | tf_asr =>
+              Binop (PrimTyped.Bits2 (PrimTyped.Asr target_size target_size))
+                    (expr_to_action src1 target_size)
+                    (expr_to_action src2 target_size)
+          | tf_islice src_sz =>
+              Binop (PrimTyped.Bits2 (PrimTyped.IndexedSlice (islice_pad src_sz target_size) target_size))
+                    (synth_convert (islice_pad src_sz target_size) (expr_to_action src1 src_sz))
+                    (synth_convert (Nat.log2_up (islice_pad src_sz target_size))
+                       (expr_to_action src2 (Nat.log2_up src_sz)))
           end
           
       | tf_expr_if cond then_expr else_expr =>

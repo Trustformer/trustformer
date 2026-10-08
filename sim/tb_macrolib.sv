@@ -1,9 +1,11 @@
 module tb_macrolib;
-  localparam [3:0] WRITE = 0, READ = 1, CLEAR = 2, MOD = 3, MOD8 = 4,
-                   BITS = 5, CONST = 6, CONST2 = 7;
+  localparam [4:0] WRITE = 0, READ = 1, CLEAR = 2, MOD = 3, MOD8 = 4,
+                   BITS = 5, CONST = 6, CONST2 = 7, LOOP = 8, CONCAT = 9, SELECT = 10,
+                   FIND = 11, SHIFT = 12, CASE = 13, SEXT = 14, PSET = 15, PGET = 16,
+                   PSET_WIDE = 17, PGET_WIDE = 18;
 
   logic clk = 0, rst_n = 0;
-  logic [4:0]  in_cmd_out = 5'b0;
+  logic [5:0]  in_cmd_out = 6'b0;
   logic [1:0]  idx = 2'b0;
   logic [31:0] val = 32'b0;
   wire ready, idx_ack, val_ack;
@@ -24,13 +26,14 @@ module tb_macrolib;
 
   int checks = 0, fails = 0;
 
-  task automatic cmd(input [3:0] c, input [1:0] i, input [31:0] v);
+  task automatic cmd(input [4:0] c, input [1:0] i, input [31:0] v);
     @(negedge clk);
     while (ready !== 1'b1) @(negedge clk);
     in_cmd_out = {1'b1, c}; idx = i; val = v;
     @(posedge clk);
     @(negedge clk);
-    in_cmd_out = 5'b0; idx = ~i; val = 32'hdeadbeef;
+    in_cmd_out = 6'b0; idx = ~i; val = 32'hdeadbeef;
+    #1;
     while (ready !== 1'b1) @(negedge clk);
   endtask
 
@@ -80,6 +83,56 @@ module tb_macrolib;
     cmd(CONST2, 0, 0);
     expect_eq("rep ++ odd hex", out_val, 32'h5C5C0ABC);
     expect_eq("N with top chunk", out_wide, 128'hABCDE);
+
+    for (int k = 0; k < 200; k++) begin
+      logic [31:0] v = $urandom;
+      cmd(LOOP, 0, v);   expect_eq("popcount", out_val, $countones(v[7:0])); expect_eq("parity", out_ok, ^v);
+      cmd(CONCAT, 0, v); expect_eq("concat", out_val, {v[7:0], v[15:8], 16'h0});
+      cmd(SEXT, 0, v);   expect_eq("sext", out_val, {{24{v[7]}}, v[7:0]});
+      if (v != 5 && v != 32'hDEADBEEF) begin cmd(CASE, 0, v); expect_eq("case default", out_val, 7); end
+    end
+    cmd(CASE, 0, 5);            expect_eq("case 5", out_val, 50);
+    cmd(CASE, 0, 32'hDEADBEEF); expect_eq("case wide", out_val, 1);
+    for (int i = 0; i < 4; i++) begin
+      cmd(SELECT, i[1:0], 0);   expect_eq("select", out_val, (i == 0) ? 10 : (i == 1) ? 20 : (i == 2) ? 30 : 99);
+    end
+
+    cmd(CLEAR, 0, 0);
+    cmd(FIND, 0, 32'h111); expect_eq("find 1 full", out_ok, 0);
+    cmd(FIND, 0, 32'h122); expect_eq("find 2 full", out_ok, 0);
+    cmd(FIND, 0, 32'h133); expect_eq("find 3 full", out_ok, 1);
+    cmd(FIND, 0, 32'h144); expect_eq("find 4 full", out_ok, 1);
+    cmd(READ, 0, 0); expect_eq("find c0", out_val, 32'h11);
+    cmd(READ, 1, 0); expect_eq("find c1", out_val, 32'h22);
+    cmd(READ, 2, 0); expect_eq("find c2", out_val, 32'h33);
+    cmd(SHIFT, 0, 32'h155);
+    cmd(READ, 0, 0); expect_eq("shift c0", out_val, 32'h22);
+    cmd(READ, 1, 0); expect_eq("shift c1", out_val, 32'h33);
+    cmd(READ, 2, 0); expect_eq("shift c2", out_val, 32'h55);
+
+    begin
+      logic [31:0] pk = 0;
+      for (int k = 0; k < 300; k++) begin
+        logic [1:0] i = $urandom;
+        logic [31:0] v = $urandom;
+        if (k % 2 == 0) begin
+          pk[i * 8 +: 8] = v[7:0];
+          cmd(PSET, i, v); expect_eq("packed set", out_val, pk);
+        end else begin
+          cmd(PGET, i, v); expect_eq("packed get", out_val, {24'h0, pk[i * 8 +: 8]});
+        end
+      end
+      for (int k = 0; k < 300; k++) begin
+        logic [31:0] v = $urandom;
+        logic [2:0] i = v[2:0];
+        if (k % 2 == 0) begin
+          if (i < 4) pk[i * 8 +: 8] = v[15:8];
+          cmd(PSET_WIDE, 0, v); expect_eq("packed set (wide index)", out_val, pk);
+        end else begin
+          cmd(PGET_WIDE, 0, v); expect_eq("packed get (wide index)", out_val, (i < 4) ? {24'h0, pk[i * 8 +: 8]} : 32'h0);
+        end
+      end
+    end
 
     if (fails != 0) begin $display("FAIL: %0d of %0d checks", fails, checks); $fatal(1); end
     $display("PASS (%0d checks)", checks);
