@@ -10,9 +10,8 @@ Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
 
 (* The paper's running example, verbatim: the lockbox with a retry counter
-   (paper/sections/05_design/01_functional_spec.tex, fig:example-spec).  The
-   module behind fig:dfg1, fig:dfgA5 and fig:dfgB5, and the tree's first use of
-   arithmetic ([tf_sub]). *)
+   (01_functional_spec.tex, fig:example-spec), behind fig:dfg1, fig:dfgA5 and
+   fig:dfgB5, and the tree's first use of arithmetic ([tf_sub]). *)
 
 Section FunctionalSpecification.
 
@@ -241,7 +240,9 @@ Section Instance.
         tfs_spec_decls := []
     |}.
 
-    Definition tf_schedule := tfs_schedule tfs_ctx 10.
+    (* The paper's configuration: at cost limit 4 [action_test] has the paper's
+       one buffer, [tries - 1], and takes its two cycles (see Taint.v). *)
+    Definition tf_schedule := tfs_schedule tfs_ctx 4.
 
     Definition tf_ctx : TFSynthContext := {|
         tf_sched_ctx := tf_schedule;

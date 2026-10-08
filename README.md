@@ -40,24 +40,24 @@ is whether the list is the right one.
 
 ## What is in here
 
-| Path                                                  | Contents                                                                                      |
-| ----------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `coq/Syntax.v`, `coq/Semantics.v`                     | the specification language and its denotational semantics                                     |
-| `coq/Contract.v`                                      | `TFSchedContext` (what a user writes) and `TFSchedule` (what the scheduler must produce)      |
-| `coq/DFG.v`                                           | data-flow graph datatypes and declassification instances                                      |
-| `coq/Scheduler/Build.v`                               | step 1: the DFG builder, a state monad over the action's `tf_ops`                             |
-| `coq/Scheduler/Cost.v`, `coq/Scheduler/Buffers.v`     | steps 2-4: the cost model, target cycles, and which nodes need a buffer register               |
-| `coq/Scheduler/States.v`                              | the scheduled register file, indexed by the buffer table                                      |
-| `coq/Scheduler/Taint.v`                               | step 5: taint and declassification analyses                                                   |
-| `coq/Scheduler/Codegen.v`                             | step 6: the DFG as `tf_ops` over that register file, and `schedule`                           |
-| `coq/Scheduler/Schedule.v`                            | the `TFSchedule` record and the obligations it carries                                        |
-| `coq/Scheduler/Show.v`, `coq/Scheduler/Audit.v`       | diagnostics: criticality reports, cycle bounds with witnesses, Graphviz output                 |
-| `coq/Backend/`                                        | `Lowering.v`, the Kôika register file, rules and scheduler for a `TFSchedule`                 |
-| `coq/Theorems/`                                       | the guarantees: `Synthesis.v`, `SchedulerSimulation.v`, `IPR.v`, `Confidentiality.v`          |
-| `coq/Theorems/Internal/`                              | proof bulk those rest on — machine-checked, not written to be read                            |
-| `coq/Declassification/`                               | the declassification rule library                                                             |
-| `coq/Examples/`                                       | the worked designs, one folder each: a `Spec.v` and any proofs about it                       |
-| `coq/Regressions/`                                    | toolchain tests: the analyses, the lowering, and the designs the testbenches drive            |
+| Path                                              | Contents                                                                                 |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `coq/Syntax.v`, `coq/Semantics.v`                 | the specification language and its denotational semantics                                |
+| `coq/Contract.v`                                  | `TFSchedContext` (what a user writes) and `TFSchedule` (what the scheduler must produce) |
+| `coq/DFG.v`                                       | data-flow graph datatypes and declassification instances                                 |
+| `coq/Scheduler/Build.v`                           | step 1: the DFG builder, a state monad over the action's `tf_ops`                        |
+| `coq/Scheduler/Cost.v`, `coq/Scheduler/Buffers.v` | steps 2-4: the cost model, target cycles, and which nodes need a buffer register         |
+| `coq/Scheduler/States.v`                          | the scheduled register file, indexed by the buffer table                                 |
+| `coq/Scheduler/Taint.v`                           | step 5: taint and declassification analyses                                              |
+| `coq/Scheduler/Codegen.v`                         | step 6: the DFG as `tf_ops` over that register file, and `schedule`                      |
+| `coq/Scheduler/Schedule.v`                        | the `TFSchedule` record and the obligations it carries                                   |
+| `coq/Scheduler/Show.v`, `coq/Scheduler/Audit.v`   | diagnostics: criticality reports, cycle bounds with witnesses, Graphviz output           |
+| `coq/Backend/`                                    | `Lowering.v`, the Kôika register file, rules and scheduler for a `TFSchedule`            |
+| `coq/Theorems/`                                   | the guarantees: `Synthesis.v`, `SchedulerSimulation.v`, `IPR.v`, `Confidentiality.v`     |
+| `coq/Theorems/Internal/`                          | proof bulk those rest on — machine-checked, not written to be read                       |
+| `coq/Declassification/`                           | the declassification rule library                                                        |
+| `coq/Examples/`                                   | the worked designs, one folder each: a `Spec.v` and any proofs about it                  |
+| `coq/Regressions/`                                | toolchain tests: the analyses, the lowering, and the designs the testbenches drive       |
 
 ## Writing a module
 
