@@ -10,6 +10,7 @@ Require Import Koika.Utils.Environments.
 Require Export Koika.Primitives.
 
 Require Koika.Properties.SemanticProperties.
+Require Koika.BitsToLists.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
@@ -1583,6 +1584,23 @@ Section SynthesisProof.
     rewrite latest_write0_expr_log. exact Hlatest.
   Qed.
 
+  Lemma slice_zext_widen :
+    forall szA szB (v: bits szA), szA <= szB ->
+      Bits.slice 0 szB (Bits.extend_end v szB false) = Bits.slice 0 szB v.
+  Proof.
+    intros szA szB v Hle.
+    apply vect_to_list_inj.
+    rewrite !BitsToLists.slice. unfold BitsToLists.take_drop'. cbn [List.firstn List.skipn].
+    unfold Bits.extend_end.
+    rewrite vect_to_list_eq_rect, vect_to_list_app, <- BitsToLists.repeat_bits_const.
+    pose proof (vect_to_list_length v) as Hlen.
+    rewrite (List.firstn_all2 (n:=szB)) by (rewrite List.app_length, List.repeat_length; lia).
+    rewrite (List.firstn_all2 (n:=szB)) by lia.
+    replace (szB - Nat.min szB (Nat.max szA szB - 0)) with 0 by lia.
+    replace (szB - Nat.min szB (szA - 0)) with (szB - szA) by lia.
+    cbn [List.repeat]. rewrite List.app_nil_r. reflexivity.
+  Qed.
+
   Lemma interp_synth_convert :
     forall r sigma log_r log_a szA szB (expr : action R Sigma _ (bits_t szA)),
       interp_action (R:=R) (REnv:=REnv) r sigma CtxEmpty log_r log_a (synth_convert (in_var_size := szA) tf_ctx szB expr) = 
@@ -1598,7 +1616,12 @@ Section SynthesisProof.
     unfold synth_convert, convert.
     destruct (eq_dec szA szB) as [Heq | Hneq]; subst.
     - sauto.
-    - cbn. unfold opt_bind. reflexivity.
+    - destruct (Nat.leb szA szB) eqn:Hle.
+      + apply Nat.leb_le in Hle.
+        cbn. unfold opt_bind.
+        destruct (interp_action r sigma CtxEmpty log_r log_a expr) as [[[l v] g] | ]; [ | reflexivity ].
+        rewrite (slice_zext_widen szA szB v Hle). reflexivity.
+      + cbn. unfold opt_bind. reflexivity.
   Time Qed. (* ca. 0.1 s *)
 
   Lemma interp_action_expr :

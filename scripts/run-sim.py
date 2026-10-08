@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Run the testbenches in sim/ against the generated Verilog in build/.
 
-    scripts/run-sim.py [name ...]      names default to every testbench
+    scripts/run-sim.py [-j N] [name ...]   names default to every testbench,
+                                           N to half the CPUs
 
 Every testbench decides its own verdict: it prints PASS or FAIL and exits
 non-zero on failure.  This script only builds it, runs it, and reports.
@@ -13,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -40,6 +42,7 @@ BENCHES = {
     "tb_untaken":   Bench("Regression_ArmsSeq"),
     "tb_xport":     Bench("Regression_XPortGuard"),
     "tb_mars":      Bench("Example_Mars"),
+    "tb_macrolib":  Bench("Regression_MacroLib"),
 
     # Against the REAL secworks/sha256 core through external/glue/.
     "tb_mars_v4": Bench(
@@ -48,6 +51,18 @@ BENCHES = {
         defines={"CORE_DIV": 1, "IP_LAT_SHA": 140, "IP_LAT_HMAC": 275},
     ),
     "tb_mars_pcrextend": Bench("Example_MarsSeq", sources=REAL_IP),
+
+    # The Knox examples, coq/Examples/Knox/.
+    "tb_knox_fig2":            Bench("Knox_Fig2Backup"),
+    "tb_knox_pin_backup":      Bench("Knox_PinBackup"),
+    "tb_knox_password_hasher": Bench("Knox_PwHasher", sources=REAL_IP),
+    "tb_knox_otp":             Bench("Knox_Otp", sources=[os.path.join(ROOT, "sim/sha1_2blk_model.sv")]),
+    "tb_knox_counter":         Bench("Knox_Counter"),
+    "tb_knox_adder":           Bench("Knox_Adder"),
+    "tb_knox_lockbox":         Bench("Knox_Lockbox"),
+    "tb_knox_multi_lockbox":   Bench("Knox_MultiLockbox"),
+    "tb_knox_fifo1":           Bench("Knox_Fifo1"),
+    "tb_knox_fifo":            Bench("Knox_Fifo"),
 }
 
 
@@ -69,14 +84,22 @@ def run_one(name, bench, verilator, work):
 
     d = os.path.join(work, name)
     os.makedirs(d, exist_ok=True)
-    rtl = [tb, design] + bench.sources
+    try:
+        return build_and_run(name, bench, verilator, [tb, design] + bench.sources, d)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def build_and_run(name, bench, verilator, rtl, d):
     for f in rtl:
         shutil.copy(f, d)
 
     # --build-jobs 2 is required: with one job verilator bundles main into
     # Vtb__ALL.a and the linker discards it.
+    # -O0: compiling the C++ dominates, and every simulation runs in seconds.
     cmd = [verilator, "--binary", "--main", "--timing", "-Wno-fatal",
-           "--build-jobs", "2", "--top-module", name]
+           "--build-jobs", "2", "--top-module", name,
+           "-MAKEFLAGS", "OPT_FAST=-O0 OPT_SLOW=-O0 OPT_GLOBAL=-O0"]
     cmd += [f"+define+{k}={v}" for k, v in bench.defines.items()]
     cmd += [os.path.basename(f) for f in rtl]
 
@@ -94,7 +117,11 @@ def run_one(name, bench, verilator, work):
 
 
 def main(argv):
-    names = [os.path.basename(a).removesuffix(".sv") for a in argv[1:]] or list(BENCHES)
+    args = argv[1:]
+    jobs = max(1, (os.cpu_count() or 2) // 2)
+    if args[:1] == ["-j"]:
+        jobs, args = int(args[1]), args[2:]
+    names = [os.path.basename(a).removesuffix(".sv") for a in args] or list(BENCHES)
     unknown = [n for n in names if n not in BENCHES]
     if unknown:
         sys.exit(f"unknown testbench(es): {', '.join(unknown)}\n"
@@ -102,14 +129,14 @@ def main(argv):
 
     verilator = find_verilator()
     status = 0
-    with tempfile.TemporaryDirectory() as work:
-        for name in names:
-            ok, detail = run_one(name, BENCHES[name], verilator, work)
+    with tempfile.TemporaryDirectory() as work, ThreadPoolExecutor(jobs) as pool:
+        results = pool.map(lambda n: run_one(n, BENCHES[n], verilator, work), names)
+        for name, (ok, detail) in zip(names, results):
             if ok:
-                print(f"{name + '.sv':<24} -> {BENCHES[name].design:<28} PASS")
+                print(f"{name + '.sv':<28} -> {BENCHES[name].design:<28} PASS")
             else:
                 status = 1
-                print(f"{name + '.sv':<24} -> {BENCHES[name].design:<28} FAIL")
+                print(f"{name + '.sv':<28} -> {BENCHES[name].design:<28} FAIL")
                 for line in detail.splitlines():
                     print(f"    {line}")
     return status

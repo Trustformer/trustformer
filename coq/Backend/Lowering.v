@@ -400,7 +400,14 @@ Section Lowering.
       : action sig (bits_t out_var_size) :=
       match eq_dec in_var_size out_var_size with
       | left e => eq_rect in_var_size (fun sz => action sig (bits_t sz)) code out_var_size e
-      | right n => (Unop (PrimTyped.Bits1 (PrimTyped.Slice in_var_size 0 out_var_size)) code)
+      | right n =>
+          if Nat.leb in_var_size out_var_size then
+            (* A Slice wider than its operand prints as an out-of-range
+               part-select whose extra bits Verilog leaves undefined. *)
+            (Unop (PrimTyped.Bits1 (PrimTyped.Slice (Nat.max in_var_size out_var_size) 0 out_var_size))
+              (Unop (PrimTyped.Bits1 (PrimTyped.ZExtL in_var_size out_var_size)) code))
+          else
+            (Unop (PrimTyped.Bits1 (PrimTyped.Slice in_var_size 0 out_var_size)) code)
       end.
 
     Program Definition live_input {sig} (r : spec_inputs)

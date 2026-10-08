@@ -44,6 +44,10 @@ Build it with `+define+GLUE_OMIT_DEASSERT` to get a deliberately misbehaving
 adapter — one that never drops `crypt_valid`. The module must remain safe under
 it. `agents/mars/oracle/run-stage3.sh` asserts exactly that.
 
+`pwhash_sha256_adapter.v` gives `sha256_core` the one-block port of the Knox
+password hasher (`coq/Examples/Knox/PasswordHasher`): a strobe and a 512-bit
+block in, the digest held on the response until the next request.
+
 ## What each adapter is responsible for
 
 `mars_sha256_glue.v` and `mars_hmac_glue.v` both pad, because `sha256_core`
