@@ -61,7 +61,7 @@ Module Examples.
     pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
-    pose (debug_sched := schedule shd cost (buffer_needs shd cost) (action)); vm_compute in debug_sched.
+    pose (debug_sched := schedule shd cost (buffer_needs shd cost) (Taint.get_tainted shd) (Taint.decl_facts shd) (action)); vm_compute in debug_sched.
   Abort.
 
   Goal True. 
@@ -71,7 +71,7 @@ Module Examples.
     pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
-    pose (debug_sched := schedule shd cost (buffer_needs shd cost) (action)); time vm_compute in debug_sched. (* TIME: 0.2 Seconds *)
+    pose (debug_sched := schedule shd cost (buffer_needs shd cost) (Taint.get_tainted shd) (Taint.decl_facts shd) (action)); time vm_compute in debug_sched. (* TIME: 0.2 Seconds *)
   Abort.
 
   Definition shd_ctx2 : TFSchedContext :=
@@ -112,7 +112,7 @@ Module Examples.
     pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
-    pose (debug_sched := schedule shd cost (buffer_needs shd cost) (action)); vm_compute in debug_sched.
+    pose (debug_sched := schedule shd cost (buffer_needs shd cost) (Taint.get_tainted shd) (Taint.decl_facts shd) (action)); vm_compute in debug_sched.
   Abort.
 
   Goal True. 
@@ -122,11 +122,11 @@ Module Examples.
     pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
-    pose (debug_sched := schedule shd cost (buffer_needs shd cost) (action)); time vm_compute in debug_sched.
+    pose (debug_sched := schedule shd cost (buffer_needs shd cost) (Taint.get_tainted shd) (Taint.decl_facts shd) (action)); time vm_compute in debug_sched.
   Abort.
 
-  Definition no_precompute := schedule shd_ctx2 5 (buffer_needs shd_ctx2 5) (action).
-  Definition with_precompute := tc_compute (schedule shd_ctx2 5 (buffer_needs shd_ctx2 5) (action)).
+  Definition no_precompute := schedule shd_ctx2 5 (buffer_needs shd_ctx2 5) (Taint.get_tainted shd_ctx2) (Taint.decl_facts shd_ctx2) (action).
+  Definition with_precompute := tc_compute (schedule shd_ctx2 5 (buffer_needs shd_ctx2 5) (Taint.get_tainted shd_ctx2) (Taint.decl_facts shd_ctx2) (action)).
 
   Goal True.
     pose (debug1 := no_precompute).
@@ -169,7 +169,7 @@ Module Examples.
     pose (debug_cost := calc_backward_cost shd cost debug_dfg); vm_compute in debug_cost.
     pose (debug_cycle := calc_target_cycle cost debug_cost); vm_compute in debug_cycle.
     pose (debug_bufs := require_buffer shd debug_dfg debug_cycle); vm_compute in debug_bufs.
-    pose (debug_sched := schedule shd cost (buffer_needs shd cost) (action)); vm_compute in debug_sched.
+    pose (debug_sched := schedule shd cost (buffer_needs shd cost) (Taint.get_tainted shd) (Taint.decl_facts shd) (action)); vm_compute in debug_sched.
   Abort.
 
 End Examples.

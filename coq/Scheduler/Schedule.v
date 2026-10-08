@@ -62,8 +62,6 @@ Section Schedule.
 
   Local Notation dfg_vars := (@dfg_vars_t states_var outputs_var).
   Local Notation dfg_state := (@dfg_state_t states_var inputs_var outputs_var ips_var).
-  Local Notation get_tainted := (Taint.get_tainted ctx).
-  Local Notation decl_facts := (Taint.decl_facts ctx).
   Hint Extern 0 (EqDec dfg_vars) => exact (Build.dfg_vars_eq_dec ctx) : typeclass_instances.
 
   (* The upstream sections are discharged, so bind their names back here. *)
@@ -93,6 +91,10 @@ Section Schedule.
 
   Context (bn : list (list (nid_t * (nat * sz_t)))).
 
+  (* The taint the code generator reads, as in Codegen.v. *)
+  Context (get_tainted : dfg_state -> list nid_t).
+  Context (decl_facts : dfg_state -> list Taint.gfact).
+
   Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (ips_var:=ips_var) (buffer_needs:=bn)).
   Hint Extern 0 (Show tf_dfg_states) => exact (States.show_tf_dfg_states ctx bn) : typeclass_instances.
   Hint Extern 0 (FiniteType2 tf_dfg_states) => exact (States.tf_dfg_states_fin2 ctx bn) : typeclass_instances.
@@ -101,15 +103,15 @@ Section Schedule.
   Local Notation compile_dfg_expr_aux := (Codegen.compile_dfg_expr_aux ctx bn).
   Local Notation compile_dfg_expr fuel a_idx dfg n bufs :=
     (compile_dfg_expr_aux (get_tainted dfg) (decl_facts dfg) [] fuel a_idx dfg n bufs).
-  Local Notation compile_dfg_aux := (Codegen.compile_dfg_aux ctx bn).
-  Local Notation compile_dfg_buffers := (Codegen.compile_dfg_buffers ctx bn).
-  Local Notation compile_dfg_drives := (Codegen.compile_dfg_drives ctx bn).
-  Local Notation compile_dfg_valid := (Codegen.compile_dfg_valid ctx bn).
+  Local Notation compile_dfg_aux := (Codegen.compile_dfg_aux ctx bn get_tainted decl_facts).
+  Local Notation compile_dfg_buffers := (Codegen.compile_dfg_buffers ctx bn get_tainted decl_facts).
+  Local Notation compile_dfg_drives := (Codegen.compile_dfg_drives ctx bn get_tainted decl_facts).
+  Local Notation compile_dfg_valid := (Codegen.compile_dfg_valid ctx bn get_tainted decl_facts).
   Local Notation done_signal := (States.done_signal ctx bn).
   Local Notation maps_from := (States.maps_from ctx bn).
   Local Notation maps_to := (States.maps_to ctx bn).
   Local Notation reset_states := (States.reset_states ctx bn).
-  Local Notation schedule := (Codegen.schedule ctx cost_limit bn).
+  Local Notation schedule := (Codegen.schedule ctx cost_limit bn get_tainted decl_facts).
   Local Notation tf_dfg_states_init := (States.tf_dfg_states_init ctx bn).
   Local Notation tf_dfg_states_size := (States.tf_dfg_states_size ctx bn).
 
@@ -791,7 +793,8 @@ End Schedule.
 
 (* The buffer table is computed once here; every function of the record closes over it. *)
 Definition tfs_schedule (ctx: TFSchedContext) (cost_limit: nat) : TFSchedule :=
-  tfs_schedule_bn ctx cost_limit (buffer_needs ctx cost_limit).
+  tfs_schedule_bn ctx cost_limit (buffer_needs ctx cost_limit)
+    (Taint.get_tainted ctx) (Taint.decl_facts ctx).
 
 (* Keeps every existing use site unchanged while the taint set is computed once
    per top-level call rather than at every phi. *)

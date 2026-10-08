@@ -1551,12 +1551,12 @@ Section SchedulerSimulation.
     In (tf_assign (tf_dfg_b a_idx n_idx)
           (buf_value_expr act a_idx n_idx sz (fst compiled) (snd compiled)
              buffers n))
-       (compile_dfg_buffers ctx bneeds (index_to_nat a_idx)
+       (compile_dfg_buffers ctx bneeds (get_tainted ctx) (decl_facts ctx) (index_to_nat a_idx)
           (build_dfg ctx act) buffers)
     /\
     In (tf_assign (tf_dfg_v a_idx n_idx)
           (buf_valid_expr act a_idx n_idx sz (snd compiled) n))
-       (compile_dfg_buffers ctx bneeds (index_to_nat a_idx)
+       (compile_dfg_buffers ctx bneeds (get_tainted ctx) (decl_facts ctx) (index_to_nat a_idx)
           (build_dfg ctx act) buffers).
   Proof.
     intro Halign. cbv zeta.
@@ -1955,7 +1955,7 @@ Section SchedulerSimulation.
         (act: tfs_action sched)
         (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) (p: p_var) :
     In (tf_assign (tf_dfg_ov p) (drive_value_expr act a_idx p))
-       (compile_dfg_drives ctx bneeds (index_to_nat a_idx) (build_dfg ctx act)
+       (compile_dfg_drives ctx bneeds (get_tainted ctx) (decl_facts ctx) (index_to_nat a_idx) (build_dfg ctx act)
           (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
   Proof.
     unfold compile_dfg_drives. rewrite index_of_nat_to_nat.
@@ -8867,7 +8867,7 @@ Section SchedulerSimulation.
     (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var) (outputs_var := o_var) (ips_var := p_var))
     (buffers: list (nat * (nat * nat))) (o: o_var)
     (op: @tf_op (tfs_states sched) si_var o_var Empty_set) :
-    In op (compile_dfg_drives ctx bneeds a_idx dfg buffers) ->
+    In op (compile_dfg_drives ctx bneeds (get_tainted ctx) (decl_facts ctx) a_idx dfg buffers) ->
     ~ op_writes_out o op.
   Proof.
     unfold compile_dfg_drives.
@@ -8881,7 +8881,7 @@ Section SchedulerSimulation.
     (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var) (outputs_var := o_var) (ips_var := p_var))
     (buffers: list (nat * (nat * nat))) (sv: s_var)
     (op: @tf_op (tfs_states sched) si_var o_var Empty_set) :
-    In op (compile_dfg_drives ctx bneeds a_idx dfg buffers) ->
+    In op (compile_dfg_drives ctx bneeds (get_tainted ctx) (decl_facts ctx) a_idx dfg buffers) ->
     ~ op_assigns_st (tf_dfg_s sv) op.
   Proof.
     unfold compile_dfg_drives.
@@ -8897,7 +8897,7 @@ Section SchedulerSimulation.
     (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var) (outputs_var := o_var) (ips_var := p_var))
     (buffers: list (nat * (nat * nat))) (s: s_var)
     (op: @tf_op (tfs_states sched) si_var o_var Empty_set) :
-    In op (compile_dfg_buffers ctx bneeds a_idx dfg buffers) ->
+    In op (compile_dfg_buffers ctx bneeds (get_tainted ctx) (decl_facts ctx) a_idx dfg buffers) ->
     ~ op_assigns_st (tf_dfg_s s) op.
   Proof.
     unfold compile_dfg_buffers.
@@ -8948,7 +8948,7 @@ Section SchedulerSimulation.
     (dfg: dfg_state_t (states_var := s_var) (inputs_var := i_var) (outputs_var := o_var) (ips_var := p_var))
     (buffers: list (nat * (nat * nat))) (o: o_var)
     (op: @tf_op (tfs_states sched) si_var o_var Empty_set) :
-    In op (compile_dfg_buffers ctx bneeds a_idx dfg buffers) ->
+    In op (compile_dfg_buffers ctx bneeds (get_tainted ctx) (decl_facts ctx) a_idx dfg buffers) ->
     ~ op_writes_out o op.
   Proof.
     unfold compile_dfg_buffers.
@@ -11547,9 +11547,9 @@ Section SchedulerSimulation.
     exists done_e,
       fst (Contract.tfs_schedule sched act)
       = done_e ::
-        compile_dfg_buffers ctx bneeds (index_to_nat a_idx) (build_dfg ctx act)
+        compile_dfg_buffers ctx bneeds (get_tainted ctx) (decl_facts ctx) (index_to_nat a_idx) (build_dfg ctx act)
           (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
-        ++ compile_dfg_drives ctx bneeds (index_to_nat a_idx) (build_dfg ctx act)
+        ++ compile_dfg_drives ctx bneeds (get_tainted ctx) (decl_facts ctx) (index_to_nat a_idx) (build_dfg ctx act)
              (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []).
   Proof.
     intros Halign.

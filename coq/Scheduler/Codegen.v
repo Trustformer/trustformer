@@ -83,8 +83,10 @@ Section Codegen.
   Local Notation declassified_at := Taint.declassified_at.
   Local Notation mem_nid := Taint.mem_nid.
   Local Notation decl_instances := (Taint.decl_instances ctx).
-  Local Notation get_tainted := (Taint.get_tainted ctx).
-  Local Notation decl_facts := (Taint.decl_facts ctx).
+  (* The taint the code generator reads: the analysis for [tfs_schedule], a
+     fixed choice for the evaluation baselines in EvalModes.v. *)
+  Context (get_tainted : dfg_state -> list nid_t).
+  Context (decl_facts : dfg_state -> list gfact).
 
   (* ============================== *)
   (* = Step 6: TF Compilations    = *)
