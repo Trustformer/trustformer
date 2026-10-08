@@ -5071,7 +5071,12 @@ Section SchedulerSimulation.
         * apply emit_full; [ exact Hp1 | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn ].
       + exact Hinv.
     - (* tf_op1 *)
-      simpl. destruct op as [| source_size].
+      simpl. destruct op as [| source_size | source_size offset].
+      + apply seq_full.
+        * apply IHe.
+        * intros id1 s1 Hg1 Hn1 Hp1. apply emit_full;
+            [ exact Hp1 | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn1 ].
+        * exact Hinv.
       + apply seq_full.
         * apply IHe.
         * intros id1 s1 Hg1 Hn1 Hp1. apply emit_full;
@@ -5274,7 +5279,7 @@ Section SchedulerSimulation.
     - (* tf_ovar *)
       simpl. apply dataflow_var_sz; assumption.
     - (* tf_op1 *)
-      simpl. destruct op as [| source_size].
+      simpl. destruct op as [| source_size | source_size offset].
       + apply (seq_sz _ _ _ size).
         * intros Hi Hv. pose proof (IHe size s Hi Hv) as H.
           destruct (dataflow_expr ctx e size s) as [id s1]. exact (sz_weaken _ _ _ _ _ H).
@@ -5294,6 +5299,21 @@ Section SchedulerSimulation.
         { intros x Hx. simpl in Hx. destruct Hx as [<-|[]]. exact Hn1. }
         pose proof (emit_sz (DFG_Unary (tf_resize source_size) id) size s1 Hp1 Hq1 Hargs) as He.
         destruct (emit ctx (DFG_Unary (tf_resize source_size) id) size s1) as [id2 s2].
+        destruct He as [Hg2 [Hn2 [Hp2 [Hq2 Hs2]]]].
+        split; [ eapply wgmono_trans; eauto
+               | split; [ exact Hn2 | split; [ exact Hp2 | split; [ exact Hq2 | exact Hs2 ] ] ] ].
+      + unfold bind. cbv beta.
+        destruct (dataflow_expr ctx e source_size s) as [id s1] eqn:Erun.
+        pose proof (IHe source_size s Hinv Hvsz) as H. rewrite Erun in H.
+        cbv beta iota.
+        destruct H as [Hg1 [Hn1 [Hp1 [Hq1 Hs1]]]].
+        assert (Hargs : forall x,
+            In x (get_args ctx
+              {| nid := length (graph s1); op := DFG_Unary (tf_slice source_size offset) id; sz := size |}) ->
+            wnidwf s1 x).
+        { intros x Hx. simpl in Hx. destruct Hx as [<-|[]]. exact Hn1. }
+        pose proof (emit_sz (DFG_Unary (tf_slice source_size offset) id) size s1 Hp1 Hq1 Hargs) as He.
+        destruct (emit ctx (DFG_Unary (tf_slice source_size offset) id) size s1) as [id2 s2].
         destruct He as [Hg2 [Hn2 [Hp2 [Hq2 Hs2]]]].
         split; [ eapply wgmono_trans; eauto
                | split; [ exact Hn2 | split; [ exact Hp2 | split; [ exact Hq2 | exact Hs2 ] ] ] ].
@@ -5348,12 +5368,14 @@ Section SchedulerSimulation.
         match uop with
         | tf_not => wsz s a (sz node)
         | tf_resize source_size => wsz s a source_size
+        | tf_slice source_size _ => wsz s a source_size
         end
     | DFG_Binary bop a1 a2 =>
         match bop with
         | tf_cmp szC _ => wsz s a1 szC /\ wsz s a2 szC
         (* SPIKE: concat reads its operands at their declared widths. *)
         | tf_concat hz lz => wsz s a1 hz /\ wsz s a2 lz
+        | tf_islice isz0 => wsz s a1 isz0 /\ wsz s a2 (Nat.log2_up isz0)
         | _ => wsz s a1 (sz node) /\ wsz s a2 (sz node)
         end
     | DFG_Phi c t e => wsz s c 1 /\ wsz s t (sz node) /\ wsz s e (sz node)
@@ -5550,7 +5572,7 @@ Section SchedulerSimulation.
       simpl. apply dataflow_var_fg; assumption.
     - (* tf_op1 *)
       rename op into uop.
-      cbn [dataflow_expr]. destruct uop as [| source_size].
+      cbn [dataflow_expr]. destruct uop as [| source_size | source_size offset].
       + unfold bind.
         pose proof (IHe size s Hinv Hvsz Hfg) as H1.
         destruct (dataflow_expr ctx e size s) as [id1 s1].
@@ -5582,9 +5604,27 @@ Section SchedulerSimulation.
         destruct He as [Hg2 [Hn2 [Hp2 [Hq2 [Hs2 Hf2]]]]].
         split; [ eapply wgmono_trans; [ exact Hg1 | exact Hg2 ]
                | split; [ exact Hn2 | split; [ exact Hp2 | split; [ exact Hq2 | split; [ exact Hs2 | exact Hf2 ] ] ] ] ].
+      + unfold bind. cbv beta.
+        destruct (dataflow_expr ctx e source_size s) as [id1 s1] eqn:Erun.
+        pose proof (IHe source_size s Hinv Hvsz Hfg) as H1. rewrite Erun in H1.
+        cbv beta iota. destruct H1 as [Hg1 [Hn1 [Hw1 [Hv1 [Hs1 Hf1]]]]].
+        assert (Hargs : forall x,
+            In x (get_args ctx
+              {| nid := length (graph s1); op := DFG_Unary (tf_slice source_size offset) id1; sz := size |}) ->
+            wnidwf s1 x)
+          by (intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn1).
+        assert (Hnode : node_args_sz s1
+            {| nid := length (graph s1); op := DFG_Unary (tf_slice source_size offset) id1; sz := size |})
+          by (unfold node_args_sz; cbn [op]; exact Hs1).
+        pose proof (emit_fg (DFG_Unary (tf_slice source_size offset) id1) size s1
+          Hw1 Hv1 Hf1 Hargs Hnode) as He.
+        destruct (emit ctx (DFG_Unary (tf_slice source_size offset) id1) size s1) as [id2 s2].
+        destruct He as [Hg2 [Hn2 [Hp2 [Hq2 [Hs2 Hf2]]]]].
+        split; [ eapply wgmono_trans; [ exact Hg1 | exact Hg2 ]
+               | split; [ exact Hn2 | split; [ exact Hp2 | split; [ exact Hq2 | split; [ exact Hs2 | exact Hf2 ] ] ] ] ].
     - (* tf_op2 *)
       rename op into bop0.
-      cbn [dataflow_expr]. destruct bop0 as [ | | | | | | szC cop | hz lz ];
+      cbn [dataflow_expr]. destruct bop0 as [ | | | | | | | | | szC cop | hz lz | isz ];
         try (unfold bind;
          match goal with
          | |- context[dataflow_expr ctx e1 ?z s] =>
@@ -5629,6 +5669,27 @@ Section SchedulerSimulation.
       pose proof (emit_fg (DFG_Binary (tf_concat hz lz) id1 id2) size s2
                     Hw2 Hv2 Hf2 Hargs Hnode) as He.
       destruct (emit ctx (DFG_Binary (tf_concat hz lz) id1 id2) size s2) as [id3 s3].
+      destruct He as [Hg3 [Hn3 [Hp3 [Hq3 [Hs3 Hf3]]]]].
+      split; [ eapply wgmono_trans; [ exact Hg1 | eapply wgmono_trans; [ exact Hg2 | exact Hg3 ] ]
+             | split; [ exact Hn3 | split; [ exact Hp3 | split; [ exact Hq3 | split; [ exact Hs3 | exact Hf3 ] ] ] ] ].
+      unfold bind.
+      pose proof (IHe1 isz s Hinv Hvsz Hfg) as H1.
+      destruct (dataflow_expr ctx e1 isz s) as [id1 s1].
+      destruct H1 as [Hg1 [Hn1 [Hw1 [Hv1 [Hs1 Hf1]]]]].
+      pose proof (IHe2 (Nat.log2_up isz) s1 Hw1 Hv1 Hf1) as H2.
+      destruct (dataflow_expr ctx e2 (Nat.log2_up isz) s1) as [id2 s2].
+      destruct H2 as [Hg2 [Hn2 [Hw2 [Hv2 [Hs2 Hf2]]]]].
+      assert (Hargs : forall x, In x (get_args ctx {| nid := length (graph s2);
+                        op := DFG_Binary (tf_islice isz) id1 id2; sz := size |}) -> wnidwf s2 x)
+        by (intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[]]];
+            [ eapply wnidwf_gmono; [ exact Hn1 | exact Hg2 ] | exact Hn2 ]).
+      assert (Hnode : node_args_sz s2 {| nid := length (graph s2);
+                        op := DFG_Binary (tf_islice isz) id1 id2; sz := size |})
+        by (unfold node_args_sz; cbn [op sz];
+            split; [ eapply wsz_gmono; [ exact Hs1 | exact Hg2 ] | exact Hs2 ]).
+      pose proof (emit_fg (DFG_Binary (tf_islice isz) id1 id2) size s2
+                    Hw2 Hv2 Hf2 Hargs Hnode) as He.
+      destruct (emit ctx (DFG_Binary (tf_islice isz) id1 id2) size s2) as [id3 s3].
       destruct He as [Hg3 [Hn3 [Hp3 [Hq3 [Hs3 Hf3]]]]].
       split; [ eapply wgmono_trans; [ exact Hg1 | eapply wgmono_trans; [ exact Hg2 | exact Hg3 ] ]
              | split; [ exact Hn3 | split; [ exact Hp3 | split; [ exact Hq3 | split; [ exact Hs3 | exact Hf3 ] ] ] ] ].
@@ -6654,11 +6715,17 @@ Section SchedulerSimulation.
         * apply ret_pos; assumption.
         * apply emit_pos; [ exact Hp1 | discriminate | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hid ].
       + exact Hp.
-    - simpl. destruct op as [| source_size].
+    - simpl. destruct op as [| source_size | source_size offset].
       + apply seq_pos.
         * apply IHe.
         * intros id1 s1 Hid1 Hp1. apply emit_pos;
             [ exact Hp1 | discriminate | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hid1 ].
+        * exact Hp.
+      + apply seq_pos.
+        * apply IHe.
+        * intros id1 s1 Hid1 Hp1. apply emit_pos;
+            [ exact Hp1 | discriminate
+            | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hid1 ].
         * exact Hp.
       + apply seq_pos.
         * apply IHe.
@@ -8309,7 +8376,10 @@ Section SchedulerSimulation.
         * apply ret_fspec; assumption.
         * apply emit_fspec; assumption.
     - (* tf_op1 *)
-      cbn [dataflow_expr]. destruct op as [| source_size].
+      cbn [dataflow_expr]. destruct op as [| source_size | source_size offset].
+      + apply fspec_seq.
+        * apply IHe.
+        * intros id s1 Hg Hn Hv1. apply emit_fspec; assumption.
       + apply fspec_seq.
         * apply IHe.
         * intros id s1 Hg Hn Hv1. apply emit_fspec; assumption.
@@ -9556,9 +9626,9 @@ Section SchedulerSimulation.
     - destruct v; cbn [fst tf_eval_expr]; [ rewrite Hs | rewrite Ho ]; reflexivity.
     - destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
                   (build_dfg ctx act) arg bufs) as [ae ve] eqn:E1.
-      cbn [fst snd] in Hval |- *. destruct op1 as [| src];
+      cbn [fst snd] in Hval |- *. destruct op1 as [| src | src off];
         cbn [tf_eval_expr];
-        [ specialize (IHb arg ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) szB pi) | specialize (IHb arg ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) src pi) ];
+        [ specialize (IHb arg ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) szB pi) | specialize (IHb arg ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) src pi) | specialize (IHb arg ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) src pi) ];
         rewrite E1 in IHb; cbn [fst snd] in IHb; rewrite (IHb Hval); reflexivity.
     - destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
                   (build_dfg ctx act) arg1 bufs) as [a1e v1e] eqn:E1.
@@ -9570,12 +9640,15 @@ Section SchedulerSimulation.
       pose proof (IHb arg1 ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) szB pi) as Hc1. pose proof (IHb arg2 ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) szB pi) as Hc2.
       rewrite E1 in Hc1. rewrite E2 in Hc2. cbn [fst snd] in Hc1, Hc2.
       specialize (Hc1 Hv1). specialize (Hc2 Hv2).
-      destruct op1 as [ | | | | | | szC cop | hz lz ];
+      destruct op1 as [ | | | | | | | | | szC cop | hz lz | isz ];
         cbn [tf_eval_expr]; try (rewrite Hc1, Hc2; reflexivity).
       + pose proof (IHb arg1 ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) szC pi) as Hd1. pose proof (IHb arg2 ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) szC pi) as Hd2.
         rewrite E1 in Hd1. rewrite E2 in Hd2. cbn [fst snd] in Hd1, Hd2.
         rewrite (Hd1 Hv1), (Hd2 Hv2). destruct cop; reflexivity.
       + pose proof (IHb arg1 ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) hz pi) as He1. pose proof (IHb arg2 ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) lz pi) as He2.
+        rewrite E1 in He1. rewrite E2 in He2. cbn [fst snd] in He1, He2.
+        rewrite (He1 Hv1), (He2 Hv2). reflexivity.
+      + pose proof (IHb arg1 ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) isz pi) as He1. pose proof (IHb arg2 ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) (Nat.log2_up isz) pi) as He2.
         rewrite E1 in He1. rewrite E2 in He2. cbn [fst snd] in He1, He2.
         rewrite (He1 Hv1), (He2 Hv2). reflexivity.
     - destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
@@ -10802,8 +10875,11 @@ Section SchedulerSimulation.
         assert (Hav : eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
                                     (build_dfg ctx act) arg bufs)) ss input
                       = Bits.ones 1) by (rewrite E1; cbn [snd]; exact Hval).
-        destruct op1 as [| src].
+        destruct op1 as [| src | src off].
         * pose proof (Hchild arg (sz node) pi Hain Hfg Hav) as Hc.
+          rewrite E1, E2 in Hc. cbn [fst] in Hc.
+          cbn [tf_eval_expr]. rewrite Hc. reflexivity.
+        * pose proof (Hchild arg src pi Hain Hfg Hav) as Hc.
           rewrite E1, E2 in Hc. cbn [fst] in Hc.
           cbn [tf_eval_expr]. rewrite Hc. reflexivity.
         * pose proof (Hchild arg src pi Hain Hfg Hav) as Hc.
@@ -10832,13 +10908,13 @@ Section SchedulerSimulation.
                                      (build_dfg ctx act) arg2 bufs)) ss input
                        = Bits.ones 1) by (rewrite E2; cbn [snd]; exact Hv2).
         unfold node_args_sz in Hfg. rewrite Hop in Hfg.
-        destruct op1 as [ | | | | | | szC cop | hz lz ];
+        destruct op1 as [ | | | | | | | | | szC cop | hz lz | isz ];
           [ destruct Hfg as [Hf1 Hf2];
             pose proof (Hchild arg1 (sz node) pi Ha1in Hf1 Hav1) as Hc1;
             pose proof (Hchild arg2 (sz node) pi Ha2in Hf2 Hav2) as Hc2;
             rewrite E1, E3 in Hc1; rewrite E2, E4 in Hc2;
             cbn [fst] in Hc1, Hc2;
-            cbn [tf_eval_expr]; rewrite Hc1, Hc2; reflexivity .. | | ].
+            cbn [tf_eval_expr]; rewrite Hc1, Hc2; reflexivity .. | | | ].
         destruct Hfg as [Hf1 Hf2].
         pose proof (Hchild arg1 szC pi Ha1in Hf1 Hav1) as Hc1.
         pose proof (Hchild arg2 szC pi Ha2in Hf2 Hav2) as Hc2.
@@ -10849,6 +10925,12 @@ Section SchedulerSimulation.
         destruct Hfg as [Hf1 Hf2].
         pose proof (Hchild arg1 hz pi Ha1in Hf1 Hav1) as Hk1.
         pose proof (Hchild arg2 lz pi Ha2in Hf2 Hav2) as Hk2.
+        rewrite E1, E3 in Hk1. rewrite E2, E4 in Hk2.
+        cbn [fst] in Hk1, Hk2.
+        cbn [tf_eval_expr]. rewrite Hk1, Hk2. reflexivity.
+        destruct Hfg as [Hf1 Hf2].
+        pose proof (Hchild arg1 isz pi Ha1in Hf1 Hav1) as Hk1.
+        pose proof (Hchild arg2 (Nat.log2_up isz) pi Ha2in Hf2 Hav2) as Hk2.
         rewrite E1, E3 in Hk1. rewrite E2, E4 in Hk2.
         cbn [fst] in Hk1, Hk2.
         cbn [tf_eval_expr]. rewrite Hk1, Hk2. reflexivity.

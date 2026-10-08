@@ -36,6 +36,7 @@ Section TrustformerSyntax.
     Inductive tf_unary_ops :=
         | tf_not                                (* Bitwise NOT *)
         | tf_resize (source_size: nat)          (* Evaluate at source_size, then convert *)
+        | tf_slice (source_size: nat) (offset: nat) (* Evaluate at source_size, take bits [offset, offset+width) *)
         .
 
     Inductive tf_comparison_ops :=
@@ -45,7 +46,11 @@ Section TrustformerSyntax.
         | tf_le                                 (* Unsigned Less than or equal *)
         | tf_gt                                 (* Unsigned Greater than *)
         | tf_ge                                 (* Unsigned Greater than or equal *)
+        | tf_slt                                (* Signed Less than *)
         .
+
+    Definition slice_pad (source_size offset width: nat) : nat := Nat.max source_size (offset + width).
+    Definition islice_pad (src_sz width: nat) : nat := 2 ^ Nat.log2_up src_sz + width.
 
     Inductive tf_binary_ops :=
         | tf_and                                (* Logical and *)
@@ -54,8 +59,12 @@ Section TrustformerSyntax.
         | tf_add                                (* Addition *)
         | tf_sub                                (* Subtraction *)
         | tf_mul                                (* Multiplication *)
+        | tf_lsr                                (* Logical shift right by a variable amount *)
+        | tf_lsl                                (* Logical shift left by a variable amount *)
+        | tf_asr                                (* Arithmetic shift right by a variable amount *)
         | tf_cmp (cmp_sz: nat) (cmp_op: tf_comparison_ops)    (* Comparison Operations *)
         | tf_concat (hi_sz: nat) (lo_sz: nat)   (* Concatenate two values *)
+        | tf_islice (src_sz: nat)               (* x[off +: width]: x at src_sz, off at log2_up src_sz *)
         .
 
     Inductive tf_expr :=
@@ -201,6 +210,14 @@ Notation "'!' x" := (tf_op1 tf_not x)
 Notation "x + y" := (tf_op2 tf_add x y) (in custom trustformer at level 50, left associativity).
 Notation "x - y" := (tf_op2 tf_sub x y) (in custom trustformer at level 50, left associativity).
 Notation "x * y" := (tf_op2 tf_mul x y) (in custom trustformer at level 40, left associativity).
+Notation "x @[ n ]" := (tf_op1 (tf_resize n) x)
+    (in custom trustformer at level 3, left associativity, n custom tf_const at level 0, format "x @[ n ]").
+Notation "x @[ s ] [ i +: w ]" := (tf_op1 (tf_resize w) (tf_op2 (tf_islice s) x i))
+    (in custom trustformer at level 3, left associativity, s custom tf_const at level 0,
+     i custom trustformer at level 99, w custom tf_const at level 0, format "x @[ s ] [ i  +:  w ]").
+Notation "x >> y" := (tf_op2 tf_lsr x y) (in custom trustformer at level 55, left associativity).
+Notation "x << y" := (tf_op2 tf_lsl x y) (in custom trustformer at level 55, left associativity).
+Notation "x >>> y" := (tf_op2 tf_asr x y) (in custom trustformer at level 55, left associativity).
 Notation "x & y" := (tf_op2 tf_and x y) (in custom trustformer at level 60, left associativity).
 Notation "x | y" := (tf_op2 tf_or x y) (in custom trustformer at level 60, left associativity).
 Notation "x ^ y" := (tf_op2 tf_xor x y) (in custom trustformer at level 60, left associativity).
@@ -220,6 +237,14 @@ Notation "x >[ n ] y" := (tf_op2 (tf_cmp n tf_gt) x y)
     (in custom trustformer at level 70, n custom tf_const at level 0, format "x  >[ n ]  y").
 Notation "x >=[ n ] y" := (tf_op2 (tf_cmp n tf_ge) x y) 
     (in custom trustformer at level 70, n custom tf_const at level 0, format "x  >=[ n ]  y").
+Notation "x <s[ n ] y" := (tf_op2 (tf_cmp n tf_slt) x y)
+    (in custom trustformer at level 70, n custom tf_const at level 0, format "x  <s[ n ]  y").
+Notation "x >s[ n ] y" := (tf_op2 (tf_cmp n tf_slt) y x)
+    (in custom trustformer at level 70, n custom tf_const at level 0, only parsing).
+Notation "x <=s[ n ] y" := (tf_op2 (tf_cmp 1 tf_eq) (tf_op2 (tf_cmp n tf_slt) y x) (tf_const 0))
+    (in custom trustformer at level 70, n custom tf_const at level 0, only parsing).
+Notation "x >=s[ n ] y" := (tf_op2 (tf_cmp 1 tf_eq) (tf_op2 (tf_cmp n tf_slt) x y) (tf_const 0))
+    (in custom trustformer at level 70, n custom tf_const at level 0, only parsing).
 Notation "x ==[ n ] y" := (tf_op2 (tf_cmp n tf_eq) x y) 
     (in custom trustformer at level 70, n custom tf_const at level 0, format "x  ==[ n ]  y").
 Notation "x !=[ n ] y" := (tf_op2 (tf_cmp n tf_neq) x y) 

@@ -44,6 +44,7 @@ Definition show_cmp_op (o: tf_comparison_ops) : string :=
   | tf_eq => "==" | tf_neq => "!="
   | tf_lt => "<"  | tf_le => "<="
   | tf_gt => ">"  | tf_ge => ">="
+  | tf_slt => "<s"
   end.
 
 Definition show_binop (o: tf_binary_ops) : string :=
@@ -52,12 +53,15 @@ Definition show_binop (o: tf_binary_ops) : string :=
   | tf_add => "+" | tf_sub => "-" | tf_mul => "*"
   | tf_cmp n c => show_cmp_op c +++ "[" +++ show n +++ "]"
   | tf_concat h l => "concat[" +++ show h +++ "," +++ show l +++ "]"
+  | tf_lsr => ">>" | tf_lsl => "<<" | tf_asr => ">>>"
+  | tf_islice s => "islice[" +++ show s +++ "]"
   end.
 
 Definition show_unop (o: tf_unary_ops) : string :=
   match o with
   | tf_not => "~"
   | tf_resize n => "resize<" +++ show n +++ ">"
+  | tf_slice n o => "slice<" +++ show n +++ "," +++ show o +++ ">"
   end.
 
 (* ================================================================= *)

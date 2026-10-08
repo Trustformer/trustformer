@@ -225,6 +225,9 @@ Section Build.
       | tf_resize source_size =>
         let! src_id := dataflow_expr src source_size in
         emit (DFG_Unary op src_id) sz
+      | tf_slice source_size _ =>
+        let! src_id := dataflow_expr src source_size in
+        emit (DFG_Unary op src_id) sz
       end
     | tf_op2 op src1 src2 =>
       match op with
@@ -238,6 +241,10 @@ Section Build.
       | tf_concat hz lz =>
         let! id1 := dataflow_expr src1 hz in
         let! id2 := dataflow_expr src2 lz in
+        emit (DFG_Binary op id1 id2) sz
+      | tf_islice s =>
+        let! id1 := dataflow_expr src1 s in
+        let! id2 := dataflow_expr src2 (Nat.log2_up s) in
         emit (DFG_Binary op id1 id2) sz
       | _ =>
         let! id1 := dataflow_expr src1 sz in
