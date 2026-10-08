@@ -109,14 +109,14 @@ Section SchedulerWorld.
   Definition done_set (ss: sched_sys_state) : Prop :=
     (fst ss).[tfs_done_signal sched] <> Bits.zero.
 
-  (* Registers that start zeroed: the done flag, every validity bit and every
-     buffer, as [reset_states] clears them.  A stall's buffer is a counter, so
-     its start value is observable. *)
+  (* Registers that start zeroed: every validity bit and every buffer, as
+     [reset_states] clears them.  A stall's buffer is a counter, so its start
+     value is observable.  The done flag is not among them: a done cycle
+     leaves it set, so the next action starts with it up. *)
   Definition zeroed_at_start (x: tfs_states sched) : Prop :=
     match x with
     | tf_dfg_b _ _ => True
     | tf_dfg_v _ _ => True
-    | tf_dfg_done  => True
     | _            => False
     end.
 
@@ -140,10 +140,13 @@ Section SchedulerWorld.
   Local Notation run ops sys input :=
     (tf_ops_run s_sz i_sz o_sz ips ops sys input).
 
+  (* Counted from cycle 1: cycle 0 is the start state, whose done flag is
+     whatever the previous action left there. *)
   Definition first_done (act: tfs_action sched) (input: input_t)
       (resp: nat -> resp_val) (ss0: sched_sys_state) (N: nat) : Prop :=
-    ss_done (ss_run N act input resp ss0)
-    /\ forall i, i < N -> ~ ss_done (ss_run i act input resp ss0).
+    0 < N
+    /\ ss_done (ss_run N act input resp ss0)
+    /\ forall i, 0 < i < N -> ~ ss_done (ss_run i act input resp ss0).
 
   (* THE ATTACKER'S MODEL OF A RUN, over the two published snapshots and the
      cycle count: the outputs stand at [pre] until cycle [N] and at [post] from

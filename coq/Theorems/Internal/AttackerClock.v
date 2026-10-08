@@ -172,7 +172,7 @@ Section Clock.
             (nodup Nat.eq_dec (map snd (var_map (build_dfg ctx act)))).
 
   (* The register takes its value from the cycle before, so cycle 0 is never
-     done: the design resets it. *)
+     done: it is the start state, whose flag the previous action left. *)
   Definition pdone_test (act: tfs_action sched) (a_idx: a_index)
       (vals: known (build_dfg ctx act)) (k: nat) : bool :=
     match k with

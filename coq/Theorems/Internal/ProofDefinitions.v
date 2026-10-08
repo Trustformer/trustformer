@@ -159,9 +159,13 @@ Section ProofWorld.
       pi_holds act a_idx input pi ss
       /\ rvalid act a_idx pi n ss input = Bits.ones 1.
 
+  (* Cycle 0 is the start state, so it never counts, as in [pdone_test]. *)
   Definition done_test (act: tfs_action sched) (input: input_t)
       (resp: nat -> resp_val) (ss0: sched_sys_state) (k: nat) : bool :=
-    if done_set_dec (ss_run k act input resp ss0) then true else false.
+    match k with
+    | 0 => false
+    | S _ => if done_set_dec (ss_run k act input resp ss0) then true else false
+    end.
 
   Definition L (act: tfs_action sched) (input: input_t)
       (resp: nat -> resp_val) (ss0: sched_sys_state) : nat :=

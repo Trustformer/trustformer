@@ -525,6 +525,7 @@ Section SchedulerRoundTrip.
   Local Notation sched_step_done_svar_untouched := (SchedulerSimulationLemmas.sched_step_done_svar_untouched ctx cost_limit).
   Local Notation sched_step_done_v := (SchedulerSimulationLemmas.sched_step_done_v ctx cost_limit).
   Local Notation sched_step_done_valid := (SchedulerSimulationLemmas.sched_step_done_valid ctx cost_limit).
+  Local Notation sched_step_done_zeroed := (SchedulerSimulationLemmas.sched_step_done_zeroed ctx cost_limit).
   Local Notation sched_step_eq := (SchedulerSimulationLemmas.sched_step_eq ctx cost_limit).
   Local Notation sched_step_getout := (SchedulerSimulationLemmas.sched_step_getout ctx cost_limit).
   Local Notation sched_step_getst := (SchedulerSimulationLemmas.sched_step_getst ctx cost_limit).
@@ -7941,17 +7942,16 @@ Section SchedulerRoundTrip.
            (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val) (N: nat),
       start_rel sp0 ss0 ->
       ip_contract act input resp ss0 ->
-      (forall k, k < N -> ~ done_set (run_n k act input resp ss0)) ->
+      0 < N ->
+      (forall k, 0 < k < N -> ~ done_set (run_n k act input resp ss0)) ->
       done_set (run_n N act input resp ss0) ->
       let sp1 := tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act) sp0 input in
       maps_from ctx bneeds (fst (run_n N act input resp ss0)) = fst sp1 /\
       snd (run_n N act input resp ss0) = snd sp1.
   Proof.
-    intros act sp0 ss0 input resp N [Hout0 [Hst0 Hzero0]] Hipc Hbefore Hdone.
+    intros act sp0 ss0 input resp N [Hout0 [Hst0 Hzero0]] Hipc HN0 Hbefore Hdone.
     destruct (exists_act_idx act) as [a_idx Halign].
-    (* N = 0 is impossible: start_rel clears the done flag *)
-    destruct N as [| M].
-    { exfalso. apply Hdone. cbn [run_n]. apply (Hzero0 (tfs_done_signal sched) I). }
+    destruct N as [| M]; [ lia | ].
     set (ssM := run_n M act input resp ss0) in *.
     change (run_n (S M) act input resp ss0)
       with (sched_step act ssM (sched_input input (resp M))) in *.
@@ -8115,17 +8115,42 @@ Section SchedulerRoundTrip.
            (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val),
       start_rel sp0 ss0 ->
       ip_contract act input resp ss0 ->
-      exists N,
-        (forall k, k < N -> ~ done_set (run_n k act input resp ss0)) /\
+      exists N, 0 < N /\
+        (forall k, 0 < k < N -> ~ done_set (run_n k act input resp ss0)) /\
         done_set (run_n N act input resp ss0) /\
         let sp1 := tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act) sp0 input in
         maps_from ctx bneeds (fst (run_n N act input resp ss0)) = fst sp1 /\
         snd (run_n N act input resp ss0) = snd sp1.
   Proof.
     intros act sp0 ss0 input resp Hstart Hipc.
-    destruct (scheduler_reaches_done act sp0 ss0 input resp Hstart) as [N [Hbefore Hdone]].
-    exists N. split; [ exact Hbefore |]. split; [ exact Hdone |].
-    apply (scheduler_done_correct act sp0 ss0 input resp N Hstart Hipc Hbefore Hdone).
+    destruct (scheduler_reaches_done act sp0 ss0 input resp Hstart)
+      as [N [HN0 [Hbefore Hdone]]].
+    exists N. split; [ exact HN0 |]. split; [ exact Hbefore |]. split; [ exact Hdone |].
+    apply (scheduler_done_correct act sp0 ss0 input resp N Hstart Hipc HN0 Hbefore Hdone).
+  Qed.
+
+  (* RE-ENTRY: the state a run reaches on its done cycle is a start state again,
+     for the source state one action later -- so the per-action theorems apply
+     to the next action.  The done cycle's reset clears every buffer and
+     validity bit; [scheduler_done_correct] gives the base state and outputs. *)
+  Theorem start_rel_after_done :
+    forall (act: tfs_action sched) (sp0: src_sys_state)
+           (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val) (N: nat),
+      start_rel sp0 ss0 ->
+      ip_contract act input resp ss0 ->
+      0 < N ->
+      (forall k, 0 < k < N -> ~ done_set (run_n k act input resp ss0)) ->
+      done_set (run_n N act input resp ss0) ->
+      start_rel (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act) sp0 input)
+                (run_n N act input resp ss0).
+  Proof.
+    intros act sp0 ss0 input resp N Hstart Hipc HN0 Hbefore Hdone.
+    destruct (scheduler_done_correct act sp0 ss0 input resp N Hstart Hipc HN0 Hbefore Hdone)
+      as [Hst Hout].
+    split; [ exact Hout |]. split; [ exact Hst |].
+    destruct N as [| M]; [ lia |].
+    exact (sched_step_done_zeroed act (run_n M act input resp ss0)
+             (sched_input input (resp M)) Hdone).
   Qed.
 
 End SchedulerRoundTrip.

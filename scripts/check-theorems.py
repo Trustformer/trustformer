@@ -28,7 +28,8 @@ HEADLINE = [
      "the generated circuit computes what the specification says",
      [("Trustformer.Theorems.Synthesis", "synthesis_correct"),
       ("Trustformer.Theorems.Synthesis", "initial_state_matches"),
-      ("Trustformer.Theorems.SchedulerSimulation", "variable_scheduler_correct")]),
+      ("Trustformer.Theorems.SchedulerSimulation", "variable_scheduler_correct"),
+      ("Trustformer.Theorems.SchedulerSimulation", "start_rel_after_done")]),
 
     ("no secret leaks by value",
      "what the attacker can see never depends on a secret",

@@ -1060,9 +1060,10 @@ Section Settled.
   Proof.
     intros _ Hvm.
     pose proof Hstart as Hst. destruct Hst as [Hoo [Hmm Hzz]].
-    destruct (L_first_done ctx cost_limit act sp0 ss0 input resp Hstart) as [Hdone Hbefore].
+    destruct (L_first_done ctx cost_limit act sp0 ss0 input resp Hstart)
+      as [HL0 [Hdone Hbefore]].
     destruct (ProofDefinitions.L ctx cost_limit act input resp ss0) as [| m].
-    - exfalso. apply Hdone. exact (Hzz (tfs_done_signal sched) I).
+    - lia.
     - assert (Hnd : forall i, 1 <= i <= m -> ~ done_set ctx cost_limit (ssk i))
         by (intros i Hi; apply Hbefore; lia).
       pose proof (proj1 (build_dfg_args_pos ctx cost_limit act) _ r Hvm) as Hr1.

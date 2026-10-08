@@ -811,11 +811,11 @@ Section IPRProof.
       (resp: nat -> resp_val) (ss0: sched_sys_state) (N N': nat) :
     first_done act input resp ss0 N -> first_done act input resp ss0 N' -> N = N'.
   Proof.
-    intros [HN HltN] [HN' HltN'].
+    intros [HN0 [HN HltN]] [HN0' [HN' HltN']].
     destruct (Nat.lt_trichotomy N N') as [H | [H | H]].
-    - destruct (HltN' N H HN).
+    - destruct (HltN' N (conj HN0 H) HN).
     - exact H.
-    - destruct (HltN N' H HN').
+    - destruct (HltN N' (conj HN0' H) HN').
   Qed.
 
 
@@ -834,8 +834,8 @@ Section IPRProof.
   Proof.
     intros Hstart Hipc.
     destruct (variable_scheduler_correct ctx cost_limit act sp0 ss0 input resp
-                Hstart Hipc) as [N [Hbefore [Hdone _]]].
-    exists N. split; assumption.
+                Hstart Hipc) as [N [HN0 [Hbefore [Hdone _]]]].
+    exists N. exact (conj HN0 (conj Hdone Hbefore)).
   Qed.
 
   Theorem emulator_correct (act: tfs_action sched) (sp0: src_sys_state)
@@ -847,7 +847,7 @@ Section IPRProof.
       forall ov, (snd (ss_run k act input resp ss0)).[ov]
                = emulate (snd sp0) (snd (spec_run act sp0 input)) N k ov.
   Proof.
-    intros Hstart Hipc [Hdone Hbefore] k Hk ov. unfold Definitions.emulate.
+    intros Hstart Hipc [HN0 [Hdone Hbefore]] k Hk ov. unfold Definitions.emulate.
     destruct (Nat.ltb_spec k N) as [Hlt | Hge].
     - assert (Hnd : forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input resp ss0))
         by (intros i Hi; apply Hbefore; lia).
@@ -855,7 +855,7 @@ Section IPRProof.
       rewrite (proj1 Hstart). reflexivity.
     - assert (HkN : k = N) by lia. subst k.
       destruct (scheduler_done_correct ctx cost_limit act sp0 ss0 input resp N
-                  Hstart Hipc Hbefore Hdone) as [_ Hout].
+                  Hstart Hipc HN0 Hbefore Hdone) as [_ Hout].
       rewrite Hout. reflexivity.
   Qed.
 
@@ -866,10 +866,12 @@ Section IPRProof.
 
   Lemma done_test_true (act: tfs_action sched) (input: input_t)
       (resp: nat -> resp_val) (ss0: sched_sys_state) (k: nat) :
+    0 < k ->
     done_test act input resp ss0 k = true <-> ss_done (ss_run k act input resp ss0).
   Proof.
+    intro Hk. destruct k as [| m]; [ lia | ].
     unfold done_test.
-    destruct (done_set_dec ctx cost_limit (ss_run k act input resp ss0)) as [Hd | Hd].
+    destruct (done_set_dec ctx cost_limit (ss_run (S m) act input resp ss0)) as [Hd | Hd].
     - split; [ intros _; exact Hd | reflexivity ].
     - split; [ discriminate | intro Hc; contradiction ].
   Qed.
@@ -881,16 +883,20 @@ Section IPRProof.
   Proof.
     intro Hstart.
     destruct (done_by_settle_bound ctx cost_limit act sp0 ss0 input resp Hstart)
-      as [N [HNle HNdone]].
+      as [N [HN0 [HNle HNdone]]].
     destruct (first_true_spec (done_test act input resp ss0)
                 (S (settle_bound ctx cost_limit act)) 0 N
                 (Nat.le_0_l N) ltac:(lia)
-                (proj2 (done_test_true act input resp ss0 N) HNdone)) as [H1 H2].
-    split.
-    - exact (proj1 (done_test_true act input resp ss0 _) H1).
+                (proj2 (done_test_true act input resp ss0 N HN0) HNdone)) as [H1 H2].
+    (* cycle 0 never passes the test, so the first cycle that does is past it *)
+    assert (HL : done_test act input resp ss0 (L act input resp ss0) = true) by exact H1.
+    assert (HL0 : 0 < L act input resp ss0).
+    { destruct (L act input resp ss0); [ discriminate HL | lia ]. }
+    split; [ exact HL0 | split ].
+    - exact (proj1 (done_test_true act input resp ss0 _ HL0) HL).
     - intros i Hi Hc.
-      pose proof (H2 i (Nat.le_0_l i) Hi) as Hfalse.
-      rewrite (proj2 (done_test_true act input resp ss0 i) Hc) in Hfalse.
+      pose proof (H2 i (Nat.le_0_l i) (proj2 Hi)) as Hfalse.
+      rewrite (proj2 (done_test_true act input resp ss0 i (proj1 Hi)) Hc) in Hfalse.
       discriminate Hfalse.
   Qed.
 
@@ -1564,28 +1570,25 @@ Section IPRProof.
     unfold ProofDefinitions.L, Definitions.L_pub.
     apply first_true_ext. intros j _ Hbefore.
     destruct j as [| m].
-    - (* cycle zero: the design resets the flag *)
-      unfold AttackerClock.pdone_test.
-      destruct (done_test act input resp ss0 0) eqn:Hd0; [ | reflexivity ].
-      exfalso. apply (proj1 (done_test_true act input resp ss0 0)) in Hd0.
-      unfold ss_done, done_set in Hd0. cbn [run_n] in Hd0.
-      exact (Hd0 (Hz (tfs_done_signal sched) I)).
+    - (* cycle zero is the start state: neither test counts it *)
+      reflexivity.
     - assert (Hnd : forall i, 1 <= i <= m ->
                 ~ ss_done (ss_run i act input resp ss0)).
       { intros i Hi Hc.
         pose proof (Hbefore i ltac:(lia)) as Hf.
-        rewrite (proj2 (done_test_true act input resp ss0 i) Hc) in Hf.
+        rewrite (proj2 (done_test_true act input resp ss0 i ltac:(lia)) Hc) in Hf.
         discriminate Hf. }
       unfold AttackerClock.pdone_test.
       destruct (adone act a_idx vals (fst (srun act a_idx vals m))) eqn:Ha.
-      + apply (proj2 (done_test_true act input resp ss0 (S m))).
+      + apply (proj2 (done_test_true act input resp ss0 (S m) (Nat.lt_0_succ m))).
         exact (proj1 (adone_matches act a_idx vals input resp ss0 m Halign Hz
                         Hsel Hvals Hnd) Ha).
       + destruct (done_test act input resp ss0 (S m)) eqn:Hd; [ | reflexivity ].
         exfalso.
         rewrite (proj2 (adone_matches act a_idx vals input resp ss0 m Halign Hz
                           Hsel Hvals Hnd)
-                   (proj1 (done_test_true act input resp ss0 (S m)) Hd)) in Ha.
+                   (proj1 (done_test_true act input resp ss0 (S m) (Nat.lt_0_succ m)) Hd))
+          in Ha.
         discriminate Ha.
   Qed.
 

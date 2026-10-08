@@ -12734,20 +12734,26 @@ Section SchedulerSimulation.
   Qed.
 
 
-  (* SOUND semantic core (Phase 2): a done cycle exists by S (settle_bound).
+  (* SOUND semantic core (Phase 2): a done cycle exists in [1, S (settle_bound)].
      Either done fired earlier, which yields an earlier witness, or every buffer
-     settled and validated by settle_bound and the combined validity fires. *)
+     settled and validated by settle_bound and the combined validity fires.
+     Cycle 0 is the start state, so the search starts at cycle 1. *)
   Lemma done_by_settle_bound :
     forall (act: tfs_action sched) (sp0: src_sys_state)
            (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val),
       start_rel sp0 ss0 ->
-      exists N, N <= S (settle_bound act) /\ done_set (run_n N act input resp ss0).
+      exists N, 0 < N /\ N <= S (settle_bound act)
+                /\ done_set (run_n N act input resp ss0).
   Proof.
     intros act sp0 ss0 input resp Hstart.
-    destruct (bounded_dec (fun k => done_set (run_n k act input resp ss0))
+    destruct (bounded_dec (fun k => done_set (run_n (S k) act input resp ss0))
                 (fun k => done_set_dec _) (settle_bound act)) as [Hearly | Hno].
-    - destruct Hearly as [j [Hjle Hjdone]]. exists j. split; [ lia | exact Hjdone ].
-    - exists (S (settle_bound act)). split; [ apply Nat.le_refl | ].
+    - destruct Hearly as [j [Hjle Hjdone]].
+      exists (S j). split; [ lia | split; [ lia | exact Hjdone ] ].
+    - assert (Hpre : forall i, 1 <= i <= settle_bound act ->
+                       ~ done_set (run_n i act input resp ss0)).
+      { intros [| i] Hi; [ lia | exact (Hno i ltac:(lia)) ]. }
+      exists (S (settle_bound act)). split; [ lia | split; [ apply Nat.le_refl | ] ].
       destruct (exists_act_idx act) as [a_idx Halign].
       unfold done_set. cbn [run_n]. rewrite sched_step_done.
       destruct (done_exprs_concrete act a_idx Halign) as [rest Hsched].
@@ -12777,7 +12783,7 @@ Section SchedulerSimulation.
         rewrite Hseq in Hinm. rewrite in_seq in Hinm. rewrite Hnid in Hinm. lia. }
       apply (compile_valid_ones act a_idx _ _ Halign (settle_bound act)
                (valids_ones_run act a_idx input resp ss0 (settle_bound act) Halign
-                  (proj2 (proj2 Hstart)) (fun i Hi => Hno i (proj2 Hi))
+                  (proj2 (proj2 Hstart)) Hpre
                   (settle_bound act) (Nat.le_refl _))
                _ (fun e He => He)
                (length (graph (build_dfg ctx act))) nd Hnd1 Hndlt Hndlt);
@@ -12785,23 +12791,27 @@ Section SchedulerSimulation.
         [ apply Nat.lt_le_incl | right ]; apply node_rank_mono; exact Hndlt.
   Qed.
 
-  (* PHASE 2 (progress): a FIRST done cycle exists, the least N <= S
-     (settle_bound act) at which done fires (well-ordering over the decidable
-     [done_set (run_n k ...)]), so "not done before N" holds by construction. *)
+  (* PHASE 2 (progress): a FIRST done cycle exists, the least N in [1, S
+     (settle_bound act)] at which done fires (well-ordering over the decidable
+     [done_set (run_n (S k) ...)]), so "not done before N" holds by
+     construction. *)
   Lemma scheduler_reaches_done :
     forall (act: tfs_action sched) (sp0: src_sys_state)
            (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val),
       start_rel sp0 ss0 ->
-      exists N,
-        (forall k, k < N -> ~ done_set (run_n k act input resp ss0)) /\
+      exists N, 0 < N /\
+        (forall k, 0 < k < N -> ~ done_set (run_n k act input resp ss0)) /\
         done_set (run_n N act input resp ss0).
   Proof.
     intros act sp0 ss0 input resp Hstart.
-    destruct (least_witness (fun k => done_set (run_n k act input resp ss0))
-                (fun k => done_set_dec _) (S (settle_bound act)))
-      as [N [Hdone Hbefore]].
-    - apply (done_by_settle_bound act sp0 ss0 input resp Hstart).
-    - exists N. split; [ exact Hbefore | exact Hdone ].
+    destruct (least_witness (fun k => done_set (run_n (S k) act input resp ss0))
+                (fun k => done_set_dec _) (settle_bound act))
+      as [M [Hdone Hbefore]].
+    - destruct (done_by_settle_bound act sp0 ss0 input resp Hstart)
+        as [[| N] [HN0 [HNle HNdone]]]; [ lia | ].
+      exists N. split; [ lia | exact HNdone ].
+    - exists (S M). split; [ lia | split; [ | exact Hdone ] ].
+      intros [| k] Hk; [ lia | exact (Hbefore k ltac:(lia)) ].
   Qed.
 
   (* ==================================================================== *)
@@ -13179,6 +13189,33 @@ Section SchedulerSimulation.
     - intros v Hv. exact (tfs_reset_states_init_zero sched v Hv).
   Qed.
 
+  Lemma reset_states_has_b
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (n_idx : Vect.index
+        (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))) :
+    In (tf_dfg_b a_idx n_idx) (reset_states ctx bneeds).
+  Proof.
+    unfold reset_states. rewrite in_flat_map.
+    exists (index_to_nat a_idx). split.
+    - apply in_seq. pose proof (index_to_nat_bounded a_idx). lia.
+    - rewrite index_of_nat_to_nat, in_flat_map.
+      exists (index_to_nat n_idx). split.
+      + apply in_seq. pose proof (index_to_nat_bounded n_idx). lia.
+      + rewrite index_of_nat_to_nat. left; reflexivity.
+  Qed.
+
+  Lemma reset_updates_b
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (n_idx : Vect.index
+        (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))) :
+    find_st_update sched (tf_dfg_b a_idx n_idx)
+      (tfs_reset_updates sched (tfs_reset_states sched)) = Some Bits.zero.
+  Proof.
+    unfold tfs_reset_updates. apply find_st_update_map_init.
+    - exact (reset_states_has_b a_idx n_idx).
+    - intros v Hv. exact (tfs_reset_states_init_zero sched v Hv).
+  Qed.
+
   (* A done cycle resets every validity bit, so the VALID => SETTLED invariant
      is vacuously re-established across it. *)
   Lemma sched_step_done_v (act: tfs_action sched)
@@ -13194,6 +13231,22 @@ Section SchedulerSimulation.
     unfold find_st_val.
     rewrite (find_st_update_app_Some _ _ _ _ (reset_updates_v a_idx n_idx)).
     reflexivity.
+  Qed.
+
+  (* ... and every buffer too, so a done cycle leaves every [zeroed_at_start]
+     register at zero: the next action starts from a start state. *)
+  Lemma sched_step_done_zeroed (act: tfs_action sched)
+      (ss: sched_sys_state) (input: sched_input_t) :
+    done_set (sched_step act ss input) ->
+    forall x, zeroed_at_start x -> (fst (sched_step act ss input)).[x] = Bits.zero.
+  Proof.
+    intros Hdone x Hx.
+    destruct x as [| s | a_idx n_idx | a_idx n_idx | p]; destruct Hx.
+    - rewrite sched_step_getst, (cycle_updates_done act ss input Hdone).
+      unfold find_st_val.
+      rewrite (find_st_update_app_Some _ _ _ _ (reset_updates_b a_idx n_idx)).
+      reflexivity.
+    - exact (sched_step_done_v act a_idx n_idx ss input Hdone).
   Qed.
 
   (* THE INVARIANT (Phase 3b): from a state with clear validity bits, at EVERY
