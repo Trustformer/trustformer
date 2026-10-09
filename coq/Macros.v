@@ -78,6 +78,12 @@ Section Macros.
   Definition mk_for (n: nat) (body: nat -> OPS) : OPS :=
     mk_seq (List.map body (List.seq 0 n)).
 
+  (* A skipped copy changes nothing, so once [cond] is false it stays false: a while loop
+     of at most [n] rounds.  A public [cond] lets the action finish early; a secret one
+     always waits for all [n] rounds. *)
+  Definition mk_while (n: nat) (cond: E) (body: nat -> OPS) : OPS :=
+    mk_for n (fun i => tf_ops_if cond (body i) (tf_ops_base tf_nop)).
+
   Definition mk_fold (n: nat) (f: nat -> E -> E) (init: E) : E :=
     List.fold_left (fun acc i => f i acc) (List.seq 0 n) init.
 
@@ -288,6 +294,9 @@ End Macros.
 
 Notation "'for' i '<' n 'do' b 'end'" := (mk_for n (fun i => b))
   (in custom trustformer at level 89, i name, n constr at level 0, b custom trustformer at level 99).
+Notation "'for' i '<' n 'while' c 'do' b 'end'" := (mk_while n c (fun i => b))
+  (in custom trustformer at level 89, i name, n constr at level 0, c custom trustformer at level 99,
+   b custom trustformer at level 99).
 Notation "x [ hi : lo ]" := (mk_slice hi lo x)
   (in custom trustformer at level 3, left associativity, hi custom tf_const at level 0,
    lo custom tf_const at level 0, format "x [ hi : lo ]").

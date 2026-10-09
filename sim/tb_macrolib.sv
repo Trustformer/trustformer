@@ -2,7 +2,7 @@ module tb_macrolib;
   localparam [4:0] WRITE = 0, READ = 1, CLEAR = 2, MOD = 3, MOD8 = 4,
                    BITS = 5, CONST = 6, CONST2 = 7, LOOP = 8, CONCAT = 9, SELECT = 10,
                    FIND = 11, SHIFT = 12, CASE = 13, SEXT = 14, PSET = 15, PGET = 16,
-                   PSET_WIDE = 17, PGET_WIDE = 18;
+                   PSET_WIDE = 17, PGET_WIDE = 18, WHILE = 19;
 
   logic clk = 0, rst_n = 0;
   logic [5:0]  in_cmd_out = 6'b0;
@@ -132,6 +132,21 @@ module tb_macrolib;
           cmd(PGET_WIDE, 0, v); expect_eq("packed get (wide index)", out_val, (i < 4) ? {24'h0, pk[i * 8 +: 8]} : 32'h0);
         end
       end
+    end
+
+    begin
+      longint t0, quick, full;
+      for (int k = 0; k < 300; k++) begin
+        logic [31:0] v;
+        int n;
+        v = $urandom >> ($urandom % 33);
+        n = 0;
+        while (n < 8 && (v >> n) != 0) n++;
+        cmd(WHILE, 0, v); expect_eq("while bit length", out_val, n); expect_eq("while done", out_ok, (v >> n) == 0);
+      end
+      t0 = $time; cmd(WHILE, 0, 0); quick = $time - t0;
+      t0 = $time; cmd(WHILE, 0, 32'hFFFFFFFF); full = $time - t0;
+      expect_eq("while exits early on a public condition", quick < full, 1);
     end
 
     if (fails != 0) begin $display("FAIL: %0d of %0d checks", fails, checks); $fatal(1); end

@@ -17,7 +17,7 @@ Section FunctionalSpecification.
     Inductive ml_action :=
     | a_write | a_read | a_clear | a_mod | a_mod8 | a_bits | a_const | a_const2
     | a_loop | a_concat | a_select | a_find | a_shift | a_case | a_sext | a_pset | a_pget
-    | a_pset_wide | a_pget_wide.
+    | a_pset_wide | a_pget_wide | a_while.
 
     Inductive ml_states := st_cell (k: ml_cell) | st_acc | st_acc8 | st_pk.
     Inductive ml_inputs := in_idx | in_val.
@@ -120,6 +120,16 @@ Section FunctionalSpecification.
       | a_pget_wide =>
           {[ `mk_clear_outputs`;
              let $out_val := `mk_zext 8 32 (mk_packed_get 32 8 3 (tf_svar st_pk) wide_idx)` ]}
+      | a_while =>
+          {[ `mk_clear_outputs`;
+             let $st_acc := $in_val;
+             let $st_acc8 := #0;
+             for i < 8 while $st_acc !=[32] #0 do
+               let $st_acc := $st_acc >> #1;
+               let $st_acc8 := `tf_const (S i)`
+             end;
+             let $out_val := `mk_zext 8 32 (tf_svar st_acc8)`;
+             let $out_ok := $st_acc ==[32] #0 ]}
       end.
 
 End FunctionalSpecification.
@@ -248,6 +258,12 @@ Section NewMacros.
       List.map (fun v => (res out_val [(a_loop, 0, v)], res out_ok [(a_loop, 0, v)]))
                [0xB7; 0x80000001; 0x80000003]%N
       = [(6, 0); (1, 0); (2, 1)]%N.
+    Proof. vm_compute. reflexivity. Qed.
+
+    Example while_bit_length :
+      List.map (fun v => (res out_val [(a_while, 0, v)], res out_ok [(a_while, 0, v)]))
+               [0; 1; 5; 0x80; 0xFF; 0x100; 0xFFFFFFFF]%N
+      = [(0, 1); (1, 1); (3, 1); (8, 1); (8, 1); (8, 0); (8, 0)]%N.
     Proof. vm_compute. reflexivity. Qed.
 
     Example concat_swap : res out_val [(a_concat, 0, 0x1234)] = 0x34120000%N.
