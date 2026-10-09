@@ -4,5 +4,5 @@
   (name Trustformer)
   (modules :standard)
   (mode vo)
-  (theories RecordUpdate Ltac2 Koika Hammer Hammer.Tactics)
+  (theories RecordUpdate Ltac2 Koika Hammer Hammer.Tactics IPR)
 )

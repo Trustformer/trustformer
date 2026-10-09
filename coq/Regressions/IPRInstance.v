@@ -11,6 +11,7 @@ Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
+Require Import Trustformer.Backend.Lowering.
 Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Theorems.IPR.
 Require Import Trustformer.Theorems.Internal.IPRProof.
@@ -168,25 +169,51 @@ Section TheoremInstantiation.
       by (apply equiv_eq; exact Hpost).
     unfold check_latency.
     rewrite (Extract.L_is_public tfs_ctx cost fs_check a_idx sp0 ss0 input no_resp
-               Halign Hst (Hipc ss0)),
+               Halign Hst (Hipc ss0) _ (fun _ => eq_refl) (fun _ => eq_refl) (fun _ => eq_refl)),
             (Extract.L_is_public tfs_ctx cost fs_check a_idx sp0' ss0' input no_resp
-               Halign Hst' (Hipc ss0')).
+               Halign Hst' (Hipc ss0') _ (fun _ => eq_refl) (fun _ => eq_refl) (fun _ => eq_refl)).
     rewrite Hpre_eq, Hpost_eq. reflexivity.
   Qed.
 
   Local Instance fs_action_names : Show fs_action := {| show _ := "check"%string |}.
 
-  (* This context attaches no IP, so the circuit's datasheet is vacuous. *)
-  Lemma no_ip_contract c0 env :
-    Definitions.ip_contract tfs_ctx cost 16 fs_action_encoding fs_action_encoding_inj
-      fs_action_names c0 env.
+  (* This context attaches no IP, so every IP model meets the datasheet. *)
+  Lemma no_ip_datasheet ip :
+    Definitions.datasheet tfs_ctx cost 16 fs_action_encoding fs_action_encoding_inj fs_action_names ip.
   Proof. intro p. destruct p. Qed.
 
-  (* The headline, fully instantiated: any command stream, idle gaps included,
-     shows the emulator at every cycle of the circuit, from any state at rest. *)
-  Definition checks_emulated c0 sp0 env cmds Hrest Hpres :=
-    IPR.circuit_emulated tfs_ctx cost 16 fs_action_encoding fs_action_encoding_inj
-      fs_action_names c0 sp0 env cmds Hrest Hpres (no_ip_contract c0 env).
+  (* The headline, fully instantiated: IPR, verbatim from upstream, for the password
+     check and any source on secure ports. *)
+  Definition check_ipr ip src :=
+    IPR.ipr tfs_ctx cost 16 fs_action_encoding fs_action_encoding_inj fs_action_names ip src
+      (no_ip_datasheet ip).
 
 End TheoremInstantiation.
+
+Section DatasheetInhabited.
+
+  Context (ctx: TFSchedContext) (cost_limit: nat).
+  Local Notation sched := (tfs_schedule ctx cost_limit).
+  Context (enc_sz: nat) (enc: tfs_action sched -> bits_t enc_sz)
+          (enc_inj: forall a b, enc a = enc b -> a = b) (names: Show (tfs_action sched)).
+  Local Notation tsched := (tf_sched_ctx (Definitions.synth ctx cost_limit enc_sz enc enc_inj names)).
+
+  (* The datasheet can be met: an IP that answers each request
+     exactly [lat] cycles on meets it, for every design. *)
+  Definition ideal_ip : Definitions.trusted_ip ctx cost_limit enc_sz enc enc_inj names :=
+    fun p h => match nth_error (rev h) (pred (ip_lat (tfs_ip tsched p))) with
+               | Some q => ip_fn (tfs_ip tsched p) (Bits.slice 0 (ip_req_sz (tfs_ip tsched p)) q)
+               | None => Bits.zero
+               end.
+
+  Lemma ideal_ip_datasheet :
+    Definitions.datasheet ctx cost_limit enc_sz enc enc_inj names ideal_ip.
+  Proof.
+    intros p h t q. cbv zeta. intros _ Hlen _. unfold ideal_ip.
+    rewrite rev_app_distr. cbn [rev]. rewrite <- app_assoc.
+    rewrite nth_error_app2 by (rewrite rev_length; lia).
+    rewrite rev_length, Hlen, Nat.sub_diag. reflexivity.
+  Qed.
+
+End DatasheetInhabited.
 

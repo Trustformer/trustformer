@@ -3839,27 +3839,36 @@ Section SynthesisProof.
 
   (* ====== Several cycles: idle ones, and the ready flag ====== *)
 
-  (* With ready up and no valid command on [in_cmd], no action rule fires. *)
+  (* With ready up, an invalid [in_cmd] or another action's code fires no rule for [a]. *)
   Lemma interp_rule_cmd_idle :
     forall (r: ContextEnv.(env_t) R) (sigma: forall f, Sig_denote (Sigma f)) log a,
       r.[tf_ready] = Ob~1 ->
-      fst (sigma ext_in_cmd Ob~1) = Ob~0 ->
+      (fst (sigma ext_in_cmd Ob~1) = Ob~0
+       \/ fst (snd (sigma ext_in_cmd Ob~1)) <> spec_action_encoding a) ->
       interp_rule r sigma log (rules (rule_cmd a)) = None.
   Proof.
     intros r sigma log a Hready Hidle.
     unfold interp_rule, rules, rule_cmd_guard. simpl_eq.
     destruct may_read; try reflexivity. timeout 10 cbn.
     rewrite Hready. timeout 10 cbn.
-    lazymatch goal with |- context [Bits.single ?T] =>
-      let H := fresh in assert (H : T = Ob~0) by exact Hidle; rewrite H end.
-    reflexivity.
+    destruct Hidle as [Hv | Hc].
+    - lazymatch goal with |- context [Bits.single ?T] =>
+        let H := fresh in assert (H : T = Ob~0) by exact Hv; rewrite H end.
+      reflexivity.
+    - lazymatch goal with |- context [Bits.single ?T] => destruct (Bits.single T) end;
+        [| reflexivity ].
+      timeout 10 cbn.
+      lazymatch goal with |- context [beq_dec ?X ?Y] => destruct (beq_dec X Y) eqn:E end;
+        [| reflexivity ].
+      exfalso. apply Hc. apply beq_dec_iff in E. exact E.
   Qed.
 
-  (* AN IDLE CYCLE: only the ack registers change. *)
+  (* AN IDLE CYCLE, [in_cmd] invalid or naming no action: only the acks change. *)
   Lemma cycle_idle :
     forall (r: ContextEnv.(env_t) R) (sigma: forall f, Sig_denote (Sigma f)) x,
       r.[tf_ready] = Ob~1 ->
-      fst (sigma ext_in_cmd Ob~1) = Ob~0 ->
+      (forall a, fst (sigma ext_in_cmd Ob~1) = Ob~0
+                 \/ fst (snd (sigma ext_in_cmd Ob~1)) <> spec_action_encoding a) ->
       match x with tf_out_ack _ | tf_ip_ack _ => False | _ => True end ->
       (interp_cycle sigma rules system_schedule r).[x] = r.[x].
   Proof.
@@ -3873,7 +3882,7 @@ Section SynthesisProof.
     - cbn [fold_right]. rewrite latest_write_schedule_outputs by exact Hx.
       rewrite SemanticProperties.latest_write_empty. reflexivity.
     - cbn [fold_right interp_scheduler'].
-      rewrite (interp_rule_cmd_idle r sigma log_empty a Hready Hidle). exact IH.
+      rewrite (interp_rule_cmd_idle r sigma log_empty a Hready (Hidle a)). exact IH.
   Qed.
 
   (* An active cycle runs the commanded action's rule and no other. *)

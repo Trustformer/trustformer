@@ -1,1 +1,2 @@
 -R _build/default/coq/ Trustformer
+-R _build/default/external/ipr/ IPR

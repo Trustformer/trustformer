@@ -53,11 +53,44 @@ is whether the list is the right one.
 | `coq/Scheduler/Schedule.v`                        | the `TFSchedule` record and the obligations it carries                                   |
 | `coq/Scheduler/Show.v`, `coq/Scheduler/Audit.v`   | diagnostics: criticality reports, cycle bounds with witnesses, Graphviz output           |
 | `coq/Backend/`                                    | `Lowering.v`, the Kôika register file, rules and scheduler for a `TFSchedule`            |
-| `coq/Theorems/`                                   | the guarantees: `IPR.v` over the emitted circuit, `Confidentiality.v` over the spec      |
+| `coq/Theorems/`                                   | the guarantees: `IPR.v` on the emitted circuit, `Confidentiality.v` on the spec          |
 | `coq/Theorems/Internal/`                          | proof bulk those rest on — machine-checked, not written to be read                       |
 | `coq/Declassification/`                           | the declassification rule library                                                        |
 | `coq/Examples/`                                   | the worked designs, one folder each: a `Spec.v` and any proofs about it                  |
 | `coq/Regressions/`                                | toolchain tests: the analyses, the lowering, and the designs the testbenches drive       |
+| `external/ipr/`                                   | the IPR definitions of Athalye et al., vendored, which `IPR.v` is stated against         |
+
+## The guarantee, in IPR's terms
+
+`coq/Theorems/IPR.v` states what the generated circuit guarantees against the
+formalization of information-preserving refinement (IPR) by Athalye et al.,
+[anishathalye/ipr](https://github.com/anishathalye/ipr). Its definition files are
+vendored in `external/ipr/` unchanged except `From Stdlib` -> `From Coq`, for Coq 8.19.
+
+| IPR, upstream                              | Trustformer, `coq/Theorems/Definitions.v`                                            |
+| ------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `M1 : machine I1 O1`, the implementation   | `closed_circuit ip src`: a step is one Kôika cycle; I1 the wires, O1 ready and the public outputs |
+| `M2 : machine I2 O2`, the specification    | `closed_spec src`: queries `Run act pin` and `Peek`, answered with the public outputs |
+| `d : driver I1 O1 I2 O2`                   | `driver`: offer the command, idle until ready is seen, read the outputs               |
+| `IPR M1 M2 d` (`Definition.v`)             | `IPR.ipr`: upstream's `IPR` itself, for every `ip` meeting its `datasheet` and every `src` |
+
+The statement differs from upstream's setting on purpose in two ways:
+
+1. **Trusted IP and secure ports.** Upstream treats every wire as the attacker's.
+   A Trustformer design may attach trusted IP and mark ports `Secret`, and those
+   wires belong to a trusted environment that both machines are closed over
+   (`close`). Any `src` drives the secure input ports and may react to the
+   outputs shown at each command. Any `ip` that meets its `datasheet` answers the
+   IP requests. With no IP and no secure port, `close` passes every wire through,
+   and the statement is upstream's for the bare circuit.
+2. **Reset.** A reset returns both machines, environment included, to their
+   initial states. `Internal/IPRStrategy.v` derives `IPR` under that convention,
+   adapting upstream's `IPR_by_functional_physical_simulation`. It also states the
+   physical half over non-empty traces only: upstream's cannot be met, since an
+   empty trace would have to end in an emulator state.
+
+The emulator IPR asks for is in `Internal/IPRBridge.v`. It reads only the
+attacker's wires and the spec's answers to its queries.
 
 ## Writing a module
 

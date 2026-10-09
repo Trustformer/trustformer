@@ -315,7 +315,7 @@ Section Instance.
       map (Definitions.sf_action tfs_ctx) acts = [false; false; true; false].
     Proof. vm_compute. reflexivity. Qed.
 
-    Definition ipr_here := IPR.circuit_emulated tfs_ctx CL _ _
+    Definition ipr_here := IPR.ipr tfs_ctx CL _ _
       (tf_action_encoding_inj tf_ctx) (tf_action_names tf_ctx).
 
     Definition package := Lowering.package tf_ctx "Knox_Fifo1".

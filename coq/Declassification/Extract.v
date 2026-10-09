@@ -25,6 +25,24 @@ Proof.
     exists a'. split; [ right; exact Hin | exact Hf ].
 Qed.
 
+(* The published bits enter the seed only as values. *)
+Lemma seed_ext {s i o p} i_sz o_sz (g: @dfg_state_t s i o p) sin1 spre1 spost1 sin2 spre2 spost2 :
+  (forall v, sin1 v = sin2 v) -> (forall o, spre1 o = spre2 o) -> (forall o, spost1 o = spost2 o) ->
+  forall n, seed i_sz o_sz g sin1 spre1 spost1 n = seed i_sz o_sz g sin2 spre2 spost2 n.
+Proof.
+  intros Hi Hpre Hpost n. unfold seed.
+  lazymatch goal with
+  | |- match _ with Some x => Some x | None => find_map ?F1 ?L end
+       = match _ with Some y => Some y | None => find_map ?F2 _ end =>
+      assert (HF : find_map F1 L = find_map F2 L)
+        by (induction L as [| [[sv | ov] r] rest IH]; cbn [find_map];
+            [ reflexivity | exact IH | rewrite Hpost, IH; reflexivity ])
+  end.
+  destruct (op (node_at g n)) as [c | iv | [sv | ov] | uop a | bop a b | a | cnd t e
+                                 | slat sa | dp darg den | sp tok en | ja jb | ];
+    rewrite ?Hi, ?Hpre, HF; reflexivity.
+Qed.
+
 (* ================================================================= *)
 (* THE RECIPE AIMS AT ANY VALUATION OBEYING OPS, PACKETS, IPs.       *)
 (* ================================================================= *)
@@ -1080,9 +1098,27 @@ Section Settled.
                (pi_holds_nil ctx cost_limit act a_idx (sik m) (ssk m)) Hrv).
   Qed.
 
-  Local Notation view := (observe ctx input (snd sp0) (snd (spec_run act sp0 input))).
+  (* The run's own view, and any view that reads as it value for value. *)
+  Local Notation view0 := (observe ctx input (snd sp0) (snd (spec_run act sp0 input))).
+  Context (view: public_view ctx).
+  Hypothesis Hview_in : forall v, seen_in ctx view v = seen_in ctx view0 v.
+  Hypothesis Hview_pre : forall o, seen_pre ctx view o = seen_pre ctx view0 o.
+  Hypothesis Hview_post : forall o, seen_post ctx view o = seen_post ctx view0 o.
+
   Local Notation rvals :=
     (recovered ctx cost_limit act (seen_in ctx view) (seen_pre ctx view) (seen_post ctx view)).
+  Local Notation seedv := (Recover.seed i_sz o_sz G (seen_in ctx view) (seen_pre ctx view)
+                                        (seen_post ctx view)).
+
+  Lemma seedv_eq n :
+    seedv n = Recover.seed i_sz o_sz G (seen_in ctx view0) (seen_pre ctx view0) (seen_post ctx view0) n.
+  Proof. exact (seed_ext i_sz o_sz G _ _ _ _ _ _ Hview_in Hview_pre Hview_post n). Qed.
+
+  Lemma seedv_sound : sound_known G V seedv.
+  Proof.
+    intros n v H. rewrite seedv_eq in H.
+    exact (seed_sound ctx cost_limit act sp0 input _ roots_ideal n v H).
+  Qed.
 
   (* EVERYTHING THE RECIPE RECOVERS IS AN IDEAL VALUE. *)
   Lemma recovered_ideal n v :
@@ -1096,7 +1132,7 @@ Section Settled.
              (videal_stall ctx cost_limit act sp0 input)
              (videal_join ctx cost_limit act sp0 input)
              (videal_drive ctx cost_limit act sp0 input)).
-    exact (seed_sound ctx cost_limit act sp0 input _ roots_ideal).
+    exact seedv_sound.
   Qed.
 
   Theorem recovered_vals_sound k :
@@ -1112,12 +1148,7 @@ Section Settled.
   (* ================================================================= *)
 
   Local Notation peq := (tfs_spec_ips_eq_dec ctx).
-  Local Notation seedv := (Recover.seed i_sz o_sz G (seen_in ctx view) (seen_pre ctx view)
-                                        (seen_post ctx view)).
   Local Notation Kf f := (recover (p_eq := peq) (tfs_spec_ip ctx) (tfs_spec_decls ctx) G seedv f).
-
-  Lemma seedv_sound : sound_known G V seedv.
-  Proof. exact (seed_sound ctx cost_limit act sp0 input _ roots_ideal). Qed.
 
   Lemma seedv_range n : seedv n <> None -> n < length (graph G).
   Proof.
@@ -1246,7 +1277,7 @@ Section Settled.
         destruct Hd as [[v r] [Hr Hf]]. cbn [snd] in Hr. subst r.
         apply filter_In in Hf. destruct Hf as [Hvm Hpub].
         destruct v as [sv | o]; [ discriminate | ].
-        apply reached_of_seed. unfold Recover.seed.
+        apply reached_of_seed. rewrite seedv_eq. unfold Recover.seed.
         destruct (match op (node_at G m) with
                   | DFG_Input v => _ | DFG_Var (DFG_OVar o0) => _ | _ => None end);
           [ discriminate | ].
@@ -1257,7 +1288,7 @@ Section Settled.
         destruct (op (nth m (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hm;
           try discriminate.
         + apply (reached_of_step 0). unfold step, node_at. rewrite Hm. discriminate.
-        + apply reached_of_seed. unfold Recover.seed, node_at. rewrite Hm.
+        + apply reached_of_seed. rewrite seedv_eq. unfold Recover.seed, node_at. rewrite Hm.
           cbn [seen_in observe]. destruct (tfs_spec_inputs_class ctx v); [ discriminate | ].
           discriminate Hop. }
     revert Hbase. generalize (public_dsts ctx G ++ trivially_public ctx G) as acc.
@@ -1312,14 +1343,14 @@ Section Settled.
                                    | slat sa | dp darg den | sp tok en | ja jb | ] eqn:Hop.
     - apply (reached_of_step 0). unfold step. rewrite Hop. discriminate.
     - destruct (tfs_spec_inputs_class ctx iv) eqn:Hcls.
-      + apply reached_of_seed. unfold Recover.seed. rewrite Hop.
+      + apply reached_of_seed. rewrite seedv_eq. unfold Recover.seed. rewrite Hop.
         cbn [seen_in observe]. rewrite Hcls. discriminate.
       + exfalso. apply Hnt. rewrite <- Hnid.
         apply (input_secret_tainted ctx cost_limit act _ iv Hnode Hop Hcls). rewrite Hnid. exact Hnr.
     - exfalso. apply Hnt. rewrite <- Hnid.
       apply (svar_tainted ctx cost_limit act _ sv Hnode Hop). rewrite Hnid. exact Hnr.
     - destruct (tfs_spec_outputs_class ctx ov) eqn:Hcls.
-      + apply reached_of_seed. unfold Recover.seed. rewrite Hop.
+      + apply reached_of_seed. rewrite seedv_eq. unfold Recover.seed. rewrite Hop.
         cbn [seen_pre observe]. rewrite Hcls. discriminate.
       + exfalso. apply Hnt. rewrite <- Hnid.
         apply (ovar_secret_tainted ctx cost_limit act _ ov Hnode Hop Hcls). rewrite Hnid. exact Hnr.

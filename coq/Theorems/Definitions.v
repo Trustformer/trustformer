@@ -1,6 +1,6 @@
 (*! The vocabulary the guarantees are stated in: the attacker's view and clock,
-    the circuit Lowering emits, and the emulator it is held to.  With the
-    statement files in coq/Theorems/, this is the whole proof-layer audit. !*)
+    the circuit Lowering emits, its trusted environment, and IPR's machines.  With
+    the statement files in coq/Theorems/, this is the whole proof-layer audit. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.
@@ -13,6 +13,8 @@ Require Import Trustformer.Contract.
 Require Export Trustformer.Scheduler.Schedule.
 Require Import Trustformer.Backend.Lowering.
 Require Trustformer.Theorems.Internal.AttackerClock.
+Require IPR.Common IPR.Machine IPR.Driver IPR.Emulator IPR.Definition.
+Import IPR.Common (result(..)) IPR.Driver (dproc(..)).
 
 Require Import Coq.Lists.List.
 Require Import Coq.Arith.PeanoNat.
@@ -59,6 +61,14 @@ Section SchedulerWorld.
     seen_pre  : forall o: o_var, option (type_denote (tf_outputs_type o_sz o));
     seen_post : forall o: o_var, option (type_denote (tf_outputs_type o_sz o));
   }.
+
+  (* A command's inputs and the outputs as the attacker sees them: a secure port
+     reads [None]. *)
+  Definition mask_in (input: input_t) : forall v: i_var, option (type_denote (tf_inputs_type i_sz v)) :=
+    fun v => match tfs_spec_inputs_class ctx v with Public => Some (input v) | Secret => None end.
+
+  Definition mask_out (outs: src_out_env) : forall o: o_var, option (type_denote (tf_outputs_type o_sz o)) :=
+    fun o => match tfs_spec_outputs_class ctx o with Public => Some outs.[o] | Secret => None end.
 
   Definition observe (input: input_t) (pre post: src_out_env) : public_view := {|
     seen_in v   := match tfs_spec_inputs_class ctx v with
@@ -134,7 +144,7 @@ End SchedulerWorld.
 
 
 (* ==================================================================== *)
-(* The circuit Lowering emits, its environment, and its emulator.       *)
+(* The circuit Lowering emits, its trusted environment, and the spec.   *)
 (* ==================================================================== *)
 
 Section CircuitWorld.
@@ -175,90 +185,155 @@ Section CircuitWorld.
   Local Notation run act sp input :=
     (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act) sp input).
 
-  (* A command: an action and the inputs it latches when it is taken. *)
-  Local Notation command := (tfs_action sched * input_t)%type.
+  Local Notation pub_inputs := (forall v, option (type_denote (tf_inputs_type i_sz v))).
+  Local Notation pub_outputs := (forall o, option (type_denote (tf_outputs_type o_sz o))).
 
-  (* THE CIRCUIT: Kôika's cycle over the lowered rules, from state [c0], with
-     [env k] what the environment drives in cycle [k]. *)
-  Fixpoint circuit_run (c0: circuit_state) (env: nat -> wires) (n: nat) : circuit_state :=
-    match n with
-    | 0 => c0
-    | S k => interp_cycle (env k) (rules synth) (system_schedule synth) (circuit_run c0 env k)
-    end.
+  (* ================================================================ *)
+  (* What the attacker sees, and what the spec answers.               *)
+  (* ================================================================ *)
 
-  (* THE CIRCUIT AT REST, holding spec state [sp]: ready, its state slots and
-     outputs are the spec's, and every buffer and validity bit is cleared. *)
-  Definition at_rest (c: circuit_state) (sp: src_sys_state) : Prop :=
-    c.[tf_ready] = Ob~1
-    /\ (forall o, c.[tf_out o] = (snd sp).[o])
-    /\ (forall x: tfs_states tsched,
-          match x with
-          | tf_dfg_s s => c.[tf_reg (tf_dfg_s s)] = (fst sp).[s]
-          | tf_dfg_b _ _ | tf_dfg_v _ _ => c.[tf_reg x] = Bits.zero
-          | _ => True
-          end).
+  (* WHAT THE ATTACKER SEES in a cycle: ready on [in_cmd], and the public output
+     ports, which show the outputs as the cycle leaves them. *)
+  Definition atk_out : Type := (bits_t 1 * pub_outputs)%type.
 
-  (* What the environment offers in a cycle while ready is up: [Some (act, input)]
-     is a valid [in_cmd] with the inputs on their ports, [None] an invalid one. *)
-  Definition presents (w: wires) (c: option command) : Prop :=
-    let cmd := w ext_in_cmd Ob~1 in
-    match c with
-    | None => fst cmd = Ob~0
-    | Some (act, input) =>
-        fst cmd = Ob~1 /\ fst (snd cmd) = tf_action_encoding synth act
-        /\ forall v, w (ext_input (inl v)) Ob~1 = input v
-    end.
+  Definition circuit_outputs (c: circuit_state) : src_out_env :=
+    ContextEnv.(create) (fun o => c.[tf_out o]).
 
-  (* THE IP's DATASHEET on the circuit: a request register raised at cycle [s]
-     and left quiet for the flight time is answered on the response wire. *)
-  Definition ip_contract (c0: circuit_state) (env: nat -> wires) : Prop :=
-    forall (p: tfs_ips tsched) (s: nat),
-      let req k := (circuit_run c0 env k).[tf_reg (tfs_drive_reg tsched p)] in
+  Definition atk_out_of (c c': circuit_state) : atk_out :=
+    (c.[tf_ready], mask_out ctx (circuit_outputs c')).
+
+  (* WHAT THE SPEC IS ASKED: its public outputs, or to run a command on public
+     inputs [pin]. *)
+  Inductive query := Peek | Run (act: tfs_action sched) (pin: pub_inputs).
+
+  (* A command's inputs: the public ones from [pin], the secure ones from [ports]. *)
+  Definition fill (pin: pub_inputs) (ports: input_t) : input_t :=
+    fun v => match tfs_spec_inputs_class ctx v, pin v with
+             | Public, Some x => x
+             | Public, None => Bits.zero
+             | Secret, _ => ports v
+             end.
+
+  Definition spec_init : src_sys_state :=
+    (ContextEnv.(create) (tfs_spec_states_init ctx), ContextEnv.(create) (fun _ => Bits.zero)).
+
+  (* ================================================================ *)
+  (* The trusted environment: whatever drives the wires the attacker  *)
+  (* does not.  With no IP and no secure port, it drives none.        *)
+  (* ================================================================ *)
+
+  Local Notation req_t p := (R synth (tf_reg (tfs_drive_reg tsched p))).
+
+  (* A TRUSTED IP: its answer in a cycle, from what its request register held at
+     the start of every cycle so far, this one last. *)
+  Definition trusted_ip : Type :=
+    forall p: tfs_ips tsched, list (req_t p) -> bits_t (ip_resp_sz (tfs_ip tsched p)).
+
+  (* ITS DATASHEET: a request strobed and then left quiet is answered, [lat]
+     cycles on, with [ip_fn] of its payload. *)
+  Definition datasheet (ip: trusted_ip) : Prop :=
+    forall p (h t: list (req_t p)) (q: req_t p),
       let sz := ip_req_sz (tfs_ip tsched p) in
       let lat := pred (ip_lat (tfs_ip tsched p)) in
-      Bits.slice sz 1 (req s) = Bits.ones 1 ->
-      (forall w, s < w < s + lat -> Bits.slice sz 1 (req w) = Bits.zero) ->
-      env (s + lat) (ext_input (inr p)) Ob~1 = ip_fn (tfs_ip tsched p) (Bits.slice 0 sz (req s)).
+      Bits.slice sz 1 q = Bits.ones 1 -> length t = lat ->
+      (forall q', In q' (firstn (pred lat) t) -> Bits.slice sz 1 q' = Bits.zero) ->
+      ip p (h ++ q :: t) = ip_fn (tfs_ip tsched p) (Bits.slice 0 sz q).
 
-  (* THE EMULATOR, which never sees the spec: it shows [em_pre] for [em_left] more
-     cycles, then [em_post].  Taking a command, it is told only the outputs after
-     it, and is busy for [L_pub] cycles of the public view. *)
-  Record emulator := { em_pre : src_out_env; em_post : src_out_env; em_left : nat }.
+  (* A TRUSTED SOURCE on the secure input ports: their values, from the outputs
+     shown at every command taken so far, this one last. *)
+  Definition trusted_source : Type := list src_out_env -> input_t.
 
-  Definition em_start (outs: src_out_env) : emulator :=
-    {| em_pre := outs; em_post := outs; em_left := 0 |}.
+  (* THE WIRES OF A CYCLE: the attacker's [w], except the secure ports, the IPs'
+     answers, and the acknowledgements a trusted party gives, which the trusted
+     environment drives. *)
+  Definition close (ip: trusted_ip) (src: trusted_source) (c: circuit_state)
+      (hs: forall p, list (req_t p)) (seen: list src_out_env) (w: wires) : wires :=
+    fun f => match f return Sig_denote (Sigma synth f) with
+             | ext_in_cmd => w ext_in_cmd
+             | ext_input (inl v) =>
+                 match tfs_spec_inputs_class ctx v with
+                 | Public => w (ext_input (inl v))
+                 | Secret => fun _ => src (seen ++ [circuit_outputs c]) v
+                 end
+             | ext_input (inr p) => fun _ => ip p (hs p ++ [c.[tf_reg (tfs_drive_reg tsched p)]])
+             | ext_output o =>
+                 match tfs_spec_outputs_class ctx o with
+                 | Public => w (ext_output o)
+                 | Secret => fun _ => Ob~0
+                 end
+             | ext_ip_req _ => fun _ => Ob~0
+             end.
 
-  Definition em_ready (e: emulator) : bool := Nat.eqb (em_left e) 0.
+  (* Whether the circuit takes a command in this cycle: it is ready, and [in_cmd]
+     is valid and names an action. *)
+  Definition takes (c: circuit_state) (w: wires) : bool :=
+    let cmd := w ext_in_cmd Ob~1 in
+    Bits.single c.[tf_ready] && Bits.single (fst cmd)
+    && existsb (fun a => beq_dec (enc a) (fst (snd cmd))) (@finite_elements _ (tfs_action_fin sched)).
 
-  Definition em_shown (e: emulator) : src_out_env :=
-    if em_ready e then em_post e else em_pre e.
+  (* ================================================================ *)
+  (* IPR's two machines and its driver.                               *)
+  (* ================================================================ *)
 
-  Definition em_tick (e: emulator) : emulator :=
-    {| em_pre := em_pre e; em_post := em_post e; em_left := pred (em_left e) |}.
+  (* THE CIRCUIT AS AN IPR MACHINE: a step is one cycle on the attacker's wires,
+     closed over the trusted environment, which keeps each IP's requests and the
+     outputs the source has been shown. *)
+  Definition closed_circuit (ip: trusted_ip) (src: trusted_source)
+    : IPR.Machine.machine wires atk_out := {|
+    IPR.Machine.state := (circuit_state * (forall p, list (req_t p)) * list src_out_env)%type;
+    IPR.Machine.init := (ContextEnv.(create) (r synth), fun _ => [], []);
+    IPR.Machine.step := fun '(c, hs, seen) w res =>
+      let c' := interp_cycle (close ip src c hs seen w) (rules synth) (system_schedule synth) c in
+      res = Result (atk_out_of c c')
+                   (c', fun p => hs p ++ [c.[tf_reg (tfs_drive_reg tsched p)]],
+                    if takes c w then seen ++ [circuit_outputs c] else seen);
+    IPR.Machine.reset := fun _ s' => s' = (ContextEnv.(create) (r synth), fun _ => [], []) |}.
 
-  Definition em_take (e: emulator) (act: tfs_action sched) (input: input_t)
-      (post: src_out_env) : emulator :=
-    {| em_pre := em_post e; em_post := post;
-       em_left := pred (L_pub ctx cost_limit act (observe ctx input (em_post e) post)) |}.
+  (* THE SPEC AS AN IPR MACHINE, closed over the same source and answering with
+     public outputs only. *)
+  Definition closed_spec (src: trusted_source) : IPR.Machine.machine query pub_outputs := {|
+    IPR.Machine.state := (src_sys_state * list src_out_env)%type;
+    IPR.Machine.init := (spec_init, []);
+    IPR.Machine.step := fun '(sp, seen) q res =>
+      res = match q with
+            | Peek => Result (mask_out ctx (snd sp)) (sp, seen)
+            | Run act pin =>
+                let seen' := seen ++ [snd sp] in
+                let sp' := run act sp (fill pin (src seen')) in
+                Result (mask_out ctx (snd sp')) (sp', seen')
+            end;
+    IPR.Machine.reset := fun _ s' => s' = (spec_init, []) |}.
 
-  (* THE IDEAL WORLD: the spec runs beside the emulator from [sp0], a state the
-     emulator never reads, and answers each command it takes with the outputs. *)
-  Fixpoint ideal_run (sp0: src_sys_state) (cmds: nat -> option command) (n: nat)
-    : src_sys_state * emulator :=
-    match n with
-    | 0 => (sp0, em_start (snd sp0))
-    | S k =>
-        let '(sp, e) := ideal_run sp0 cmds k in
-        match cmds k with
-        | Some (act, input) =>
-            if em_ready e
-            then let sp' := run act sp input in (sp', em_take e act input (snd sp'))
-            else (sp, em_tick e)
-        | None => (sp, em_tick e)
-        end
-    end.
+  (* Wires offering nothing, and wires offering [act] on public inputs [pin]. *)
+  Definition idle_wires : wires :=
+    fun f => match f return Sig_denote (Sigma synth f) with
+             | ext_in_cmd => fun _ => (Ob~0, (Bits.zero, tt))
+             | ext_input _ => fun _ => Bits.zero
+             | ext_output _ => fun _ => Ob~0
+             | ext_ip_req _ => fun _ => Ob~0
+             end.
+
+  Definition offer_wires (act: tfs_action sched) (pin: pub_inputs) : wires :=
+    fun f => match f return Sig_denote (Sigma synth f) with
+             | ext_in_cmd => fun _ => (Ob~1, (tf_action_encoding synth act, tt))
+             | ext_input (inl v) => fun _ => fill pin (fun _ => Bits.zero) v
+             | ext_input (inr _) => fun _ => Bits.zero
+             | ext_output _ => fun _ => Ob~0
+             | ext_ip_req _ => fun _ => Ob~0
+             end.
+
+  (* THE DRIVER: a spec operation as cycles -- offer it, idle until ready is seen
+     again, then read the public outputs off one more idle cycle. *)
+  Definition driver : IPR.Driver.driver wires atk_out query pub_outputs :=
+    fun q => match q with
+             | Peek => DBind (DCall idle_wires) (fun o => DRet (snd o))
+             | Run act pin =>
+                 DBind (DCall (offer_wires act pin)) (fun _ =>
+                 DBind (DWhile (DBind (DCall idle_wires) (fun o => DRet (negb (Bits.single (fst o)))))
+                               (DRet tt)) (fun _ =>
+                 DBind (DCall idle_wires) (fun o => DRet (snd o))))
+             end.
 
 End CircuitWorld.
 
-Arguments em_pre {ctx}. Arguments em_post {ctx}. Arguments em_left {ctx}.
-Arguments em_start {ctx}. Arguments em_ready {ctx}. Arguments em_shown {ctx}. Arguments em_tick {ctx}.
+Arguments Peek {ctx cost_limit}. Arguments Run {ctx cost_limit}.

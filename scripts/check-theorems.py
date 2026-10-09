@@ -14,11 +14,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # A headline theorem states a guarantee the project makes, not a step to one.
 # (group, why it is headline, [(module, theorem), ...])
 HEADLINE = [
-    ("the circuit computes the spec and leaks no secret by timing",
-     "the project's reason to exist: from any state at rest, at every cycle of the "
-     "emitted circuit the outputs are the spec's and the cycle they change on is public",
-     [("Trustformer.Theorems.IPR", "circuit_emulated"),
-      ("Trustformer.Theorems.IPR", "reset_at_rest")]),
+    ("the circuit meets IPR (Athalye et al.)",
+     "the project's reason to exist: the generated circuit computes the spec and leaks "
+     "no more than it, for IPR as upstream defines it, under any trusted environment",
+     [("Trustformer.Theorems.IPR", "ipr")]),
 
     ("no secret leaks by value",
      "what the attacker can see never depends on a secret",
@@ -84,6 +83,7 @@ def main():
         return 0
 
     lib = os.path.join(ROOT, "_build/default/coq")
+    ipr_lib = os.path.join(ROOT, "_build/default/external/ipr")
     if not os.path.isdir(lib):
         sys.exit("_build/default/coq is missing -- run 'dune build coq/' first")
 
@@ -92,7 +92,7 @@ def main():
         probe = os.path.join(work, "CheckTheorems.v")
         with open(probe, "w") as fh:
             fh.write(build_probe(pairs))
-        run = subprocess.run(["coqc", "-R", lib, "Trustformer", probe],
+        run = subprocess.run(["coqc", "-R", lib, "Trustformer", "-R", ipr_lib, "IPR", probe],
                              capture_output=True, text=True, cwd=work)
 
     if run.returncode != 0:
