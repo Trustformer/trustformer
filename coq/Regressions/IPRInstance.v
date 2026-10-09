@@ -5,7 +5,7 @@
 Require Import Koika.Frontend.
 Require Import Koika.Std.
 
-Require Import Trustformer.Theorems.Definitions.
+Require Import Trustformer.Theorems.IPRDefinitions.
 Require Import Trustformer.Theorems.Internal.ProofDefinitions.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
@@ -179,7 +179,7 @@ Section TheoremInstantiation.
 
   (* This context attaches no IP, so every IP model meets the datasheet. *)
   Lemma no_ip_datasheet ip :
-    Definitions.datasheet tfs_ctx cost 16 fs_action_encoding fs_action_encoding_inj fs_action_names ip.
+    IPRDefinitions.datasheet tfs_ctx cost 16 fs_action_encoding fs_action_encoding_inj fs_action_names ip.
   Proof. intro p. destruct p. Qed.
 
   (* The headline, fully instantiated: IPR, verbatim from upstream, for the password
@@ -196,18 +196,18 @@ Section DatasheetInhabited.
   Local Notation sched := (tfs_schedule ctx cost_limit).
   Context (enc_sz: nat) (enc: tfs_action sched -> bits_t enc_sz)
           (enc_inj: forall a b, enc a = enc b -> a = b) (names: Show (tfs_action sched)).
-  Local Notation tsched := (tf_sched_ctx (Definitions.synth ctx cost_limit enc_sz enc enc_inj names)).
+  Local Notation tsched := (tf_sched_ctx (IPRDefinitions.synth ctx cost_limit enc_sz enc enc_inj names)).
 
   (* The datasheet can be met: an IP that answers each request
      exactly [lat] cycles on meets it, for every design. *)
-  Definition ideal_ip : Definitions.trusted_ip ctx cost_limit enc_sz enc enc_inj names :=
+  Definition ideal_ip : IPRDefinitions.trusted_ip ctx cost_limit enc_sz enc enc_inj names :=
     fun p h => match nth_error (rev h) (pred (ip_lat (tfs_ip tsched p))) with
                | Some q => ip_fn (tfs_ip tsched p) (Bits.slice 0 (ip_req_sz (tfs_ip tsched p)) q)
                | None => Bits.zero
                end.
 
   Lemma ideal_ip_datasheet :
-    Definitions.datasheet ctx cost_limit enc_sz enc enc_inj names ideal_ip.
+    IPRDefinitions.datasheet ctx cost_limit enc_sz enc enc_inj names ideal_ip.
   Proof.
     intros p h t q. cbv zeta. intros _ Hlen _. unfold ideal_ip.
     rewrite rev_app_distr. cbn [rev]. rewrite <- app_assoc.

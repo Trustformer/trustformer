@@ -11,9 +11,10 @@ Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
 Require Import Trustformer.Backend.Lowering.
-Require Export Trustformer.Theorems.Definitions.
+Require Export Trustformer.Theorems.IPRDefinitions.
 Require Export Trustformer.Theorems.Internal.IRDefinitions.
 Require Export Trustformer.Theorems.Internal.CircuitDefinitions.
+Require Import Trustformer.Theorems.Internal.AttackerClock.
 Require Trustformer.Declassification.Extract.
 Require Trustformer.Theorems.Internal.IPRProof.
 Require Trustformer.Theorems.Internal.SchedulerSimulationLemmas.
@@ -113,8 +114,8 @@ Section OneCommand.
   Local Notation ip_contract := (IRDefinitions.ip_contract ctx cost_limit).
   Local Notation first_done := (IRDefinitions.first_done ctx cost_limit).
   Local Notation emulate := (IRDefinitions.emulate ctx).
-  Local Notation L_pub := (Definitions.L_pub ctx cost_limit).
-  Local Notation observe := (Definitions.observe ctx).
+  Local Notation L_pub := (AttackerClock.L_pub ctx cost_limit).
+  Local Notation observe := (AttackerClock.observe ctx).
 
   (* ONE COMMAND on the IR: done first on the cycle [L_pub] computes from the
      public view, with the outputs at [pre] until then and [post] on it. *)
@@ -184,7 +185,7 @@ Section Model.
   Local Notation command := (tfs_action sched * input_t)%type.
   Local Notation run act sp input :=
     (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act) sp input).
-  Local Notation L_pub := (Definitions.L_pub ctx cost_limit).
+  Local Notation L_pub := (AttackerClock.L_pub ctx cost_limit).
   Local Notation pub_inputs := (forall v, option (type_denote (tf_inputs_type i_sz v))).
 
   (* [in_cmd]'s code, decoded as the circuit's guards compare it. *)
@@ -315,9 +316,9 @@ Section Emulator.
   Local Notation pub_inputs := (forall v, option (type_denote (tf_inputs_type i_sz v))).
   Local Notation pub_outputs := (forall o, option (type_denote (tf_outputs_type o_sz o))).
   Local Notation atk_in := (CircuitDefinitions.atk_in ctx enc_sz).
-  Local Notation atk_out := (Definitions.atk_out ctx).
-  Local Notation query := (Definitions.query ctx cost_limit).
-  Local Notation L_pub := (Definitions.L_pub ctx cost_limit).
+  Local Notation atk_out := (IPRDefinitions.atk_out ctx).
+  Local Notation query := (IPRDefinitions.query ctx cost_limit).
+  Local Notation L_pub := (AttackerClock.L_pub ctx cost_limit).
 
   (* The emulator's own state: the outputs it shows before and after the running
      command, and that command's cycles left. *)
@@ -448,8 +449,8 @@ Section CircuitProof.
   Local Notation cmds k := (cmd_of ctx cost_limit enc_sz enc enc_inj names (env k)).
   Local Notation ideal k :=
     (ideal_run ctx cost_limit sp0 (fun i => cmd_of ctx cost_limit enc_sz enc enc_inj names (env i)) pv k).
-  Local Notation L_pub := (Definitions.L_pub ctx cost_limit).
-  Local Notation observe := (Definitions.observe ctx).
+  Local Notation L_pub := (AttackerClock.L_pub ctx cost_limit).
+  Local Notation observe := (AttackerClock.observe ctx).
 
   Local Notation run_n := (IRDefinitions.run_n ctx cost_limit).
   Local Notation sched_input := (IRDefinitions.sched_input ctx cost_limit).

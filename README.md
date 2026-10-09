@@ -53,7 +53,7 @@ is whether the list is the right one.
 | `coq/Scheduler/Schedule.v`                        | the `TFSchedule` record and the obligations it carries                                   |
 | `coq/Scheduler/Show.v`, `coq/Scheduler/Audit.v`   | diagnostics: criticality reports, cycle bounds with witnesses, Graphviz output           |
 | `coq/Backend/`                                    | `Lowering.v`, the Kôika register file, rules and scheduler for a `TFSchedule`            |
-| `coq/Theorems/`                                   | the guarantees: `IPR.v` on the emitted circuit, `Confidentiality.v` on the spec          |
+| `coq/Theorems/`                                   | the guarantees: `IPR.v` on the emitted circuit, `Confidentiality.v` on the spec, each stated over its own `*Definitions.v` |
 | `coq/Theorems/Internal/`                          | proof bulk those rest on — machine-checked, not written to be read                       |
 | `coq/Declassification/`                           | the declassification rule library                                                        |
 | `coq/Examples/`                                   | the worked designs, one folder each: a `Spec.v` and any proofs about it                  |
@@ -67,7 +67,7 @@ formalization of information-preserving refinement (IPR) by Athalye et al.,
 [anishathalye/ipr](https://github.com/anishathalye/ipr). Its definition files are
 vendored in `external/ipr/` unchanged except `From Stdlib` -> `From Coq`, for Coq 8.19.
 
-| IPR, upstream                              | Trustformer, `coq/Theorems/Definitions.v`                                            |
+| IPR, upstream                              | Trustformer, `coq/Theorems/IPRDefinitions.v`                                         |
 | ------------------------------------------ | ------------------------------------------------------------------------------------ |
 | `M1 : machine I1 O1`, the implementation   | `closed_circuit ip src`: a step is one Kôika cycle; I1 the wires, O1 ready and the public outputs |
 | `M2 : machine I2 O2`, the specification    | `closed_spec src`: queries `Run act pin` and `Peek`, answered with the public outputs |

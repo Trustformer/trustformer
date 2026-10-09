@@ -11,7 +11,7 @@ Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
 Require Import Trustformer.Backend.Lowering.
-Require Export Trustformer.Theorems.Definitions.
+Require Export Trustformer.Theorems.IPRDefinitions.
 Require Import Trustformer.Theorems.Internal.CircuitDefinitions.
 Require Trustformer.Theorems.Internal.CircuitProof.
 Require Trustformer.Theorems.Internal.SynthesisProof.
@@ -108,7 +108,7 @@ Section Bridge.
 
   Local Notation M1 := (closed_circuit ctx cost_limit enc_sz enc enc_inj names ip src).
   Local Notation M2 := (closed_spec ctx cost_limit src).
-  Local Notation d := (Definitions.driver ctx cost_limit enc_sz enc enc_inj names).
+  Local Notation d := (IPRDefinitions.driver ctx cost_limit enc_sz enc enc_inj names).
   Local Notation close := (close ctx cost_limit enc_sz enc enc_inj names ip src).
   Local Notation takes := (takes ctx cost_limit enc_sz enc enc_inj names).
   Local Notation circuit_outputs := (circuit_outputs ctx cost_limit enc_sz enc enc_inj names).
@@ -214,7 +214,7 @@ Section Bridge.
   Lemma cenv_pv s ws k v :
     mask_in ctx (port_inputs (ws k)) v = mask_in ctx (port_inputs (cenv s ws k)) v.
   Proof.
-    unfold mask_in, port_inputs, cenv, Definitions.close. cbv beta iota.
+    unfold mask_in, port_inputs, cenv, IPRDefinitions.close. cbv beta iota.
     destruct (tfs_spec_inputs_class ctx v); reflexivity.
   Qed.
 
@@ -223,7 +223,7 @@ Section Bridge.
     port_inputs (cenv s ws k) v
     = fill (mask_in ctx (port_inputs (ws k))) (src (snd (crun s ws k) ++ [circuit_outputs (fst (fst (crun s ws k)))])) v.
   Proof.
-    unfold port_inputs, cenv, Definitions.close, Definitions.fill, mask_in. cbv beta iota.
+    unfold port_inputs, cenv, IPRDefinitions.close, IPRDefinitions.fill, mask_in. cbv beta iota.
     destruct (tfs_spec_inputs_class ctx v); reflexivity.
   Qed.
 
@@ -234,7 +234,7 @@ Section Bridge.
   Lemma rest_outputs (c: circuit_state) (sp: src_sys_state) : at_rest c sp -> circuit_outputs c = snd sp.
   Proof.
     intros [_ [Hout _]]. apply equiv_eq. intro o.
-    unfold Definitions.circuit_outputs. rewrite getenv_create. exact (Hout o).
+    unfold IPRDefinitions.circuit_outputs. rewrite getenv_create. exact (Hout o).
   Qed.
 
   (* A cycle offering nothing keeps the circuit at rest, showing ready and its outputs. *)
@@ -249,19 +249,19 @@ Section Bridge.
       intro a. left. exact Hw. }
     destruct Hr as [Hrdy [Hout Hreg]].
     assert (Houts : circuit_outputs (cycle w c) = snd sp).
-    { apply equiv_eq. intro o. unfold Definitions.circuit_outputs. rewrite getenv_create.
+    { apply equiv_eq. intro o. unfold IPRDefinitions.circuit_outputs. rewrite getenv_create.
       rewrite Hid by exact I. exact (Hout o). }
     split.
     - split; [ rewrite Hid by exact I; exact Hrdy | split ].
       + intro o. rewrite Hid by exact I. exact (Hout o).
       + intro x. specialize (Hreg x). destruct x; cbv iota in *; try exact I;
           rewrite Hid by exact I; exact Hreg.
-    - unfold Definitions.atk_out_of. rewrite Hrdy, Houts. reflexivity.
+    - unfold IPRDefinitions.atk_out_of. rewrite Hrdy, Houts. reflexivity.
   Qed.
 
   Lemma takes_idle (c: circuit_state) (w: wires) : fst (w ext_in_cmd Ob~1) = Ob~0 -> takes c w = false.
   Proof.
-    intro H. unfold Definitions.takes. cbv zeta. rewrite H.
+    intro H. unfold IPRDefinitions.takes. cbv zeta. rewrite H.
     destruct (Bits.single (c.[tf_ready])); reflexivity.
   Qed.
 
@@ -274,7 +274,7 @@ Section Bridge.
   Qed.
 
   Lemma takes_offer (c: circuit_state) act pin : c.[tf_ready] = Ob~1 -> takes c (offer act pin) = true.
-  Proof. intro H. unfold Definitions.takes. cbv zeta. rewrite H. exact (existsb_enc act). Qed.
+  Proof. intro H. unfold IPRDefinitions.takes. cbv zeta. rewrite H. exact (existsb_enc act). Qed.
 
   (* M1 takes a command just when the emulator, ready, decodes one. *)
   Lemma takes_iff (c: circuit_state) (w: wires) (e: CircuitProof.em ctx) :
@@ -283,7 +283,7 @@ Section Bridge.
                 then match cmd_of w with Some _ => true | None => false end
                 else false.
   Proof.
-    intro Hiff. unfold Definitions.takes, CircuitProof.cmd_of, CircuitProof.decode. cbv zeta.
+    intro Hiff. unfold IPRDefinitions.takes, CircuitProof.cmd_of, CircuitProof.decode. cbv zeta.
     rewrite existsb_find.
     destruct (CircuitProof.em_ready e) eqn:Er.
     - rewrite (proj2 Hiff eq_refl). cbn [Bits.single andb].
@@ -351,8 +351,8 @@ Section Bridge.
     Lemma offer_inputs v : port_inputs (cenv s cws 0) v = fill pin (src (snd s ++ [snd sp])) v.
     Proof.
       rewrite cenv_inputs. cbn [crun]. rewrite (rest_outputs _ _ Hrest).
-      unfold port_inputs, cws, Definitions.offer_wires. cbv beta iota.
-      unfold Definitions.fill, mask_in. destruct (tfs_spec_inputs_class ctx v); reflexivity.
+      unfold port_inputs, cws, IPRDefinitions.offer_wires. cbv beta iota.
+      unfold IPRDefinitions.fill, mask_in. destruct (tfs_spec_inputs_class ctx v); reflexivity.
     Qed.
 
     Lemma command_run :

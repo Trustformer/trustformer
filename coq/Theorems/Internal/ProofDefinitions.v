@@ -10,7 +10,7 @@ Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Backend.Lowering.
-Require Export Trustformer.Theorems.Definitions.
+Require Export Trustformer.Theorems.IPRDefinitions.
 Require Export Trustformer.Theorems.Internal.IRDefinitions.
 Require Export Trustformer.Theorems.Internal.AttackerClock.
 Require Import Trustformer.Declassification.Recover.
@@ -52,7 +52,7 @@ Section ProofWorld.
 
   Local Notation done_set := (IRDefinitions.done_set ctx cost_limit).
   Local Notation ss_run   := (IRDefinitions.run_n ctx cost_limit).
-  Local Notation L_pub    := (Definitions.L_pub ctx cost_limit).
+  Local Notation L_pub    := (AttackerClock.L_pub ctx cost_limit).
   Local Notation node_op  := (AttackerClock.node_op ctx cost_limit).
   Local Notation settle_bound := (AttackerClock.settle_bound ctx cost_limit).
   Local Notation L_pub_at := (AttackerClock.L_pub_at ctx cost_limit).
@@ -224,7 +224,7 @@ Section ProofWorld.
     = L_pub_at act a_idx
         (recovered act (seen_in ctx view) (seen_pre ctx view) (seen_post ctx view)).
   Proof.
-    unfold Definitions.L_pub, AttackerClock.latency, act_idx_aligned. intro Ha.
+    unfold AttackerClock.L_pub, AttackerClock.latency, act_idx_aligned. intro Ha.
     rewrite <- Ha, index_of_nat_to_nat. reflexivity.
   Qed.
 

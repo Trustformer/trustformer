@@ -8,7 +8,7 @@ Require Import Trustformer.Backend.Lowering.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
 Require Import Trustformer.Macros.
-Require Trustformer.Theorems.Definitions.
+Require Trustformer.Theorems.ConfidentialityDefinitions.
 Require Trustformer.Theorems.IPR.
 
 Require Import Coq.Lists.List.
@@ -312,7 +312,7 @@ Section Instance.
     Proof. vm_compute. reflexivity. Qed.
 
     Example sf_flags :
-      map (Definitions.sf_action tfs_ctx) acts = [false; false; true; false].
+      map (ConfidentialityDefinitions.sf_action tfs_ctx) acts = [false; false; true; false].
     Proof. vm_compute. reflexivity. Qed.
 
     Definition ipr_here := IPR.ipr tfs_ctx CL _ _

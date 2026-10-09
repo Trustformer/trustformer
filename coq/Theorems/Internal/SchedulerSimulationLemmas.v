@@ -11,7 +11,7 @@ Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
-Require Import Trustformer.Theorems.Definitions.
+Require Import Trustformer.Theorems.IPRDefinitions.
 Require Import Trustformer.Theorems.Internal.ProofDefinitions.
 
 Require Import Coq.Lists.List.

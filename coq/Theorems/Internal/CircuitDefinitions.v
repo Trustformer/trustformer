@@ -1,6 +1,6 @@
 (*! The circuit-level vocabulary the proofs use: runs over open wires, the
     circuit at rest, the datasheet on the wires.  None of it is in a headline
-    statement; Theorems/Definitions.v is. !*)
+    statement; Theorems/IPRDefinitions.v is. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.
@@ -12,7 +12,21 @@ Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
 Require Import Trustformer.Backend.Lowering.
-Require Import Trustformer.Theorems.Definitions.
+Require Import Trustformer.Theorems.IPRDefinitions.
+
+Section AttackerInputs.
+
+  Context (ctx: TFSchedContext).
+
+  Local Notation i_var := (tfs_spec_inputs ctx).
+  Local Notation i_sz  := (tfs_spec_inputs_size ctx).
+  Local Notation input_t := (forall x : i_var, type_denote (tf_inputs_type i_sz x)).
+
+  (* A command's inputs as the attacker sees them: a secure port reads [None]. *)
+  Definition mask_in (input: input_t) : forall v: i_var, option (type_denote (tf_inputs_type i_sz v)) :=
+    fun v => match tfs_spec_inputs_class ctx v with Public => Some (input v) | Secret => None end.
+
+End AttackerInputs.
 
 Section CircuitVocab.
 

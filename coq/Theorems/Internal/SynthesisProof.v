@@ -15,7 +15,7 @@ Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Utils.
 Require Import Trustformer.Internal.UtilsLemmas.
-Require Export Trustformer.Theorems.Definitions.
+Require Export Trustformer.Theorems.IPRDefinitions.
 Require Export Trustformer.Theorems.Internal.IRDefinitions.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Backend.Lowering.
@@ -43,7 +43,7 @@ Section SynthesisProof.
 
   Context (tf_ctx: TFSynthContext).
 
-  (* Stated in Theorems/Definitions.v; bound here at this section's context. *)
+  (* Stated in Internal/IRDefinitions.v; bound here at this section's context. *)
   Local Notation abstract_init_state := (IRDefinitions.abstract_init_state tf_ctx).
   Local Notation env_matches := (IRDefinitions.env_matches tf_ctx).
   Local Notation input_matches := (IRDefinitions.input_matches tf_ctx).

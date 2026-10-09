@@ -10,7 +10,7 @@ Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
 Require Import Trustformer.Backend.Lowering.
-Require Export Trustformer.Theorems.Definitions.
+Require Export Trustformer.Theorems.IPRDefinitions.
 Require Trustformer.Theorems.Internal.IPRBridge.
 Require IPR.Definition.
 

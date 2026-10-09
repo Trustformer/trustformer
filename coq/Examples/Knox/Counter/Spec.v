@@ -8,7 +8,7 @@ Require Import Trustformer.Backend.Lowering.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
 Require Import Trustformer.Macros.
-Require Trustformer.Theorems.Definitions.
+Require Trustformer.Theorems.ConfidentialityDefinitions.
 Require Trustformer.Theorems.IPR.
 
 Require Import Coq.Lists.List.
@@ -215,9 +215,9 @@ Section Instance.
       List.map (fun a => Bits.to_nat (tf_action_encoding tf_ctx a)) [act_add; act_get] = [0; 1].
     Proof. vm_compute. reflexivity. Qed.
 
-    Example sf_add : Definitions.sf_action tfs_ctx act_add = true.
+    Example sf_add : ConfidentialityDefinitions.sf_action tfs_ctx act_add = true.
     Proof. vm_compute. reflexivity. Qed.
-    Example sf_get : Definitions.sf_action tfs_ctx act_get = false.
+    Example sf_get : ConfidentialityDefinitions.sf_action tfs_ctx act_get = false.
     Proof. vm_compute. reflexivity. Qed.
 
     Definition ipr_here := IPR.ipr tfs_ctx CL _ _

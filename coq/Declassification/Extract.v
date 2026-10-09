@@ -390,7 +390,7 @@ End RecipeSound.
 
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
-Require Import Trustformer.Theorems.Definitions.
+Require Import Trustformer.Theorems.IPRDefinitions.
 Require Import Trustformer.Theorems.Internal.ProofDefinitions.
 Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Theorems.Internal.IPRProof.

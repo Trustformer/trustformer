@@ -5,7 +5,7 @@
 Require Import Koika.Frontend.
 Require Import Koika.Utils.Common.
 
-Require Export Trustformer.Theorems.Definitions.
+Require Export Trustformer.Theorems.IPRDefinitions.
 Require Export Trustformer.Theorems.Internal.ProofDefinitions.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
@@ -1545,7 +1545,7 @@ Section IPRProof.
     L act input resp ss0 = L_pub_at act a_idx vals.
   Proof.
     intros Halign Hz Hsel Hvals.
-    unfold ProofDefinitions.L, Definitions.L_pub.
+    unfold ProofDefinitions.L, AttackerClock.L_pub.
     apply first_true_ext. intros j _ Hbefore.
     destruct j as [| m].
     - (* cycle zero is the start state: neither test counts it *)

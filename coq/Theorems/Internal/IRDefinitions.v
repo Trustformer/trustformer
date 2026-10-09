@@ -1,6 +1,6 @@
 (*! The scheduled IR the proofs run through: its cycle and run, the IR form of the
     IP datasheet, the start relation, and how a Kôika state matches an IR state.
-    None of it is in a headline statement; Theorems/Definitions.v is. !*)
+    None of it is in a headline statement; Theorems/*Definitions.v are. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.
