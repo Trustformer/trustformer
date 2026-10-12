@@ -16,8 +16,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HEADLINE = [
     ("the circuit meets IPR (Athalye et al.)",
      "the project's reason to exist: the generated circuit computes the spec and leaks "
-     "no more than it, for IPR as upstream defines it, under any trusted environment",
-     [("Trustformer.Theorems.IPR", "ipr")]),
+     "no more than it, for IPR as upstream defines it, under any trusted environment; "
+     "ipr_uniform with one emulator for every environment and start state",
+     [("Trustformer.Theorems.IPR", "ipr"),
+      ("Trustformer.Theorems.IPR", "ipr_uniform")]),
 
     ("no secret leaks by value",
      "what the attacker can see never depends on a secret",

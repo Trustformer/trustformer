@@ -34,4 +34,29 @@ Section Guarantees.
                        (driver ctx cost_limit enc_sz enc enc_inj names).
   Proof. exact (IPRBridge.ipr_holds ctx cost_limit enc_sz enc enc_inj names ip src). Qed.
 
+  Local Notation wires := (forall f, Sig_denote (Sigma (synth ctx cost_limit enc_sz enc enc_inj names) f)).
+  Local Notation pub_outputs :=
+    (forall o, option (type_denote (tf_outputs_type (tfs_spec_outputs_size ctx) o))).
+
+  (* ONE EMULATOR, chosen before the trusted environment and the start: it works for
+     every IP meeting its datasheet, every source, and every start where the circuit
+     rests holding the spec's state.  So no secret from either can reach its timing. *)
+  Corollary ipr_uniform :
+    exists e : IPR.Emulator.emulator (query ctx cost_limit) pub_outputs wires (atk_out ctx),
+    forall (ip: trusted_ip ctx cost_limit enc_sz enc enc_inj names) (src: trusted_source ctx),
+      datasheet ctx cost_limit enc_sz enc enc_inj names ip ->
+      forall c hs sp seen,
+        at_rest ctx cost_limit enc_sz enc enc_inj names c sp ->
+        IPR.Machine.equivalent
+          (IPR.Definition.real_world
+             (start_at (closed_circuit ctx cost_limit enc_sz enc enc_inj names ip src) (c, hs, seen))
+             (driver ctx cost_limit enc_sz enc enc_inj names))
+          (IPR.Definition.ideal_world (start_at (closed_spec ctx cost_limit src) (sp, seen)) e).
+  Proof.
+    exists (IPRBridge.e_wires ctx cost_limit enc_sz enc enc_inj names).
+    intros ip src Hip c hs sp seen Hr.
+    exact (IPRBridge.ipr_from ctx cost_limit enc_sz enc enc_inj names ip src Hip
+             (c, hs, seen) (sp, seen) (conj Hr eq_refl)).
+  Qed.
+
 End Guarantees.

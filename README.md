@@ -92,6 +92,12 @@ The statement differs from upstream's setting on purpose in two ways:
 The emulator IPR asks for is in `Internal/IPRBridge.v`. It reads only the
 attacker's wires and the spec's answers to its queries.
 
+Upstream's `IPR` picks its emulator after the machines, so it may depend on `src`:
+a constant secret source would not be excluded from leaking by timing.
+`IPR.ipr_uniform` closes this. One emulator, fixed by the design alone, works for
+every `ip` meeting its `datasheet`, every `src`, and every start where the circuit
+is `at_rest` holding the spec's state, both machines moved there by `start_at`.
+
 ## Writing a module
 
 1. Declare three variable types (states, inputs, outputs) with their bit widths,

@@ -1,5 +1,5 @@
 (*! IPR from a functional and a physical simulation, when a reset sends both machines
-    to their initial states.  Adapted from ProofStrategy/Simulation.v of
+    to related states; also from any related start.  Adapted from Simulation.v of
     anishathalye/ipr, whose physical half cannot hold for the empty trace. !*)
 
 Require Import IPR.Common.
@@ -7,6 +7,7 @@ Require Import IPR.Machine.
 Require Import IPR.Driver.
 Require Import IPR.Emulator.
 Require Import IPR.Definition.
+Require Trustformer.Theorems.IPRDefinitions.
 
 Require Import Coq.Lists.List.
 Import ListNotations.
@@ -21,11 +22,14 @@ Section Strategy.
   (* Holds between the two machines in between spec-level operations. *)
   Variable R : M1.(state) -> M2.(state) -> Prop.
 
-  Definition resets_to_init {I O : Type} (M : machine I O) : Prop :=
-    forall s s', M.(reset) s s' <-> s' = M.(init).
+  (* Every reset lands in [r]. *)
+  Definition resets_to {I O : Type} (M : machine I O) (r : M.(state)) : Prop :=
+    forall s s', M.(reset) s s' <-> s' = r.
+
+  Definition resets_to_init {I O : Type} (M : machine I O) : Prop := resets_to M M.(init).
 
   (* Upstream's functional simulation, less "R survives a reset": a reset lands in
-     the initial states, which R relates. *)
+     states R relates, see [equivalent_by_simulation]. *)
   Definition functional_simulation : Prop :=
     R M1.(init) M2.(init) /\
       (forall s1 s2 i2,
@@ -43,16 +47,17 @@ Section Strategy.
     trace (I2 + I1) (O2 + O1) :=
     map (fun '(i, o) => IO (inr i) (inr o)) io.
 
-  (* Upstream's physical simulation over non-empty traces, and without its reset
-     clause, which a reset to the initial states makes unnecessary. *)
-  Definition physical_simulation : Prop :=
-    exists (e : emulator I2 O2 I1 O1),
+  (* Upstream's physical simulation over non-empty traces, for emulator [e], and
+     without its reset clause, which a reset to related states makes unnecessary. *)
+  Definition physical_simulation_with (e : emulator I2 O2 I1 O1) : Prop :=
     forall s1 s2 i o io s1',
       R s1 s2 ->
       execution M1 s1 (io_to_machine_trace ((i, o) :: io)) s1' ->
       exists s2' e2',
         execution (ideal_world M2 e) (EmulatorHigh s2)
           (io_to_ideal_machine_trace ((i, o) :: io)) (EmulatorLow s2' e2').
+
+  Definition physical_simulation : Prop := exists e, physical_simulation_with e.
 
   Definition lifted_R (e : emulator I2 O2 I1 O1)
       (ds1 : driver_state M1.(state)) (es2 : emulator_state M2.(state) e.(estate)) : Prop :=
@@ -183,18 +188,20 @@ Section Strategy.
       execution M1 s (io_to_machine_trace ((i, o) :: io)) s'.
   Proof. intros. cbn. econstructor; eauto. Qed.
 
-  Theorem IPR_by_simulation :
+  (* The two worlds agree for emulator [e] itself, when resets land in related states. *)
+  Theorem equivalent_by_simulation (e : emulator I2 O2 I1 O1) (r1 : M1.(state)) (r2 : M2.(state)) :
     total M1 ->
     deterministic M2 ->
-    resets_to_init M1 ->
-    resets_to_init M2 ->
+    resets_to M1 r1 ->
+    resets_to M2 r2 ->
+    R r1 r2 ->
     functional_simulation ->
-    physical_simulation ->
-    IPR M1 M2 d.
+    physical_simulation_with e ->
+    equivalent (real_world M1 d) (ideal_world M2 e).
   Proof.
-    intros Htot1 Hdet2 Hrst1 Hrst2 (Hinit & Hterm & Hcorrect) (e & Hphys).
-    assert (Hrst1i : forall s, M1.(reset) s M1.(init)) by (intro s; apply Hrst1; reflexivity).
-    assert (Hrst2i : forall s, M2.(reset) s M2.(init)) by (intro s; apply Hrst2; reflexivity).
+    intros Htot1 Hdet2 Hrst1 Hrst2 Hr12 (Hinit & Hterm & Hcorrect) Hphys.
+    assert (Hrst1i : forall s, M1.(reset) s r1) by (intro s; apply Hrst1; reflexivity).
+    assert (Hrst2i : forall s, M2.(reset) s r2) by (intro s; apply Hrst2; reflexivity).
     (* Taking one wire-level step from a related pair, in either world's terms. *)
     assert (Hlow_start : forall s1 s2 i1 o1 s1',
               R s1 s2 -> M1.(step) s1 i1 (Result o1 s1') ->
@@ -224,7 +231,7 @@ Section Strategy.
       destruct (HR ((i1, o1) :: io) s1'' (machine_trace_cons _ _ _ _ _ _ Hs Hio))
         as (s2'' & e2'' & He'').
       exists s2'', e2''. exact (execution_rest e Hdet2 _ _ _ _ _ _ Hst He''). }
-    exists e. split.
+    split.
     - (* the real world refines the ideal one *)
       apply forward_simulation with (R := lifted_R e).
       split; [ exact Hinit | split ].
@@ -249,14 +256,14 @@ Section Strategy.
         * (* back to spec level: both worlds reset first *)
           match goal with Hr : reset _ _ _ |- _ => apply Hrst1 in Hr; subst end.
           match goal with Hd : dexec _ _ _ _ _ |- _ =>
-            destruct (Hcorrect _ _ _ _ _ Hinit Hd) as (s2' & Hs2 & HR') end.
+            destruct (Hcorrect _ _ _ _ _ Hr12 Hd) as (s2' & Hs2 & HR') end.
           exists (EmulatorHigh s2'). split; [| exact HR' ].
           eapply EmulatorStepLowHigh; [ exact (Hrst2i s2) |]. exact (MuxStepL _ _ M2 _ _ _ _ Hs2).
       + intros s1 s1' s2 HR Hr.
         destruct s1 as [s1 | s1], s1' as [s1' | s1'], s2 as [s2 | s2 e2];
           cbn in HR, Hr; try contradiction;
           apply Hrst1 in Hr; subst;
-          exists (EmulatorHigh M2.(init)); (split; [ exact (Hrst2i _) | exact Hinit ]).
+          exists (EmulatorHigh r2); (split; [ exact (Hrst2i _) | exact Hr12 ]).
     - (* the ideal world refines the real one *)
       apply forward_simulation with (R := fun s2 s1 => lifted_R e s1 s2).
       split; [ exact Hinit | split ].
@@ -283,8 +290,8 @@ Section Strategy.
           match goal with Hr : reset _ _ _ |- _ => apply Hrst2 in Hr; subst end.
           match goal with Hm : step (mux M2) _ _ _ |- _ => inversion Hm; subst end.
           match goal with Hs : step M2 _ _ _ |- _ => rename Hs into Hspec end.
-          destruct (Hterm _ _ i2 Hinit) as (o2' & s1' & Hd).
-          destruct (Hcorrect _ _ _ _ _ Hinit Hd) as (s2'' & Hs2 & HR').
+          destruct (Hterm _ _ i2 Hr12) as (o2' & s1' & Hd).
+          destruct (Hcorrect _ _ _ _ _ Hr12 Hd) as (s2'' & Hs2 & HR').
           pose proof (Hdet2 _ _ _ _ Hspec Hs2) as E.
           inversion E; subst.
           exists (DriverHigh s1'). split; [| exact HR' ].
@@ -300,7 +307,140 @@ Section Strategy.
         destruct s2 as [s2 | s2 e2], s2' as [s2' | s2' e2'], s1 as [s1 | s1];
           cbn in HR, Hr; try contradiction;
           apply Hrst2 in Hr; subst;
-          exists (DriverHigh M1.(init)); (split; [ exact (Hrst1i _) | exact Hinit ]).
+          exists (DriverHigh r1); (split; [ exact (Hrst1i _) | exact Hr12 ]).
+  Qed.
+
+  Theorem IPR_by_simulation :
+    total M1 ->
+    deterministic M2 ->
+    resets_to_init M1 ->
+    resets_to_init M2 ->
+    functional_simulation ->
+    physical_simulation ->
+    IPR M1 M2 d.
+  Proof.
+    intros Htot1 Hdet2 Hrst1 Hrst2 Hfun (e & Hphys). exists e.
+    exact (equivalent_by_simulation e M1.(init) M2.(init) Htot1 Hdet2 Hrst1 Hrst2
+             (proj1 Hfun) Hfun Hphys).
   Qed.
 
 End Strategy.
+
+(* [start_at] changes only the initial state, so a moved machine has the original's
+   steps and runs, under the driver and beside the emulator alike. *)
+Section StartAt.
+
+  Context {I O : Type} (M : machine I O) (s0 : M.(state)).
+  Local Notation M' := (IPRDefinitions.start_at M s0).
+
+  Lemma mux_start x i r : (mux M').(step) x i r <-> (mux M).(step) x i r.
+  Proof.
+    split; intro H; destruct H;
+      first [ exact (MuxStepL _ _ M _ _ _ _ H) | exact (MuxStepR _ _ M _ _ _ _ H)
+            | exact (MuxStepL _ _ M' _ _ _ _ H) | exact (MuxStepR _ _ M' _ _ _ _ H) ].
+  Qed.
+
+  (* The same constructor at the other machine, its premises among the hypotheses. *)
+  Ltac dexec_at Mx :=
+    first [ refine (DexecCall Mx _ _ _ _ (proj1 (mux_start _ _ _) _)); eassumption
+          | refine (DexecCall Mx _ _ _ _ (proj2 (mux_start _ _ _) _)); eassumption
+          | exact (DexecRet Mx _ _ _)
+          | refine (DexecBind Mx _ _ _ _ _ _ _ _ _ _); eassumption
+          | refine (DexecWhileTrue Mx _ _ _ _ _ _ _ _ _); eassumption
+          | refine (DexecWhileFalse Mx _ _ _ _ _); eassumption
+          | refine (DexecChooseL Mx _ _ _ _ _ _); eassumption
+          | refine (DexecChooseR Mx _ _ _ _ _ _); eassumption ].
+
+  Lemma dexec_start T (p : dproc I O T) (x : M.(state)) (r : result T M.(state)) :
+    dexec (mux M') T p x r <-> dexec (mux M) T p x r.
+  Proof. split; intro H; induction H; first [ dexec_at (mux M) | dexec_at (mux M') ]. Qed.
+
+  Ltac eexec_at Mx :=
+    first [ refine (EexecCall Mx _ _ _ _ _ (proj1 (mux_start _ _ _) _)); eassumption
+          | refine (EexecCall Mx _ _ _ _ _ (proj2 (mux_start _ _ _) _)); eassumption
+          | exact (EexecGet Mx _ _)
+          | exact (EexecPut Mx _ _ _)
+          | exact (EexecRet Mx _ _ _)
+          | refine (EexecBind Mx _ _ _ _ _ _ _ _ _ _); eassumption
+          | refine (EexecWhileTrue Mx _ _ _ _ _ _ _ _ _); eassumption
+          | refine (EexecWhileFalse Mx _ _ _ _ _); eassumption ].
+
+  Lemma eexec_start {S : Type} T (p : eproc S I O T)
+      (x : M.(state) * S) (r : result T (M.(state) * S)) :
+    eexec (mux M') T p x r <-> eexec (mux M) T p x r.
+  Proof. split; intro H; induction H; first [ eexec_at (mux M) | eexec_at (mux M') ]. Qed.
+
+  Lemma execution_start (x : M.(state)) tr (y : M.(state)) :
+    execution M' x tr y <-> execution M x tr y.
+  Proof.
+    split; intro H; induction H;
+      first [ exact (ExecutionEmpty M _) | exact (ExecutionEmpty M' _)
+            | refine (ExecutionStep M _ _ _ _ _ _ _ _); eassumption
+            | refine (ExecutionStep M' _ _ _ _ _ _ _ _); eassumption
+            | refine (ExecutionReset M _ _ _ _ _ _); eassumption
+            | refine (ExecutionReset M' _ _ _ _ _ _); eassumption ].
+  Qed.
+
+  Section Ideal.
+
+    Context {I1 O1 : Type} (e : emulator I O I1 O1).
+
+    Ltac ideal_step_at Mx :=
+      first [ refine (EmulatorStepHighHigh _ _ _ _ _ _ Mx e _ _ _ _ (proj1 (mux_start _ _ _) _)); eassumption
+            | refine (EmulatorStepHighHigh _ _ _ _ _ _ Mx e _ _ _ _ (proj2 (mux_start _ _ _) _)); eassumption
+            | refine (EmulatorStepLowHigh _ _ _ _ _ _ Mx e _ _ _ _ _ _ _ (proj1 (mux_start _ _ _) _)); eassumption
+            | refine (EmulatorStepLowHigh _ _ _ _ _ _ Mx e _ _ _ _ _ _ _ (proj2 (mux_start _ _ _) _)); eassumption
+            | refine (EmulatorStepHighLow _ _ _ _ _ _ Mx e _ _ _ _ _ (proj1 (eexec_start _ _ _ _) _)); eassumption
+            | refine (EmulatorStepHighLow _ _ _ _ _ _ Mx e _ _ _ _ _ (proj2 (eexec_start _ _ _ _) _)); eassumption
+            | refine (EmulatorStepLowLow _ _ _ _ _ _ Mx e _ _ _ _ _ _ (proj1 (eexec_start _ _ _ _) _)); eassumption
+            | refine (EmulatorStepLowLow _ _ _ _ _ _ Mx e _ _ _ _ _ _ (proj2 (eexec_start _ _ _ _) _)); eassumption ].
+
+    Lemma ideal_step_start (x : emulator_state M.(state) e.(estate)) i
+        (r : result (O + O1) (emulator_state M.(state) e.(estate))) :
+      (ideal_world M' e).(step) x i r <-> (ideal_world M e).(step) x i r.
+    Proof. split; intro H; destruct H; first [ ideal_step_at (mux M) | ideal_step_at (mux M') ]. Qed.
+
+    Lemma ideal_execution_start (x : emulator_state M.(state) e.(estate)) tr
+        (y : emulator_state M.(state) e.(estate)) :
+      execution (ideal_world M' e) x tr y <-> execution (ideal_world M e) x tr y.
+    Proof.
+      split; intro H; induction H;
+        first [ exact (ExecutionEmpty (ideal_world M e) _) | exact (ExecutionEmpty (ideal_world M' e) _)
+              | refine (ExecutionStep (ideal_world M e) _ _ _ _ _ _ (proj1 (ideal_step_start _ _ _) _) _); eassumption
+              | refine (ExecutionStep (ideal_world M' e) _ _ _ _ _ _ (proj2 (ideal_step_start _ _ _) _) _); eassumption
+              | refine (ExecutionReset (ideal_world M e) _ _ _ _ _ _); eassumption
+              | refine (ExecutionReset (ideal_world M' e) _ _ _ _ _ _); eassumption ].
+    Qed.
+
+  End Ideal.
+
+End StartAt.
+
+(* FROM ANY RELATED START, for emulator [e] itself: both machines moved there by
+   [start_at] keep the simulations, so the two worlds agree. *)
+Theorem equivalent_from {I1 O1 I2 O2 : Type} (M1 : machine I1 O1) (d : driver I1 O1 I2 O2)
+    (M2 : machine I2 O2) (R : M1.(state) -> M2.(state) -> Prop)
+    (e : emulator I2 O2 I1 O1) (r1 : M1.(state)) (r2 : M2.(state)) :
+  total M1 ->
+  deterministic M2 ->
+  resets_to M1 r1 ->
+  resets_to M2 r2 ->
+  R r1 r2 ->
+  functional_simulation _ _ _ _ M1 d M2 R ->
+  physical_simulation_with _ _ _ _ M1 M2 R e ->
+  forall s1 s2, R s1 s2 ->
+    equivalent (real_world (IPRDefinitions.start_at M1 s1) d)
+               (ideal_world (IPRDefinitions.start_at M2 s2) e).
+Proof.
+  intros Htot Hdet Hrst1 Hrst2 Hr12 (_ & Hterm & Hcorrect) Hphys s1 s2 HR.
+  apply (equivalent_by_simulation _ _ _ _ (IPRDefinitions.start_at M1 s1) d
+           (IPRDefinitions.start_at M2 s2) R e r1 r2 Htot Hdet Hrst1 Hrst2 Hr12).
+  - split; [ exact HR | split ].
+    + intros t1 t2 i2 Ht. destruct (Hterm t1 t2 i2 Ht) as (o2 & t1' & Hd).
+      exists o2, t1'. apply dexec_start. exact Hd.
+    + intros t1 t2 i2 o2 t1' Ht Hd. apply dexec_start in Hd.
+      exact (Hcorrect _ _ _ _ _ Ht Hd).
+  - intros t1 t2 i o io t1' Ht Hex. apply execution_start in Hex.
+    destruct (Hphys _ _ _ _ _ _ Ht Hex) as (t2' & e2' & Hid).
+    exists t2', e2'. apply ideal_execution_start. exact Hid.
+Qed.

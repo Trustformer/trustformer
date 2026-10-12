@@ -657,9 +657,8 @@ Section Bridge.
 
   End Physical.
 
-  Lemma bridge_physical : IPRStrategy.physical_simulation _ _ _ _ M1 M2 Rel.
+  Lemma bridge_physical_with : IPRStrategy.physical_simulation_with _ _ _ _ M1 M2 Rel e_wires.
   Proof.
-    exists e_wires.
     intros s1 [sp seen] w o io s1' [Hr Hseen] Hexec. cbn [fst snd] in Hr, Hseen. subst seen.
     set (io' := (w, o) :: io) in *.
     set (ws := fun k => fst (nth k io' dflt)).
@@ -678,6 +677,24 @@ Section Bridge.
     - change (length io') with (1 + length io).
       apply (ideal_low st io 1). intros j Hj.
       exact (Hstep (S j) ltac:(simpl length in *; lia)).
+  Qed.
+
+  Lemma bridge_physical : IPRStrategy.physical_simulation _ _ _ _ M1 M2 Rel.
+  Proof. exists e_wires. exact bridge_physical_with. Qed.
+
+  (* FROM ANY START where the circuit rests holding the spec's state, with the
+     emulator [e_wires] itself, which reads neither [ip] nor [src]. *)
+  Theorem ipr_from s1 s2 :
+    Rel s1 s2 -> equivalent (real_world (start_at M1 s1) d) (ideal_world (start_at M2 s2) e_wires).
+  Proof.
+    apply (IPRStrategy.equivalent_from M1 d M2 Rel e_wires (init M1) (init M2)).
+    - exact M1_total.
+    - exact M2_deterministic.
+    - exact M1_resets.
+    - exact M2_resets.
+    - exact (proj1 bridge_functional).
+    - exact bridge_functional.
+    - exact bridge_physical_with.
   Qed.
 
   (* IPR, AS UPSTREAM DEFINES IT, for the closed circuit, the closed spec, and the driver. *)

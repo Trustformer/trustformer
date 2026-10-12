@@ -1,6 +1,6 @@
-(*! The circuit-level vocabulary the proofs use: runs over open wires, the
-    circuit at rest, the datasheet on the wires.  None of it is in a headline
-    statement; Theorems/IPRDefinitions.v is. !*)
+(*! The circuit-level vocabulary the proofs use: runs over open wires and the
+    datasheet on the wires.  None of it is in a headline statement;
+    Theorems/IPRDefinitions.v is. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.
@@ -61,18 +61,6 @@ Section CircuitVocab.
     | 0 => c0
     | S k => interp_cycle (env k) (rules synth) (system_schedule synth) (circuit_run c0 env k)
     end.
-
-  (* The circuit at rest, holding spec state [sp]: ready, its state slots and
-     outputs are the spec's, and every buffer and validity bit is cleared. *)
-  Definition at_rest (c: circuit_state) (sp: src_sys_state) : Prop :=
-    c.[tf_ready] = Ob~1
-    /\ (forall o, c.[tf_out o] = (snd sp).[o])
-    /\ (forall x: tfs_states tsched,
-          match x with
-          | tf_dfg_s s => c.[tf_reg (tf_dfg_s s)] = (fst sp).[s]
-          | tf_dfg_b _ _ | tf_dfg_v _ _ => c.[tf_reg x] = Bits.zero
-          | _ => True
-          end).
 
   (* The IPs' datasheet on a run's wires: a request register raised at cycle [s]
      and left quiet for the flight time is answered on the response wire. *)

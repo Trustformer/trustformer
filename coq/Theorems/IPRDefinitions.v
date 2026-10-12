@@ -37,6 +37,15 @@ Section AttackerOutputs.
 
 End AttackerOutputs.
 
+(* An IPR machine started in state [s]: [M]'s steps and reset, only its initial
+   state replaced. *)
+Definition start_at {I O : Type} (M: IPR.Machine.machine I O) (s: IPR.Machine.state M)
+  : IPR.Machine.machine I O := {|
+  IPR.Machine.state := IPR.Machine.state M;
+  IPR.Machine.init := s;
+  IPR.Machine.step := IPR.Machine.step M;
+  IPR.Machine.reset := IPR.Machine.reset M |}.
+
 (* ==================================================================== *)
 (* The circuit Lowering emits, its trusted environment, and the spec.   *)
 (* ==================================================================== *)
@@ -164,6 +173,18 @@ Section CircuitWorld.
     let cmd := w ext_in_cmd Ob~1 in
     Bits.single c.[tf_ready] && Bits.single (fst cmd)
     && existsb (fun a => beq_dec (enc a) (fst (snd cmd))) (@finite_elements _ (tfs_action_fin sched)).
+
+  (* The circuit at rest, holding spec state [sp]: ready, its state slots and
+     outputs are the spec's, and every buffer and validity bit is cleared. *)
+  Definition at_rest (c: circuit_state) (sp: src_sys_state) : Prop :=
+    c.[tf_ready] = Ob~1
+    /\ (forall o, c.[tf_out o] = (snd sp).[o])
+    /\ (forall x: tfs_states tsched,
+          match x with
+          | tf_dfg_s s => c.[tf_reg (tf_dfg_s s)] = (fst sp).[s]
+          | tf_dfg_b _ _ | tf_dfg_v _ _ => c.[tf_reg x] = Bits.zero
+          | _ => True
+          end).
 
   (* ================================================================ *)
   (* IPR's two machines and its driver.                               *)
