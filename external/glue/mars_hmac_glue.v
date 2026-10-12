@@ -11,9 +11,9 @@
 // two-pass structure lives here instead.
 //
 // That puts HMAC inside the TCB, which is the cost.  It is bounded and
-// checked: agents/mars/oracle/run-stage3.sh compares MARS_Quote's signature
-// against the TCG reference emulator byte for byte, so a wrong pad, a wrong
-// length field or a swapped pass shows up immediately.
+// checked: sim/tb_mars_v4.sv and sim/tb_mars_pcrextend.sv compare MARS_Quote's
+// signature against the TCG reference emulator's byte for byte, so a wrong
+// pad, a wrong length field or a swapped pass shows up immediately.
 //
 //   HMAC(K, m) = H( (K0 ^ opad) || H( (K0 ^ ipad) || m ) )
 //
