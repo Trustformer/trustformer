@@ -98,6 +98,11 @@ a constant secret source would not be excluded from leaking by timing.
 every `ip` meeting its `datasheet`, every `src`, and every start where the circuit
 is `at_rest` holding the spec's state, both machines moved there by `start_at`.
 
+IPR only speaks of what the attacker sees. `IPR.synthesis_correct` covers the rest:
+from any start where the circuit is `at_rest` holding the spec's state, the driver
+finishes every query, answers as the spec does, and leaves the circuit `at_rest`
+holding the spec's next state, Secret state and outputs included.
+
 ## Writing a module
 
 1. Declare three variable types (states, inputs, outputs) with their bit widths,

@@ -21,6 +21,11 @@ HEADLINE = [
      [("Trustformer.Theorems.IPR", "ipr"),
       ("Trustformer.Theorems.IPR", "ipr_uniform")]),
 
+    ("the circuit computes the spec",
+     "full functional correctness, secret state and outputs included, from any start "
+     "at rest; IPR itself only speaks of what the attacker sees",
+     [("Trustformer.Theorems.IPR", "synthesis_correct")]),
+
     ("no secret leaks by value",
      "what the attacker can see never depends on a secret",
      [("Trustformer.Theorems.Confidentiality", "seq_confidential"),

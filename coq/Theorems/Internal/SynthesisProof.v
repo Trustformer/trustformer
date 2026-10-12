@@ -3504,7 +3504,7 @@ Section SynthesisProof.
 
   (* Below is done *)
 
-  Lemma synthesis_correct_aux3 :
+  Lemma cycle_correct_aux3 :
     forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
            (act: spec_action) (input: input_t)
            (sigma: forall f, Sig_denote (Sigma f))
@@ -3620,7 +3620,7 @@ Section SynthesisProof.
       rewrite SemanticProperties.latest_write_empty. reflexivity.
   Qed.
 
-  Lemma synthesis_correct_aux2 :
+  Lemma cycle_correct_aux2 :
     forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
            (act: spec_action) (input: input_t)
            (sigma: forall f, Sig_denote (Sigma f))
@@ -3678,7 +3678,7 @@ Section SynthesisProof.
   Qed.
 
 
-  Lemma synthesis_correct_aux :
+  Lemma cycle_correct_aux :
     forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
            (act: spec_action) (input: input_t)
            (sigma: forall f, Sig_denote (Sigma f))
@@ -3705,8 +3705,8 @@ Section SynthesisProof.
     - (* current action is the requested action *)
       cbn [fold_right interp_scheduler'].
 
-      rewrite synthesis_correct_aux2; try assumption.
-      apply (synthesis_correct_aux3 sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hlive Hlog).
+      rewrite cycle_correct_aux2; try assumption.
+      apply (cycle_correct_aux3 sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hlive Hlog).
 
     - (* current action is not the requested action *)
       assert (H_act_neq_a: act <> a). { intro H. subst. contradiction. }
@@ -3819,7 +3819,8 @@ Section SynthesisProof.
         * sauto.
   Qed.
 
-  Theorem synthesis_correct :
+  (* ONE CYCLE of the circuit is one step of the scheduled IR. *)
+  Theorem cycle_correct :
     forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
            (act: spec_action) (input: input_t)
            (sigma: forall f, Sig_denote (Sigma f)),
@@ -3834,7 +3835,7 @@ Section SynthesisProof.
     cbn [interp_scheduler'].
     pose proof (good_log_after_busy r sigma) as Hgood.
     destruct (interp_rule r sigma log_empty (rules rule_busy));
-      apply synthesis_correct_aux; assumption.
+      apply cycle_correct_aux; assumption.
   Qed.
 
   (* ====== Several cycles: idle ones, and the ready flag ====== *)

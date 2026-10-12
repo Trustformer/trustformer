@@ -512,7 +512,7 @@ Section CircuitProof.
     assert (Hin_rdy : (circuit_run env k).[tf_ready] = Ob~1 ->
               IRDefinitions.input_matches synth act (sched_input input (resp k)) (env k))
       by (intro H; apply accept_matches, Hrdy, H).
-    destruct (SynthesisProof.synthesis_correct synth ss (circuit_run env k) act
+    destruct (SynthesisProof.cycle_correct synth ss (circuit_run env k) act
                 (sched_input input (resp k)) (env k) Hst Hin_rdy Hnrdy (live_matches k input))
       as [Hst' Henv'].
     pose proof (SynthesisProof.cycle_ready synth ss (circuit_run env k) act
