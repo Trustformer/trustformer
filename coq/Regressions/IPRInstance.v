@@ -15,7 +15,7 @@ Require Import Trustformer.Backend.Lowering.
 Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Theorems.IPR.
 Require Import Trustformer.Theorems.Internal.IPRProof.
-Require Trustformer.Declassification.Extract.
+Require Trustformer.Theorems.Internal.Extract.
 
 Require Import Coq.Lists.List.
 Require Import Lia.

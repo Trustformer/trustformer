@@ -15,7 +15,7 @@ Require Export Trustformer.Theorems.IPRDefinitions.
 Require Export Trustformer.Theorems.Internal.IRDefinitions.
 Require Export Trustformer.Theorems.Internal.CircuitDefinitions.
 Require Import Trustformer.Theorems.Internal.AttackerClock.
-Require Trustformer.Declassification.Extract.
+Require Trustformer.Theorems.Internal.Extract.
 Require Trustformer.Theorems.Internal.IPRProof.
 Require Trustformer.Theorems.Internal.SchedulerSimulationLemmas.
 Require Trustformer.Theorems.Internal.SchedulerRoundTrip.
