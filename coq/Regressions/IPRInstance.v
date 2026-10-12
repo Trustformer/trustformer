@@ -5,13 +5,13 @@
 Require Import Koika.Frontend.
 Require Import Koika.Std.
 
-Require Import Trustformer.Theorems.Definitions.
+Require Import Trustformer.Theorems.IPRDefinitions.
 Require Import Trustformer.Theorems.Internal.ProofDefinitions.
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
-Require Import Trustformer.Theorems.SchedulerSimulation.
+Require Import Trustformer.Backend.Lowering.
 Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Theorems.IPR.
 Require Import Trustformer.Theorems.Internal.IPRProof.
@@ -122,17 +122,13 @@ Section TheoremInstantiation.
 
   Definition reg_emulator := emulator_correct_L tfs_ctx cost.
 
-  Definition reg_headline := IPR.emulator_correct tfs_ctx cost.
-
-  Definition reg_headline_seq := IPR.emulator_correct_seq tfs_ctx cost.
-
   (* This context attaches no IP, so the response stream is a function out of
      [Empty_set] and its datasheet obligation is vacuous. *)
   Definition no_resp : nat -> forall p : tfs_ips sched,
       bits_t (ip_resp_sz (tfs_ip sched p)) :=
     fun _ p => match p with end.
 
-  (* The headline, fully instantiated: for this context, two runs of [fs_check]
+  (* [L_is_public], fully instantiated: for this context, two runs of [fs_check]
      that agree on the outputs before and after finish on the same cycle, no
      matter what [fs_secret] holds. *)
   Theorem check_latency_is_public :
@@ -156,7 +152,7 @@ Section TheoremInstantiation.
   Proof.
     intros a_idx input sp0 sp0' ss0 ss0' Halign Hst Hst' Hpre Hpost.
     (* this context attaches no IP, so the datasheet obligation is vacuous *)
-    assert (Hipc : forall ss, Definitions.ip_contract tfs_ctx cost fs_check input no_resp ss)
+    assert (Hipc : forall ss, IRDefinitions.ip_contract tfs_ctx cost fs_check input no_resp ss)
       by (intros ss p; destruct p).
     (* both runs show the attacker the same view, so they finish together *)
     assert (Hpre_eq : snd sp0 = snd sp0') by (apply equiv_eq; exact Hpre).
@@ -173,29 +169,51 @@ Section TheoremInstantiation.
       by (apply equiv_eq; exact Hpost).
     unfold check_latency.
     rewrite (Extract.L_is_public tfs_ctx cost fs_check a_idx sp0 ss0 input no_resp
-               Halign Hst (Hipc ss0)),
+               Halign Hst (Hipc ss0) _ (fun _ => eq_refl) (fun _ => eq_refl) (fun _ => eq_refl)),
             (Extract.L_is_public tfs_ctx cost fs_check a_idx sp0' ss0' input no_resp
-               Halign Hst' (Hipc ss0')).
+               Halign Hst' (Hipc ss0') _ (fun _ => eq_refl) (fun _ => eq_refl) (fun _ => eq_refl)).
     rewrite Hpre_eq, Hpost_eq. reflexivity.
   Qed.
 
-  (* The sequence headline, fully instantiated: with no IP attached the
-     datasheet over the run is vacuous, so any queue of checks run from a start
-     state shows the attacker [emulate_seq], cycle by cycle. *)
-  Theorem checks_emulated :
-    forall (q: list (tfs_action sched
-                     * (forall x : tfs_spec_inputs tfs_ctx,
-                          type_denote (tf_inputs_type (tfs_spec_inputs_size tfs_ctx) x))))
-           sp0 ss0,
-      start_rel tfs_ctx cost sp0 ss0 ->
-      forall k ov,
-        (snd (snd (queue_run tfs_ctx cost k q no_resp ss0))).[ov]
-        = emulate_seq tfs_ctx cost (snd sp0) (spec_outputs_seq tfs_ctx cost q sp0) k ov.
-  Proof.
-    intros q sp0 ss0 Hst k ov.
-    assert (Hq : queue_ip_contract tfs_ctx cost q no_resp ss0) by (intros p; destruct p).
-    exact (proj2 (IPR.emulator_correct_seq tfs_ctx cost q sp0 ss0 no_resp Hst Hq k) ov).
-  Qed.
+  Local Instance fs_action_names : Show fs_action := {| show _ := "check"%string |}.
+
+  (* This context attaches no IP, so every IP model meets the datasheet. *)
+  Lemma no_ip_datasheet ip :
+    IPRDefinitions.datasheet tfs_ctx cost 16 fs_action_encoding fs_action_encoding_inj fs_action_names ip.
+  Proof. intro p. destruct p. Qed.
+
+  (* The headline, fully instantiated: IPR, verbatim from upstream, for the password
+     check and any source on secure ports. *)
+  Definition check_ipr ip src :=
+    IPR.ipr tfs_ctx cost 16 fs_action_encoding fs_action_encoding_inj fs_action_names ip src
+      (no_ip_datasheet ip).
 
 End TheoremInstantiation.
+
+Section DatasheetInhabited.
+
+  Context (ctx: TFSchedContext) (cost_limit: nat).
+  Local Notation sched := (tfs_schedule ctx cost_limit).
+  Context (enc_sz: nat) (enc: tfs_action sched -> bits_t enc_sz)
+          (enc_inj: forall a b, enc a = enc b -> a = b) (names: Show (tfs_action sched)).
+  Local Notation tsched := (tf_sched_ctx (IPRDefinitions.synth ctx cost_limit enc_sz enc enc_inj names)).
+
+  (* The datasheet can be met: an IP that answers each request
+     exactly [lat] cycles on meets it, for every design. *)
+  Definition ideal_ip : IPRDefinitions.trusted_ip ctx cost_limit enc_sz enc enc_inj names :=
+    fun p h => match nth_error (rev h) (pred (ip_lat (tfs_ip tsched p))) with
+               | Some q => ip_fn (tfs_ip tsched p) (Bits.slice 0 (ip_req_sz (tfs_ip tsched p)) q)
+               | None => Bits.zero
+               end.
+
+  Lemma ideal_ip_datasheet :
+    IPRDefinitions.datasheet ctx cost_limit enc_sz enc enc_inj names ideal_ip.
+  Proof.
+    intros p h t q. cbv zeta. intros _ Hlen _. unfold ideal_ip.
+    rewrite rev_app_distr. cbn [rev]. rewrite <- app_assoc.
+    rewrite nth_error_app2 by (rewrite rev_length; lia).
+    rewrite rev_length, Hlen, Nat.sub_diag. reflexivity.
+  Qed.
+
+End DatasheetInhabited.
 

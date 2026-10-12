@@ -14,23 +14,22 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # A headline theorem states a guarantee the project makes, not a step to one.
 # (group, why it is headline, [(module, theorem), ...])
 HEADLINE = [
-    ("the pipeline is correct",
-     "the generated circuit computes what the specification says",
-     [("Trustformer.Theorems.Synthesis", "synthesis_correct"),
-      ("Trustformer.Theorems.Synthesis", "initial_state_matches"),
-      ("Trustformer.Theorems.SchedulerSimulation", "variable_scheduler_correct"),
-      ("Trustformer.Theorems.SchedulerSimulation", "start_rel_after_done")]),
+    ("the circuit meets IPR (Athalye et al.)",
+     "the project's reason to exist: the generated circuit computes the spec and leaks "
+     "no more than it, for IPR as upstream defines it, under any trusted environment; "
+     "ipr_uniform with one emulator for every environment and start state",
+     [("Trustformer.Theorems.IPR", "ipr"),
+      ("Trustformer.Theorems.IPR", "ipr_uniform")]),
+
+    ("the circuit computes the spec",
+     "full functional correctness, secret state and outputs included, from any start "
+     "at rest; IPR itself only speaks of what the attacker sees",
+     [("Trustformer.Theorems.IPR", "synthesis_correct")]),
 
     ("no secret leaks by value",
      "what the attacker can see never depends on a secret",
      [("Trustformer.Theorems.Confidentiality", "seq_confidential"),
       ("Trustformer.Theorems.Confidentiality", "no_direct_secret_flow")]),
-
-    ("no secret leaks by timing",
-     "the project's reason to exist: an output observer learns nothing a run "
-     "keeps to itself, and the cycle it learns it on is public",
-     [("Trustformer.Theorems.IPR", "emulator_correct"),
-      ("Trustformer.Theorems.IPR", "emulator_correct_seq")]),
 
     ("the declassification rules are sound",
      "each rule widens what may be published; unsound means a real leak",
@@ -91,6 +90,7 @@ def main():
         return 0
 
     lib = os.path.join(ROOT, "_build/default/coq")
+    ipr_lib = os.path.join(ROOT, "_build/default/external/ipr")
     if not os.path.isdir(lib):
         sys.exit("_build/default/coq is missing -- run 'dune build coq/' first")
 
@@ -99,7 +99,7 @@ def main():
         probe = os.path.join(work, "CheckTheorems.v")
         with open(probe, "w") as fh:
             fh.write(build_probe(pairs))
-        run = subprocess.run(["coqc", "-R", lib, "Trustformer", probe],
+        run = subprocess.run(["coqc", "-R", lib, "Trustformer", "-R", ipr_lib, "IPR", probe],
                              capture_output=True, text=True, cwd=work)
 
     if run.returncode != 0:

@@ -1,5 +1,5 @@
-(* THE ROUND TRIP, as Theorems/SchedulerSimulation.v states it: one source step
-   equals iterating the scheduled cycle until done, modulo maps_to / maps_from.
+(* THE ROUND TRIP: one source step equals iterating the scheduled cycle until
+   done, modulo maps_to / maps_from, and the done cycle is a start state again.
    Kept apart from SchedulerSimulationLemmas.v, whose names the shims re-bind. *)
 
 Require Import Koika.Frontend.
@@ -146,7 +146,7 @@ Section SchedulerRoundTrip.
   Local Notation done_exprs_concrete := (SchedulerSimulationLemmas.done_exprs_concrete ctx cost_limit).
   Local Notation done_ops_no_done := (SchedulerSimulationLemmas.done_ops_no_done ctx cost_limit).
   Local Notation done_ops_no_dup := (SchedulerSimulationLemmas.done_ops_no_dup ctx cost_limit).
-  Local Notation done_set := (Definitions.done_set ctx cost_limit).
+  Local Notation done_set := (IRDefinitions.done_set ctx cost_limit).
   Local Notation done_set_dec := (ProofDefinitions.done_set_dec ctx cost_limit).
   Local Notation done_val_eval := (SchedulerSimulationLemmas.done_val_eval ctx cost_limit).
   Local Notation drive_after_cycle := (SchedulerSimulationLemmas.drive_after_cycle ctx cost_limit).
@@ -158,17 +158,17 @@ Section SchedulerRoundTrip.
   Local Notation drive_has_sample := (SchedulerSimulationLemmas.drive_has_sample ctx cost_limit).
   Local Notation drive_nodes_spec := (SchedulerSimulationLemmas.drive_nodes_spec ctx cost_limit).
   Local Notation drive_nodes_split := (SchedulerSimulationLemmas.drive_nodes_split ctx cost_limit).
-  Local Notation drive_payload := (Definitions.drive_payload ctx cost_limit).
+  Local Notation drive_payload := (IRDefinitions.drive_payload ctx cost_limit).
   Local Notation drive_payload_eval := (SchedulerSimulationLemmas.drive_payload_eval ctx cost_limit).
   Local Notation drive_payload_expr := (SchedulerSimulationLemmas.drive_payload_expr ctx cost_limit).
   Local Notation drive_payload_expr_hold := (SchedulerSimulationLemmas.drive_payload_expr_hold ctx cost_limit).
   Local Notation drive_payload_hold := (SchedulerSimulationLemmas.drive_payload_hold ctx cost_limit).
-  Local Notation ip_contract := (Definitions.ip_contract ctx cost_limit).
+  Local Notation ip_contract := (IRDefinitions.ip_contract ctx cost_limit).
   Local Notation port_strobe_after := (SchedulerSimulationLemmas.port_strobe_after ctx cost_limit).
   Local Notation port_strobe_quiet := (SchedulerSimulationLemmas.port_strobe_quiet ctx cost_limit).
   Local Notation port_strobe_take_later := (SchedulerSimulationLemmas.port_strobe_take_later ctx cost_limit).
   Local Notation slice_app_hi := (SchedulerSimulationLemmas.slice_app_hi ctx cost_limit).
-  Local Notation port_strobe := (Definitions.port_strobe ctx cost_limit).
+  Local Notation port_strobe := (IRDefinitions.port_strobe ctx cost_limit).
   Local Notation drive_payload_slice := (SchedulerSimulationLemmas.drive_payload_slice ctx cost_limit).
   Local Notation drive_payload_take := (SchedulerSimulationLemmas.drive_payload_take ctx cost_limit).
   Local Notation drive_payload_take_later := (SchedulerSimulationLemmas.drive_payload_take_later ctx cost_limit).
@@ -468,7 +468,7 @@ Section SchedulerRoundTrip.
   Local Notation ret_fspec := (SchedulerSimulationLemmas.ret_fspec ctx).
   Local Notation ret_full := (SchedulerSimulationLemmas.ret_full ctx).
   Local Notation ret_pos := (SchedulerSimulationLemmas.ret_pos ctx).
-  Local Notation run_n := (Definitions.run_n ctx cost_limit).
+  Local Notation run_n := (IRDefinitions.run_n ctx cost_limit).
   Local Notation run_preserves_ovar := (SchedulerSimulationLemmas.run_preserves_ovar ctx cost_limit).
   Local Notation run_preserves_svar := (SchedulerSimulationLemmas.run_preserves_svar ctx cost_limit).
   Local Notation sample_before_drive := (SchedulerSimulationLemmas.sample_before_drive ctx cost_limit).
@@ -507,8 +507,8 @@ Section SchedulerRoundTrip.
   Local Notation samples_stalled_cons_nonsample := (SchedulerSimulationLemmas.samples_stalled_cons_nonsample ctx).
   Local Notation samples_stalled_rev := (SchedulerSimulationLemmas.samples_stalled_rev ctx).
   Local Notation samples_within := (SchedulerSimulationLemmas.samples_within ctx).
-  Local Notation sched_input := (Definitions.sched_input ctx cost_limit).
-  Local Notation sched_step := (Definitions.sched_step ctx cost_limit).
+  Local Notation sched_input := (IRDefinitions.sched_input ctx cost_limit).
+  Local Notation sched_step := (IRDefinitions.sched_step ctx cost_limit).
   Local Notation sched_step_done := (SchedulerSimulationLemmas.sched_step_done ctx cost_limit).
   Local Notation sched_step_done_ovar := (SchedulerSimulationLemmas.sched_step_done_ovar ctx cost_limit).
   Local Notation sched_step_done_ovar_untouched := (SchedulerSimulationLemmas.sched_step_done_ovar_untouched ctx cost_limit).
@@ -554,7 +554,7 @@ Section SchedulerRoundTrip.
   Local Notation stall_valid_next_ones := (SchedulerSimulationLemmas.stall_valid_next_ones ctx cost_limit).
   Local Notation stall_wait_start := (SchedulerSimulationLemmas.stall_wait_start ctx cost_limit).
   Local Notation stall_weight := (AttackerClock.stall_weight ctx cost_limit).
-  Local Notation start_rel := (Definitions.start_rel ctx cost_limit).
+  Local Notation start_rel := (IRDefinitions.start_rel ctx cost_limit).
   Local Notation succ_arg_node := (SchedulerSimulationLemmas.succ_arg_node ctx).
   Local Notation succ_args_build_dfg := (SchedulerSimulationLemmas.succ_args_build_dfg ctx cost_limit).
   Local Notation succ_sample_node := (SchedulerSimulationLemmas.succ_sample_node ctx).
@@ -597,7 +597,7 @@ Section SchedulerRoundTrip.
   Local Notation wvmg := (SchedulerSimulationLemmas.wvmg ctx).
   Local Notation wvsz := (SchedulerSimulationLemmas.wvsz ctx).
   Local Notation wvsz_build_dfg := (SchedulerSimulationLemmas.wvsz_build_dfg ctx cost_limit).
-  Local Notation zeroed_at_start := (Definitions.zeroed_at_start ctx cost_limit).
+  Local Notation zeroed_at_start := (IRDefinitions.zeroed_at_start ctx cost_limit).
 
   Local Notation sched := (tfs_schedule ctx cost_limit).
   Local Notation s_var := (tfs_spec_states ctx).

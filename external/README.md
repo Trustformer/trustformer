@@ -9,10 +9,20 @@ Nothing here is generated. `build/*.v` is generated; this is what it is wired to
 
 ```
 external/
+  ipr/      vendored Coq definitions of IPR — anishathalye/ipr (MIT)
   sha256/   vendored upstream IP, unmodified — secworks/sha256 (BSD-2)
   glue/     thin adapters between an IP's native interface and a module's
             Trusted port group.  This is TCB: secrets cross it.
 ```
+
+## `ipr/`
+
+`anishathalye/ipr`, from https://github.com/anishathalye/ipr at commit
+`8697bdcd9b72df2ab1f12582e8c8e10b5f11bdb9`, MIT, © Anish Athalye. Only the definition
+files are copied: `Common.v`, `Tactics.v`, `Machine.v`, `Driver.v`, `Emulator.v`,
+`Definition.v`. The one change is `From Stdlib Require` -> `From Coq Require`, for
+Coq 8.19; `diff` against upstream shows nothing else. `coq/Theorems/IPR.v` states
+Trustformer's guarantee against these definitions.
 
 ## `sha256/`
 

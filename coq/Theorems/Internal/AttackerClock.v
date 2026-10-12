@@ -1,5 +1,5 @@
 (*! The attacker's clock: the cycle an action finishes on, computed from the
-    design and the public view.  [Definitions.L_pub] calls [latency]. !*)
+    design and the public view.  [L_pub], at the end, calls [latency]. !*)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.
@@ -204,3 +204,41 @@ Section Clock.
     end.
 
 End Clock.
+
+Section PublicView.
+
+  Context (ctx: TFSchedContext).
+  Context (cost_limit: nat).
+
+  Local Notation sched := (tfs_schedule ctx cost_limit).
+  Local Notation i_var := (tfs_spec_inputs ctx).
+  Local Notation o_var := (tfs_spec_outputs ctx).
+  Local Notation i_sz  := (tfs_spec_inputs_size ctx).
+  Local Notation o_sz  := (tfs_spec_outputs_size ctx).
+  Local Notation src_out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).
+  Local Notation input_t := (forall x : i_var, type_denote (tf_inputs_type i_sz x)).
+
+  (* WHAT THE ATTACKER SEES: each public input, and each public output before
+     and after the action.  A secret port reads [None]. *)
+  Record public_view := {
+    seen_in   : forall v: i_var, option (type_denote (tf_inputs_type i_sz v));
+    seen_pre  : forall o: o_var, option (type_denote (tf_outputs_type o_sz o));
+    seen_post : forall o: o_var, option (type_denote (tf_outputs_type o_sz o));
+  }.
+
+  Definition observe (input: input_t) (pre post: src_out_env) : public_view := {|
+    seen_in v   := match tfs_spec_inputs_class ctx v with
+                   | Public => Some (input v) | Secret => None end;
+    seen_pre o  := match tfs_spec_outputs_class ctx o with
+                   | Public => Some pre.[o] | Secret => None end;
+    seen_post o := match tfs_spec_outputs_class ctx o with
+                   | Public => Some post.[o] | Secret => None end;
+  |}.
+
+  (* THE LATENCY, OVER PUBLIC DATA.  Its arguments are the whole of what it
+     reads: the action and the view.  The calculation is internal. *)
+  Definition L_pub (act: tfs_action sched) (view: public_view) : nat :=
+    latency ctx cost_limit act
+      (seen_in view) (seen_pre view) (seen_post view).
+
+End PublicView.

@@ -5,7 +5,7 @@ Require Import Koika.Utils.Environments.
 
 Require Import Trustformer.Syntax.
 Require Import Trustformer.Semantics.
-Require Export Trustformer.Theorems.Definitions.
+Require Export Trustformer.Theorems.ConfidentialityDefinitions.
 Require Import Trustformer.Contract.
 
 Require Import Coq.Lists.List.
@@ -19,12 +19,12 @@ Section Confidentiality.
 
   Context (ctx: TFSchedContext).
 
-  (* Stated in Theorems/Definitions.v; bound here at this section's context. *)
-  Local Notation pub_agree := (Definitions.pub_agree ctx).
-  Local Notation run_seq := (Definitions.run_seq ctx).
-  Local Notation sf_action := (Definitions.sf_action ctx).
-  Local Notation sf_expr := (Definitions.sf_expr ctx).
-  Local Notation sf_ops := (Definitions.sf_ops ctx).
+  (* Stated in Theorems/ConfidentialityDefinitions.v; bound here at this section's context. *)
+  Local Notation pub_agree := (ConfidentialityDefinitions.pub_agree ctx).
+  Local Notation run_seq := (ConfidentialityDefinitions.run_seq ctx).
+  Local Notation sf_action := (ConfidentialityDefinitions.sf_action ctx).
+  Local Notation sf_expr := (ConfidentialityDefinitions.sf_expr ctx).
+  Local Notation sf_ops := (ConfidentialityDefinitions.sf_ops ctx).
 
   Local Notation s_var := (tfs_spec_states ctx).
   Local Notation i_var := (tfs_spec_inputs ctx).
