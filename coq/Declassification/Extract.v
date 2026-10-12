@@ -26,9 +26,7 @@ Proof.
 Qed.
 
 (* ================================================================= *)
-(* THE RECIPE AIMS AT ANY VALUATION THAT OBEYS THE GRAPH.              *)
-(* Operations, packets and IP functions are all the recipe uses, so     *)
-(* whatever obeys them is what it computes.                             *)
+(* THE RECIPE AIMS AT ANY VALUATION OBEYING OPS, PACKETS, IPs.       *)
 (* ================================================================= *)
 Section RecipeSound.
   Context {s_var i_var o_var p_var: Type} {p_eq: EqDec p_var}.
@@ -389,8 +387,7 @@ Proof.
 Qed.
 
 (* ================================================================= *)
-(* THE RUN'S IDEAL VALUES: each node as it reads once it is ready,     *)
-(* every IP answer [ip_fn] of its request.                              *)
+(* THE RUN'S IDEAL VALUES: nodes once ready, IP answers [ip_fn].     *)
 (* ================================================================= *)
 Section Ideal.
   Context (ctx: TFSchedContext) (cost_limit: nat).
@@ -826,7 +823,7 @@ Section Settled.
       rewrite Hc, <- (IH a Ha pi Hpi Hva).
       unfold nval. rewrite (nre_unary ctx cost_limit act a_idx n uop a Hn1 Hnlen Hop').
       unfold node_sz, node_at in Hw |- *.
-      destruct uop as [| s]; cbn [tf_eval_expr op1_bits]; rewrite Hw, convert_id; reflexivity.
+      destruct uop as [| s | s o]; cbn [tf_eval_expr op1_bits]; rewrite Hw, convert_id; reflexivity.
     - (* binary *)
       destruct (node_args_range ctx cost_limit act n Hn1 Hnlen a
                   ltac:(unfold get_args; rewrite Hop'; left; reflexivity)) as [Ha1 Ha].
@@ -837,7 +834,7 @@ Section Settled.
       rewrite Hc, <- (IH a Ha pi Hpi Hva), <- (IH b Hb pi Hpi Hvb).
       unfold nval. rewrite (nre_binary ctx cost_limit act a_idx n bop a b Hn1 Hnlen Hop').
       unfold node_sz, node_at in Hw |- *.
-      destruct bop as [ | | | | | | szC cop | hz lz ]; destruct Hw as [H1 H2];
+      destruct bop as [ | | | | | | | | | szC cop | hz lz | isz ]; destruct Hw as [H1 H2];
         rewrite H1, H2; cbn [tf_eval_expr op2_bits]; rewrite ?convert_id; try reflexivity.
       all: destruct cop; reflexivity.
     - (* resize *)
@@ -1060,9 +1057,10 @@ Section Settled.
   Proof.
     intros _ Hvm.
     pose proof Hstart as Hst. destruct Hst as [Hoo [Hmm Hzz]].
-    destruct (L_first_done ctx cost_limit act sp0 ss0 input resp Hstart) as [Hdone Hbefore].
+    destruct (L_first_done ctx cost_limit act sp0 ss0 input resp Hstart)
+      as [HL0 [Hdone Hbefore]].
     destruct (ProofDefinitions.L ctx cost_limit act input resp ss0) as [| m].
-    - exfalso. apply Hdone. exact (Hzz (tfs_done_signal sched) I).
+    - lia.
     - assert (Hnd : forall i, 1 <= i <= m -> ~ done_set ctx cost_limit (ssk i))
         by (intros i Hi; apply Hbefore; lia).
       pose proof (proj1 (build_dfg_args_pos ctx cost_limit act) _ r Hvm) as Hr1.

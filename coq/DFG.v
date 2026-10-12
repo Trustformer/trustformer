@@ -101,6 +101,7 @@ Section Values.
     match uop with
     | tf_not => Bits.neg (convert x)
     | tf_resize s => convert (convert (szB := s) x)
+    | tf_slice s o => Bits.slice o w (convert (szB := slice_pad s o w) (convert (szB := s) x))
     end.
 
   Definition op2_bits (bop: tf_binary_ops) (w sa sb: nat)
@@ -122,9 +123,16 @@ Section Values.
         | tf_le  => if Bits.unsigned_le u v then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
         | tf_gt  => if Bits.unsigned_gt u v then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
         | tf_ge  => if Bits.unsigned_ge u v then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
+        | tf_slt => if Bits.signed_lt u v then convert (Bits.of_nat 1 1) else convert (Bits.of_nat 1 0)
         end
     | tf_concat hz lz =>
         convert (Bits.app (convert (szB := hz) x) (convert (szB := lz) y))
+    | tf_lsr => Bits.lsr (Bits.to_nat (convert (szB := w) y)) (convert (szB := w) x)
+    | tf_lsl => Bits.lsl (Bits.to_nat (convert (szB := w) y)) (convert (szB := w) x)
+    | tf_asr => Bits.asr (Bits.to_nat (convert (szB := w) y)) (convert (szB := w) x)
+    | tf_islice s =>
+        Bits.slice (Bits.to_nat (convert (szB := Nat.log2_up (islice_pad s w)) (convert (szB := Nat.log2_up s) y))) w
+          (convert (szB := islice_pad s w) (convert (szB := s) x))
     end.
 
   (* Every operation node holds its operation applied to its arguments; inputs,
@@ -149,8 +157,10 @@ Section Values.
       match op (node_at g n) with
       | DFG_Unary tf_not a => node_sz g a = node_sz g n
       | DFG_Unary (tf_resize s) a => node_sz g a = s
+      | DFG_Unary (tf_slice s _) a => node_sz g a = s
       | DFG_Binary (tf_cmp w _) a b => node_sz g a = w /\ node_sz g b = w
       | DFG_Binary (tf_concat hz lz) a b => node_sz g a = hz /\ node_sz g b = lz
+      | DFG_Binary (tf_islice s) a b => node_sz g a = s /\ node_sz g b = Nat.log2_up s
       | DFG_Binary _ a b => node_sz g a = node_sz g n /\ node_sz g b = node_sz g n
       | DFG_Phi c t e =>
           node_sz g c = 1 /\ node_sz g t = node_sz g n /\ node_sz g e = node_sz g n

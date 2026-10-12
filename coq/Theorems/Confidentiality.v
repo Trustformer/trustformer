@@ -103,6 +103,7 @@ Section Confidentiality.
     - cbn [tf_eval_expr]. destruct op.
       + rewrite (IHe Hsf sys sys' input szB Hpub). reflexivity.
       + rewrite (IHe Hsf sys sys' input source_size Hpub). reflexivity.
+      + rewrite (IHe Hsf sys sys' input source_size Hpub). reflexivity.
     - apply andb_prop in Hsf. destruct Hsf as [H1 H2].
       cbn [tf_eval_expr]. destruct op;
         try (rewrite (IHe1 H1 sys sys' input szB Hpub),
@@ -113,6 +114,8 @@ Section Confidentiality.
       + (* concatenation: likewise, each side at its own width *)
         rewrite (IHe1 H1 sys sys' input hi_sz Hpub),
                 (IHe2 H2 sys sys' input lo_sz Hpub); reflexivity.
+      + rewrite (IHe1 H1 sys sys' input src_sz Hpub),
+                (IHe2 H2 sys sys' input (Nat.log2_up src_sz) Hpub); reflexivity.
     - apply andb_prop in Hsf. destruct Hsf as [Hc Htf].
       apply andb_prop in Htf. destruct Htf as [Ht Hf].
       cbn [tf_eval_expr].

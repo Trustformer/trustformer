@@ -30,6 +30,7 @@ theorems: coq
 
 check: all
 	@python3 scripts/check-drivers.py build/*.v
+	@python3 scripts/check-ranges.py build/*.v
 
 sim: all
 	@python3 scripts/run-sim.py
@@ -37,6 +38,7 @@ sim: all
 test: all
 	@python3 scripts/check-theorems.py
 	@python3 scripts/check-drivers.py build/*.v
+	@python3 scripts/check-ranges.py build/*.v
 	@python3 scripts/run-sim.py
 
 clean:

@@ -1,14 +1,6 @@
-(* ==================================================================== *)
-(* The round trip: one source step of an action equals iterating the    *)
-(* scheduled per-cycle transition until the done flag fires, modulo     *)
-(* maps_to / maps_from.  The statement a reader audits is in            *)
-(* Theorems/SchedulerSimulation.v; this file proves it.                 *)
-(*                                                                      *)
-(* Kept apart from SchedulerSimulationLemmas.v so that work on the round *)
-(* trip does not recompile 13,000 lines of builder invariants.  The     *)
-(* shims below re-bind that file's discharged names at this section's   *)
-(* [ctx] and [cost_limit].                                             *)
-(* ==================================================================== *)
+(* THE ROUND TRIP, as Theorems/SchedulerSimulation.v states it: one source step
+   equals iterating the scheduled cycle until done, modulo maps_to / maps_from.
+   Kept apart from SchedulerSimulationLemmas.v, whose names the shims re-bind. *)
 
 Require Import Koika.Frontend.
 Require Import Koika.Std.
@@ -525,6 +517,7 @@ Section SchedulerRoundTrip.
   Local Notation sched_step_done_svar_untouched := (SchedulerSimulationLemmas.sched_step_done_svar_untouched ctx cost_limit).
   Local Notation sched_step_done_v := (SchedulerSimulationLemmas.sched_step_done_v ctx cost_limit).
   Local Notation sched_step_done_valid := (SchedulerSimulationLemmas.sched_step_done_valid ctx cost_limit).
+  Local Notation sched_step_done_zeroed := (SchedulerSimulationLemmas.sched_step_done_zeroed ctx cost_limit).
   Local Notation sched_step_eq := (SchedulerSimulationLemmas.sched_step_eq ctx cost_limit).
   Local Notation sched_step_getout := (SchedulerSimulationLemmas.sched_step_getout ctx cost_limit).
   Local Notation sched_step_getst := (SchedulerSimulationLemmas.sched_step_getst ctx cost_limit).
@@ -672,8 +665,7 @@ Section SchedulerRoundTrip.
   Local Notation dvar := (@dfg_vars_t s_var o_var).
 
   (* ==================================================================== *)
-  (* The combinational twins of [compile_stall_valid]: a node's compiled  *)
-  (* validity written in terms of its arguments'.                         *)
+  (* A node's compiled validity in terms of its arguments'.               *)
   (* ==================================================================== *)
 
   Lemma compile_unary_valid
@@ -1383,11 +1375,9 @@ Section SchedulerRoundTrip.
       var_map s' = var_map s -> sem_inv s sp -> sem_inv s' sp.
     Proof. intros Hvm [Ha Hb]. unfold sem_inv. rewrite Hvm. split; assumption. Qed.
 
-    (* ================================================================= *)
-    (* PHASE 3d, STEP 4: [dataflow_expr] is semantics-preserving.         *)
-    (* The node it returns denotes, in the compiled scheduler state, the  *)
-    (* source value of the expression in the CURRENT source state [sp].   *)
-    (* ================================================================= *)
+    (* PHASE 3d, STEP 4: [dataflow_expr] is semantics-preserving: the node it
+       returns denotes, in the compiled scheduler state, the source value of the
+       expression in the CURRENT source state [sp]. *)
     Lemma dataflow_expr_sem :
       forall e szE (s s': wst) id sp,
         0 < length (graph s) -> winv s -> wvsz s -> gpos s ->
@@ -1522,7 +1512,7 @@ Section SchedulerRoundTrip.
                                     Rop Hsrcp R2 Hv)).
             cbn [src_get dfg_var_size]. reflexivity.
       - (* tf_op1 *)
-        destruct uop as [ | source_size ].
+        destruct uop as [ | source_size | source_size offset ].
         + (* tf_not *)
           cbn [dataflow_expr] in Hde. unfold bind in Hde.
           pose proof (dataflow_expr_sz e1 szE s Hinv Hvsz) as Hsz1.
@@ -1575,9 +1565,35 @@ Section SchedulerRoundTrip.
             rewrite (Hv1 pi Hgp (nrv_peel_unary act a_idx id (tf_resize source_size)
                                    src_id pi ss sinput Rop Hsrcp R2 Hv)).
             reflexivity.
+        + cbn [dataflow_expr] in Hde. unfold bind in Hde.
+          pose proof (dataflow_expr_sz e1 source_size s Hinv Hvsz) as Hsz1.
+          destruct (dataflow_expr ctx e1 source_size s) as [src_id s1] eqn:Ee1.
+          destruct Hsz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hz1]]]].
+          cbv beta in Hde.
+          assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
+          assert (Hg1F : wgmono s1 F)
+            by exact (wgmono_trans s1 s' F (emit_gmono _ _ _ _ _ Hde) Hg').
+          assert (Hposp : 1 <= src_id /\ gpos s1).
+          { pose proof (dataflow_expr_pos e1 source_size s Hpos) as Hq.
+            rewrite Ee1 in Hq. exact Hq. }
+          destruct Hposp as [Hsrcp Hpos1].
+          destruct (IH1 source_size s s1 src_id sp Hne Hinv Hvsz Hpos Ee1 Hg1F Hsem)
+            as [Hsem1 Hv1].
+          destruct (emitted_node_at act F s1 s'
+                      (DFG_Unary (tf_slice source_size offset) src_id) szE id
+                      HF Hne1 Hde Hg') as [R1 [R2 [Rop _]]].
+          split.
+          * apply (sem_inv_vm s1 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem1 ].
+          * intros pi Hgp Hv.
+            unfold ProofDefinitions.nval in Hv1 |- *.
+            rewrite (nre_unary act a_idx id (tf_slice source_size offset) src_id R1 R2 Rop).
+            cbn [tf_eval_expr].
+            rewrite (Hv1 pi Hgp (nrv_peel_unary act a_idx id (tf_slice source_size offset)
+                                   src_id pi ss sinput Rop Hsrcp R2 Hv)).
+            reflexivity.
       - (* tf_op2 *)
-        destruct bop as [ | | | | | | szC cop | hz lz ].
-        1-6: (cbn [dataflow_expr] in Hde; unfold bind in Hde;
+        destruct bop as [ | | | | | | | | | szC cop | hz lz | isz ].
+        1-9: (cbn [dataflow_expr] in Hde; unfold bind in Hde;
               pose proof (dataflow_expr_sz e1 szE s Hinv Hvsz) as Hsz1;
               destruct (dataflow_expr ctx e1 szE s) as [id1 s1] eqn:Ee1;
               destruct Hsz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hz1]]]];
@@ -1684,6 +1700,40 @@ Section SchedulerRoundTrip.
                       Rop Hid1p Hid2p R2 Hv) as [Hb1 Hb2];
           unfold ProofDefinitions.nval in Hv1, Hv2 |- *;
           rewrite (nre_binary act a_idx id (tf_concat hz lz) id1 id2 R1 R2 Rop);
+          cbn [tf_eval_expr];
+          rewrite (Hv1 pi Hgp Hb1), (Hv2 pi Hgp Hb2); reflexivity ].
+        cbn [dataflow_expr] in Hde. unfold bind in Hde.
+        pose proof (dataflow_expr_sz e1 isz s Hinv Hvsz) as Hsz1.
+        destruct (dataflow_expr ctx e1 isz s) as [id1 s1] eqn:Ee1.
+        destruct Hsz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hz1]]]].
+        pose proof (dataflow_expr_sz e2 (Nat.log2_up isz) s1 Hp1 Hq1) as Hsz2.
+        destruct (dataflow_expr ctx e2 (Nat.log2_up isz) s1) as [id2 s2] eqn:Ee2.
+        destruct Hsz2 as [Hg2 [Hn2 [Hp2 [Hq2 Hz2]]]].
+        cbv beta in Hde.
+        assert (Hpp1 : 1 <= id1 /\ gpos s1).
+        { pose proof (dataflow_expr_pos e1 isz s Hpos) as Hq.
+          rewrite Ee1 in Hq. exact Hq. }
+        destruct Hpp1 as [Hid1p Hpos1].
+        assert (Hpp2 : 1 <= id2 /\ gpos s2).
+        { pose proof (dataflow_expr_pos e2 (Nat.log2_up isz) s1 Hpos1) as Hq.
+          rewrite Ee2 in Hq. exact Hq. }
+        destruct Hpp2 as [Hid2p Hpos2].
+        assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
+        assert (Hne2 : 0 < length (graph s2)) by exact (gne_gmono s1 s2 Hg2 Hne1).
+        assert (Hg2F : wgmono s2 F)
+          by exact (wgmono_trans s2 s' F (emit_gmono _ _ _ _ _ Hde) Hg').
+        assert (Hg1F : wgmono s1 F) by exact (wgmono_trans s1 s2 F Hg2 Hg2F).
+        destruct (IH1 isz s s1 id1 sp Hne Hinv Hvsz Hpos Ee1 Hg1F Hsem) as [Hsem1 Hv1].
+        destruct (IH2 (Nat.log2_up isz) s1 s2 id2 sp Hne1 Hp1 Hq1 Hpos1 Ee2 Hg2F Hsem1) as [Hsem2 Hv2].
+        destruct (emitted_node_at act F s2 s' (DFG_Binary (tf_islice isz) id1 id2)
+                    szE id HF Hne2 Hde Hg') as [R1 [R2 [Rop _]]].
+        split;
+        [ apply (sem_inv_vm s2 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem2 ]
+        | intros pi Hgp Hv;
+          destruct (nrv_peel_binary act a_idx id (tf_islice isz) id1 id2 pi ss sinput
+                      Rop Hid1p Hid2p R2 Hv) as [Hb1 Hb2];
+          unfold ProofDefinitions.nval in Hv1, Hv2 |- *;
+          rewrite (nre_binary act a_idx id (tf_islice isz) id1 id2 R1 R2 Rop);
           cbn [tf_eval_expr];
           rewrite (Hv1 pi Hgp Hb1), (Hv2 pi Hgp Hb2); reflexivity ].
       - (* tf_expr_if *)
@@ -1827,13 +1877,9 @@ Section SchedulerRoundTrip.
           * exact (Helse (Hbt Hbv)).
     Qed.
 
-    (* ================================================================= *)
-    (* PHASE 3d, STEP 5: the map merger is semantics-preserving.          *)
-    (* [b] is the (abstract) branch selector: [true] means the ELSE side  *)
-    (* was taken, matching [tf_expr_if]'s and [tf_ops_updates]'s          *)
-    (* "cond = 0 -> else" convention.  Keeping it abstract avoids ever    *)
-    (* writing [beq_dec] in a statement.                                  *)
-    (* ================================================================= *)
+    (* PHASE 3d, STEP 5: the map merger is semantics-preserving.  The selector [b]
+       stays abstract, [true] meaning the ELSE side was taken ([tf_expr_if]'s
+       "cond = 0 -> else"), so no statement mentions [beq_dec]. *)
     Lemma merge_key_sem (cond_id: nid_t) (k: dvar) vt_opt ve_opt
           (s s1: wst) res (b: bool) (spt spe spf: src_sys_state) :
       0 < length (graph s) -> gpos s ->
@@ -2127,11 +2173,9 @@ Section SchedulerRoundTrip.
            (tf_eval_expr s_sz i_sz o_sz (szB := s_sz dst) e sp input), snd sp).
     Proof. reflexivity. Qed.
 
-    (* THE DENOTATION at the spec level, in this file's R form: a call assigns its
-       destination the value of its RESPONSE port, with the argument [e] absent
-       from the right-hand side. *)
-    (* V4: a call is ONE source update, the IP applied to the request.  The
-       request port is the scheduler's own register and no declared output. *)
+    (* THE DENOTATION of a call at the spec level, V4: ONE source update, the
+       destination taking the IP applied to the request.  The request port is the
+       scheduler's own register and no declared output. *)
     Lemma ops_run_call (ip: p_var) (dst: s_var) e (sp: src_sys_state) :
       tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tf_ops_base (tf_call ip dst e)) sp input
       = (ContextEnv.(putenv) (fst sp) dst
@@ -2240,7 +2284,7 @@ Section SchedulerRoundTrip.
         destruct (Nat.eqb _ sz).
         + unfold ret in Hde. injection Hde as _ <-. reflexivity.
         + exact (emit_vm _ _ s1 id s' Hde).
-      - destruct uop as [ | source_size ]; cbn [dataflow_expr] in Hde;
+      - destruct uop as [ | source_size | source_size offset ]; cbn [dataflow_expr] in Hde;
           unfold bind in Hde.
         + destruct (dataflow_expr ctx e1 sz s) as [src_id s1] eqn:Ee1.
           cbv beta in Hde. rewrite <- (IH1 sz s src_id s1 Ee1).
@@ -2248,13 +2292,17 @@ Section SchedulerRoundTrip.
         + destruct (dataflow_expr ctx e1 source_size s) as [src_id s1] eqn:Ee1.
           cbv beta in Hde. rewrite <- (IH1 source_size s src_id s1 Ee1).
           exact (emit_vm _ _ s1 id s' Hde).
-      - destruct bop as [ | | | | | | szC cop | hz lz ]; cbn [dataflow_expr] in Hde;
+        + destruct (dataflow_expr ctx e1 source_size s) as [src_id s1] eqn:Ee1.
+          cbv beta in Hde. rewrite <- (IH1 source_size s src_id s1 Ee1).
+          exact (emit_vm _ _ s1 id s' Hde).
+      - destruct bop as [ | | | | | | | | | szC cop | hz lz | isz ]; cbn [dataflow_expr] in Hde;
           unfold bind in Hde;
           [ destruct (dataflow_expr ctx e1 sz s) as [id1 s1] eqn:Ee1 ..
           | destruct (dataflow_expr ctx e1 szC s) as [id1 s1] eqn:Ee1
-          | destruct (dataflow_expr ctx e1 hz s) as [id1 s1] eqn:Ee1 ];
+          | destruct (dataflow_expr ctx e1 hz s) as [id1 s1] eqn:Ee1
+          | destruct (dataflow_expr ctx e1 isz s) as [id1 s1] eqn:Ee1 ];
           cbv beta in Hde.
-        1-6: (destruct (dataflow_expr ctx e2 sz s1) as [id2 s2] eqn:Ee2;
+        1-9: (destruct (dataflow_expr ctx e2 sz s1) as [id2 s2] eqn:Ee2;
               cbv beta in Hde;
               rewrite <- (IH1 sz s id1 s1 Ee1), <- (IH2 sz s1 id2 s2 Ee2);
               exact (emit_vm _ _ s2 id s' Hde)).
@@ -2265,6 +2313,10 @@ Section SchedulerRoundTrip.
         + destruct (dataflow_expr ctx e2 lz s1) as [id2 s2] eqn:Ee2.
           cbv beta in Hde.
           rewrite <- (IH1 hz s id1 s1 Ee1), <- (IH2 lz s1 id2 s2 Ee2).
+          exact (emit_vm _ _ s2 id s' Hde).
+        + destruct (dataflow_expr ctx e2 (Nat.log2_up isz) s1) as [id2 s2] eqn:Ee2.
+          cbv beta in Hde.
+          rewrite <- (IH1 isz s id1 s1 Ee1), <- (IH2 (Nat.log2_up isz) s1 id2 s2 Ee2).
           exact (emit_vm _ _ s2 id s' Hde).
       - cbn [dataflow_expr] in Hde. unfold bind in Hde.
         destruct (dataflow_expr ctx ec 1 s) as [cid s1] eqn:Ec. cbv beta in Hde.
@@ -2416,7 +2468,7 @@ Section SchedulerRoundTrip.
             [ left; exact Hin | right; exact Hvn | exfalso; lia ].
         + exfalso. exact (EMIT _ _ s1 s'
                             (get_var_len (DFG_OVar ov) s src_id s1 Hne Hinv Hvsz Egv) Hde).
-      - exfalso. destruct uop as [ | source_size ]; cbn [dataflow_expr] in Hde;
+      - exfalso. destruct uop as [ | source_size | source_size offset ]; cbn [dataflow_expr] in Hde;
           unfold bind in Hde.
         + destruct (dataflow_expr ctx e1 sz s) as [src_id s1] eqn:Ee1.
           cbv beta in Hde.
@@ -2426,9 +2478,13 @@ Section SchedulerRoundTrip.
           cbv beta in Hde.
           exact (EMIT _ _ s1 s'
                    (dataflow_expr_len e1 source_size s src_id s1 Hne Hinv Hvsz Ee1) Hde).
-      - exfalso. destruct bop as [ | | | | | | szC cop | hz lz ];
+        + destruct (dataflow_expr ctx e1 source_size s) as [src_id s1] eqn:Ee1.
+          cbv beta in Hde.
+          exact (EMIT _ _ s1 s'
+                   (dataflow_expr_len e1 source_size s src_id s1 Hne Hinv Hvsz Ee1) Hde).
+      - exfalso. destruct bop as [ | | | | | | | | | szC cop | hz lz | isz ];
           cbn [dataflow_expr] in Hde; unfold bind in Hde.
-        1-6: (destruct (dataflow_expr ctx e1 sz s) as [id1 s1] eqn:Ee1;
+        1-9: (destruct (dataflow_expr ctx e1 sz s) as [id1 s1] eqn:Ee1;
               cbv beta in Hde;
               pose proof (dataflow_expr_sz e1 sz s Hinv Hvsz) as Hz1;
               rewrite Ee1 in Hz1; destruct Hz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hzz1]]]];
@@ -2457,6 +2513,15 @@ Section SchedulerRoundTrip.
                    (Nat.le_trans _ _ _
                       (dataflow_expr_len e1 hz s id1 s1 Hne Hinv Hvsz Ee1)
                       (dataflow_expr_len e2 lz s1 id2 s2 Hne1 Hp1 Hq1 Ee2)) Hde).
+        + destruct (dataflow_expr ctx e1 isz s) as [id1 s1] eqn:Ee1. cbv beta in Hde.
+          pose proof (dataflow_expr_sz e1 isz s Hinv Hvsz) as Hz1.
+          rewrite Ee1 in Hz1. destruct Hz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hzz1]]]].
+          assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
+          destruct (dataflow_expr ctx e2 (Nat.log2_up isz) s1) as [id2 s2] eqn:Ee2. cbv beta in Hde.
+          exact (EMIT _ _ s2 s'
+                   (Nat.le_trans _ _ _
+                      (dataflow_expr_len e1 isz s id1 s1 Hne Hinv Hvsz Ee1)
+                      (dataflow_expr_len e2 (Nat.log2_up isz) s1 id2 s2 Hne1 Hp1 Hq1 Ee2)) Hde).
       - exfalso. cbn [dataflow_expr] in Hde. unfold bind in Hde.
         destruct (dataflow_expr ctx ec 1 s) as [cid s1] eqn:Ec. cbv beta in Hde.
         pose proof (dataflow_expr_sz ec 1 s Hinv Hvsz) as Hz1.
@@ -2620,7 +2685,7 @@ Section SchedulerRoundTrip.
         + exfalso. exact (ABSURD _ _ s1 Hne1
                             (get_var_len (DFG_OVar ov) s src_id s1 Hne Hinv Hvsz Egv)
                             Hde ltac:(intros w Hc; discriminate Hc)).
-      - exfalso. destruct uop as [ | source_size ]; cbn [dataflow_expr] in Hde;
+      - exfalso. destruct uop as [ | source_size | source_size offset ]; cbn [dataflow_expr] in Hde;
           unfold bind in Hde.
         + destruct (dataflow_expr ctx e1 sz s) as [src_id s1] eqn:Ee1.
           cbv beta in Hde.
@@ -2636,9 +2701,16 @@ Section SchedulerRoundTrip.
           exact (ABSURD _ _ s1 (gne_gmono s s1 Hg1 Hne)
                    (dataflow_expr_len e1 source_size s src_id s1 Hne Hinv Hvsz Ee1)
                    Hde ltac:(intros w Hc; discriminate Hc)).
-      - exfalso. destruct bop as [ | | | | | | szC cop | hz lz ];
+        + destruct (dataflow_expr ctx e1 source_size s) as [src_id s1] eqn:Ee1.
+          cbv beta in Hde.
+          pose proof (dataflow_expr_sz e1 source_size s Hinv Hvsz) as Hz1.
+          rewrite Ee1 in Hz1. destruct Hz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hzz1]]]].
+          exact (ABSURD _ _ s1 (gne_gmono s s1 Hg1 Hne)
+                   (dataflow_expr_len e1 source_size s src_id s1 Hne Hinv Hvsz Ee1)
+                   Hde ltac:(intros w Hc; discriminate Hc)).
+      - exfalso. destruct bop as [ | | | | | | | | | szC cop | hz lz | isz ];
           cbn [dataflow_expr] in Hde; unfold bind in Hde.
-        1-6: (destruct (dataflow_expr ctx e1 sz s) as [id1 s1] eqn:Ee1;
+        1-9: (destruct (dataflow_expr ctx e1 sz s) as [id1 s1] eqn:Ee1;
               cbv beta in Hde;
               pose proof (dataflow_expr_sz e1 sz s Hinv Hvsz) as Hz1;
               rewrite Ee1 in Hz1; destruct Hz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hzz1]]]];
@@ -2676,6 +2748,18 @@ Section SchedulerRoundTrip.
                       (dataflow_expr_len e1 hz s id1 s1 Hne Hinv Hvsz Ee1)
                       (dataflow_expr_len e2 lz s1 id2 s2 Hne1 Hp1 Hq1 Ee2))
                    Hde ltac:(intros w Hc; discriminate Hc)).
+        + destruct (dataflow_expr ctx e1 isz s) as [id1 s1] eqn:Ee1. cbv beta in Hde.
+          pose proof (dataflow_expr_sz e1 isz s Hinv Hvsz) as Hz1.
+          rewrite Ee1 in Hz1. destruct Hz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hzz1]]]].
+          assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
+          destruct (dataflow_expr ctx e2 (Nat.log2_up isz) s1) as [id2 s2] eqn:Ee2. cbv beta in Hde.
+          pose proof (dataflow_expr_sz e2 (Nat.log2_up isz) s1 Hp1 Hq1) as Hz2.
+          rewrite Ee2 in Hz2. destruct Hz2 as [Hg2 [Hn2 [Hp2 [Hq2 Hzz2]]]].
+          exact (ABSURD _ _ s2 (gne_gmono s1 s2 Hg2 Hne1)
+                   (Nat.le_trans _ _ _
+                      (dataflow_expr_len e1 isz s id1 s1 Hne Hinv Hvsz Ee1)
+                      (dataflow_expr_len e2 (Nat.log2_up isz) s1 id2 s2 Hne1 Hp1 Hq1 Ee2))
+                   Hde ltac:(intros w Hc; discriminate Hc)).
       - exfalso. cbn [dataflow_expr] in Hde. unfold bind in Hde.
         destruct (dataflow_expr ctx ec 1 s) as [cid s1] eqn:Ec. cbv beta in Hde.
         pose proof (dataflow_expr_sz ec 1 s Hinv Hvsz) as Hz1.
@@ -2697,11 +2781,9 @@ Section SchedulerRoundTrip.
                  Hde ltac:(intros w Hc; discriminate Hc)).
     Qed.
 
-    (* ================================================================= *)
-    (* Structural, and free of [en_holds]: what the builder does to    *)
-    (* [var_map] pins what the source does to the state.  Both arms of a  *)
-    (* conditional have these, which is what breaks the circularity there.*)
-    (* ================================================================= *)
+    (* Structural, and free of [en_holds]: what the builder does to [var_map] pins
+       what the source does to the state.  Both arms of a conditional have these,
+       which is what breaks the circularity there. *)
     Lemma dataflow_ops_len : forall ops en (s: wst) u s',
       0 < length (graph s) -> winv s -> wvsz s -> wfg s ->
       (forall x, In x (map fst en) -> wnidwf s x) ->
@@ -2714,8 +2796,6 @@ Section SchedulerRoundTrip.
       exact (wgmono_len s s' Hne (proj1 (proj2 Hinv)) (proj1 (proj2 Pp)) Gg).
     Qed.
 
-    (* [merge_key] returns an id the graph already held only in its symmetric
-       case, where the key is at that node in BOTH arms. *)
     (* [merge_key] returns an id the graph already held only in its symmetric
        case, where the key is at that node in BOTH arms; anything else is a
        fresh phi. *)
@@ -3465,10 +3545,9 @@ Section SchedulerRoundTrip.
             { intro He. subst v. exact (Hno res_id Hhead). }
             rewrite (src_get_put_o_neq sp dst _ v Hnv).
             apply Hfr1. intros n Hin. exact (Hno n (Hkeep v n Hin Hnv)).
-        + (* THE ROUND TRIP.  [dataflow_ops] emits arg -> drive -> (join) ->
-             stall -> sample and binds [dst] to the SAMPLE, whose reference IS
-             its register; [Hrt] says that register holds the IP's answer to
-             this call's own request. *)
+        + (* THE ROUND TRIP.  [dataflow_ops] emits arg -> drive -> (join) -> stall ->
+             sample and binds [dst] to the SAMPLE, whose reference IS its register;
+             [Hrt] says it holds the IP's answer to this call's own request. *)
           simpl.
           rewrite (bind_red (get_state ctx) _ s _ _ (get_state_red s)).
           pose proof (dataflow_expr_fg expr (ip_req_sz (tfs_spec_ip ctx ip)) s
@@ -3978,12 +4057,9 @@ Section SchedulerRoundTrip.
     split; [ reflexivity | cbn [graph var_map]; split; reflexivity ].
   Qed.
 
-  (* ==================================================================== *)
-  (* Phase 3d: the DFG really computes the source action.  This says       *)
-  (* nothing about the scheduler, buffers, validity bits or cycles —       *)
-  (* purely that [build_dfg] followed by the BUFFER-FREE                   *)
-  (* [compile_dfg_expr] reproduces the source semantics [tf_ops_run].      *)
-  (* ==================================================================== *)
+  (* PHASE 3d: the DFG really computes the source action -- nothing about the
+     scheduler, buffers, validity bits or cycles, purely that [build_dfg] then the
+     BUFFER-FREE [compile_dfg_expr] reproduces [tf_ops_run]. *)
   Lemma dfg_action_semantics (act: tfs_action sched) a_idx
         (sp: src_sys_state) (ss: sched_sys_state)
         (input: input_t) (sinput: sched_input_t) :
@@ -4093,11 +4169,9 @@ Section SchedulerRoundTrip.
   Qed.
 
 
-  (* ==================================================================== *)
-  (* THE ROUND TRIP.  Phase 3b settled which drives can take a port; what *)
-  (* follows settles when, which is the cost model's business and not     *)
-  (* this file's -- so it arrives as named hypotheses on the run.         *)
-  (* ==================================================================== *)
+  (* THE ROUND TRIP.  Phase 3b settled which drives can take a port; when they do
+     is the cost model's business, not this file's, so it arrives as named
+     hypotheses on the run. *)
 
   (* The buffers a guard keeps are the buffers a reference keeps. *)
   Lemma drive_sbufs_eq (act: tfs_action sched) a_idx :
@@ -4403,10 +4477,9 @@ Section SchedulerRoundTrip.
     exists q, qsz, n_idx. split; [ exact Hassoc | split; [ exact Hidx | exact Hvn ] ].
   Qed.
 
-  (* PHASE 3b'S PAYOFF.  While a call's answer is still outstanding, a LATER
-     call on that port cannot take the wire: an exclusive path condition puts
-     the pulse down directly, and every other one is held by the ordering join
-     that waits on a sample no earlier than this one. *)
+  (* PHASE 3b'S PAYOFF: while a call's answer is outstanding, no LATER call on that
+     port takes the wire -- an exclusive path condition holds its pulse down, and
+     any other waits on an ordering join behind a sample no earlier than this. *)
 
 
   (* Only the sentinel at position 0 is empty, so any node that carries an op
@@ -4445,11 +4518,9 @@ Section SchedulerRoundTrip.
     rewrite <- Hnid. apply (build_dfg_nid_pos act); [ apply nth_In; exact Hlt | exact Hne ].
   Qed.
 
-  (* A CALL-FREE action has nothing to wait for.  Every compiled validity is a
-     fold of [tf_const 1], because the only non-constant leaf a reference
-     expression can reach is a SAMPLE's buffer -- and with no IP there is none.
-     This is what lets a call-free context discharge a declassification rule's
-     settledness obligation. *)
+  (* A CALL-FREE action has nothing to wait for: every compiled validity folds
+     [tf_const 1], as only a SAMPLE's buffer is a non-constant leaf.  This lets a
+     call-free context discharge a declassification rule's settledness. *)
   Lemma nrv_no_samples (act: tfs_action sched) a_idx :
     sample_bufs act a_idx = [] ->
     forall fuel n pi (ss: sched_sys_state) (input: sched_input_t),
@@ -4867,10 +4938,9 @@ Section SchedulerRoundTrip.
     reflexivity.
   Qed.
 
-  (* WHY [guards_settled] IS NOT A HYPOTHESIS.  A drive fires on the one cycle
-     its stall starts, and its validity -- hence the gate that lets it fire --
-     now carries its guard's.  So wherever a guarded call pulses, every source
-     its path condition reads has already settled. *)
+  (* WHY [guards_settled] IS NOT A HYPOTHESIS: a drive fires on the one cycle its
+     stall starts, and its validity -- the gate that lets it fire -- carries its
+     guard's, so every source a firing call's path condition reads has settled. *)
   Lemma drive_pulse_guard_valid
         (act: tfs_action sched) a_idx n p arg en
         (ss: sched_sys_state) (input: sched_input_t) :
@@ -4977,10 +5047,9 @@ Section SchedulerRoundTrip.
     exact Hl.
   Qed.
 
-  (* Two calls in mutually exclusive branches never hold one port at once --
-     now at the level of the RUN, with no assumption about when guards settle.
-     A drive that pulses has had its guard's sources settle, and a settled
-     source reads the same at the end of the run, where [en_holds] pins it. *)
+  (* Two calls in exclusive branches never hold one port at once, at the level of
+     the RUN: a pulsing drive's guard sources have settled, and a settled source
+     reads the same at the end of the run, where [en_holds] pins it. *)
   Lemma excl_drive_pulse_zero
         (act: tfs_action sched) a_idx (p: p_var) en_s mm arg_m en_m
         (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) u M :
@@ -5409,14 +5478,12 @@ Section SchedulerRoundTrip.
 
 
   (* ---- The timing facts the round trip needs ---------------------------- *)
-  (* Each is a property of the SCHEDULE that this file's structural analysis  *)
-  (* does not reach: the cost model certifies them for a constant-time        *)
-  (* action, and every call-bearing action in the tree is one.                *)
+  (* Properties of the SCHEDULE beyond this file's structural analysis: the cost
+     model certifies them for constant-time actions, as every call-bearing one is. *)
 
-  (* On one port the answers come back in the order the calls were emitted,
-     for calls whose guards can hold together.  [pending_samples] filters by
-     [negb (guards_disjoint ...)], so exclusive arms are sequenced by nothing
-     and are excluded here; [covers] hands the same disjunction back. *)
+  (* On one port, answers come back in call order for calls whose guards can hold
+     together; [pending_samples] drops exclusive arms via [negb (guards_disjoint
+     ...)], and [covers] hands that disjunction back. *)
   Definition samples_ordered (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val)
       (ss0: sched_sys_state) : Prop :=
     forall (p: p_var) s1 s2 tok1 en1 tok2 en2 k,
@@ -5428,10 +5495,9 @@ Section SchedulerRoundTrip.
       (fst (run_n k act input resp ss0)).[tf_dfg_v a_idx s2] = Bits.ones 1 ->
       (fst (run_n k act input resp ss0)).[tf_dfg_v a_idx s1] = Bits.ones 1.
 
-  (* A call's request reaches the port before its answer is latched, carrying
-     a settled argument, and no call emitted at or before it moves the port
-     again while the answer is outstanding.  Only WHERE THE CALL FIRES: an
-     untaken arm's sample latches too, and its drive never pulsed. *)
+  (* A call's request reaches the port, with a settled argument, before its answer
+     latches, and no call emitted at or before it moves the port meanwhile.  Only
+     WHERE THE CALL FIRES: an untaken arm's sample latches with no pulse. *)
   Definition requests_sent (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val)
       (ss0: sched_sys_state) (M: nat) : Prop :=
     forall n_idx (p: p_var) tok en d j,
@@ -5482,10 +5548,9 @@ Section SchedulerRoundTrip.
       pose proof (args_lt_fwd act nj Hin b Hgb). lia.
   Qed.
 
-  (* THE ORDER, as a lemma.  A later call on a port is sequenced behind every
-     earlier one whose guard can hold with its own, so the earlier answer is
-     latched first.  Strong induction on the later sample: the tree it waits
-     on may name a sample that in turn covers the one we want. *)
+  (* THE ORDER, as a lemma: a later call on a port is sequenced behind every
+     earlier one whose guard can hold with its own, so the earlier answer latches
+     first.  Strong induction: the tree it waits on may cover the one we want. *)
   Lemma samples_ordered_holds
         (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) :
     act_idx_aligned act a_idx ->
@@ -5715,10 +5780,9 @@ Section SchedulerRoundTrip.
              (le_n _) Hpre Hs1 Hs2 Hle Hdj Hones).
   Qed.
 
-  (* THE PORT AT THE LATCH.  When a call's answer is latched, the port still
-     carries that call's own request: its drive put it there, phase 3b keeps
-     every later call off the wire, and [requests_sent] keeps the earlier
-     ones off. *)
+  (* THE PORT AT THE LATCH: when a call's answer latches, the port still carries
+     its own request -- its drive put it there, phase 3b keeps later calls off the
+     wire, and [requests_sent] keeps earlier ones off. *)
 
   (* No call AFTER this one takes the port while the answer is outstanding. *)
   Lemma no_later_drive_upto
@@ -5944,12 +6008,9 @@ Section SchedulerRoundTrip.
     unfold ProofDefinitions.node_ref_expr in Hnre. rewrite Hnre. reflexivity.
   Qed.
 
-  (* THE ROUND TRIP, discharged.  The sample latches on the cycle its validity
-     rises, reading a port that still carries its own request, and holds that
-     answer to the end of the run. *)
-  (* OPEN.  The answer on the channel at the cycle a sample latches is the
-     answer to that sample's OWN request: [ip_contract] delivers it [ip_lat]
-     cycles after the pulse, and [requests_sent] puts the pulse there. *)
+  (* The answer on the channel when a sample latches is the answer to its OWN
+     request: [ip_contract] delivers it [ip_lat] cycles after the pulse, and
+     [requests_sent] puts the pulse there. *)
   Lemma answer_on_wire
         (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val)
         (ss0: sched_sys_state) M n_idx (p: p_var) tok en d av en' j :
@@ -6012,8 +6073,12 @@ Section SchedulerRoundTrip.
       apply (port_strobe_quiet act a_idx p _ _ Halign Hnw).
       intros mm Hin. assert (H1 : t < w') by lia. assert (H2 : w' < j) by lia.
       exact (Hquiet w' H1 H2 mm Hin). }
-    pose proof (Hipc p (S t) Hstrobe Hqs) as Hans.
     assert (Hidx : S t + pred (ip_lat (tfs_ip sched p)) = j) by lia.
+    (* the answer is due at [j < M], while the action still runs *)
+    assert (Hlive : forall i, 0 < i <= S t + pred (ip_lat (tfs_ip sched p)) ->
+              ~ done_set (run_n i act input resp ss0))
+      by (intros i Hi; apply Hpre; lia).
+    pose proof (Hipc p (S t) Hlive Hstrobe Hqs) as Hans.
     rewrite Hidx in Hans. rewrite Hans. f_equal.
     (* the payload has not moved since the pulse *)
     assert (Hhold : forall k, S t + k <= j ->
@@ -6078,6 +6143,9 @@ Section SchedulerRoundTrip.
       as [H | H]; [ exfalso; exact (Hmin i ltac:(lia) H) | exact H ].
   Qed.
 
+  (* THE ROUND TRIP, discharged.  The sample latches on the cycle its validity
+     rises, reading a port that still carries its own request, and holds that
+     answer to the end of the run. *)
   Lemma round_trip
         (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) M
         n_idx (p: p_var) tok en d av en' :
@@ -6870,9 +6938,7 @@ Section SchedulerRoundTrip.
   Qed.
 
   (* ==================================================================== *)
-  (* THE OPEN OBLIGATION.                                                 *)
-  (*                                                                      *)
-  (* [Print Assumptions variable_scheduler_correct] names what is owed.   *)
+  (* THE TIMING FACTS, discharged: from a latch back to its drive.        *)
   (* ==================================================================== *)
 
   (* OPEN.  The walk from a latched sample back to its drive's argument:
@@ -7066,10 +7132,8 @@ Section SchedulerRoundTrip.
       | exact Hav ].
   Qed.
 
-  (* OPEN.  The design is settled and its structural prerequisites are
-     proved -- [stall_wait_start], [stall_is_buffered],
-     [chain_gate_stall_is_token].  What is left is the walk from a sample's
-     latch back to the cycle its drive pulsed on. *)
+  (* The walk from a sample's latch back to the cycle its drive pulsed on, over
+     [stall_wait_start], [stall_is_buffered] and [chain_gate_stall_is_token]. *)
 
   (* A saturated counter stays saturated for the rest of the run. *)
   Lemma stall_saturated_run
@@ -7690,10 +7754,9 @@ Section SchedulerRoundTrip.
                  Hsrc_j Hgd).
   Qed.
 
-  (* A latched sample read its guard from nodes that had already settled: the
-     drive's validity waits on them, and validity does not fall.  This holds
-     whether or not the guard was TRUE, which is what lets a reader case-split
-     on it. *)
+  (* A latched sample read its guard from already-settled nodes: the drive's
+     validity waits on them and validity does not fall -- whether or not the guard
+     was TRUE, which lets a reader case-split on it. *)
   Lemma sample_guard_rise
         (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val)
         (ss0: sched_sys_state) k n_idx (p: p_var) tok en :
@@ -7941,17 +8004,16 @@ Section SchedulerRoundTrip.
            (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val) (N: nat),
       start_rel sp0 ss0 ->
       ip_contract act input resp ss0 ->
-      (forall k, k < N -> ~ done_set (run_n k act input resp ss0)) ->
+      0 < N ->
+      (forall k, 0 < k < N -> ~ done_set (run_n k act input resp ss0)) ->
       done_set (run_n N act input resp ss0) ->
       let sp1 := tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act) sp0 input in
       maps_from ctx bneeds (fst (run_n N act input resp ss0)) = fst sp1 /\
       snd (run_n N act input resp ss0) = snd sp1.
   Proof.
-    intros act sp0 ss0 input resp N [Hout0 [Hst0 Hzero0]] Hipc Hbefore Hdone.
+    intros act sp0 ss0 input resp N [Hout0 [Hst0 Hzero0]] Hipc HN0 Hbefore Hdone.
     destruct (exists_act_idx act) as [a_idx Halign].
-    (* N = 0 is impossible: start_rel clears the done flag *)
-    destruct N as [| M].
-    { exfalso. apply Hdone. cbn [run_n]. apply (Hzero0 (tfs_done_signal sched) I). }
+    destruct N as [| M]; [ lia | ].
     set (ssM := run_n M act input resp ss0) in *.
     change (run_n (S M) act input resp ss0)
       with (sched_step act ssM (sched_input input (resp M))) in *.
@@ -8115,17 +8177,41 @@ Section SchedulerRoundTrip.
            (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val),
       start_rel sp0 ss0 ->
       ip_contract act input resp ss0 ->
-      exists N,
-        (forall k, k < N -> ~ done_set (run_n k act input resp ss0)) /\
+      exists N, 0 < N /\
+        (forall k, 0 < k < N -> ~ done_set (run_n k act input resp ss0)) /\
         done_set (run_n N act input resp ss0) /\
         let sp1 := tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act) sp0 input in
         maps_from ctx bneeds (fst (run_n N act input resp ss0)) = fst sp1 /\
         snd (run_n N act input resp ss0) = snd sp1.
   Proof.
     intros act sp0 ss0 input resp Hstart Hipc.
-    destruct (scheduler_reaches_done act sp0 ss0 input resp Hstart) as [N [Hbefore Hdone]].
-    exists N. split; [ exact Hbefore |]. split; [ exact Hdone |].
-    apply (scheduler_done_correct act sp0 ss0 input resp N Hstart Hipc Hbefore Hdone).
+    destruct (scheduler_reaches_done act sp0 ss0 input resp Hstart)
+      as [N [HN0 [Hbefore Hdone]]].
+    exists N. split; [ exact HN0 |]. split; [ exact Hbefore |]. split; [ exact Hdone |].
+    apply (scheduler_done_correct act sp0 ss0 input resp N Hstart Hipc HN0 Hbefore Hdone).
+  Qed.
+
+  (* RE-ENTRY: on its done cycle the run is in a start state again, for the
+     source state one action later.  The done cycle's reset clears buffers and
+     validity bits; [scheduler_done_correct] gives the base state and outputs. *)
+  Theorem start_rel_after_done :
+    forall (act: tfs_action sched) (sp0: src_sys_state)
+           (ss0: sched_sys_state) (input: input_t) (resp: nat -> resp_val) (N: nat),
+      start_rel sp0 ss0 ->
+      ip_contract act input resp ss0 ->
+      0 < N ->
+      (forall k, 0 < k < N -> ~ done_set (run_n k act input resp ss0)) ->
+      done_set (run_n N act input resp ss0) ->
+      start_rel (tf_ops_run s_sz i_sz o_sz (tfs_spec_ip ctx) (tfs_spec_action_ops ctx act) sp0 input)
+                (run_n N act input resp ss0).
+  Proof.
+    intros act sp0 ss0 input resp N Hstart Hipc HN0 Hbefore Hdone.
+    destruct (scheduler_done_correct act sp0 ss0 input resp N Hstart Hipc HN0 Hbefore Hdone)
+      as [Hst Hout].
+    split; [ exact Hout |]. split; [ exact Hst |].
+    destruct N as [| M]; [ lia |].
+    exact (sched_step_done_zeroed act (run_n M act input resp ss0)
+             (sched_input input (resp M)) Hdone).
   Qed.
 
 End SchedulerRoundTrip.
