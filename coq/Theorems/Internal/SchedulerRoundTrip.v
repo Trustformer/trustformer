@@ -3987,10 +3987,9 @@ Section SchedulerRoundTrip.
     cbn [filter]. destruct e as [m msz].
     assert (Hf : is_sample_of act m = false).
     { unfold ProofDefinitions.is_sample_of.
-      destruct (node_op act m) as [c | iv | v | uop a | bop a b | r | c t e
-                                  | lat a | dp da den | sp stok sen | ja jb | ];
+      case_op (node_op act m);
         try reflexivity.
-      exfalso. exact (Hno sp). }
+      exfalso. exact (Hno siv). }
     rewrite Hf. exact IH.
   Qed.
 
@@ -4145,8 +4144,7 @@ Section SchedulerRoundTrip.
         [| discriminate ].
       intro H. injection H as <- _. right.
       apply find_some in Ej. destruct Ej as [Hin Hpred].
-      destruct (op j) as [ c | v | v | uop a1 | bop a1 a2 | a1 | cd t1 e1
-                         | sl sa | dov dn den | siv sn sen | ja jb | ] eqn:Ejop;
+      case_op (op j) as Ejop;
         try discriminate.
       apply Nat.eqb_eq in Hpred. subst ja.
       exists jb. destruct (node_at_nid act j Hin) as [_ Hnth].
@@ -4188,10 +4186,10 @@ Section SchedulerRoundTrip.
               exists l, node_op act (nid nd) = DFG_Stall l m).
     { intros m nd Hf. apply find_some in Hf. destruct Hf as [Hin Hp].
       destruct (node_at_nid act nd Hin) as [_ Hnth].
-      destruct (op nd) as [ | | | | | | | l aa | | | | ] eqn:Hop;
+      case_op (op nd) as Hop;
         try discriminate Hp.
-      apply Nat.eqb_eq in Hp. subst aa.
-      exists l. unfold AttackerClock.node_op. rewrite Hnth. exact Hop. }
+      apply Nat.eqb_eq in Hp. subst sa.
+      exists slat. unfold AttackerClock.node_op. rewrite Hnth. exact Hop. }
     unfold chain_gate. cbv zeta.
     destruct (find (fun nd => match op nd with
                               | DFG_Stall _ a => Nat.eqb a n

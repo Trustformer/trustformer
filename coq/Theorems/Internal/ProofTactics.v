@@ -4,10 +4,20 @@
 Require Import Coq.Lists.List.
 Require Import Trustformer.Scheduler.Build.
 
-(* Split on a DFG op, naming its fields the same way in every proof. *)
+(* Split on a DFG op, naming its fields the same way in every proof, so a new
+   node kind adds its branch here rather than at each such split. *)
 Tactic Notation "case_op" constr(o) "as" ident(Hop) :=
   destruct o as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid
                 | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Hop.
+Tactic Notation "case_op" constr(o) :=
+  let H := fresh "Hop" in case_op o as H; clear H.
+(* The same, a variable read split into a state's [sv] and an output's [ov];
+   the second list of node kinds, kept in step with the first. *)
+Tactic Notation "case_op_vars" constr(o) "as" ident(Hop) :=
+  destruct o as [c | v | [sv | ov] | op1 arg | op1 arg1 arg2 | arg | cnd tid eid
+                | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Hop.
+Tactic Notation "case_op_vars" constr(o) :=
+  let H := fresh "Hop" in case_op_vars o as H; clear H.
 
 (* [In x (get_args ctx node)] for an argument [x] of the op [Hop] names (or of
    an op already in the goal), a guard literal's [x] given as [In l en]. *)

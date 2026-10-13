@@ -2525,8 +2525,7 @@ Section SchedulerSimulation.
     destruct (find _ (graph s)) as [nd |] eqn:Ef; [| discriminate].
     intro H. injection H as <-.
     apply find_some in Ef. destruct Ef as [Hin Hp]. cbv beta in Hp.
-    destruct (op nd) as [ c | iv | v2 | uop a | bop a1 a2 | a | cd t e
-                        | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo;
+    case_op (op nd) as Eo;
       try discriminate Hp.
     destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) siv ip) as [-> | Hne];
       [| discriminate Hp].
@@ -2611,8 +2610,7 @@ Section SchedulerSimulation.
       - cbn [fold_left]. exact Hacc.
       - cbn [fold_left]. apply IH; [ intros x Hx; apply Hsub; right; exact Hx |].
         assert (Hnd : In nd (graph s)) by (apply Hsub; left; reflexivity).
-        destruct (op nd) as [ c | iv | v2 | uop a | bop a1 a2 | a | cd t e
-                            | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo;
+        case_op (op nd) as Eo;
           try exact Hacc.
         destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) siv p) as [-> | Hne];
           [| exact Hacc ].
@@ -2689,8 +2687,7 @@ Section SchedulerSimulation.
     end.
     { intro g. induction g as [| x g IHg]; intros acc r Hr; [ exact Hr |].
       cbn [fold_left]. apply IHg.
-      destruct (op x) as [ c | iv | v2 | uop a | bop a1 a2 | a | cd t e
-                         | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo;
+      case_op (op x) as Eo;
         try exact Hr.
       destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) siv p) as [-> | Hne]; [| exact Hr ].
       destruct (guards_disjoint en sen); [ exact Hr |].
@@ -2722,7 +2719,7 @@ Section SchedulerSimulation.
       cbn [fold_left].
       destruct Hns as [Hxn | Hns].
       - subst x.
-        destruct (op ns) as [ c | iv | v2 | uop a | bop a1 a2 | a | cd t e
+        destruct (op ns) as [ c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid
                             | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo;
           try discriminate Hop.
         injection Hop as Hp1 Hp2 Hp3. subst siv. subst sn. subst sen.
@@ -2742,7 +2739,7 @@ Section SchedulerSimulation.
           exists nd, tk.
           split; [ exact Hnd |]. split; [ exact Hnid |].
           split; [ exact Hndop |]. rewrite guards_disjoint_sym. exact Hfr.
-      - destruct (op x) as [ c | iv | v2 | uop a | bop a1 a2 | a | cd t e
+      - destruct (op x) as [ c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid
                           | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo;
           try exact (IHg acc Hdg' Hsub' Hlt' Hacc Hns).
         destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) siv p) as [-> | Hne];
@@ -7920,12 +7917,11 @@ Section SchedulerSimulation.
       destruct Hnode as [Hnode Hsam]. subst n.
       split; [| exact (Hnid_lt node Hnode) ].
       (* a sample reads its token, and an arg ranks below its node *)
-      destruct (op node) as [c|iv|dv|uop ua|bop b1 b2|ra|pc pt pe|slat sa
-                            |dp da den|sp tok sen|ja jb|] eqn:Hop;
+      case_op (op node) as Hop;
         try discriminate Hsam.
-      assert (Htok : In tok (get_args ctx node))
+      assert (Htok : In sn (get_args ctx node))
         by (unfold get_args; rewrite Hop; left; reflexivity).
-      pose proof (args_lt_fwd act node Hnode tok Htok). lia.
+      pose proof (args_lt_fwd act node Hnode sn Htok). lia.
   Qed.
 
   Lemma vreg_nid_node_range :
@@ -8239,8 +8235,7 @@ Section SchedulerSimulation.
         pi (op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |})).
   Proof.
     intro Hla. cbn [compile_dfg_expr_aux]. rewrite Hla. cbv beta iota zeta.
-    destruct (op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [ | | v | | | | | | | | | ]; try destruct v; cbn [compile_node];
+    case_op (op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |})); try destruct v; cbn [compile_node];
       repeat match goal with
              | |- context [compile_dfg_expr_aux ?a ?b ?c ?d ?e ?f ?g ?h ?i ?j] =>
                  destruct (compile_dfg_expr_aux a b c d e f g h i j)
@@ -8416,8 +8411,8 @@ Section SchedulerSimulation.
     Lemma reads_at_args o szB x sx : In (x, sx) (reads_at o szB) -> In x (args o).
     Proof.
       intro H. apply (in_map fst) in H. revert H.
-      destruct o as [ | | | uop a | bop a b | | | | | | | ];
-        try destruct uop; try destruct bop; cbn [reads_at map fst get_args op In]; tauto.
+      case_op o;
+        try destruct op1; try destruct op1; cbn [reads_at map fst get_args op In]; tauto.
     Qed.
 
     (* A node's VALUE carries over where its validity fires on the first side,
@@ -12250,8 +12245,7 @@ Section SchedulerSimulation.
     intros Hsamp Hsd Hdi His.
     pose proof (sample_nid_succ act samp p tok en Hsamp) as Hsm.
     unfold sample_drive in Hsd. rewrite Hsamp in Hsd.
-    destruct (node_op act tok) as [ c | iv | v2 | uop a1 | bop a1 a2 | a1 | cd t1 e1
-                                 | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Etok;
+    case_op (node_op act tok) as Etok;
       try (destruct (sample_drive_head_shape act p tok d Hsd)
              as [[Hdh [ar [e2 Hh]]] | [prev [ar2 [e3 [Hh Hdr]]]]];
            [ lia
@@ -12273,8 +12267,7 @@ Section SchedulerSimulation.
     intros Hsamp Hsd.
     pose proof (sample_nid_succ act samp p tok en Hsamp) as Hsm.
     unfold sample_drive in Hsd. rewrite Hsamp in Hsd.
-    destruct (node_op act tok) as [ c | iv | v2 | uop a1 | bop a1 a2 | a1 | cd t1 e1
-                                 | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Etok;
+    case_op (node_op act tok) as Etok;
       try (destruct (sample_drive_head_shape act p tok d Hsd)
              as [[Hdh [ar [e2 Hh]]] | [prev [ar2 [e3 [Hh Hdr]]]]];
            [ lia

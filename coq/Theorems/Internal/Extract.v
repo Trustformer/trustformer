@@ -663,12 +663,10 @@ Section Ideal.
     pose proof (wfg_build_dfg ctx cost_limit act _
                   (nth_In _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hlt)) as Hfg.
     unfold node_args_sz in Hfg.
-    destruct (op (nth n (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | iv | dv | uop a | bop a b | a | cnd t e | slat sa | dp darg den
-         | sp tok en | ja jb | ];
+    case_op (op (nth n (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}));
       try exact I.
-    - destruct uop; exact (proj2 (wsz_node_sz ctx cost_limit act _ _ Hfg)).
-    - destruct bop; destruct Hfg as [H1 H2]; split;
+    - destruct op1; exact (proj2 (wsz_node_sz ctx cost_limit act _ _ Hfg)).
+    - destruct op1; destruct Hfg as [H1 H2]; split;
         first [ exact (proj2 (wsz_node_sz ctx cost_limit act _ _ H1))
               | exact (proj2 (wsz_node_sz ctx cost_limit act _ _ H2)) ].
     - destruct Hfg as [Hc [Ht He]].
