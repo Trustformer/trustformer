@@ -164,20 +164,12 @@ Section IPRProof.
   Context (cost_limit: nat).
 
   (* Bound at this section's context. *)
-  Local Notation sample_args_settled := (ProofDefinitions.sample_args_settled ctx cost_limit).
-  Local Notation sample_guards_settled := (ProofDefinitions.sample_guards_settled ctx cost_limit).
-  Local Notation samples_answered := (ProofDefinitions.samples_answered ctx cost_limit).
-  Local Notation samples_zeroed := (ProofDefinitions.samples_zeroed ctx cost_limit).
   Local Notation settled := (ProofDefinitions.settled ctx cost_limit).
-
-  (* Bound here at this section's context. *)
   Local Notation L := (ProofDefinitions.L ctx cost_limit).
   Local Notation bit_of := ProofDefinitions.bit_of.
   Local Notation done_test := (ProofDefinitions.done_test ctx cost_limit).
-  Local Notation drives_sized := (ProofDefinitions.drives_sized ctx cost_limit).
   Local Notation emulate := (IRDefinitions.emulate ctx).
   Local Notation first_done := (IRDefinitions.first_done ctx cost_limit).
-  Local Notation guards_sized := (ProofDefinitions.guards_sized ctx cost_limit).
   Local Notation is_plumbing := (ProofDefinitions.is_plumbing ctx cost_limit).
   Local Notation pi_holds := (ProofDefinitions.pi_holds ctx cost_limit).
   Local Notation plumbing_not_root := (ProofDefinitions.plumbing_not_root ctx cost_limit).
@@ -189,7 +181,6 @@ Section IPRProof.
   Local Notation avalid := (AttackerClock.avalid ctx cost_limit).
   Local Notation avalid_node := (AttackerClock.avalid_node ctx cost_limit).
   Local Notation vv_matches := (ProofDefinitions.vv_matches ctx cost_limit).
-  Local Notation settled_at := (ProofDefinitions.settled_at ctx cost_limit).
   Local Notation vals_sound := (ProofDefinitions.vals_sound ctx cost_limit).
   Local Notation selectors_extractable :=
     (ProofDefinitions.selectors_extractable ctx cost_limit).

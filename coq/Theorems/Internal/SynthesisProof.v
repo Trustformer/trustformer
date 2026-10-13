@@ -61,15 +61,11 @@ Section SynthesisProof.
   Opaque tfs_states_fin.
   Local Notation spec_states_size := (tfs_states_size (tf_sched_ctx tf_ctx)).
   Opaque tfs_states_size.
-  Local Notation spec_states_t := (tf_states_type spec_states_size).
   Opaque tf_states_type.
-  Local Notation spec_states_init := (tfs_states_init (tf_sched_ctx tf_ctx)).
   Opaque tfs_states_init.
   Local Notation spec_all_states := (@finite_elements spec_states spec_states_fin).
   Opaque finite_elements.
-  Local Notation spec_state_index := (@finite_index spec_states spec_states_fin).
   Opaque finite_index.
-  Local Notation spec_state_num := (Datatypes.length spec_all_states).
 
   Local Notation spec_inputs := (tfs_inputs (tf_sched_ctx tf_ctx)).
   Opaque tfs_inputs.
@@ -77,13 +73,10 @@ Section SynthesisProof.
   Opaque tfs_inputs_fin.
   Local Notation spec_inputs_size := (tfs_inputs_size (tf_sched_ctx tf_ctx)).
   Opaque tfs_inputs_size.
-  Local Notation spec_inputs_t := (tf_inputs_type spec_inputs_size).
   Opaque tf_inputs_type.
   Local Notation spec_all_inputs := (@finite_elements spec_inputs spec_inputs_fin).
   Opaque finite_elements.
-  Local Notation spec_input_index := (@finite_index spec_inputs spec_inputs_fin).
   Opaque finite_index.
-  Local Notation spec_input_num := (Datatypes.length spec_all_inputs).
 
   Local Notation spec_outputs := (tfs_outputs (tf_sched_ctx tf_ctx)).
   Opaque tfs_outputs.
@@ -91,13 +84,10 @@ Section SynthesisProof.
   Opaque tfs_outputs_fin.
   Local Notation spec_outputs_size := (tfs_outputs_size (tf_sched_ctx tf_ctx)).
   Opaque tfs_outputs_size.
-  Local Notation spec_outputs_t := (tf_outputs_type spec_outputs_size).
   Opaque tf_outputs_type.
   Local Notation spec_all_outputs := (@finite_elements spec_outputs spec_outputs_fin).
   Opaque finite_elements.
-  Local Notation spec_output_index := (@finite_index spec_outputs spec_outputs_fin).
   Opaque finite_index.
-  Local Notation spec_output_num := (Datatypes.length spec_all_outputs).
 
   Local Notation spec_ips := (tfs_ips (tf_sched_ctx tf_ctx)).
   Opaque tfs_ips.
@@ -111,11 +101,8 @@ Section SynthesisProof.
   Opaque tfs_action_fin.
   Local Notation spec_all_actions := (@finite_elements spec_action spec_action_fin).
   Opaque finite_elements.
-  Local Notation spec_action_index := (@finite_index spec_action spec_action_fin).
   Opaque finite_index.
-  Local Notation spec_action_num := (Datatypes.length spec_all_actions).
 
-  Local Notation spec_action_reg_size := (tf_action_reg_size tf_ctx).
   Local Notation spec_action_encoding := (tf_action_encoding tf_ctx).
   Opaque tf_action_encoding.
   Local Notation spec_action_encoding_inj := (tf_action_encoding_inj tf_ctx).
@@ -128,9 +115,7 @@ Section SynthesisProof.
   Local Definition spec_schedule_ops_nodup := (tfs_schedule_no_duplicates (tf_sched_ctx tf_ctx)).
 
   Local Notation reg_t := (@_reg_t spec_states spec_inputs spec_outputs spec_ips).
-  Local Notation reg_t_finite := (@_reg_t_finite tf_ctx).
   Opaque _reg_t_finite.
-  Local Notation ext_fn_t := (@_ext_fn_t spec_inputs spec_outputs spec_ips).
 
   Local Notation st_env := (ContextEnv.(env_t) (tf_states_type spec_states_size)).
   Local Notation out_env := (ContextEnv.(env_t) (tf_outputs_type spec_outputs_size)).

@@ -69,7 +69,6 @@ Section SchedulerSimulation.
   Context (cost_limit: nat).
 
   (* Bound at this section's context. *)
-  Local Notation node_ref_valid := (ProofDefinitions.node_ref_valid ctx cost_limit).
   Local Notation sample_drive := (ProofDefinitions.sample_drive ctx cost_limit).
   Local Notation sample_drive_head := (ProofDefinitions.sample_drive_head ctx cost_limit).
   Local Notation vreg_nid := (ProofDefinitions.vreg_nid ctx cost_limit).
@@ -80,7 +79,6 @@ Section SchedulerSimulation.
   Local Notation done_set := (IRDefinitions.done_set ctx cost_limit).
   Local Notation done_set_dec := (ProofDefinitions.done_set_dec ctx cost_limit).
   Local Notation drive_payload := (IRDefinitions.drive_payload ctx cost_limit).
-  Local Notation ip_contract := (IRDefinitions.ip_contract ctx cost_limit).
   Local Notation is_sample_of := (ProofDefinitions.is_sample_of ctx cost_limit).
   Local Notation node_op := (AttackerClock.node_op ctx cost_limit).
   Local Notation node_rank := (AttackerClock.node_rank ctx cost_limit).
