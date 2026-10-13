@@ -70,9 +70,34 @@ Section Clock.
 
   Definition slot_valid (vv: vvec) (j: nat) : bool := nth j vv false.
 
-  (* A node's validity as the attacker computes it: the buffer slots it reads
-     come from [vv], and an untainted phi's selector from [vals].  It mirrors
-     [compile_dfg_expr_aux]'s second component. *)
+  (* One step of the attacker's validity at an unbuffered node: [rec] reads the
+     arguments, an untainted phi's selector comes from [vals].  It mirrors
+     [compile_node]'s second component. *)
+  Definition avalid_node (act: tfs_action sched) (vals: known (build_dfg ctx act))
+      (rec: list lit -> nid_t -> bool) (pi: list lit)
+      (o: @dfg_op_t (tfs_spec_states ctx) i_var o_var (tfs_spec_ips ctx)) : bool :=
+    match o with
+    | DFG_Const _ | DFG_Input _ | DFG_Var _ => true
+    | DFG_Unary _ a | DFG_Resize a | DFG_Stall _ a => rec pi a
+    | DFG_Sample _ tok _ => rec pi tok
+    | DFG_Binary _ a b | DFG_Join a b => andb (rec pi a) (rec pi b)
+    | DFG_Drive _ a en => fold_right (fun l acc => andb (rec pi (fst l)) acc) (rec pi a) en
+    | DFG_Phi c t e =>
+        let crit := phi_crit (get_tainted ctx (build_dfg ctx act))
+                             (decl_facts ctx (build_dfg ctx act)) c pi in
+        if crit
+        then andb (andb (rec (phi_path crit c true pi) t) (rec (phi_path crit c false pi) e))
+                  (rec pi c)
+        else andb (rec pi c)
+                  (match vals c with
+                   | Some v => rec (phi_path crit c (nonzero v) pi) (if nonzero v then t else e)
+                   | None => false
+                   end)
+    | DFG_Empty => false
+    end.
+
+  (* A node's validity as the attacker computes it: a buffered node's is its
+     slot's bit in [vv], any other's one [avalid_node] step. *)
   Fixpoint avalid (act: tfs_action sched) (vals: known (build_dfg ctx act))
       (vv: vvec) (bufs: list (nid_t * (nat * sz_t)))
       (fuel: nat) (pi: list lit) (n: nid_t) : bool :=
@@ -81,38 +106,20 @@ Section Clock.
     | S f =>
         match BitsToLists.list_assoc bufs n with
         | Some (j, _) => slot_valid vv j
-        | None =>
-            let rec := avalid act vals vv bufs f in
-            match node_op act n with
-            | DFG_Const _ => true
-            | DFG_Input _ => true
-            | DFG_Var _ => true
-            | DFG_Unary _ a => rec pi a
-            | DFG_Resize a => rec pi a
-            | DFG_Binary _ a b => andb (rec pi a) (rec pi b)
-            | DFG_Stall _ a => rec pi a
-            | DFG_Sample _ tok _ => rec pi tok
-            | DFG_Join a b => andb (rec pi a) (rec pi b)
-            | DFG_Drive _ a en =>
-                fold_right (fun l acc => andb (rec pi (fst l)) acc) (rec pi a) en
-            | DFG_Phi c t e =>
-                let crit := phi_crit (get_tainted ctx (build_dfg ctx act))
-                                     (decl_facts ctx (build_dfg ctx act)) c pi in
-                if crit
-                then andb (andb (rec (phi_path crit c true pi) t)
-                                (rec (phi_path crit c false pi) e))
-                          (rec pi c)
-                else andb (rec pi c)
-                          (match vals c with
-                           | Some v =>
-                               rec (phi_path crit c (nonzero v) pi)
-                                   (if nonzero v then t else e)
-                           | None => false
-                           end)
-            | DFG_Empty => false
-            end
+        | None => avalid_node act vals (avalid act vals vv bufs f) pi (node_op act n)
         end
     end.
+
+  Lemma avalid_unbuffered act vals vv bufs f pi n :
+    BitsToLists.list_assoc bufs n = None ->
+    avalid act vals vv bufs (S f) pi n
+    = avalid_node act vals (avalid act vals vv bufs f) pi (node_op act n).
+  Proof. intro H. cbn [avalid]. rewrite H. reflexivity. Qed.
+
+  Lemma avalid_buffered act vals vv bufs f pi n j jsz :
+    BitsToLists.list_assoc bufs n = Some (j, jsz) ->
+    avalid act vals vv bufs (S f) pi n = slot_valid vv j.
+  Proof. intro H. cbn [avalid]. rewrite H. reflexivity. Qed.
 
   (* ---- THE SHADOW MACHINE: the registers an attacker can keep ----
      Validity bits and stall counts, one per buffer slot; no value register, as a
