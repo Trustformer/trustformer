@@ -34,7 +34,6 @@ Section SchedulerRoundTrip.
   Local Notation Q_plain := (SchedulerSimulationLemmas.Q_plain ctx).
   Local Notation Q_plain_succ := (SchedulerSimulationLemmas.Q_plain_succ ctx).
   Local Notation act_idx_aligned := (ProofDefinitions.act_idx_aligned ctx cost_limit).
-  Local Notation all_bind_at := (SchedulerSimulationLemmas.all_bind_at ctx).
   Local Notation all_nodes := (SchedulerSimulationLemmas.all_nodes ctx).
   Local Notation all_nodes_emit := (SchedulerSimulationLemmas.all_nodes_emit ctx).
   Local Notation all_nodes_rev := (SchedulerSimulationLemmas.all_nodes_rev ctx).
@@ -47,7 +46,6 @@ Section SchedulerRoundTrip.
   Local Notation args_lt_fwd := (SchedulerSimulationLemmas.args_lt_fwd ctx cost_limit).
   Local Notation backward_cost_monotone := (SchedulerSimulationLemmas.backward_cost_monotone ctx cost_limit).
   Local Notation backward_cycle_monotone := (SchedulerSimulationLemmas.backward_cycle_monotone ctx cost_limit).
-  Local Notation bind_pair := (SchedulerSimulationLemmas.bind_pair ctx).
   Local Notation bind_red := (SchedulerSimulationLemmas.bind_red ctx).
   Local Notation buf_valid_expr := (SchedulerSimulationLemmas.buf_valid_expr ctx cost_limit).
   Local Notation buf_value_expr := (SchedulerSimulationLemmas.buf_value_expr ctx cost_limit).
@@ -124,14 +122,11 @@ Section SchedulerRoundTrip.
   Local Notation cycle_updates := (SchedulerSimulationLemmas.cycle_updates ctx cost_limit).
   Local Notation cycle_updates_done := (SchedulerSimulationLemmas.cycle_updates_done ctx cost_limit).
   Local Notation cycle_updates_not_done := (SchedulerSimulationLemmas.cycle_updates_not_done ctx cost_limit).
-  Local Notation dataflow_expr_all := (SchedulerSimulationLemmas.dataflow_expr_all ctx).
   Local Notation dataflow_expr_fg := (SchedulerSimulationLemmas.dataflow_expr_fg ctx).
   Local Notation dataflow_expr_full := (SchedulerSimulationLemmas.dataflow_expr_full ctx).
   Local Notation dataflow_expr_g := (SchedulerSimulationLemmas.dataflow_expr_g ctx).
   Local Notation dataflow_expr_grows := (SchedulerSimulationLemmas.dataflow_expr_grows ctx).
-  Local Notation dataflow_expr_joins := (SchedulerSimulationLemmas.dataflow_expr_joins ctx).
   Local Notation dataflow_expr_pos := (SchedulerSimulationLemmas.dataflow_expr_pos ctx).
-  Local Notation dataflow_expr_spec := (SchedulerSimulationLemmas.dataflow_expr_spec ctx).
   Local Notation dataflow_expr_sz := (SchedulerSimulationLemmas.dataflow_expr_sz ctx).
   Local Notation dataflow_ops_calls := (SchedulerSimulationLemmas.dataflow_ops_calls ctx).
   Local Notation dataflow_ops_fg := (SchedulerSimulationLemmas.dataflow_ops_fg ctx).
@@ -139,9 +134,7 @@ Section SchedulerRoundTrip.
   Local Notation dataflow_ops_joins := (SchedulerSimulationLemmas.dataflow_ops_joins ctx).
   Local Notation dataflow_ops_jst := (SchedulerSimulationLemmas.dataflow_ops_jst ctx).
   Local Notation dataflow_ops_pos := (SchedulerSimulationLemmas.dataflow_ops_pos ctx).
-  Local Notation dataflow_ops_preserves_vmg := (SchedulerSimulationLemmas.dataflow_ops_preserves_vmg ctx).
   Local Notation dataflow_ops_sdr := (SchedulerSimulationLemmas.dataflow_ops_sdr ctx).
-  Local Notation dataflow_ops_spec := (SchedulerSimulationLemmas.dataflow_ops_spec ctx).
   Local Notation dataflow_ops_sst := (SchedulerSimulationLemmas.dataflow_ops_sst ctx).
   Local Notation dataflow_ops_ssucc := (SchedulerSimulationLemmas.dataflow_ops_ssucc ctx).
   Local Notation dataflow_ops_succ := (SchedulerSimulationLemmas.dataflow_ops_succ ctx).
@@ -168,6 +161,7 @@ Section SchedulerRoundTrip.
   Local Notation drive_payload_expr := (SchedulerSimulationLemmas.drive_payload_expr ctx cost_limit).
   Local Notation drive_payload_expr_hold := (SchedulerSimulationLemmas.drive_payload_expr_hold ctx cost_limit).
   Local Notation drive_payload_hold := (SchedulerSimulationLemmas.drive_payload_hold ctx cost_limit).
+  Local Notation if_run := (SchedulerSimulationLemmas.if_run ctx).
   Local Notation ip_contract := (IRDefinitions.ip_contract ctx cost_limit).
   Local Notation port_strobe_after := (SchedulerSimulationLemmas.port_strobe_after ctx cost_limit).
   Local Notation port_strobe_quiet := (SchedulerSimulationLemmas.port_strobe_quiet ctx cost_limit).
@@ -190,35 +184,28 @@ Section SchedulerRoundTrip.
   Local Notation drive_value_expr := (SchedulerSimulationLemmas.drive_value_expr ctx cost_limit).
   Local Notation drive_value_expr_split := (SchedulerSimulationLemmas.drive_value_expr_split ctx cost_limit).
   Local Notation drive_vfirst := (SchedulerSimulationLemmas.drive_vfirst ctx cost_limit).
-  Local Notation emit_eq := (SchedulerSimulationLemmas.emit_eq ctx).
-  Local Notation emit_eval := (SchedulerSimulationLemmas.emit_eval ctx).
+  Local Notation else_entry_fg := (SchedulerSimulationLemmas.else_entry_fg ctx).
+  Local Notation else_entry_pos := (SchedulerSimulationLemmas.else_entry_pos ctx).
   Local Notation emit_fg := (SchedulerSimulationLemmas.emit_fg ctx).
-  Local Notation emit_fspec := (SchedulerSimulationLemmas.emit_fspec ctx).
   Local Notation emit_full := (SchedulerSimulationLemmas.emit_full ctx).
   Local Notation emit_gmono := (SchedulerSimulationLemmas.emit_gmono ctx).
   Local Notation emit_pos := (SchedulerSimulationLemmas.emit_pos ctx).
   Local Notation emit_red := (SchedulerSimulationLemmas.emit_red ctx).
-  Local Notation emit_spec := (SchedulerSimulationLemmas.emit_spec ctx).
   Local Notation emit_sz := (SchedulerSimulationLemmas.emit_sz ctx).
   Local Notation emit_var_node_at := (SchedulerSimulationLemmas.emit_var_node_at ctx cost_limit).
   Local Notation emit_vm := (SchedulerSimulationLemmas.emit_vm ctx).
   Local Notation emitted_node_at := (SchedulerSimulationLemmas.emitted_node_at ctx cost_limit).
-  Local Notation ensure_var_eq := (SchedulerSimulationLemmas.ensure_var_eq ctx).
   Local Notation ensure_var_fg := (SchedulerSimulationLemmas.ensure_var_fg ctx).
   Local Notation ensure_var_full := (SchedulerSimulationLemmas.ensure_var_full ctx).
   Local Notation ensure_var_gmono := (SchedulerSimulationLemmas.ensure_var_gmono ctx).
   Local Notation ensure_var_graph := (SchedulerSimulationLemmas.ensure_var_graph ctx).
   Local Notation ensure_var_node_at := (SchedulerSimulationLemmas.ensure_var_node_at ctx cost_limit).
   Local Notation ensure_var_pos := (SchedulerSimulationLemmas.ensure_var_pos ctx).
-  Local Notation ensure_var_spec := (SchedulerSimulationLemmas.ensure_var_spec ctx).
   Local Notation ensure_var_sz := (SchedulerSimulationLemmas.ensure_var_sz ctx).
   Local Notation ensure_var_vm_head := (SchedulerSimulationLemmas.ensure_var_vm_head ctx).
   Local Notation ensure_var_vm_inv := (SchedulerSimulationLemmas.ensure_var_vm_inv ctx).
   Local Notation ensure_var_vm_keep := (SchedulerSimulationLemmas.ensure_var_vm_keep ctx).
   Local Notation ensure_var_vmap := (SchedulerSimulationLemmas.ensure_var_vmap ctx).
-  Local Notation espec := (SchedulerSimulationLemmas.espec ctx).
-  Local Notation espec_ospec := (SchedulerSimulationLemmas.espec_ospec ctx).
-  Local Notation espec_trans := (SchedulerSimulationLemmas.espec_trans ctx).
   Local Notation eval1_const1 := (SchedulerSimulationLemmas.eval1_const1 ctx cost_limit).
   Local Notation eval1_svar_v := (SchedulerSimulationLemmas.eval1_svar_v ctx cost_limit).
   Local Notation eval_convert_ivar := (SchedulerSimulationLemmas.eval_convert_ivar ctx cost_limit).
@@ -254,21 +241,14 @@ Section SchedulerRoundTrip.
   Local Notation find_st_update_unique_assign := (SchedulerSimulationLemmas.find_st_update_unique_assign ctx cost_limit).
   Local Notation fold_valid_and_ext := (SchedulerSimulationLemmas.fold_valid_and_ext ctx cost_limit).
   Local Notation fold_valid_and_ones := (SchedulerSimulationLemmas.fold_valid_and_ones ctx cost_limit).
-  Local Notation fspec := (SchedulerSimulationLemmas.fspec ctx).
-  Local Notation fspec_seq := (SchedulerSimulationLemmas.fspec_seq ctx).
   Local Notation g_bind_at := (SchedulerSimulationLemmas.g_bind_at ctx).
   Local Notation get_state_red := (SchedulerSimulationLemmas.get_state_red ctx).
   Local Notation get_var_cases := (SchedulerSimulationLemmas.get_var_cases ctx).
   Local Notation get_var_fg := (SchedulerSimulationLemmas.get_var_fg ctx).
-  Local Notation get_var_fspec := (SchedulerSimulationLemmas.get_var_fspec ctx).
   Local Notation get_var_full := (SchedulerSimulationLemmas.get_var_full ctx).
   Local Notation get_var_pos := (SchedulerSimulationLemmas.get_var_pos ctx).
-  Local Notation get_var_spec := (SchedulerSimulationLemmas.get_var_spec ctx).
   Local Notation get_var_sz := (SchedulerSimulationLemmas.get_var_sz ctx).
   Local Notation getenv_maps_from := (SchedulerSimulationLemmas.getenv_maps_from ctx cost_limit).
-  Local Notation gmono := (SchedulerSimulationLemmas.gmono ctx).
-  Local Notation gmono_refl := (SchedulerSimulationLemmas.gmono_refl ctx).
-  Local Notation gmono_trans := (SchedulerSimulationLemmas.gmono_trans ctx).
   Local Notation gne_gmono := (SchedulerSimulationLemmas.gne_gmono ctx).
   Local Notation gpos := (SchedulerSimulationLemmas.gpos ctx).
   Local Notation graph_nid_has_cost := (SchedulerSimulationLemmas.graph_nid_has_cost ctx cost_limit).
@@ -305,7 +285,6 @@ Section SchedulerRoundTrip.
   Local Notation join_kind := (SchedulerSimulationLemmas.join_kind ctx).
   Local Notation join_nid_succ := (SchedulerSimulationLemmas.join_nid_succ ctx cost_limit).
   Local Notation join_pendings_calls := (SchedulerSimulationLemmas.join_pendings_calls ctx).
-  Local Notation join_pendings_espec := (SchedulerSimulationLemmas.join_pendings_espec ctx).
   Local Notation join_pendings_fg := (SchedulerSimulationLemmas.join_pendings_fg ctx).
   Local Notation join_pendings_full := (SchedulerSimulationLemmas.join_pendings_full ctx).
   Local Notation join_pendings_g := (SchedulerSimulationLemmas.join_pendings_g ctx).
@@ -325,13 +304,11 @@ Section SchedulerRoundTrip.
   Local Notation joins_sequence_emit_comb := (SchedulerSimulationLemmas.joins_sequence_emit_comb ctx).
   Local Notation joins_sequence_emit_order := (SchedulerSimulationLemmas.joins_sequence_emit_order ctx).
   Local Notation joins_sequence_emit_other := (SchedulerSimulationLemmas.joins_sequence_emit_other ctx).
-  Local Notation joins_sequence_graph_eq := (SchedulerSimulationLemmas.joins_sequence_graph_eq ctx).
   Local Notation joins_sequence_rev := (SchedulerSimulationLemmas.joins_sequence_rev ctx).
   Local Notation joins_stalled := (SchedulerSimulationLemmas.joins_stalled ctx).
   Local Notation joins_stalled_build_dfg := (SchedulerSimulationLemmas.joins_stalled_build_dfg ctx cost_limit).
   Local Notation joins_stalled_cons_nonjoin := (SchedulerSimulationLemmas.joins_stalled_cons_nonjoin ctx).
   Local Notation joins_stalled_rev := (SchedulerSimulationLemmas.joins_stalled_rev ctx).
-  Local Notation js_bind_at := (SchedulerSimulationLemmas.js_bind_at ctx).
   Local Notation js_call_head := (SchedulerSimulationLemmas.js_call_head ctx).
   Local Notation jst_node := (SchedulerSimulationLemmas.jst_node ctx).
   Local Notation jst_node_cons := (SchedulerSimulationLemmas.jst_node_cons ctx).
@@ -348,24 +325,20 @@ Section SchedulerRoundTrip.
   Local Notation merge_key_fg := (SchedulerSimulationLemmas.merge_key_fg ctx).
   Local Notation merge_key_full := (SchedulerSimulationLemmas.merge_key_full ctx).
   Local Notation merge_key_pos := (SchedulerSimulationLemmas.merge_key_pos ctx).
-  Local Notation merge_key_spec := (SchedulerSimulationLemmas.merge_key_spec ctx).
   Local Notation merge_loop_cover := (SchedulerSimulationLemmas.merge_loop_cover ctx).
   Local Notation merge_loop_fg := (SchedulerSimulationLemmas.merge_loop_fg ctx).
   Local Notation merge_loop_full := (SchedulerSimulationLemmas.merge_loop_full ctx).
   Local Notation merge_loop_gmono := (SchedulerSimulationLemmas.merge_loop_gmono ctx).
   Local Notation merge_loop_pos := (SchedulerSimulationLemmas.merge_loop_pos ctx).
-  Local Notation merge_loop_spec := (SchedulerSimulationLemmas.merge_loop_spec ctx).
+  Local Notation merge_after_arms := (SchedulerSimulationLemmas.merge_after_arms ctx).
   Local Notation merge_maps_fg := (SchedulerSimulationLemmas.merge_maps_fg ctx).
   Local Notation merge_maps_full := (SchedulerSimulationLemmas.merge_maps_full ctx).
   Local Notation merge_maps_pos := (SchedulerSimulationLemmas.merge_maps_pos ctx).
-  Local Notation merge_maps_spec := (SchedulerSimulationLemmas.merge_maps_spec ctx).
   Local Notation nid_seq := (SchedulerSimulationLemmas.nid_seq ctx).
   Local Notation nid_seq_bound := (SchedulerSimulationLemmas.nid_seq_bound ctx).
   Local Notation nid_seq_ids_desc := (SchedulerSimulationLemmas.nid_seq_ids_desc ctx).
   Local Notation nids_bounded := (SchedulerSimulationLemmas.nids_bounded ctx).
   Local Notation nids_bounded_cons := (SchedulerSimulationLemmas.nids_bounded_cons ctx).
-  Local Notation nidwf := (SchedulerSimulationLemmas.nidwf ctx).
-  Local Notation nidwf_gmono := (SchedulerSimulationLemmas.nidwf_gmono ctx).
   Local Notation no_stall_on_joined := (SchedulerSimulationLemmas.no_stall_on_joined ctx cost_limit).
   Local Notation node_args_range := (SchedulerSimulationLemmas.node_args_range ctx cost_limit).
   Local Notation node_args_sz := (SchedulerSimulationLemmas.node_args_sz ctx).
@@ -407,12 +380,8 @@ Section SchedulerRoundTrip.
   Local Notation nval_var_svar := (SchedulerSimulationLemmas.nval_var_svar ctx cost_limit).
   Local Notation op_assigns_st := (SchedulerSimulationLemmas.op_assigns_st ctx cost_limit).
   Local Notation op_writes_out := (SchedulerSimulationLemmas.op_writes_out ctx cost_limit).
-  Local Notation ospec := (SchedulerSimulationLemmas.ospec ctx).
-  Local Notation ospec_trans := (SchedulerSimulationLemmas.ospec_trans ctx).
-  Local Notation ospecv := (SchedulerSimulationLemmas.ospecv ctx).
   Local Notation pending_samples_covers := (SchedulerSimulationLemmas.pending_samples_covers ctx).
   Local Notation pending_samples_nidwf := (SchedulerSimulationLemmas.pending_samples_nidwf ctx).
-  Local Notation pending_samples_nidwf' := (SchedulerSimulationLemmas.pending_samples_nidwf' ctx).
   Local Notation pending_samples_pos := (SchedulerSimulationLemmas.pending_samples_pos ctx).
   Local Notation pending_samples_spec := (SchedulerSimulationLemmas.pending_samples_spec ctx).
   Local Notation pends := (SchedulerSimulationLemmas.pends ctx).
@@ -428,15 +397,6 @@ Section SchedulerRoundTrip.
   Local Notation pleaf_left := (SchedulerSimulationLemmas.pleaf_left ctx).
   Local Notation pleaf_mono := (SchedulerSimulationLemmas.pleaf_mono ctx).
   Local Notation pleaf_right := (SchedulerSimulationLemmas.pleaf_right ctx).
-  Local Notation preserves_all := (SchedulerSimulationLemmas.preserves_all ctx).
-  Local Notation preserves_all_bind := (SchedulerSimulationLemmas.preserves_all_bind ctx).
-  Local Notation preserves_all_emit := (SchedulerSimulationLemmas.preserves_all_emit ctx).
-  Local Notation preserves_all_ensure_var := (SchedulerSimulationLemmas.preserves_all_ensure_var ctx).
-  Local Notation preserves_all_get_var := (SchedulerSimulationLemmas.preserves_all_get_var ctx).
-  Local Notation preserves_all_merge_key := (SchedulerSimulationLemmas.preserves_all_merge_key ctx).
-  Local Notation preserves_all_merge_loop := (SchedulerSimulationLemmas.preserves_all_merge_loop ctx).
-  Local Notation preserves_all_ret := (SchedulerSimulationLemmas.preserves_all_ret ctx).
-  Local Notation preserves_all_set_var := (SchedulerSimulationLemmas.preserves_all_set_var ctx).
   Local Notation preserves_g := (SchedulerSimulationLemmas.preserves_g ctx).
   Local Notation preserves_g_bind := (SchedulerSimulationLemmas.preserves_g_bind ctx).
   Local Notation preserves_g_emit := (SchedulerSimulationLemmas.preserves_g_emit ctx).
@@ -447,18 +407,6 @@ Section SchedulerRoundTrip.
   Local Notation preserves_g_merge_maps := (SchedulerSimulationLemmas.preserves_g_merge_maps ctx).
   Local Notation preserves_g_ret := (SchedulerSimulationLemmas.preserves_g_ret ctx).
   Local Notation preserves_g_set_var := (SchedulerSimulationLemmas.preserves_g_set_var ctx).
-  Local Notation preserves_js := (SchedulerSimulationLemmas.preserves_js ctx).
-  Local Notation preserves_js_bind := (SchedulerSimulationLemmas.preserves_js_bind ctx).
-  Local Notation preserves_js_bind_st := (SchedulerSimulationLemmas.preserves_js_bind_st ctx).
-  Local Notation preserves_js_emit := (SchedulerSimulationLemmas.preserves_js_emit ctx).
-  Local Notation preserves_js_ensure_var := (SchedulerSimulationLemmas.preserves_js_ensure_var ctx).
-  Local Notation preserves_js_get_state := (SchedulerSimulationLemmas.preserves_js_get_state ctx).
-  Local Notation preserves_js_get_var := (SchedulerSimulationLemmas.preserves_js_get_var ctx).
-  Local Notation preserves_js_merge_key := (SchedulerSimulationLemmas.preserves_js_merge_key ctx).
-  Local Notation preserves_js_merge_loop := (SchedulerSimulationLemmas.preserves_js_merge_loop ctx).
-  Local Notation preserves_js_merge_maps := (SchedulerSimulationLemmas.preserves_js_merge_maps ctx).
-  Local Notation preserves_js_ret := (SchedulerSimulationLemmas.preserves_js_ret ctx).
-  Local Notation preserves_js_set_var := (SchedulerSimulationLemmas.preserves_js_set_var ctx).
   Local Notation put_state_red := (SchedulerSimulationLemmas.put_state_red ctx).
   Local Notation read_var_cases := (SchedulerSimulationLemmas.read_var_cases ctx).
   Local Notation read_var_vmap := (SchedulerSimulationLemmas.read_var_vmap ctx).
@@ -470,7 +418,6 @@ Section SchedulerRoundTrip.
   Local Notation reset_updates_no_out := (SchedulerSimulationLemmas.reset_updates_no_out ctx cost_limit).
   Local Notation reset_updates_no_svar := (SchedulerSimulationLemmas.reset_updates_no_svar ctx cost_limit).
   Local Notation reset_updates_v := (SchedulerSimulationLemmas.reset_updates_v ctx cost_limit).
-  Local Notation ret_fspec := (SchedulerSimulationLemmas.ret_fspec ctx).
   Local Notation ret_full := (SchedulerSimulationLemmas.ret_full ctx).
   Local Notation ret_pos := (SchedulerSimulationLemmas.ret_pos ctx).
   Local Notation run_n := (IRDefinitions.run_n ctx cost_limit).
@@ -535,9 +482,7 @@ Section SchedulerRoundTrip.
   Local Notation set_var_fg := (SchedulerSimulationLemmas.set_var_fg ctx).
   Local Notation set_var_full := (SchedulerSimulationLemmas.set_var_full ctx).
   Local Notation set_var_graph := (SchedulerSimulationLemmas.set_var_graph ctx).
-  Local Notation set_var_ospecv := (SchedulerSimulationLemmas.set_var_ospecv ctx).
   Local Notation set_var_pos := (SchedulerSimulationLemmas.set_var_pos ctx).
-  Local Notation set_var_spec := (SchedulerSimulationLemmas.set_var_spec ctx).
   Local Notation set_var_vm_head := (SchedulerSimulationLemmas.set_var_vm_head ctx).
   Local Notation set_var_vm_inv := (SchedulerSimulationLemmas.set_var_vm_inv ctx).
   Local Notation set_var_vm_inv2 := (SchedulerSimulationLemmas.set_var_vm_inv2 ctx).
@@ -561,6 +506,10 @@ Section SchedulerRoundTrip.
   Local Notation stall_wait_start := (SchedulerSimulationLemmas.stall_wait_start ctx cost_limit).
   Local Notation stall_weight := (AttackerClock.stall_weight ctx cost_limit).
   Local Notation start_rel := (IRDefinitions.start_rel ctx cost_limit).
+  Local Notation start_gpos := (SchedulerSimulationLemmas.start_gpos ctx).
+  Local Notation start_wfg := (SchedulerSimulationLemmas.start_wfg ctx).
+  Local Notation start_winv := (SchedulerSimulationLemmas.start_winv ctx).
+  Local Notation start_wvsz := (SchedulerSimulationLemmas.start_wvsz ctx).
   Local Notation succ_arg_node := (SchedulerSimulationLemmas.succ_arg_node ctx).
   Local Notation succ_args_build_dfg := (SchedulerSimulationLemmas.succ_args_build_dfg ctx cost_limit).
   Local Notation succ_sample_node := (SchedulerSimulationLemmas.succ_sample_node ctx).
@@ -581,7 +530,6 @@ Section SchedulerRoundTrip.
   Local Notation var_map_output_has_cost := (SchedulerSimulationLemmas.var_map_output_has_cost ctx cost_limit).
   Local Notation var_map_snd_is_graph_nid := (SchedulerSimulationLemmas.var_map_snd_is_graph_nid ctx cost_limit).
   Local Notation var_node_at := (SchedulerSimulationLemmas.var_node_at ctx cost_limit).
-  Local Notation vmg := (SchedulerSimulationLemmas.vmg ctx).
   Local Notation vreg_nid := (ProofDefinitions.vreg_nid ctx cost_limit).
   Local Notation caches := (ProofDefinitions.caches ctx cost_limit).
   Local Notation vreg_nid_in_require_buffer := (SchedulerSimulationLemmas.vreg_nid_in_require_buffer ctx cost_limit).
@@ -656,8 +604,6 @@ Section SchedulerRoundTrip.
        (decl_facts ctx (build_dfg ctx act)) (length (graph (build_dfg ctx act)))
        a_idx (build_dfg ctx act) sbufs en).
   Local Notation wst := (@dfg_state_t s_var i_var o_var p_var).
-  Local Notation dstate :=
-    (dfg_state_t (states_var:=s_var)(inputs_var:=i_var)(outputs_var:=o_var)(ips_var:=p_var)).
   Local Notation ppath tainted dfacts pi cnd b :=
     (phi_path (phi_crit tainted dfacts cnd pi) cnd b pi).
   Local Notation ppath_at act pi cnd b :=
@@ -3070,88 +3016,6 @@ Section SchedulerRoundTrip.
         unfold AttackerClock.node_op. rewrite Mst. reflexivity.
     Qed.
 
-    (* The else arm starts from the then arm's graph under the var_map from
-       before the branch: every builder invariant carries over. *)
-    Lemma else_entry_fg (s1 st: wst) :
-      wgmono s1 st -> 0 < length (graph s1) -> winv s1 -> winv st -> wvsz s1 -> wfg st ->
-      winv {| graph := graph st; var_map := var_map s1 |}
-      /\ wvsz {| graph := graph st; var_map := var_map s1 |}
-      /\ wfg {| graph := graph st; var_map := var_map s1 |}
-      /\ 0 < length (graph {| graph := graph st; var_map := var_map s1 |}).
-    Proof.
-      intros G Hne [Hv1 _] [_ [Hnst Habt]] Q1 Ft.
-      split; [| split; [| split ]].
-      - split; [| exact (conj Hnst Habt) ].
-        intros k id Hin. destruct (Hv1 k id Hin) as [node [Hn Hnid]].
-        exists node. exact (conj (G node Hn) Hnid).
-      - intros v id Hin. exact (wsz_gmono _ _ _ _ (Q1 v id Hin) G).
-      - intros node Hin. exact (node_args_sz_gmono _ _ node (Ft node Hin) (fun n Hn => Hn)).
-      - exact (gne_gmono s1 st G Hne).
-    Qed.
-
-    Lemma else_entry_pos (s1 st: wst) :
-      gpos s1 -> gpos st -> gpos {| graph := graph st; var_map := var_map s1 |}.
-    Proof.
-      intros [_ [Hvp1 _]] [Hl [_ [Hargs [Hsent Hnz]]]].
-      exact (conj Hl (conj Hvp1 (conj Hargs (conj Hsent Hnz)))).
-    Qed.
-
-    (* The merge after both arms keeps the builder invariants: each arm's map
-       names nodes the else arm's graph holds. *)
-    Lemma merge_after_arms cond_id (s1 st se: wst) :
-      wnidwf s1 cond_id -> wsz s1 cond_id 1 -> wgmono s1 st -> wgmono st se ->
-      winv st -> wvsz st -> winv se -> wvsz se -> wfg se ->
-      let (fin, s') := merge_maps ctx cond_id (var_map s1) (var_map st) (var_map se) se in
-      wgmono se s' /\ winv s' /\ wvsz s' /\ wfg s' /\
-      (forall k id, In (k, id) fin -> wnidwf s' id) /\
-      (forall k id, In (k, id) fin -> wsz s' id (dfg_var_size ctx k)).
-    Proof.
-      intros Nc Sc G1 G2 [Hvt _] Qt Pe Qe Fe.
-      apply merge_maps_fg; [ exact Pe | exact Qe | exact Fe
-        | exact (wnidwf_gmono _ _ _ Nc (wgmono_trans _ _ _ G1 G2))
-        | exact (wsz_gmono _ _ _ _ Sc (wgmono_trans _ _ _ G1 G2)) | | | | ].
-      - intros k id Hin. destruct (Hvt k id Hin) as [node [Hn Hnid]].
-        exists node. exact (conj (G2 node Hn) Hnid).
-      - intros k id Hin. exact (proj1 Pe k id Hin).
-      - intros k id Hin. exact (wsz_gmono _ _ _ _ (Qt k id Hin) G2).
-      - intros k id Hin. exact (Qe k id Hin).
-    Qed.
-
-    (* A conditional's run: the condition, the then arm, the else arm from the
-       then arm's graph under the old var_map, then the merge. *)
-    Lemma if_run en cond o1 o2 (s: wst) u s' :
-      dataflow_ops ctx en (tf_ops_if cond o1 o2) s = (u, s') ->
-      exists cond_id s1 ut s_then ue s_else final_vars s_final,
-        dataflow_expr ctx cond 1 s = (cond_id, s1)
-        /\ dataflow_ops ctx ((cond_id, true) :: en) o1 s1 = (ut, s_then)
-        /\ dataflow_ops ctx ((cond_id, false) :: en) o2
-             {| graph := graph s_then; var_map := var_map s1 |} = (ue, s_else)
-        /\ merge_maps ctx cond_id (var_map s1) (var_map s_then) (var_map s_else) s_else
-           = (final_vars, s_final)
-        /\ s' = {| graph := graph s_final; var_map := final_vars |}.
-    Proof.
-      intro Hrun. cbn [dataflow_ops] in Hrun.
-      destruct (dataflow_expr ctx cond 1 s) as [cond_id s1] eqn:Ec.
-      rewrite (bind_red _ _ s _ _ Ec), (bind_red (get_state ctx) _ s1 _ _ (get_state_red s1))
-        in Hrun.
-      destruct (dataflow_ops ctx ((cond_id, true) :: en) o1 s1) as [ut s_then] eqn:Et.
-      rewrite (bind_red _ _ s1 _ _ Et),
-              (bind_red (get_state ctx) _ s_then _ _ (get_state_red s_then)),
-              (bind_red (put_state ctx _) _ s_then _ _ (put_state_red _ s_then)) in Hrun.
-      destruct (dataflow_ops ctx ((cond_id, false) :: en) o2
-                  {| graph := graph s_then; var_map := var_map s1 |}) as [ue s_else] eqn:Ee.
-      rewrite (bind_red _ _ _ _ _ Ee),
-              (bind_red (get_state ctx) _ s_else _ _ (get_state_red s_else)) in Hrun.
-      destruct (merge_maps ctx cond_id (var_map s1) (var_map s_then) (var_map s_else) s_else)
-        as [final_vars s_final] eqn:Em.
-      rewrite (bind_red _ _ s_else _ _ Em),
-              (bind_red (get_state ctx) _ s_final _ _ (get_state_red s_final)),
-              put_state_red in Hrun.
-      destruct (pair_inj Hrun) as [_ <-].
-      exists cond_id, s1, ut, s_then, ue, s_else, final_vars, s_final.
-      exact (conj eq_refl (conj Et (conj Ee (conj Em eq_refl)))).
-    Qed.
-
     (* A call's run, emit by emit: the argument, the pending joins, the drive,
        its head, the wait, the sample, and the binding.  The graph only grows. *)
     Lemma call_run en ip dst expr (s: wst) u s' :
@@ -3435,8 +3299,8 @@ Section SchedulerRoundTrip.
           eapply wnidwf_gmono; [ apply Hen, Hx | exact Gc ]. }
         pose proof (dataflow_ops_fg op1 ((cond_id, true) :: en) s1 Pc Qc Fc Hen_t) as Ft.
         rewrite Et in Ft. destruct Ft as [Gthen [Pthen [Qthen Fthen]]].
-        destruct (else_entry_fg s1 s_then Gthen Hne1 Pc Pthen Qc Fthen)
-          as [PsR [QsR [FsR HneR]]].
+        destruct (else_entry_fg s1 s_then Gthen Pc Pthen Qc Fthen) as [PsR [QsR FsR]].
+        pose proof (gne_gmono s1 s_then Gthen Hne1) as HneR.
         assert (Gthen_sR : wgmono s_then sR) by exact (fun n Hn => Hn).
         assert (Hen_e : forall x, In x (map fst ((cond_id, false) :: en)) -> wnidwf sR x).
         { assert (Gs1R : wgmono s1 sR) by exact (wgmono_trans _ _ _ Gthen Gthen_sR).
@@ -3718,7 +3582,8 @@ Section SchedulerRoundTrip.
         rewrite Et in Ht.
         assert (Hpos_then : gpos s_then)
           by run_fact (dataflow_ops_pos op1 ((cond_id, true) :: en) s1 Hpos1 (Hen_p true)) Et.
-        destruct (else_entry_fg s1 s_then Gthen Hne1 Pc Pthen Qc Fthen) as [PsR [QsR [FsR HneR]]].
+        destruct (else_entry_fg s1 s_then Gthen Pc Pthen Qc Fthen) as [PsR [QsR FsR]].
+        pose proof (gne_gmono s1 s_then Gthen Hne1) as HneR.
         pose proof (else_entry_pos s1 s_then Hpos1 Hpos_then) as HposR.
         set (sR := {| graph := graph s_then; var_map := var_map s1 |} : wst) in *.
         set (sF := {| graph := graph s_final; var_map := final_vars |} : wst).
@@ -3922,19 +3787,9 @@ Section SchedulerRoundTrip.
   Proof.
     intros Halign Hsinp Hrtp Hargp Hs Ho.
     destruct (build_dfg_final act) as [Fin [Ed [Hgr Hvm]]].
-    assert (Hempty : winv {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ];
-                            var_map := [] |}).
-    { split; [ | split ].
-      - intros k id Hin. destruct Hin.
-      - unfold SchedulerSimulationLemmas.nid_seq. reflexivity.
-      - intros a Ha x Hx. simpl in Ha. destruct Ha as [<-|[]]. simpl in Hx. destruct Hx. }
-    assert (Hemvsz : wvsz {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ];
-                            var_map := [] |}).
-    { intros v id Hin. destruct Hin. }
-    assert (Hemfg : wfg {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ];
-                          var_map := [] |}).
-    { intros node Hin. simpl in Hin. destruct Hin as [<-|[]].
-      unfold SchedulerSimulationLemmas.node_args_sz. cbn [op]. exact I. }
+    pose proof start_winv as Hempty.
+    pose proof start_wvsz as Hemvsz.
+    pose proof start_wfg as Hemfg.
     assert (Hne0 : 0 < length (graph ({| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ];
                                         var_map := [] |} : wst))).
     { cbn [graph]. simpl. apply Nat.lt_0_1. }
@@ -4293,14 +4148,7 @@ Section SchedulerRoundTrip.
     forall node, In node (graph (build_dfg ctx act)) ->
       op node <> DFG_Empty -> 1 <= nid node.
   Proof.
-    assert (Hempty : gpos {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |}).
-    { split; [ | split; [ | split; [ | split ] ] ].
-      - cbn. lia.
-      - intros k id Hin. destruct Hin.
-      - intros node Hin x Hx. cbn in Hin. destruct Hin as [<-|[]]. cbn in Hx. destruct Hx.
-      - intros node Hin He. cbn in Hin. destruct Hin as [<-|[]]. cbn. reflexivity.
-      - intros node Hin He. cbn in Hin. destruct Hin as [<-|[]]. cbn in He.
-        exfalso. apply He. reflexivity. }
+    pose proof start_gpos as Hempty.
     unfold build_dfg.
     pose proof (dataflow_ops_pos (tfs_spec_action_ops ctx act) []
                   {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0; |} ]; var_map := [] |} Hempty
