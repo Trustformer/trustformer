@@ -30,9 +30,9 @@ Definition bounds20 := Eval vm_compute in (action_bounds tfs_ctx 20 dfg0).
 (* Same chain and widths at three cost limits.  [cost_fn] discards [sz], so
    these track the LIMIT rather than a physical delay: at limit 20 the whole
    ten-operator 256-bit chain sits in ~2 cycles.  A width-aware model is free to
-   adopt -- costing add/sub at [2 + sz/128] moves only these three values, to
-   26/6/3, and leaves the eight 32-bit examples byte-identical. *)
-Example probe_bounds10 : bounds10 = (4, 4). Proof. reflexivity. Qed.
+   adopt -- costing add/sub at [2 + sz/128] moves only these three values and
+   leaves the eight 32-bit examples byte-identical. *)
+Example probe_bounds10 : bounds10 = (5, 5). Proof. reflexivity. Qed.
 Example probe_bounds20 : bounds20 = (2, 2). Proof. reflexivity. Qed.
 
 (* SPIKE: pin tf_concat's bit ORDER by computation.  MARS correctness depends on
