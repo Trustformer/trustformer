@@ -910,18 +910,9 @@ Section IPRProof.
       = Some n_idx.
   Proof.
     intros Halign Hsub Hla.
-    assert (Hin_gsi : List.In (n, (j, jsz))
-              (get_sizes_and_idx ctx (build_dfg ctx act)
-                 (require_buffer ctx (build_dfg ctx act)
-                    (calc_target_cycle cost_limit
-                       (calc_backward_cost ctx cost_limit (build_dfg ctx act))))))
-      by (rewrite <- (buffer_slot_eq ctx cost_limit act a_idx Halign);
-          apply Hsub, wla_in, Hla).
-    assert (Hlt : j < length
-              (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
-    { rewrite (buffer_slot_eq ctx cost_limit act a_idx Halign), gsi_length.
-      exact (gsi_idx_bound ctx _ _ n j jsz Hin_gsi). }
-    exact (index_of_nat_bounded Hlt).
+    destruct (buffer_slot_in ctx cost_limit act a_idx n j jsz Halign (Hsub _ (wla_in _ _ _ Hla)))
+      as [n_idx [Hidx _]].
+    exists n_idx. exact Hidx.
   Qed.
 
 
@@ -1255,10 +1246,7 @@ Section IPRProof.
     m < length (nth (index_to_nat a_idx) bneeds []) ->
     fst (snd (nth m (nth (index_to_nat a_idx) bneeds []) (0, (0, 0)))) = m.
   Proof.
-    intros Halign Hm.
-    rewrite (buffer_slot_eq ctx cost_limit act a_idx Halign) in Hm |- *.
-    rewrite gsi_length in Hm.
-    exact (gsi_idx_at ctx _ _ m Hm).
+    intros Halign Hm. exact (slot_index_at ctx cost_limit act a_idx m Halign Hm).
   Qed.
 
   (* THE SHADOW MACHINE IS THE REGISTERS: at every pre-done cycle the attacker's

@@ -19,3 +19,9 @@ Ltac in_args Hop :=
 (* Read a fact [lem] stated of a builder run at that run, [E: m s = (x, s1)]. *)
 Ltac run_fact lem E :=
   let H := fresh "H" in pose proof lem as H; rewrite E in H; exact H.
+
+(* A premise about each node and its register, from a per-register fact [H],
+   through the one-node-per-register bridge [lem] (each use marks one). *)
+Ltac per_node lem Halign H :=
+  let n := fresh "n" in let i := fresh "n_idx" in let Hc := fresh "Hc" in
+  intros n i Hc; rewrite <- (lem _ _ i n Halign Hc); apply H.

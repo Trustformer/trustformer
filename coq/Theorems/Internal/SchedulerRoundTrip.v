@@ -77,6 +77,9 @@ Section SchedulerRoundTrip.
   Local Notation calls_sequenced_cons_join := (SchedulerSimulationLemmas.calls_sequenced_cons_join ctx).
   Local Notation calls_sequenced_cons_sample := (SchedulerSimulationLemmas.calls_sequenced_cons_sample ctx).
   Local Notation calls_sequenced_head := (SchedulerSimulationLemmas.calls_sequenced_head ctx).
+  Local Notation caches_of_entry := (SchedulerSimulationLemmas.caches_of_entry ctx cost_limit).
+  Local Notation caches_size := (SchedulerSimulationLemmas.caches_size ctx cost_limit).
+  Local Notation caches_vreg := (SchedulerSimulationLemmas.caches_vreg ctx cost_limit).
   Local Notation chain_gate_is_join := (SchedulerSimulationLemmas.chain_gate_is_join ctx cost_limit).
   Local Notation chain_gate_some_of_stall := (SchedulerSimulationLemmas.chain_gate_some_of_stall ctx cost_limit).
   Local Notation chain_gate_some := (SchedulerSimulationLemmas.chain_gate_some ctx cost_limit).
@@ -540,6 +543,7 @@ Section SchedulerRoundTrip.
   Local Notation set_var_vm_inv2 := (SchedulerSimulationLemmas.set_var_vm_inv2 ctx).
   Local Notation set_var_vm_keep := (SchedulerSimulationLemmas.set_var_vm_keep ctx).
   Local Notation settle_bound := (AttackerClock.settle_bound ctx cost_limit).
+  Local Notation slot_keys := (SchedulerSimulationLemmas.slot_keys ctx cost_limit).
   Local Notation slot_keys_nodup := (SchedulerSimulationLemmas.slot_keys_nodup ctx cost_limit).
   Local Notation ssucc_build_dfg := (SchedulerSimulationLemmas.ssucc_build_dfg ctx cost_limit).
   Local Notation stall_cost_gap := (SchedulerSimulationLemmas.stall_cost_gap ctx cost_limit).
@@ -579,10 +583,12 @@ Section SchedulerRoundTrip.
   Local Notation var_node_at := (SchedulerSimulationLemmas.var_node_at ctx cost_limit).
   Local Notation vmg := (SchedulerSimulationLemmas.vmg ctx).
   Local Notation vreg_nid := (ProofDefinitions.vreg_nid ctx cost_limit).
+  Local Notation caches := (ProofDefinitions.caches ctx cost_limit).
   Local Notation vreg_nid_in_require_buffer := (SchedulerSimulationLemmas.vreg_nid_in_require_buffer ctx cost_limit).
   Local Notation vreg_nid_inj := (SchedulerSimulationLemmas.vreg_nid_inj ctx cost_limit).
   Local Notation vreg_nid_node_range := (SchedulerSimulationLemmas.vreg_nid_node_range ctx cost_limit).
   Local Notation vreg_nid_of_entry := (SchedulerSimulationLemmas.vreg_nid_of_entry ctx cost_limit).
+  Local Notation vreg_caches := (SchedulerSimulationLemmas.vreg_caches ctx cost_limit).
   Local Notation wfg := (SchedulerSimulationLemmas.wfg ctx).
   Local Notation wfg_build_dfg := (SchedulerSimulationLemmas.wfg_build_dfg ctx cost_limit).
   Local Notation wgmono := (SchedulerSimulationLemmas.wgmono ctx).
@@ -1228,9 +1234,9 @@ Section SchedulerRoundTrip.
 
     (* THE ROUND TRIP: a sample.s register holds the IP.s answer to the
        request its OWN drive sent. *)
-    Hypothesis Hrt : forall n_idx p tok en d av en',
-      node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
-      sample_drive act (vreg_nid a_idx n_idx) = Some d ->
+    Hypothesis Hrt : forall n n_idx, caches a_idx n_idx n -> forall p tok en d av en',
+      node_op act n = DFG_Sample p tok en ->
+      sample_drive act n = Some d ->
       node_op act d = DFG_Drive p av en' ->
       sz (nth d (graph (build_dfg ctx act))
            {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p) ->
@@ -1246,9 +1252,9 @@ Section SchedulerRoundTrip.
              (node_ref_expr act a_idx av) ss sinput)).
 
     (* A latched sample's request carried a settled argument. *)
-    Hypothesis Harg : forall n_idx p tok en d av en',
-      node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
-      sample_drive act (vreg_nid a_idx n_idx) = Some d ->
+    Hypothesis Harg : forall n n_idx, caches a_idx n_idx n -> forall p tok en d av en',
+      node_op act n = DFG_Sample p tok en ->
+      sample_drive act n = Some d ->
       node_op act d = DFG_Drive p av en' ->
       (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
       eval1 (node_ref_valid act a_idx av) ss sinput = Bits.ones 1.
@@ -3708,16 +3714,13 @@ Section SchedulerRoundTrip.
           assert (Hsampv : is_sample_of act samp_id = true)
             by (unfold ProofDefinitions.is_sample_of, AttackerClock.node_op;
                 rewrite MsmOp; reflexivity).
-          destruct (sample_index act a_idx samp_id Hali Hsampv) as [n_idx Hvn].
+          destruct (sample_index act a_idx samp_id Hali Hsampv) as [n_idx Hc].
           assert (Hbsz : ss_sz (tf_dfg_b a_idx n_idx)
                          = dfg_var_size ctx (DFG_SVar dst))
-            by (rewrite (buffer_register_node_size act a_idx n_idx Hali), Hvn;
-                exact MsmSz).
-          assert (Hsmop : node_op act (vreg_nid a_idx n_idx) = DFG_Sample ip stall_id en)
-            by (rewrite Hvn; exact Hsmop0).
-          assert (Hsmdr : sample_drive act (vreg_nid a_idx n_idx) = Some drive_id)
-            by (rewrite Hvn; exact Hdrv).
+            by (rewrite (caches_size act a_idx n_idx samp_id Hali Hc); exact MsmSz).
           assert (Hdrop2 : node_op act drive_id = DFG_Drive ip arg_id en) by exact MdrOp.
+          (* the sample's reference reads its register, one node to a register *)
+          pose proof (caches_vreg act a_idx n_idx samp_id Hali Hc) as Hvn.
           assert (Hsamp : forall pi, en_holds pi ->
                     rvalid act a_idx pi samp_id ss sinput = Bits.ones 1 ->
                     NV (dfg_var_size ctx (DFG_SVar dst)) samp_id
@@ -3733,14 +3736,14 @@ Section SchedulerRoundTrip.
                          (length (graph (build_dfg ctx act))) Hnlen) in Hv.
               cbn [snd] in Hv. rewrite eval1_svar_v in Hv. exact Hv. }
             rewrite <- (Hval [] ltac:(intros q bb [])
-                          (Harg n_idx ip stall_id en drive_id arg_id en
-                             Hsmop Hsmdr Hdrop2 Hreg)).
+                          (Harg samp_id n_idx Hc ip stall_id en drive_id arg_id en
+                             Hsmop0 Hdrv Hdrop2 Hreg)).
             unfold ProofDefinitions.nval. rewrite <- Hvn.
             rewrite (nre_sample act a_idx n_idx Hali
                        ltac:(rewrite Hvn; exact Hsampv)).
             rewrite <- Hbsz, eval_svar_same.
-            exact (Hrt n_idx ip stall_id en drive_id arg_id en
-                     Hsmop Hsmdr Hdrop2 MdrSz Hgd Hreg). }
+            exact (Hrt samp_id n_idx Hc ip stall_id en drive_id arg_id en
+                     Hsmop0 Hdrv Hdrop2 MdrSz Hgd Hreg). }
           rewrite <- Hvm2 in Hvm1, Hfr1. rewrite ops_run_call.
           run_fact (sem_inv_set_var (DFG_SVar dst) samp_id s2 sp _ Hvm1 Hfr1 Hsamp) Es.
       - (* sequential composition *)
@@ -3966,9 +3969,9 @@ Section SchedulerRoundTrip.
         (input: input_t) (sinput: sched_input_t) :
     act_idx_aligned act a_idx ->
     (forall v, sinput (inl v) = input v) ->
-    (forall n_idx p tok en d av en',
-       node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
-       sample_drive act (vreg_nid a_idx n_idx) = Some d ->
+    (forall n n_idx, caches a_idx n_idx n -> forall p tok en d av en',
+       node_op act n = DFG_Sample p tok en ->
+       sample_drive act n = Some d ->
        node_op act d = DFG_Drive p av en' ->
        sz (nth d (graph (build_dfg ctx act))
             {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p) ->
@@ -3980,9 +3983,9 @@ Section SchedulerRoundTrip.
               (szB := ip_req_sz (tfs_spec_ip ctx p))
               (node_ref_expr act a_idx av) ss sinput))) ->
     (* a latched sample's request carried a settled argument *)
-    (forall n_idx p tok en d av en',
-       node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
-       sample_drive act (vreg_nid a_idx n_idx) = Some d ->
+    (forall n n_idx, caches a_idx n_idx n -> forall p tok en d av en',
+       node_op act n = DFG_Sample p tok en ->
+       sample_drive act n = Some d ->
        node_op act d = DFG_Drive p av en' ->
        (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
        eval1 (node_ref_valid act a_idx av) ss sinput = Bits.ones 1) ->
@@ -4323,7 +4326,7 @@ Section SchedulerRoundTrip.
                               (sched_input input (resp (w + dd))) o Hnd))
                ltac:(intro v; reflexivity)
                Hsub
-               ltac:(intros m _ Hx;
+               ltac:(intros ? m _ _ Hx;
                      exact (buffer_frozen_step act a_idx m
                               (run_n (w + dd) act input resp ss0)
                               (sched_input input (resp (w + dd)))
@@ -4375,7 +4378,7 @@ Section SchedulerRoundTrip.
                      = Some (q, qsz))
       by (apply list_assoc_nodup_in; [ exact (slot_keys_nodup act a_idx Halign) | exact Hin ]).
     destruct (buffer_slot_of act a_idx n q qsz Halign Hassoc) as [n_idx [Hidx Hvn]].
-    exists q, qsz, n_idx. split; [ exact Hassoc | split; [ exact Hidx | exact Hvn ] ].
+    exists q, qsz, n_idx. split; [ exact Hassoc | split; [ exact Hidx | exact (caches_vreg act a_idx n_idx n Halign Hvn) ] ].
   Qed.
 
   (* PHASE 3b'S PAYOFF: while a call's answer is outstanding, no LATER call on that
@@ -4661,7 +4664,8 @@ Section SchedulerRoundTrip.
              (sched_input input (resp w))
              (sched_input input (resp u))
              (run_n w act input resp ss0) (run_n u act input resp ss0)
-             Halign Hsvar Hovar ltac:(intro v; reflexivity) Hbfroz
+             Halign Hsvar Hovar ltac:(intro v; reflexivity)
+             ltac:(per_node constr:(caches_vreg) Halign Hbfroz)
              (length (graph (build_dfg ctx act))) c szB Hclen Hval).
   Qed.
   (* A path condition that holds at a later cycle held already at [t], once
@@ -4741,7 +4745,7 @@ Section SchedulerRoundTrip.
     pose proof (stall_is_buffered act s t l a Hs Ht Harg Hop) as Hin.
     assert (Hfst : In (nid t) (map fst (nth (index_to_nat a_idx)
                                           (buffer_needs ctx cost_limit) []))).
-    { rewrite (buffer_slot_eq act a_idx Halign), gsi_map_fst. exact Hin. }
+    { rewrite (slot_keys act a_idx Halign). exact Hin. }
     apply in_map_iff in Hfst. destruct Hfst as [[n' v] [Heq Hentry]].
     cbn [fst] in Heq. subst n'.
     apply (list_assoc_in_some _ (nid t) v). exact Hentry.
@@ -5056,6 +5060,7 @@ Section SchedulerRoundTrip.
       + pose proof (Hsub (nid nj) (m0, msz) Enj) as Hreal.
         destruct (buffer_slot_of act a_idx (nid nj) m0 msz Halign Hreal)
           as [nj_idx [Hnjidx Hnjvn]].
+        apply (caches_vreg act a_idx _ _ Halign) in Hnjvn.
         rewrite (compile_buffered_valid _ _ _ a_idx (nid nj) bufs m0 msz nj_idx fuel []
                    Enj Hnjidx Hf0) in Hones.
         rewrite eval1_svar_v in Hones.
@@ -5117,6 +5122,7 @@ Section SchedulerRoundTrip.
       + pose proof (Hsub (nid nj) (m0, msz) Enj) as Hreal.
         destruct (buffer_slot_of act a_idx (nid nj) m0 msz Halign Hreal)
           as [nj_idx [Hnjidx Hnjvn]].
+        apply (caches_vreg act a_idx _ _ Halign) in Hnjvn.
         rewrite (compile_buffered_valid _ _ _ a_idx (nid nj) bufs m0 msz nj_idx fuel []
                    Enj Hnjidx Hf0) in Hones.
         rewrite eval1_svar_v in Hones.
@@ -5309,6 +5315,7 @@ Section SchedulerRoundTrip.
         as [[m0 msz] |] eqn:Hgb.
       + (* the join is buffered: its own validity bit has yet to rise *)
         destruct (buffer_slot_of act a_idx g m0 msz Halign Hgb) as [g_idx [Hgidx Hgvn]].
+        apply (caches_vreg act a_idx _ _ Halign) in Hgvn.
         apply (drive_pulse_zero_of_gate_reg act a_idx m g h m0 msz g_idx _ _
                  Hcg Hgb Hgidx Hlen0).
         destruct u as [| j].
@@ -5902,7 +5909,8 @@ Section SchedulerRoundTrip.
                (sched_input input (resp t))
                (sched_input input (resp M))
                (run_n t act input resp ss0) (run_n M act input resp ss0)
-               Halign Hsvar Hovar ltac:(intro v; reflexivity) Hbfroz
+               Halign Hsvar Hovar ltac:(intro v; reflexivity)
+               ltac:(per_node constr:(caches_vreg) Halign Hbfroz)
                (length (graph (build_dfg ctx act))) d
                (ip_req_sz (tfs_spec_ip ctx p)) Hdlen Hrv).
     pose proof (nre_drive act a_idx d p av en' Hd1 Hdlen Hdop) as Hnre.
@@ -6287,16 +6295,10 @@ Section SchedulerRoundTrip.
     destruct (BitsToLists.list_assoc
                 (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) tok)
       as [[m msz] |] eqn:Hq; [| exfalso; exact (Hne eq_refl) ].
-    pose proof (wla_in _ _ _ Hq) as Hinq.
-    assert (Hltq : m < length
-              (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
-    { rewrite (buffer_slot_eq act a_idx Halign), gsi_length.
-      apply (gsi_idx_bound (build_dfg ctx act) _ tok m msz).
-      rewrite <- (buffer_slot_eq act a_idx Halign). exact Hinq. }
-    destruct (index_of_nat_bounded Hltq) as [t_idx Ht_idx].
+    destruct (buffer_slot_of act a_idx tok m msz Halign Hq) as [t_idx [Ht_idx Htc]].
     exists m, msz, t_idx.
     split; [ reflexivity | split; [ exact Ht_idx | ]].
-    exact (vreg_nid_of_entry act a_idx _ m msz t_idx Halign Hinq Ht_idx).
+    exact (caches_vreg act a_idx t_idx tok Halign Htc).
   Qed.
   (* A join that reads valid has BOTH arguments valid, whether or not the join
      itself is buffered: if it is, its register says so one cycle back, and
@@ -6361,14 +6363,8 @@ Section SchedulerRoundTrip.
       as [[mj mjsz] |] eqn:Hq.
     - (* buffered: its register is up, so one cycle back its gate was *)
       pose proof (wla_in _ _ _ Hq) as Hinq.
-      assert (Hltq : mj < length
-                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
-      { rewrite (buffer_slot_eq act a_idx Halign), gsi_length.
-        apply (gsi_idx_bound (build_dfg ctx act) _ j2 mj mjsz).
-        rewrite <- (buffer_slot_eq act a_idx Halign). exact Hinq. }
-      destruct (index_of_nat_bounded Hltq) as [j_idx Hj_idx].
-      assert (Hjv : vreg_nid a_idx j_idx = j2)
-        by (apply (vreg_nid_of_entry act a_idx _ mj mjsz j_idx Halign Hinq Hj_idx)).
+      destruct (buffer_slot_of act a_idx j2 mj mjsz Halign Hq) as [j_idx [Hj_idx Hjc]].
+      pose proof (caches_vreg act a_idx j_idx j2 Halign Hjc) as Hjv.
       rewrite (compile_buffered_valid (build_dfg ctx act) _ _ a_idx j2
                  (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
                  mj mjsz j_idx (length (graph (build_dfg ctx act))) []
@@ -6757,14 +6753,8 @@ Section SchedulerRoundTrip.
           as [[mj mjsz] |] eqn:Hq.
         + (* the join is buffered: its validity IS its register, so step back *)
           pose proof (wla_in _ _ _ Hq) as Hinq.
-          assert (Hltq : mj < length
-                    (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
-          { rewrite (buffer_slot_eq act a_idx Halign), gsi_length.
-            apply (gsi_idx_bound (build_dfg ctx act) _ aa mj mjsz).
-            rewrite <- (buffer_slot_eq act a_idx Halign). exact Hinq. }
-          destruct (index_of_nat_bounded Hltq) as [j_idx Hj_idx].
-          assert (Hjv : vreg_nid a_idx j_idx = aa)
-            by (apply (vreg_nid_of_entry act a_idx _ mj mjsz j_idx Halign Hinq Hj_idx)).
+          destruct (buffer_slot_of act a_idx aa mj mjsz Halign Hq) as [j_idx [Hj_idx Hjc]].
+          pose proof (caches_vreg act a_idx j_idx aa Halign Hjc) as Hjv.
           rewrite (compile_buffered_valid (build_dfg ctx act) _ _ a_idx aa
                      (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
                      mj mjsz j_idx (length (graph (build_dfg ctx act))) []
@@ -8044,7 +8034,9 @@ Section SchedulerRoundTrip.
       exact (sample_arg_settled act a_idx input resp ss0 M n_idx p tok en d av en'
                Halign Hlen2 Hzero0 Hpre Hsamp Hsd Hdop Hv). }
     destruct (dfg_action_semantics act a_idx sp0 ssM input (sched_input input (resp M))
-                Halign ltac:(intro v; reflexivity) Hrt_obligation Harg_obligation Hs Ho)
+                Halign ltac:(intro v; reflexivity)
+                ltac:(per_node constr:(caches_vreg) Halign Hrt_obligation)
+                ltac:(per_node constr:(caches_vreg) Halign Harg_obligation) Hs Ho)
       as [Hsem_s [Hsem_o [Hfix_s Hfix_o]]].
     split.
     - apply equiv_eq. unfold equiv. intro sv.

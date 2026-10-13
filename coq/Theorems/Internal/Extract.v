@@ -394,6 +394,7 @@ Require Import Trustformer.Theorems.IPRDefinitions.
 Require Import Trustformer.Theorems.Internal.ProofDefinitions.
 Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Theorems.Internal.IPRProof.
+Require Import Trustformer.Theorems.Internal.ProofTactics.
 
 Lemma guard_true_ext {s i o p} (g: @dfg_state_t s i o p) (V1 V2: valuation g) en :
   (forall l, In l en -> V1 (fst l) = V2 (fst l)) -> guard_true g V1 en = guard_true g V2 en.
@@ -938,6 +939,7 @@ Section Settled.
       assert (Hsam : is_sample_of ctx cost_limit act n = true)
         by (unfold ProofDefinitions.is_sample_of, AttackerClock.node_op; rewrite Hop'; reflexivity).
       destruct (sample_index ctx cost_limit act a_idx n Halign Hsam) as [n_idx Hvid].
+      apply (caches_vreg ctx cost_limit act a_idx _ _ Halign) in Hvid.
       assert (Hopn : AttackerClock.node_op ctx cost_limit act n = DFG_Sample sp tok en)
         by exact Hop'.
       destruct (sample_has_drive ctx cost_limit act n sp tok en Hopn) as [d [av [Hsd Hdop]]].
@@ -1051,10 +1053,11 @@ Section Settled.
       as [Hans [_ [Hargs _]]].
     destruct (dfg_action_semantics ctx cost_limit act a_idx sp0 (ssk k) input (sik k)
                 Halign (fun v => eq_refl)
-                ltac:(intros n_idx p tok en d av en' Ho1 Ho2 Ho3 Ho4 Hg Hv;
+                ltac:(intros n n_idx Hc p tok en d av en' Ho1 Ho2 Ho3 Ho4 Hg Hv;
+                      rewrite <- (caches_vreg ctx cost_limit act a_idx n_idx n Halign Hc) in Ho1, Ho2;
                       exact (Hans n_idx p tok en d av en' Ho1 Ho2 Ho3 Ho4 Hv
                                (guard_pi_holds ctx cost_limit act a_idx (sik k) en (ssk k) Hg)))
-                Hargs
+                ltac:(per_node constr:(caches_vreg ctx cost_limit) Halign Hargs)
                 ltac:(intro sv; rewrite (run_preserves_svar ctx cost_limit act input resp ss0 k Hnd sv);
                       rewrite <- Hmm, getenv_maps_from; reflexivity)
                 ltac:(intro ov; rewrite (run_preserves_ovar ctx cost_limit act input resp ss0 k Hnd ov);

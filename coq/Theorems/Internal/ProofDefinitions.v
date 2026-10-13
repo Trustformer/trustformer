@@ -263,6 +263,15 @@ Section ProofWorld.
              (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
              (0, (0, 0))).
 
+  (* Register [n_idx] caches node [n]: the table has an entry for [n] at that
+     register.  Stated by entry, so a register shared by nodes caches each. *)
+  Definition caches
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (n_idx : Vect.index (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+      (n: nat) : Prop :=
+    exists msz, In (n, (index_to_nat n_idx, msz))
+                   (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []).
+
   (* The validity that goes with [node_ref_expr]: ones exactly when every sample
      buffer the reference reads has already latched. *)
   Definition node_ref_valid
