@@ -44,12 +44,6 @@ Section Bounds.
   Local Notation get_tainted := (Taint.get_tainted ctx).
   Local Notation decl_facts := (Taint.decl_facts ctx).
 
-  Definition cycle_of (cycles: list (nid_t * cycle_t)) (n: nid_t) : cycle_t :=
-    match BitsToLists.list_assoc cycles n with
-    | Some c => c
-    | None => 0
-    end.
-
   (* A bound together with the path of branch literals that achieves it.  A
      number alone says the action is not constant time; the path says WHEN it
      is fast and when it is slow, which is the attack. *)
@@ -72,65 +66,42 @@ Section Bounds.
 
   Definition wmin (a b: wcycle) : wcycle := if Nat.ltb (fst b) (fst a) then b else a.
 
-  (* Reaching a deeper stage does not change WHICH branches were taken. *)
-  Definition wbump (here: cycle_t) (a: wcycle) : wcycle :=
-    if Nat.ltb (fst a) here then (here, snd a) else a.
-
-  (* A critical phi ANDs both branch validities, so it can only be ready when
-     the slower branch is; a non-critical one selects, so its best case is the
-     faster branch.  That difference is the entire cost of criticality. *)
+  (* When [n] is valid as its readers see it: sources at once, a buffer one cycle
+     after its cone, a stall's counter [lat] cycles after it, the rest as codegen's
+     validity expressions.  A non-critical phi is as early as the branch it takes. *)
   Fixpoint node_bounds_w (dfg: dfg_state) (tainted: list nid_t) (dfacts: list gfact)
-      (cycles: list (nid_t * cycle_t)) (pi: list lit) (fuel: nat) (n: nid_t)
+      (bufs: list nid_t) (pi: list lit) (fuel: nat) (n: nid_t)
       : wcycle * wcycle :=
     match fuel with
     | 0 => ((0, pi), (0, pi))
     | S fuel' =>
-        (* A source node is never buffered (see [require_buffer]), so it is
-           readable in stage 0 no matter how deep its target cycle claims to be. *)
-        let here := if is_source dfg n then 0 else cycle_of cycles n in
         let node := nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |} in
-        match op node with
-        | DFG_Unary _ a =>
-            let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel' a in
-            (wbump here l, wbump here u)
-        | DFG_Resize a =>
-            let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel' a in
-            (wbump here l, wbump here u)
-        | DFG_Binary _ a1 a2 =>
-            let '(l1, u1) := node_bounds_w dfg tainted dfacts cycles pi fuel' a1 in
-            let '(l2, u2) := node_bounds_w dfg tainted dfacts cycles pi fuel' a2 in
-            (wbump here (wmax_lo l1 l2), wbump here (wmax u1 u2))
-        (* SPIKE: identity for now.  W-b would add its declared latency to BOTH
-           bounds here, which is exactly what keeps the latency derivable. *)
-        | DFG_Stall _ a =>
-            let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel' a in
-            (wbump here l, wbump here u)
-        | DFG_Drive _ a _ =>
-            let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel' a in
-            (wbump here l, wbump here u)
-        | DFG_Sample _ t _ =>
-            let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel' t in
-            (wbump here l, wbump here u)
-        (* Like a binary: the ordering join is valid when both arguments are. *)
-        | DFG_Join a b =>
-            let '(l1, u1) := node_bounds_w dfg tainted dfacts cycles pi fuel' a in
-            let '(l2, u2) := node_bounds_w dfg tainted dfacts cycles pi fuel' b in
-            (wbump here (wmax_lo l1 l2), wbump here (wmax u1 u2))
-        | DFG_Phi c t e =>
-            let crit := phi_crit tainted dfacts c pi in
-            let '(lc, uc) := node_bounds_w dfg tainted dfacts cycles pi fuel' c in
-            let '(lt, ut) := node_bounds_w dfg tainted dfacts cycles (phi_path crit c true pi) fuel' t in
-            let '(le, ue) := node_bounds_w dfg tainted dfacts cycles (phi_path crit c false pi) fuel' e in
-            (wbump here (wmax_lo lc (if crit then wmax_lo lt le else wmin lt le)),
-             wbump here (wmax uc (wmax ut ue)))
-        | _ => ((here, pi), (here, pi))
-        end
+        let delay := if existsb (Nat.eqb n) bufs
+                     then match op node with DFG_Stall l _ => l | _ => 1 end
+                     else 0 in
+        let go m := node_bounds_w dfg tainted dfacts bufs pi fuel' m in
+        let both (a b: wcycle * wcycle) := (wmax_lo (fst a) (fst b), wmax (snd a) (snd b)) in
+        let '(l, u) :=
+          match op node with
+          | DFG_Unary _ a | DFG_Resize a | DFG_Stall _ a => go a
+          | DFG_Sample _ t _ => go t
+          | DFG_Binary _ a1 a2 | DFG_Join a1 a2 => both (go a1) (go a2)
+          | DFG_Drive _ a en => fold_left (fun acc g => both acc (go (fst g))) en (go a)
+          | DFG_Phi c t e =>
+              let crit := phi_crit tainted dfacts c pi in
+              let '(lc, uc) := go c in
+              let '(lt, ut) := node_bounds_w dfg tainted dfacts bufs (phi_path crit c true pi) fuel' t in
+              let '(le, ue) := node_bounds_w dfg tainted dfacts bufs (phi_path crit c false pi) fuel' e in
+              (wmax_lo lc (if crit then wmax_lo lt le else wmin lt le), wmax uc (wmax ut ue))
+          | _ => ((0, pi), (0, pi))
+          end in
+        ((fst l + delay, snd l), (fst u + delay, snd u))
     end.
 
   Definition node_bounds (dfg: dfg_state) (tainted: list nid_t) (dfacts: list gfact)
-      (cycles: list (nid_t * cycle_t)) (pi: list lit) (fuel: nat) (n: nid_t)
+      (bufs: list nid_t) (pi: list lit) (fuel: nat) (n: nid_t)
       : cycle_t * cycle_t :=
-    let '(l, u) := node_bounds_w dfg tainted dfacts cycles pi fuel n in (fst l, fst u).
+    let '(l, u) := node_bounds_w dfg tainted dfacts bufs pi fuel n in (fst l, fst u).
 
   (* The action is done when every variable it writes is valid, so the bounds
      are maxima over the roots, counted in CYCLES (combinational is (1, 1)).
@@ -138,11 +109,11 @@ Section Bounds.
   Definition action_bounds_w (dfg: dfg_state) : wcycle * wcycle :=
     let tainted := get_tainted dfg in
     let dfacts := decl_facts dfg in
-    let cycles := calc_target_cycle (calc_backward_cost dfg) in
+    let bufs := require_buffer ctx dfg (calc_target_cycle (calc_backward_cost dfg)) in
     let '(l, u) :=
       fold_left (fun '(l, u) v =>
                    let '(lv, uv) :=
-                     node_bounds_w dfg tainted dfacts cycles [] (List.length (graph dfg)) (snd v) in
+                     node_bounds_w dfg tainted dfacts bufs [] (List.length (graph dfg)) (snd v) in
                    (wmax_lo l lv, wmax u uv))
                 (var_map dfg) ((0, []), (0, [])) in
     ((S (fst l), snd l), (S (fst u), snd u)).

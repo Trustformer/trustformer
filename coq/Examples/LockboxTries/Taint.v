@@ -262,7 +262,7 @@ Section Bounds.
     Example public_tries_sweep :
       map (fun c => action_bounds ctxB_whitebox c (build_dfg ctxB_whitebox fs_act_test))
           [1; 2; 3; 4; 5]
-      = [(3, 5); (2, 3); (1, 2); (1, 2); (1, 1)].
+      = [(3, 4); (2, 3); (1, 2); (1, 2); (1, 1)].
     Proof. vm_compute. reflexivity. Qed.
 
 End Bounds.
