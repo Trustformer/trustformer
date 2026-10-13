@@ -9167,6 +9167,275 @@ Section SchedulerSimulation.
              end; reflexivity.
   Qed.
 
+  (* Componentwise equality of a pair, without [injection] on its terms. *)
+  Lemma pair_inj {A B} {a c: A} {b d: B} : (a, b) = (c, d) -> a = c /\ b = d.
+  Proof. intro H. exact (conj (f_equal fst H) (f_equal snd H)). Qed.
+
+  (* ==================================================================== *)
+  (* Each node kind's compiler step, once: what it reads from its args.   *)
+  (* ==================================================================== *)
+
+  Section CompileNode.
+    Context (tainted: list nid_t) (dfacts: list gfact)
+            (dfg: @dfg_state_t s_var i_var o_var p_var).
+    Local Notation cnode := (compile_node tainted dfacts dfg).
+    Local Notation args o := (get_args ctx {| nid := 0; op := o; sz := 0 |}).
+    Local Notation rec_t := (list lit -> nid_t -> sexpr * sexpr).
+    Local Notation ev szx e ss input := (tf_eval_expr ss_sz si_sz oo_sz (szB := szx) e ss input).
+
+    (* A node's value reads only its arguments' values, at any path. *)
+    Lemma compile_node_fst_ext (rec1 rec2: rec_t) pi1 pi2 o :
+      (forall p1 p2 x, In x (args o) -> fst (rec1 p1 x) = fst (rec2 p2 x)) ->
+      fst (cnode rec1 pi1 o) = fst (cnode rec2 pi2 o).
+    Proof.
+      intro H. case_op o as Hop; cbn [compile_node fst]; try reflexivity.
+      - rewrite (H pi1 pi2 arg ltac:(in_args Hop)). reflexivity.
+      - rewrite (H pi1 pi2 arg1 ltac:(in_args Hop)), (H pi1 pi2 arg2 ltac:(in_args Hop)).
+        reflexivity.
+      - rewrite (H pi1 pi2 arg ltac:(in_args Hop)). reflexivity.
+      - rewrite (H pi1 pi2 cnd ltac:(in_args Hop)),
+                (H _ (ppath tainted dfacts pi2 cnd true) tid ltac:(in_args Hop)),
+                (H _ (ppath tainted dfacts pi2 cnd false) eid ltac:(in_args Hop)).
+        reflexivity.
+      - rewrite (H pi1 pi2 dn ltac:(in_args Hop)). reflexivity.
+    Qed.
+
+    (* A node's step is determined by its arguments' compiled pairs. *)
+    Lemma compile_node_ext (rec1 rec2: rec_t) pi o :
+      (forall p x, In x (args o) -> rec1 p x = rec2 p x) ->
+      cnode rec1 pi o = cnode rec2 pi o.
+    Proof.
+      intro H. case_op o as Hop; cbn [compile_node]; try reflexivity.
+      - rewrite (H pi arg ltac:(in_args Hop)). reflexivity.
+      - rewrite (H pi arg1 ltac:(in_args Hop)), (H pi arg2 ltac:(in_args Hop)). reflexivity.
+      - rewrite (H pi arg ltac:(in_args Hop)). reflexivity.
+      - rewrite (H pi cnd ltac:(in_args Hop)),
+                (H (ppath tainted dfacts pi cnd true) tid ltac:(in_args Hop)),
+                (H (ppath tainted dfacts pi cnd false) eid ltac:(in_args Hop)).
+        reflexivity.
+      - rewrite (H pi sa ltac:(in_args Hop)). reflexivity.
+      - rewrite (H pi dn ltac:(in_args Hop)). f_equal.
+        apply (fold_valid_and_ext (fun m => snd (rec1 pi m)) (fun m => snd (rec2 pi m))).
+        intros x Hin. cbv beta. rewrite (H pi (fst x) ltac:(in_args Hop)). reflexivity.
+      - rewrite (H pi sn ltac:(in_args Hop)). reflexivity.
+      - rewrite (H pi ja ltac:(in_args Hop)), (H pi jb ltac:(in_args Hop)). reflexivity.
+    Qed.
+
+    (* A node's validity carries from one side to the other where its arguments'
+       do, at the paths each side reads them; a selecting phi also needs both
+       sides to agree on its condition, and cannot turn critical. *)
+    Lemma compile_node_valid_transfer (rec1 rec2: rec_t) pi1 pi2 o
+          (ss1 ss2: sched_sys_state) (in1 in2: sched_input_t) :
+      (forall x, In x (args o) ->
+         eval1 (snd (rec1 pi1 x)) ss1 in1 = Bits.ones 1 ->
+         eval1 (snd (rec2 pi2 x)) ss2 in2 = Bits.ones 1) ->
+      (forall c tb eb, o = DFG_Phi c tb eb ->
+         (phi_crit tainted dfacts c pi2 = true -> phi_crit tainted dfacts c pi1 = true)
+         /\ (forall b,
+               eval1 (snd (rec1 (ppath tainted dfacts pi1 c b) (if b then tb else eb)))
+                 ss1 in1 = Bits.ones 1 ->
+               eval1 (snd (rec2 (ppath tainted dfacts pi2 c b) (if b then tb else eb)))
+                 ss2 in2 = Bits.ones 1)
+         /\ (eval1 (snd (rec1 pi1 c)) ss1 in1 = Bits.ones 1 ->
+             eval1 (fst (rec1 pi1 c)) ss1 in1 = eval1 (fst (rec2 pi2 c)) ss2 in2)) ->
+      eval1 (snd (cnode rec1 pi1 o)) ss1 in1 = Bits.ones 1 ->
+      eval1 (snd (cnode rec2 pi2 o)) ss2 in2 = Bits.ones 1.
+    Proof.
+      intros Harg Hphi Hval.
+      case_op o as Hop; cbn [compile_node fst snd] in Hval |- *.
+      - apply eval1_const1.
+      - apply eval1_const1.
+      - destruct v; apply eval1_const1.
+      - exact (Harg arg ltac:(in_args Hop) Hval).
+      - apply valid_and_ones in Hval as [Hv1 Hv2]. apply valid_and_ones.
+        exact (conj (Harg arg1 ltac:(in_args Hop) Hv1) (Harg arg2 ltac:(in_args Hop) Hv2)).
+      - exact (Harg arg ltac:(in_args Hop) Hval).
+      - destruct (Hphi cnd tid eid eq_refl) as [Hmono [Hbr Hcond]].
+        pose proof (Hbr true) as Hbt. pose proof (Hbr false) as Hbf. clear Hbr.
+        cbv iota in Hbt, Hbf.
+        destruct (phi_crit tainted dfacts cnd pi1) eqn:Hc1;
+          destruct (phi_crit tainted dfacts cnd pi2) eqn:Hc2;
+          cbn [phi_path] in Hval, Hbt, Hbf |- *.
+        + (* critical both sides: all three arguments *)
+          apply valid_and_ones in Hval as [Hte Hcv]. apply valid_and_ones in Hte as [Htv Hev].
+          apply valid_and_ones. split; [ apply valid_and_ones; split |].
+          * exact (Hbt Htv).
+          * exact (Hbf Hev).
+          * exact (Harg cnd ltac:(in_args Hop) Hcv).
+        + (* critical, then selecting: both branches give the one *)
+          apply valid_and_ones in Hval as [Hte Hcv]. apply valid_and_ones in Hte as [Htv Hev].
+          apply valid_and_ones. split; [ exact (Harg cnd ltac:(in_args Hop) Hcv) |].
+          apply valid_if_eval; [ exact (Hbt Htv) | exact (Hbf Hev) ].
+        + exfalso. discriminate (Hmono eq_refl).
+        + (* selecting both sides, on a condition both read alike *)
+          apply valid_and_ones in Hval as [Hcv Hif].
+          destruct (valid_if_eval_inv _ _ _ ss1 in1 Hif) as [Hthen Helse].
+          pose proof (Hcond Hcv) as Hcc.
+          apply valid_and_ones. split; [ exact (Harg cnd ltac:(in_args Hop) Hcv) |].
+          apply valid_if_eval_sel; rewrite <- Hcc; intro Hz;
+            [ exact (Hbt (Hthen Hz)) | exact (Hbf (Helse Hz)) ].
+      - exact (Harg sa ltac:(in_args Hop) Hval).
+      - destruct (proj1 (fold_valid_and_ones (fun m => snd (rec1 pi1 m)) _ ss1 in1 den) Hval)
+          as [Hv Hall].
+        apply (fold_valid_and_ones (fun m => snd (rec2 pi2 m))).
+        split; [ exact (Harg dn ltac:(in_args Hop) Hv) |].
+        intros x Hin. exact (Harg (fst x) ltac:(in_args Hop) (Hall x Hin)).
+      - exact (Harg sn ltac:(in_args Hop) Hval).
+      - apply valid_and_ones in Hval as [Hv1 Hv2]. apply valid_and_ones.
+        exact (conj (Harg ja ltac:(in_args Hop) Hv1) (Harg jb ltac:(in_args Hop) Hv2)).
+      - exact Hval.
+    Qed.
+
+    (* A real node's validity fires where all its arguments' do, at every path. *)
+    Lemma compile_node_valid_fires (rec: rec_t) pi o (ss: sched_sys_state)
+          (input: sched_input_t) :
+      (forall p x, In x (args o) -> eval1 (snd (rec p x)) ss input = Bits.ones 1) ->
+      o <> DFG_Empty ->
+      eval1 (snd (cnode rec pi o)) ss input = Bits.ones 1.
+    Proof.
+      intros Hch Hne.
+      case_op o as Hop; cbn [compile_node fst snd].
+      - apply eval1_const1.
+      - apply eval1_const1.
+      - destruct v; apply eval1_const1.
+      - exact (Hch pi arg ltac:(in_args Hop)).
+      - apply valid_and_ones.
+        exact (conj (Hch pi arg1 ltac:(in_args Hop)) (Hch pi arg2 ltac:(in_args Hop))).
+      - exact (Hch pi arg ltac:(in_args Hop)).
+      - destruct (phi_crit tainted dfacts cnd pi).
+        + apply valid_and_ones. split; [ apply valid_and_ones; split |];
+            apply Hch; in_args Hop.
+        + apply valid_and_ones. split; [ apply Hch; in_args Hop |].
+          apply valid_if_eval; apply Hch; in_args Hop.
+      - exact (Hch pi sa ltac:(in_args Hop)).
+      - apply (fold_valid_and_ones (fun m => snd (rec pi m))).
+        split; [ exact (Hch pi dn ltac:(in_args Hop)) |].
+        intros x Hin. exact (Hch pi (fst x) ltac:(in_args Hop)).
+      - exact (Hch pi sn ltac:(in_args Hop)).
+      - apply valid_and_ones.
+        exact (conj (Hch pi ja ltac:(in_args Hop)) (Hch pi jb ltac:(in_args Hop))).
+      - exfalso. exact (Hne eq_refl).
+    Qed.
+
+    (* The widths a node read at [szB] reads its arguments' values at, as
+       [tf_eval_expr] evaluates [compile_node]'s value. *)
+    Definition reads_at (o: @dfg_op_t s_var i_var o_var p_var) (szB: nat)
+      : list (nid_t * nat) :=
+      match o with
+      | DFG_Unary uop a =>
+          [(a, match uop with tf_not => szB | tf_resize s => s | tf_slice s _ => s end)]
+      | DFG_Binary bop a b =>
+          match bop with
+          | tf_cmp szC _ => [(a, szC); (b, szC)]
+          | tf_concat hz lz => [(a, hz); (b, lz)]
+          | tf_islice isz => [(a, isz); (b, Nat.log2_up isz)]
+          | _ => [(a, szB); (b, szB)]
+          end
+      | DFG_Resize a => [(a, sz (nth a (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}))]
+      | DFG_Phi c t e => [(c, 1); (t, szB); (e, szB)]
+      | DFG_Drive _ a _ => [(a, szB)]
+      | _ => []
+      end.
+
+    Lemma reads_at_args o szB x sx : In (x, sx) (reads_at o szB) -> In x (args o).
+    Proof.
+      intro H. apply (in_map fst) in H. revert H.
+      destruct o as [ | | | uop a | bop a b | | | | | | | ];
+        try destruct uop; try destruct bop; cbn [reads_at map fst get_args op In]; tauto.
+    Qed.
+
+    (* A node's VALUE carries over where its validity fires on the first side,
+       given its leaves and the argument values it reads agree. *)
+    Lemma compile_node_value_transfer (rec1 rec2: rec_t) pi o szB
+          (ss1 ss2: sched_sys_state) (in1 in2: sched_input_t) :
+      (forall v szx, ev szx (tf_ivar (inl v)) ss1 in1 = ev szx (tf_ivar (inl v)) ss2 in2) ->
+      (forall s szx, ev szx (tf_svar (tf_dfg_s s)) ss1 in1
+                     = ev szx (tf_svar (tf_dfg_s s)) ss2 in2) ->
+      (forall ov szx, ev szx (tf_ovar ov) ss1 in1 = ev szx (tf_ovar ov) ss2 in2) ->
+      (forall p tok en, o = DFG_Sample p tok en -> forall szx,
+         ev szx (tf_ivar (inr p)) ss1 in1 = ev szx (tf_ivar (inr p)) ss2 in2) ->
+      (forall x sx p, In (x, sx) (reads_at o szB) ->
+         eval1 (snd (rec1 p x)) ss1 in1 = Bits.ones 1 ->
+         ev sx (fst (rec1 p x)) ss1 in1 = ev sx (fst (rec2 p x)) ss2 in2) ->
+      eval1 (snd (cnode rec1 pi o)) ss1 in1 = Bits.ones 1 ->
+      ev szB (fst (cnode rec1 pi o)) ss1 in1 = ev szB (fst (cnode rec2 pi o)) ss2 in2.
+    Proof.
+      intros Hi Hs Ho Hsm Hread Hval.
+      case_op o as Hop; cbn [compile_node fst snd] in Hval |- *.
+      - reflexivity.
+      - exact (Hi v szB).
+      - destruct v; [ exact (Hs _ szB) | exact (Ho _ szB) ].
+      - destruct op1 as [| s | s off]; cbn [tf_eval_expr];
+          [ rewrite (Hread arg szB pi ltac:(left; reflexivity) Hval)
+          | rewrite (Hread arg s pi ltac:(left; reflexivity) Hval)
+          | rewrite (Hread arg s pi ltac:(left; reflexivity) Hval) ]; reflexivity.
+      - apply valid_and_ones in Hval as [Hv1 Hv2].
+        destruct op1 as [ | | | | | | | | | szC cop | hz lz | isz ]; cbn [tf_eval_expr];
+          [ rewrite (Hread arg1 szB pi ltac:(left; reflexivity) Hv1),
+                    (Hread arg2 szB pi ltac:(right; left; reflexivity) Hv2); reflexivity ..
+          | rewrite (Hread arg1 szC pi ltac:(left; reflexivity) Hv1),
+                    (Hread arg2 szC pi ltac:(right; left; reflexivity) Hv2);
+            destruct cop; reflexivity
+          | rewrite (Hread arg1 hz pi ltac:(left; reflexivity) Hv1),
+                    (Hread arg2 lz pi ltac:(right; left; reflexivity) Hv2); reflexivity
+          | rewrite (Hread arg1 isz pi ltac:(left; reflexivity) Hv1),
+                    (Hread arg2 (Nat.log2_up isz) pi ltac:(right; left; reflexivity) Hv2);
+            reflexivity ].
+      - cbn [tf_eval_expr].
+        rewrite (Hread arg (sz (nth arg (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}))
+                   pi ltac:(left; reflexivity) Hval).
+        reflexivity.
+      - cbn [tf_eval_expr].
+        destruct (phi_crit tainted dfacts cnd pi); cbn [phi_path] in Hval |- *.
+        + (* critical: all three arguments are valid *)
+          apply valid_and_ones in Hval as [Hte Hcv]. apply valid_and_ones in Hte as [Htv Hev].
+          rewrite (Hread cnd 1 pi ltac:(left; reflexivity) Hcv),
+                  (Hread tid szB pi ltac:(right; left; reflexivity) Htv),
+                  (Hread eid szB pi ltac:(right; right; left; reflexivity) Hev).
+          reflexivity.
+        + (* selecting: both sides take the branch their common condition names *)
+          apply valid_and_ones in Hval as [Hcv Hif].
+          destruct (valid_if_eval_inv _ _ _ ss1 in1 Hif) as [Hthen Helse].
+          pose proof (Hread cnd 1 pi ltac:(left; reflexivity) Hcv) as Hcc.
+          rewrite Hcc.
+          destruct (beq_dec (eval1 (fst (rec2 pi cnd)) ss2 in2) Bits.zero) eqn:Hb.
+          * apply beq_dec_iff in Hb.
+            refine (Hread eid szB _ ltac:(right; right; left; reflexivity) (Helse _)).
+            rewrite Hcc. exact Hb.
+          * refine (Hread tid szB _ ltac:(right; left; reflexivity) (Hthen _)).
+            rewrite Hcc. intro Hz. rewrite Hz, beq_dec_refl in Hb. discriminate.
+      - reflexivity.
+      - destruct (proj1 (fold_valid_and_ones (fun m => snd (rec1 pi m)) _ ss1 in1 den) Hval)
+          as [Hv _].
+        exact (Hread dn szB pi ltac:(left; reflexivity) Hv).
+      - exact (Hsm siv sn sen eq_refl szB).
+      - reflexivity.
+      - reflexivity.
+    Qed.
+  End CompileNode.
+
+  (* At its declared width a node reads each argument at that argument's own. *)
+  Lemma reads_at_declared (act: tfs_action sched) node x sx :
+    node_args_sz (build_dfg ctx act) node ->
+    In (x, sx) (reads_at (build_dfg ctx act) (op node) (sz node)) ->
+    sx = sz (nth x (graph (build_dfg ctx act)) {| nid := 0; op := DFG_Empty; sz := 0 |}).
+  Proof.
+    unfold node_args_sz. intros Hfg Hr.
+    destruct (op node) as [ | | | uop a | bop a b | a | c t e | | p a en | | | ];
+      try destruct uop; try destruct bop; cbn [reads_at In] in Hr;
+      repeat match goal with
+             | H : _ \/ _ |- _ => destruct H as [H | H]
+             | H : False |- _ => destruct H
+             | H : _ /\ _ |- _ => destruct H
+             | H : (_, _) = (_, _) |- _ => destruct (pair_inj H) as [<- <-]; clear H
+             end;
+      first [ reflexivity
+            | match goal with
+              | Hw : wsz _ ?a ?s |- ?s = sz (nth ?a _ _) =>
+                  exact (eq_sym (proj2 (wsz_node_sz act a s Hw)))
+              end ].
+  Qed.
+
   (* The path only decides criticality, which lives in the VALIDITY component,
      so the value expression is the same under any path. *)
   Lemma compile_fst_pi_irrel (tainted: list nid_t)
@@ -9181,29 +9450,7 @@ Section SchedulerSimulation.
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:Hla.
     { cbn [compile_dfg_expr_aux]. rewrite Hla. reflexivity. }
     rewrite (compile_unbuffered (pi := pi) Hla), (compile_unbuffered (pi := pi') Hla).
-    case_op (op (nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |})) as Hop;
-      cbn [compile_node fst].
-    - reflexivity.
-    - reflexivity.
-    - destruct v; reflexivity.
-    - rewrite (IH arg pi pi'). reflexivity.
-    - rewrite (IH arg1 pi pi'), (IH arg2 pi pi'). reflexivity.
-    - rewrite (IH arg pi pi'). reflexivity.
-    - rewrite (IH cnd pi pi'),
-              (IH tid (ppath tainted dfacts pi cnd true) (ppath tainted dfacts pi' cnd true)),
-              (IH eid (ppath tainted dfacts pi cnd false) (ppath tainted dfacts pi' cnd false)).
-      reflexivity.
-    - (* DFG_Stall: carries no value *)
-      reflexivity.
-    - (* DFG_Drive: its value is still its argument's -- the guard reached only
-         the validity half *)
-      rewrite (IH dn pi pi'). reflexivity.
-    - (* DFG_Sample: the VALUE half is [tf_ivar v], which does not mention the
-         path at all. *)
-      reflexivity.
-    - (* DFG_Join: no value either. *)
-      reflexivity.
-    - reflexivity.
+    apply compile_node_fst_ext. intros p1 p2 x _. apply IH.
   Qed.
 
   Lemma guard_incl_mono (g pi pi': list lit) :
@@ -9233,6 +9480,20 @@ Section SchedulerSimulation.
     { apply existsb_exists. exists g.
       split; [ exact Hg | exact (guard_incl_mono g pi pi' Hsub Hincl) ]. }
     rewrite Hex in Hd. discriminate.
+  Qed.
+
+  (* ... so a longer path compiles each phi branch under a longer path too. *)
+  Lemma ppath_incl (tainted: list nid_t) (dfacts: list gfact) (c: nid_t) (b: bool)
+        (pi pi': list lit) :
+    (forall x, In x pi -> In x pi') ->
+    forall x, In x (ppath tainted dfacts pi c b) -> In x (ppath tainted dfacts pi' c b).
+  Proof.
+    intros Hsub x. unfold phi_path.
+    destruct (phi_crit tainted dfacts c pi') eqn:H2.
+    - rewrite (phi_crit_mono _ _ c pi pi' Hsub H2). exact (Hsub x).
+    - destruct (phi_crit tainted dfacts c pi);
+        [ intro Hx; right; exact (Hsub x Hx)
+        | intros [Hx | Hx]; [ left; exact Hx | right; exact (Hsub x Hx) ] ].
   Qed.
 
   (* Packages the phi step of the VALUE component in one equation, so proofs
@@ -9399,9 +9660,10 @@ Section SchedulerSimulation.
     intros Halign Hs Ho Hi Hsub Hb fuel.
     induction fuel as [| fuel IH]; intros n szB pi Hnlen Hsamples Hval;
       [ reflexivity | ].
-    cbn [compile_dfg_expr_aux] in Hval |- *.
     destruct (BitsToLists.list_assoc bufs n) as [[m msz] |] eqn:Hla.
     { (* a SAMPLE buffer: both sides read the register, pinned by its validity *)
+      cbn [compile_dfg_expr_aux] in Hval |- *. rewrite Hla in Hval |- *.
+      cbv beta iota in Hval |- *.
       destruct (index_of_nat _ m) as [n_idx' |] eqn:Hn_idx'; [| reflexivity].
       cbv beta iota in Hval |- *.
       assert (Hvn : vreg_nid a_idx n_idx' = n)
@@ -9417,139 +9679,20 @@ Section SchedulerSimulation.
                       {| nid := 0; op := DFG_Empty; sz := 0 |}));
         cbn [fst tf_eval_expr];
         try (f_equal; exact (Hb n_idx' Hmem Hv1)); reflexivity. }
-    cbv beta iota in Hval |- *.
-    (* every recursive call is at an ARGUMENT, hence below [n] *)
-    assert (Harg : forall x, In x (get_args ctx
-                     (nth n (graph (build_dfg ctx act))
-                        {| nid := 0; op := DFG_Empty; sz := 0 |})) -> x < n).
-    { intros x Hx.
-      pose proof (args_lt_fwd act _ (nth_In _ _ Hnlen) x Hx) as Hlt.
-      rewrite (node_nid_at act n Hnlen) in Hlt. exact Hlt. }
-    assert (IHb : forall x, x < n -> forall szx (p: list lit),
-              eval1 (snd (compile_dfg_expr_aux ctx bneeds tainted dfacts p fuel a_idx
-                            (build_dfg ctx act) x bufs)) ss1 input1 = Bits.ones 1 ->
-              tf_eval_expr ss_sz si_sz oo_sz (szB := szx)
-                (fst (compile_dfg_expr_aux ctx bneeds tainted dfacts p fuel a_idx
-                        (build_dfg ctx act) x bufs)) ss1 input1
-              = tf_eval_expr ss_sz si_sz oo_sz (szB := szx)
-                (fst (compile_dfg_expr_aux ctx bneeds tainted dfacts p fuel a_idx
-                        (build_dfg ctx act) x bufs)) ss2 input2).
-    { intros x Hx szx p.
-      apply (IH x szx p (Nat.lt_trans _ _ _ Hx Hnlen)).
-      intros y Hy. apply Hsamples. lia. }
-    clear IH.
-    destruct (op (nth n (graph (build_dfg ctx act))
-                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Hop.
-    - reflexivity.
-    - cbn [fst tf_eval_expr]. rewrite Hi. reflexivity.
-    - destruct v; cbn [fst tf_eval_expr]; [ rewrite Hs | rewrite Ho ]; reflexivity.
-    - destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) arg bufs) as [ae ve] eqn:E1.
-      cbn [fst snd] in Hval |- *. destruct op1 as [| src | src off];
-        cbn [tf_eval_expr];
-        [ specialize (IHb arg ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) szB pi) | specialize (IHb arg ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) src pi) | specialize (IHb arg ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) src pi) ];
-        rewrite E1 in IHb; cbn [fst snd] in IHb; rewrite (IHb Hval); reflexivity.
-    - destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) arg1 bufs) as [a1e v1e] eqn:E1.
-      destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) arg2 bufs) as [a2e v2e] eqn:E2.
-      cbn [fst snd] in Hval |- *.
-      rewrite valid_and_eval in Hval.
-      apply bits1_and_split in Hval. destruct Hval as [Hv1 Hv2].
-      pose proof (IHb arg1 ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) szB pi) as Hc1. pose proof (IHb arg2 ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) szB pi) as Hc2.
-      rewrite E1 in Hc1. rewrite E2 in Hc2. cbn [fst snd] in Hc1, Hc2.
-      specialize (Hc1 Hv1). specialize (Hc2 Hv2).
-      destruct op1 as [ | | | | | | | | | szC cop | hz lz | isz ];
-        cbn [tf_eval_expr]; try (rewrite Hc1, Hc2; reflexivity).
-      + pose proof (IHb arg1 ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) szC pi) as Hd1. pose proof (IHb arg2 ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) szC pi) as Hd2.
-        rewrite E1 in Hd1. rewrite E2 in Hd2. cbn [fst snd] in Hd1, Hd2.
-        rewrite (Hd1 Hv1), (Hd2 Hv2). destruct cop; reflexivity.
-      + pose proof (IHb arg1 ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) hz pi) as He1. pose proof (IHb arg2 ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) lz pi) as He2.
-        rewrite E1 in He1. rewrite E2 in He2. cbn [fst snd] in He1, He2.
-        rewrite (He1 Hv1), (He2 Hv2). reflexivity.
-      + pose proof (IHb arg1 ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) isz pi) as He1. pose proof (IHb arg2 ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) (Nat.log2_up isz) pi) as He2.
-        rewrite E1 in He1. rewrite E2 in He2. cbn [fst snd] in He1, He2.
-        rewrite (He1 Hv1), (He2 Hv2). reflexivity.
-    - destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) arg bufs) as [ae ve] eqn:E1.
-      cbn [fst snd tf_eval_expr] in Hval |- *.
-      specialize (IHb arg ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) (sz (nth arg (graph (build_dfg ctx act))
-                                {| nid := 0; op := DFG_Empty; sz := 0 |})) pi).
-      rewrite E1 in IHb. cbn [fst snd] in IHb. rewrite (IHb Hval). reflexivity.
-    - destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) cnd bufs) as [ce cv] eqn:Ec.
-      destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts
-                  (ppath tainted dfacts pi cnd true) fuel a_idx
-                  (build_dfg ctx act) tid bufs) as [te tv] eqn:Et.
-      destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts
-                  (ppath tainted dfacts pi cnd false) fuel a_idx
-                  (build_dfg ctx act) eid bufs) as [ee ev] eqn:Ee.
-      cbn [fst snd] in Hval |- *.
-      pose proof (IHb cnd ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) 1 pi) as Hcc. rewrite Ec in Hcc. cbn [fst snd] in Hcc.
-      pose proof (IHb tid ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) szB (ppath tainted dfacts pi cnd true)) as Hct.
-      rewrite Et in Hct. cbn [fst snd] in Hct.
-      pose proof (IHb eid ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto) szB (ppath tainted dfacts pi cnd false)) as Hce.
-      rewrite Ee in Hce. cbn [fst snd] in Hce.
-      (* the condition is valid either way, so the two sides SELECT alike *)
-      assert (Hcv : eval1 cv ss1 input1 = Bits.ones 1
-                    /\ (eval1 ce ss1 input1 <> Bits.zero ->
-                        eval1 tv ss1 input1 = Bits.ones 1)
-                    /\ (eval1 ce ss1 input1 = Bits.zero ->
-                        eval1 ev ss1 input1 = Bits.ones 1)).
-      { destruct (phi_crit tainted dfacts cnd pi).
-        - rewrite valid_and_eval in Hval. apply bits1_and_split in Hval.
-          destruct Hval as [Hval Hc]. rewrite valid_and_eval in Hval.
-          apply bits1_and_split in Hval. destruct Hval as [Ht He].
-          split; [ exact Hc | split; intros _; assumption ].
-        - rewrite valid_and_eval in Hval. apply bits1_and_split in Hval.
-          destruct Hval as [Hc Hif]. split; [ exact Hc |].
-          exact (valid_if_eval_inv ce tv ev ss1 input1 Hif). }
-      destruct Hcv as [Hc [Ht He]].
-      assert (Hceq : eval1 ce ss1 input1 = eval1 ce ss2 input2) by exact (Hcc Hc).
-      cbn [tf_eval_expr].
-      (* both conditions come FROM the goal, then the equation lines them up *)
-      match goal with
-      | |- (if beq_dec ?c1 _ then _ else _) = _ =>
-          replace c1 with (eval1 ce ss1 input1) by reflexivity
-      end.
-      match goal with
-      | |- _ = (if beq_dec ?c2 _ then _ else _) =>
-          replace c2 with (eval1 ce ss2 input2) by reflexivity
-      end.
-      rewrite Hceq.
-      match goal with | |- (if ?g then _ else _) = _ => destruct g eqn:Hb0 end.
-      + apply Hce, He. rewrite Hceq. exact (proj1 (beq_dec_iff _ _ _) Hb0).
-      + apply Hct, Ht. rewrite Hceq. intro Hz.
-        rewrite Hz, beq_dec_refl in Hb0. discriminate.
-    - (* DFG_Stall: no value, so both sides are [tf_const 0]. *)
-      cbn [fst].
-      destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) sa bufs).
-      reflexivity.
-    - (* DFG_Drive: its value still passes through; the guard reached only the
-         validity, and the argument's half of that is what the IH wants. *)
-      destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) dn bufs) as [de ve] eqn:ED.
-      cbn [fst snd] in Hval |- *.
-      pose proof (fold_valid_and_ones
-        (fun m => snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                         (build_dfg ctx act) m bufs)) ve ss1 input1 den) as Hfa.
-      destruct (proj1 Hfa Hval) as [Hv _].
-      pose proof (IHb dn ltac:(apply Harg; unfold get_args; rewrite Hop; cbn [In]; tauto)
-                    szB pi ltac:(rewrite ED; cbn [snd]; exact Hv)) as Hc.
-      rewrite ED in Hc. cbn [fst] in Hc. exact Hc.
-    - (* DFG_Sample: every sample is buffered, so this arm is unreachable. *)
-      exfalso. apply (Hsamples n ltac:(lia));
+    rewrite (compile_unbuffered Hla) in Hval |- *.
+    apply compile_node_value_transfer; [ | | | | | exact Hval ].
+    - intros v szx. cbn [tf_eval_expr]. rewrite Hi. reflexivity.
+    - intros s szx. cbn [tf_eval_expr]. rewrite Hs. reflexivity.
+    - intros o szx. cbn [tf_eval_expr]. rewrite Ho. reflexivity.
+    - (* every sample is buffered, so no unbuffered one is reached *)
+      intros p tok en Hop. exfalso. apply (Hsamples n ltac:(lia));
         [ unfold is_sample_of, node_op; rewrite Hop; reflexivity | exact Hla ].
-    - (* DFG_Join: no value either. *)
-      cbn [fst].
-      destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) ja bufs).
-      destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx
-                  (build_dfg ctx act) jb bufs).
-      reflexivity.
-    - reflexivity.
+    - (* every value read is an argument's, below [n] *)
+      intros x sx p Hr Hxv.
+      pose proof (args_lt_fwd act _ (nth_In _ _ Hnlen) x (reads_at_args _ _ _ _ _ Hr)) as Hlt.
+      rewrite (node_nid_at act n Hnlen) in Hlt.
+      apply (IH x sx p (Nat.lt_trans _ _ _ Hlt Hnlen)); [ intros y Hy; apply Hsamples; lia |].
+      exact Hxv.
   Qed.
 
   (* A BUFFER-FREE compiled expression reads only base state vars (tf_dfg_s),
@@ -9651,58 +9794,15 @@ Section SchedulerSimulation.
       apply (IH x p (Nat.lt_trans _ _ _ Hx Hnlen)).
       intros y Hy. apply Hsamples. lia. }
     clear IH.
-    case_op (op (nth n (graph (build_dfg ctx act)) {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as Hop; cbn [compile_node fst snd] in Hval |- *.
-    - exact Hval.
-    - exact Hval.
-    - destruct v; exact Hval.
-    - exact (IHb arg (Harg arg ltac:(in_args Hop)) pi Hval).
-    - apply valid_and_ones in Hval as [Hv1 Hv2]. apply valid_and_ones.
-      exact (conj (IHb arg1 (Harg arg1 ltac:(in_args Hop)) pi Hv1)
-                  (IHb arg2 (Harg arg2 ltac:(in_args Hop)) pi Hv2)).
-    - exact (IHb arg (Harg arg ltac:(in_args Hop)) pi Hval).
-    - (* Phi *)
-      assert (Hcnd : cnd < n) by (apply Harg; in_args Hop).
-      pose proof (compile_nobuf_state_indep_gen act a_idx input1 input2 ss1 ss2
-                    tainted dfacts bufs Halign Hs Ho Hi Hsub Hb
-                    fuel cnd 1 pi ltac:(lia)
-                    ltac:(intros y Hy; apply Hsamples; lia)) as Hcond.
-      remember (ppath tainted dfacts pi cnd true) as pt eqn:Hpt. clear Hpt.
-      remember (ppath tainted dfacts pi cnd false) as pe eqn:Hpe. clear Hpe.
-      destruct (phi_crit tainted dfacts cnd pi).
-      + (* critical: all three *)
-        apply valid_and_ones in Hval as [Hte Hcv]. apply valid_and_ones in Hte as [Htv Hev].
-        apply valid_and_ones. split; [ apply valid_and_ones; split |].
-        * exact (IHb tid (Harg tid ltac:(in_args Hop)) pt Htv).
-        * exact (IHb eid (Harg eid ltac:(in_args Hop)) pe Hev).
-        * exact (IHb cnd Hcnd pi Hcv).
-      + (* selecting: the two states select alike *)
-        apply valid_and_ones in Hval as [Hcv Hif].
-        destruct (valid_if_eval_inv _ _ _ ss1 input1 Hif) as [Hthen Helse].
-        specialize (Hcond Hcv).
-        apply valid_and_ones. split; [ exact (IHb cnd Hcnd pi Hcv) |].
-        apply valid_if_eval_sel.
-        * intro Hnz. apply (IHb tid (Harg tid ltac:(in_args Hop)) pt), Hthen.
-          intro Hz. apply Hnz. rewrite <- Hcond. exact Hz.
-        * intro Hz. apply (IHb eid (Harg eid ltac:(in_args Hop)) pe), Helse.
-          rewrite Hcond. exact Hz.
-    - exact (IHb sa (Harg sa ltac:(in_args Hop)) pi Hval).
-    - (* Drive: the argument's validity and every literal's source, each
-         transferred by the IH. *)
-      destruct (proj1 (fold_valid_and_ones
-                         (fun m => snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel
-                                          a_idx (build_dfg ctx act) m bufs))
-                         _ ss1 input1 den) Hval) as [Hv Hall].
-      apply (fold_valid_and_ones
-               (fun m => snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel
-                                a_idx (build_dfg ctx act) m bufs))).
-      split; [ exact (IHb dn (Harg dn ltac:(in_args Hop)) pi Hv) |].
-      intros x Hin. exact (IHb (fst x) (Harg (fst x) ltac:(in_args Hop)) pi (Hall x Hin)).
-    - exact (IHb sn (Harg sn ltac:(in_args Hop)) pi Hval).
-    - apply valid_and_ones in Hval as [Hv1 Hv2]. apply valid_and_ones.
-      exact (conj (IHb ja (Harg ja ltac:(in_args Hop)) pi Hv1)
-                  (IHb jb (Harg jb ltac:(in_args Hop)) pi Hv2)).
-    - exact Hval.
+    eapply compile_node_valid_transfer; [ | | exact Hval ].
+    - intros x Hx. exact (IHb x (Harg x Hx) pi).
+    - (* a selecting phi: the two states agree on its condition's value *)
+      intros c tb eb Hop. split; [ exact (fun H => H) |]. split.
+      + intros b. apply IHb, Harg. destruct b; in_args Hop.
+      + exact (compile_nobuf_state_indep_gen act a_idx input1 input2 ss1 ss2
+                 tainted dfacts bufs Halign Hs Ho Hi Hsub Hb fuel c 1 pi
+                 ltac:(pose proof (Harg c ltac:(in_args Hop)); lia)
+                 ltac:(intros y Hy; apply Hsamples; pose proof (Harg c ltac:(in_args Hop)); lia)).
   Qed.
 
   (* compile_dfg_expr is fuel-invariant above the structural bound: the recursion
@@ -9724,80 +9824,12 @@ Section SchedulerSimulation.
     intros Hn1 Hnlen f1 f2 pi Hf1 Hf2.
     destruct f1 as [| f1']; [ lia | ].
     destruct f2 as [| f2']; [ lia | ].
-    set (dfg := build_dfg ctx act) in *.
-    cbn [compile_dfg_expr_aux].
     destruct (BitsToLists.list_assoc buffers n) as [[n_idx n_sz] |] eqn:Hla.
-    - reflexivity.
-    - set (node := nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}) in *.
-      assert (Hnode_in : In node (graph dfg)) by (unfold node; apply nth_In; exact Hnlen).
-      pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
-      pose proof (node_nid_at act n Hnlen) as Hnid. fold dfg in Hnid. fold node in Hnid.
-      assert (Harg : forall x, In x (get_args ctx node) -> 1 <= x /\ x < n).
-      { intros x Hx. split.
-        - exact (Hargpos node Hnode_in x Hx).
-        - pose proof (args_lt_fwd act node) as Hlt2. fold dfg in Hlt2.
-          specialize (Hlt2 Hnode_in x Hx). rewrite Hnid in Hlt2. exact Hlt2. }
-      assert (Hrec : forall x (p: list lit), In x (get_args ctx node) ->
-                compile_dfg_expr_aux ctx bneeds tainted dfacts p f1' a_idx dfg x buffers
-                = compile_dfg_expr_aux ctx bneeds tainted dfacts p f2' a_idx dfg x buffers).
-      { intros x p Hx. destruct (Harg x Hx) as [Hx1 Hx2].
-        apply (IH x Hx2 Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen)); lia. }
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Hop.
-      + reflexivity.
-      + reflexivity.
-      + destruct v; reflexivity.
-      + assert (Hain : In arg (get_args ctx node))
-          by (unfold get_args; rewrite Hop; left; reflexivity).
-        rewrite (Hrec arg pi Hain). reflexivity.
-      + assert (Ha1 : In arg1 (get_args ctx node))
-          by (unfold get_args; rewrite Hop; left; reflexivity).
-        assert (Ha2 : In arg2 (get_args ctx node))
-          by (unfold get_args; rewrite Hop; right; left; reflexivity).
-        rewrite (Hrec arg1 pi Ha1), (Hrec arg2 pi Ha2). reflexivity.
-      + assert (Hain : In arg (get_args ctx node))
-          by (unfold get_args; rewrite Hop; left; reflexivity).
-        rewrite (Hrec arg pi Hain). reflexivity.
-      + assert (Hcin : In cnd (get_args ctx node))
-          by (unfold get_args; rewrite Hop; left; reflexivity).
-        assert (Htin : In tid (get_args ctx node))
-          by (unfold get_args; rewrite Hop; right; left; reflexivity).
-        assert (Hein : In eid (get_args ctx node))
-          by (unfold get_args; rewrite Hop; right; right; left; reflexivity).
-        rewrite (Hrec cnd pi Hcin), (Hrec tid (ppath tainted dfacts pi cnd true) Htin),
-                (Hrec eid (ppath tainted dfacts pi cnd false) Hein). reflexivity.
-      + (* DFG_Stall: one argument, same shape as DFG_Unary / DFG_Resize. *)
-        assert (Hain : In sa (get_args ctx node))
-          by (unfold get_args; rewrite Hop; left; reflexivity).
-        rewrite (Hrec sa pi Hain). reflexivity.
-      + (* SPIKE 2b: DFG_Drive, same shape -- plus its guard's sources, which
-           [get_args] counts as arguments too. *)
-        assert (Hain : In dn (get_args ctx node))
-          by (unfold get_args; rewrite Hop; left; reflexivity).
-        rewrite (Hrec dn pi Hain).
-        destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi f2' a_idx
-                    dfg dn buffers) as [de ve] eqn:ED.
-        cbv beta iota zeta. f_equal.
-        apply (fold_valid_and_ext
-                 (fun m => snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi f1'
-                                  a_idx dfg m buffers))
-                 (fun m => snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi f2'
-                                  a_idx dfg m buffers)) ve den).
-        intros x Hin.
-        rewrite (Hrec (fst x) pi
-          ltac:(unfold get_args; rewrite Hop; right; exact (in_map fst den x Hin))).
-        reflexivity.
-      + (* DFG_Sample -- the fuel only reaches the token, and the value half
-           does not mention it. *)
-        assert (Hain : In sn (get_args ctx node))
-          by (unfold get_args; rewrite Hop; left; reflexivity).
-        rewrite (Hrec sn pi Hain). reflexivity.
-      + (* DFG_Join: both arguments, for the validity half only. *)
-        assert (Hain : In ja (get_args ctx node))
-          by (unfold get_args; rewrite Hop; left; reflexivity).
-        assert (Hbin : In jb (get_args ctx node))
-          by (unfold get_args; rewrite Hop; right; left; reflexivity).
-        rewrite (Hrec ja pi Hain), (Hrec jb pi Hbin). reflexivity.
-      + exfalso. apply (node_op_not_empty act n Hn1 Hnlen). exact Hop.
+    { cbn [compile_dfg_expr_aux]. rewrite Hla. reflexivity. }
+    rewrite (compile_unbuffered (fuel := f1') Hla), (compile_unbuffered (fuel := f2') Hla).
+    apply compile_node_ext. intros p x Hx.
+    destruct (node_args_range act n Hn1 Hnlen x Hx) as [Hx1 Hx2].
+    apply (IH x Hx2 Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen)); lia.
   Qed.
 
   Lemma compile_fuel_irrel (act: tfs_action sched) a_idx buffers :
@@ -9833,76 +9865,14 @@ Section SchedulerSimulation.
     intros n. induction n as [n IH] using (well_founded_induction lt_wf).
     intros Hn1 Hnlen Hagree f pi Hf.
     destruct f as [| f']; [ lia | ].
-    set (dfg := build_dfg ctx act) in *.
-    cbn [compile_dfg_expr_aux].
-    rewrite (Hagree n (Nat.le_refl n)).
     destruct (BitsToLists.list_assoc b2 n) as [[n_idx n_sz] |] eqn:Hla.
-    - reflexivity.
-    - set (node := nth n (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0 |}) in *.
-      assert (Hnode_in : In node (graph dfg)) by (unfold node; apply nth_In; exact Hnlen).
-      pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
-      pose proof (node_nid_at act n Hnlen) as Hnid. fold dfg in Hnid. fold node in Hnid.
-      assert (Harg : forall x, In x (get_args ctx node) -> 1 <= x /\ x < n).
-      { intros x Hx. split.
-        - exact (Hargpos node Hnode_in x Hx).
-        - pose proof (args_lt_fwd act node) as Hlt2. fold dfg in Hlt2.
-          specialize (Hlt2 Hnode_in x Hx). rewrite Hnid in Hlt2. exact Hlt2. }
-      assert (Hrec : forall x (p: list lit), In x (get_args ctx node) ->
-                compile_dfg_expr_aux ctx bneeds tainted dfacts p f' a_idx dfg x b1
-                = compile_dfg_expr_aux ctx bneeds tainted dfacts p f' a_idx dfg x b2).
-      { intros x p Hx. destruct (Harg x Hx) as [Hx1 Hx2].
-        apply (IH x Hx2 Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen));
-          [ intros y Hy; apply Hagree; lia | lia ]. }
-      destruct (op node) as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Hop.
-      + reflexivity.
-      + reflexivity.
-      + destruct v; reflexivity.
-      + assert (Hain : In arg (get_args ctx node))
-          by (unfold get_args; rewrite Hop; left; reflexivity).
-        rewrite (Hrec arg pi Hain). reflexivity.
-      + assert (Ha1 : In arg1 (get_args ctx node))
-          by (unfold get_args; rewrite Hop; left; reflexivity).
-        assert (Ha2 : In arg2 (get_args ctx node))
-          by (unfold get_args; rewrite Hop; right; left; reflexivity).
-        rewrite (Hrec arg1 pi Ha1), (Hrec arg2 pi Ha2). reflexivity.
-      + assert (Hain : In arg (get_args ctx node))
-          by (unfold get_args; rewrite Hop; left; reflexivity).
-        rewrite (Hrec arg pi Hain). reflexivity.
-      + assert (Hcin : In cnd (get_args ctx node))
-          by (unfold get_args; rewrite Hop; left; reflexivity).
-        assert (Htin : In tid (get_args ctx node))
-          by (unfold get_args; rewrite Hop; right; left; reflexivity).
-        assert (Hein : In eid (get_args ctx node))
-          by (unfold get_args; rewrite Hop; right; right; left; reflexivity).
-        rewrite (Hrec cnd pi Hcin), (Hrec tid (ppath tainted dfacts pi cnd true) Htin),
-                (Hrec eid (ppath tainted dfacts pi cnd false) Hein). reflexivity.
-      + assert (Hain : In sa (get_args ctx node))
-          by (unfold get_args; rewrite Hop; left; reflexivity).
-        rewrite (Hrec sa pi Hain). reflexivity.
-      + assert (Hain : In dn (get_args ctx node))
-          by (unfold get_args; rewrite Hop; left; reflexivity).
-        rewrite (Hrec dn pi Hain).
-        destruct (compile_dfg_expr_aux ctx bneeds tainted dfacts pi f' a_idx
-                    dfg dn b2) as [de ve] eqn:ED.
-        cbv beta iota zeta. f_equal.
-        apply (fold_valid_and_ext
-                 (fun m => snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi f'
-                                  a_idx dfg m b1))
-                 (fun m => snd (compile_dfg_expr_aux ctx bneeds tainted dfacts pi f'
-                                  a_idx dfg m b2)) ve den).
-        intros x Hin.
-        rewrite (Hrec (fst x) pi
-          ltac:(unfold get_args; rewrite Hop; right; exact (in_map fst den x Hin))).
-        reflexivity.
-      + assert (Hain : In sn (get_args ctx node))
-          by (unfold get_args; rewrite Hop; left; reflexivity).
-        rewrite (Hrec sn pi Hain). reflexivity.
-      + assert (Hain : In ja (get_args ctx node))
-          by (unfold get_args; rewrite Hop; left; reflexivity).
-        assert (Hbin : In jb (get_args ctx node))
-          by (unfold get_args; rewrite Hop; right; left; reflexivity).
-        rewrite (Hrec ja pi Hain), (Hrec jb pi Hbin). reflexivity.
-      + exfalso. apply (node_op_not_empty act n Hn1 Hnlen). exact Hop.
+    { cbn [compile_dfg_expr_aux]. rewrite (Hagree n (Nat.le_refl n)), Hla. reflexivity. }
+    rewrite (compile_unbuffered (eq_trans (Hagree n (Nat.le_refl n)) Hla)),
+            (compile_unbuffered Hla).
+    apply compile_node_ext. intros p x Hx.
+    destruct (node_args_range act n Hn1 Hnlen x Hx) as [Hx1 Hx2].
+    apply (IH x Hx2 Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen));
+      [ intros y Hy; apply Hagree; lia | lia ].
   Qed.
 
   (* A stall carries no value, whether or not it is buffered: the buffered
@@ -10534,8 +10504,6 @@ Section SchedulerSimulation.
       (fst (compile_dfg_expr_at ctx bneeds p f a_idx (build_dfg ctx act) m bs)).
     Local Notation cvalid p f m bs :=
       (snd (compile_dfg_expr_at ctx bneeds p f a_idx (build_dfg ctx act) m bs)).
-    Local Notation crit_at p c :=
-      (phi_crit (get_tainted ctx (build_dfg ctx act)) (decl_facts ctx (build_dfg ctx act)) c p).
 
     (* Compiling under a LONGER path condition only WEAKENS the validity: the
        path enters only through [declassified_at], so a phi that was critical --
@@ -10552,57 +10520,15 @@ Section SchedulerSimulation.
       { (* buffered: the register, under any path *)
         cbn [compile_dfg_expr_aux] in Hval |- *. rewrite Hla in Hval |- *. exact Hval. }
       rewrite (compile_unbuffered Hla) in Hval. rewrite (compile_unbuffered Hla).
-      case_op (op (nth n (graph (build_dfg ctx act)) {| nid := 0; op := DFG_Empty; sz := 0 |}))
-        as Hop; cbn [compile_node fst snd] in Hval |- *.
-      - exact Hval.
-      - exact Hval.
-      - destruct v; exact Hval.
-      - exact (IH arg pi pi' Hsub Hval).
-      - apply valid_and_ones in Hval as [Hv1 Hv2]. apply valid_and_ones.
-        exact (conj (IH arg1 pi pi' Hsub Hv1) (IH arg2 pi pi' Hsub Hv2)).
-      - exact (IH arg pi pi' Hsub Hval).
-      - (* Phi: the only place the path is read *)
-        pose proof (compile_fst_pi_irrel (get_tainted ctx (build_dfg ctx act))
-                      (decl_facts ctx (build_dfg ctx act)) a_idx (build_dfg ctx act)
-                      bufs fuel cnd pi pi') as Hce.
-        destruct (crit_at pi cnd) eqn:Hcp; destruct (crit_at pi' cnd) eqn:Hcp';
-          cbn [phi_path] in Hval |- *.
-        + (* critical both sides *)
-          apply valid_and_ones in Hval as [Hte Hcv]. apply valid_and_ones in Hte as [Htv Hev].
-          apply valid_and_ones. split; [ apply valid_and_ones; split |].
-          * exact (IH tid pi pi' Hsub Htv).
-          * exact (IH eid pi pi' Hsub Hev).
-          * exact (IH cnd pi pi' Hsub Hcv).
-        + (* critical at [pi], selecting at [pi']: both branches give the one *)
-          apply valid_and_ones in Hval as [Hte Hcv]. apply valid_and_ones in Hte as [Htv Hev].
-          assert (Hsub' : forall b x, In x pi -> In x ((cnd, b) :: pi'))
-            by (intros b x Hx; right; exact (Hsub x Hx)).
-          apply valid_and_ones. split; [ exact (IH cnd pi pi' Hsub Hcv) |].
-          apply valid_if_eval;
-            [ exact (IH tid _ _ (Hsub' true) Htv) | exact (IH eid _ _ (Hsub' false) Hev) ].
-        + (* selecting at [pi], critical at [pi']: impossible *)
-          exfalso. rewrite (phi_crit_mono _ _ cnd pi pi' Hsub Hcp') in Hcp. discriminate.
-        + (* selecting both sides *)
-          apply valid_and_ones in Hval as [Hcv Hif].
-          destruct (valid_if_eval_inv _ _ _ ss input Hif) as [Hthen Helse].
-          assert (Hsub' : forall b x, In x ((cnd, b) :: pi) -> In x ((cnd, b) :: pi'))
-            by (intros b x [Hx | Hx]; [ left; exact Hx | right; exact (Hsub x Hx) ]).
-          apply valid_and_ones. split; [ exact (IH cnd pi pi' Hsub Hcv) |].
-          apply valid_if_eval_sel; rewrite <- Hce; intro Hc;
-            [ exact (IH tid _ _ (Hsub' true) (Hthen Hc))
-            | exact (IH eid _ _ (Hsub' false) (Helse Hc)) ].
-      - exact (IH sa pi pi' Hsub Hval).
-      - (* Drive: the argument's validity AND every literal's source, and the IH
-           carries each across the path change. *)
-        destruct (proj1 (fold_valid_and_ones (fun m => cvalid pi fuel m bufs) _ ss input den)
-                    Hval) as [Hv Hall].
-        apply (fold_valid_and_ones (fun m => cvalid pi' fuel m bufs)).
-        split; [ exact (IH dn pi pi' Hsub Hv) |].
-        intros x Hin. exact (IH (fst x) pi pi' Hsub (Hall x Hin)).
-      - exact (IH sn pi pi' Hsub Hval).
-      - apply valid_and_ones in Hval as [Hv1 Hv2]. apply valid_and_ones.
-        exact (conj (IH ja pi pi' Hsub Hv1) (IH jb pi pi' Hsub Hv2)).
-      - exact Hval.
+      revert Hval. apply compile_node_valid_transfer.
+      - intros x _ Hx. exact (IH x pi pi' Hsub Hx).
+      - (* the path enters only at a phi: criticality, branch paths, condition *)
+        intros c tb eb _. split; [ exact (phi_crit_mono _ _ c pi pi' Hsub) |]. split.
+        + intros b Hx. exact (IH _ _ _ (ppath_incl _ _ c b pi pi' Hsub) Hx).
+        + intros _. rewrite (compile_fst_pi_irrel (get_tainted ctx (build_dfg ctx act))
+                               (decl_facts ctx (build_dfg ctx act)) a_idx
+                               (build_dfg ctx act) bufs fuel c pi pi').
+          reflexivity.
     Qed.
 
     (* SUBSTITUTION, gated by VALIDITY: where a node's compiled validity fires, its
@@ -10664,89 +10590,23 @@ Section SchedulerSimulation.
           rewrite (compile_fst_pi_irrel _ _ a_idx (build_dfg ctx act) (sample_bufs act a_idx)
                      (length (graph (build_dfg ctx act))) n [] pi).
           reflexivity.
-      - (* not buffered: split the validity along the op's structure *)
+      - (* not buffered: one step, each value read at its declared width *)
         rewrite (compile_unbuffered Hla) in Hval |- *.
         rewrite (compile_unbuffered (Hsam_sub n (Nat.le_refl n) Hla)).
         pose proof (node_args_range act n Hn1 Hnlen) as Harg.
-        set (node := nth n (graph (build_dfg ctx act))
-                       {| nid := 0; op := DFG_Empty; sz := 0 |}) in *.
+        assert (Hfg : node_args_sz (build_dfg ctx act)
+                        (nth n (graph (build_dfg ctx act))
+                           {| nid := 0; op := DFG_Empty; sz := 0 |}))
+          by (apply wfg_build_dfg, nth_In; exact Hnlen).
         subst szB.
-        assert (Hfg : node_args_sz (build_dfg ctx act) node)
-          by (apply wfg_build_dfg; unfold node; apply nth_In; exact Hnlen).
-        (* a child is substituted at any width its node declares *)
-        assert (Hchild : forall x sx (p: list lit), In x (get_args ctx node) ->
-                  wsz (build_dfg ctx act) x sx ->
-                  eval1 (cvalid p fuel x bufs) ss input = Bits.ones 1 ->
-                  tf_eval_expr ss_sz si_sz oo_sz (szB := sx) (cval p fuel x bufs) ss input
-                  = tf_eval_expr ss_sz si_sz oo_sz (szB := sx)
-                      (cval p fuel x (sample_bufs act a_idx)) ss input).
-        { intros x sx p Hx Hwsz Hxv.
-          destruct (Harg x Hx) as [Hx1 Hx2].
-          destruct (wsz_node_sz act x sx Hwsz) as [Hxlen Hxsz].
-          apply (IH x sx p
-                   ltac:(intros y Hy; apply Hsam_sub; lia)
-                   ltac:(intros y my mszy Hy; apply Hsam_same; lia)
-                   Hx1 Hxlen ltac:(lia) (eq_sym Hxsz) Hxv). }
-        unfold node_args_sz in Hfg.
-        case_op (op node) as Hop; cbn [compile_node fst snd] in Hval |- *.
-        + reflexivity.
-        + reflexivity.
-        + destruct v; reflexivity.
-        + (* Unary: validity passes through *)
-          destruct op1; cbn [tf_eval_expr];
-            rewrite (Hchild arg _ pi ltac:(in_args Hop) Hfg Hval); reflexivity.
-        + (* Binary: validity is the AND of the two children's *)
-          apply valid_and_ones in Hval as [Hv1 Hv2].
-          destruct op1; destruct Hfg as [Hf1 Hf2]; cbn [tf_eval_expr];
-            rewrite (Hchild arg1 _ pi ltac:(in_args Hop) Hf1 Hv1),
-                    (Hchild arg2 _ pi ltac:(in_args Hop) Hf2 Hv2);
-            reflexivity.
-        + (* Resize: validity passes through, read at the argument's own width *)
-          destruct (Harg arg ltac:(in_args Hop)) as [Hx1 Hx2].
-          cbn [tf_eval_expr].
-          rewrite (IH arg _ pi
-                     ltac:(intros y Hy; apply Hsam_sub; lia)
-                     ltac:(intros y my mszy Hy; apply Hsam_same; lia)
-                     Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen) ltac:(lia) eq_refl Hval).
-          reflexivity.
-        + (* Phi: the validity fires only for the branch the value selects *)
-          destruct Hfg as [Hf1 [Hf2 Hf3]].
-          (* the branch paths only matter to [Hchild], which is path-polymorphic *)
-          remember (ppath_at act pi cnd true) as pt eqn:Hpt. clear Hpt.
-          remember (ppath_at act pi cnd false) as pe eqn:Hpe. clear Hpe.
-          cbn [tf_eval_expr].
-          destruct (crit_at pi cnd).
-          * (* critical: all three children are valid *)
-            apply valid_and_ones in Hval as [Hte Hcv]. apply valid_and_ones in Hte as [Htv Hev].
-            rewrite (Hchild cnd 1 pi ltac:(in_args Hop) Hf1 Hcv),
-                    (Hchild tid _ pt ltac:(in_args Hop) Hf2 Htv),
-                    (Hchild eid _ pe ltac:(in_args Hop) Hf3 Hev).
-            reflexivity.
-          * (* non-critical: only the selected branch is known valid *)
-            apply valid_and_ones in Hval as [Hcv Hif].
-            destruct (valid_if_eval_inv _ _ _ ss input Hif) as [Hthen Helse].
-            pose proof (Hchild cnd 1 pi ltac:(in_args Hop) Hf1 Hcv) as Hcc.
-            rewrite Hcc.
-            destruct (beq_dec (eval1 (cval pi fuel cnd (sample_bufs act a_idx)) ss input)
-                        Bits.zero) eqn:Hb.
-            -- apply beq_dec_iff in Hb.
-               refine (Hchild eid _ pe ltac:(in_args Hop) Hf3 (Helse _)).
-               rewrite Hcc. exact Hb.
-            -- refine (Hchild tid _ pt ltac:(in_args Hop) Hf2 (Hthen _)).
-               rewrite Hcc. intro Hz. rewrite Hz, beq_dec_refl in Hb. discriminate.
-        + (* Stall: carries no value, so both sides are [tf_const 0] *)
-          reflexivity.
-        + (* Drive: the value still passes through; the guard reached only the
-             validity, and the argument's half of it is what the IH wants *)
-          destruct (proj1 (fold_valid_and_ones (fun m => cvalid pi fuel m bufs) _ ss input den)
-                      Hval) as [Hv _].
-          exact (Hchild dn _ pi ltac:(in_args Hop) Hfg Hv).
-        + (* Sample: its value [tf_ivar] is the same with and without buffers,
-             the round trip's value/validity decoupling *)
-          reflexivity.
-        + (* Join: no value either *)
-          reflexivity.
-        + exfalso. exact (node_op_not_empty act n Hn1 Hnlen Hop).
+        revert Hval. apply compile_node_value_transfer; try (intros; reflexivity).
+        intros x sx p Hr Hxv.
+        destruct (Harg x (reads_at_args _ _ _ _ _ Hr)) as [Hx1 Hx2].
+        exact (IH x sx p
+                 ltac:(intros y Hy; apply Hsam_sub; lia)
+                 ltac:(intros y my mszy Hy; apply Hsam_same; lia)
+                 Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen) ltac:(lia)
+                 (reads_at_declared act _ x sx Hfg Hr) Hxv).
     Qed.
 
     (* The unbounded form, for the callers that pass the whole table. *)
@@ -10844,15 +10704,13 @@ Section SchedulerSimulation.
         rewrite (compile_fuel_irrel_gen act a_idx (sample_bufs act a_idx) _ _ n Hn1 Hnlen
                    (S fuel) (length (graph (build_dfg ctx act))) pi Hnfuel Hnlen).
         rewrite <- Hvn. exact (Hrefs n_idx' pi Hval).
-      - (* not buffered: split the validity along the op's structure *)
+      - (* not buffered: one step, each validity carried across the tables *)
         rewrite (compile_unbuffered Hla) in Hval.
         rewrite (compile_unbuffered (Hsam_sub n (Nat.le_refl n) Hla)).
         pose proof (node_args_range act n Hn1 Hnlen) as Harg.
-        set (node := nth n (graph (build_dfg ctx act))
-                       {| nid := 0; op := DFG_Empty; sz := 0 |}) in *.
-        assert (Hfg : node_args_sz (build_dfg ctx act) node)
-          by (apply wfg_build_dfg; unfold node; apply nth_In; exact Hnlen).
-        assert (Hchild : forall x (p: list lit), In x (get_args ctx node) ->
+        assert (Hchild : forall x (p: list lit),
+                  In x (get_args ctx (nth n (graph (build_dfg ctx act))
+                                       {| nid := 0; op := DFG_Empty; sz := 0 |})) ->
                   eval1 (cvalid p fuel x bufs) ss input = Bits.ones 1 ->
                   eval1 (cvalid p fuel x (sample_bufs act a_idx)) ss input = Bits.ones 1).
         { intros x p Hx Hxv. destruct (Harg x Hx) as [Hx1 Hx2].
@@ -10860,55 +10718,22 @@ Section SchedulerSimulation.
                    ltac:(intros y Hy; apply Hsam_sub; lia)
                    ltac:(intros y my mszy Hy; apply Hsam_same; lia)
                    Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen) ltac:(lia) Hxv). }
-        unfold node_args_sz in Hfg.
-        case_op (op node) as Hop; cbn [compile_node fst snd] in Hval |- *.
-        + apply eval1_const1.
-        + apply eval1_const1.
-        + destruct v; apply eval1_const1.
-        + exact (Hchild arg pi ltac:(in_args Hop) Hval).
-        + apply valid_and_ones in Hval as [Hv1 Hv2]. apply valid_and_ones.
-          exact (conj (Hchild arg1 pi ltac:(in_args Hop) Hv1)
-                      (Hchild arg2 pi ltac:(in_args Hop) Hv2)).
-        + exact (Hchild arg pi ltac:(in_args Hop) Hval).
-        + (* Phi: the selected branch, and the two tables must SELECT alike *)
-          destruct Hfg as [Hf1 [Hf2 Hf3]].
-          (* the condition agrees in VALUE across the two tables *)
-          destruct (Harg cnd ltac:(in_args Hop)) as [Hc1 Hc2].
-          destruct (wsz_node_sz act cnd 1 Hf1) as [Hclen Hcsz].
-          pose proof (compile_subst_valid_gen_at Hinv bufs Hsub fuel cnd 1 pi
-                        ltac:(intros y Hy; apply Hsam_sub; lia)
-                        ltac:(intros y my mszy Hy; apply Hsam_same; lia)
-                        Hc1 Hclen ltac:(lia) (eq_sym Hcsz)) as Hcondval.
-          remember (ppath_at act pi cnd true) as pt eqn:Hpt. clear Hpt.
-          remember (ppath_at act pi cnd false) as pe eqn:Hpe. clear Hpe.
-          destruct (crit_at pi cnd).
-          * (* critical: all three children are valid *)
-            apply valid_and_ones in Hval as [Hte Hcv]. apply valid_and_ones in Hte as [Htv Hev].
-            apply valid_and_ones. split; [ apply valid_and_ones; split |].
-            -- exact (Hchild tid pt ltac:(in_args Hop) Htv).
-            -- exact (Hchild eid pe ltac:(in_args Hop) Hev).
-            -- exact (Hchild cnd pi ltac:(in_args Hop) Hcv).
-          * (* non-critical: only the branch the condition selects *)
-            apply valid_and_ones in Hval as [Hcv Hif].
-            destruct (valid_if_eval_inv _ _ _ ss input Hif) as [Hthen Helse].
-            specialize (Hcondval Hcv).
-            apply valid_and_ones. split; [ exact (Hchild cnd pi ltac:(in_args Hop) Hcv) |].
-            apply valid_if_eval_sel; rewrite <- Hcondval; intro Hc;
-              [ exact (Hchild tid pt ltac:(in_args Hop) (Hthen Hc))
-              | exact (Hchild eid pe ltac:(in_args Hop) (Helse Hc)) ].
-        + exact (Hchild sa pi ltac:(in_args Hop) Hval).
-        + (* Drive: the argument's validity and every literal's source, each
-             carried across the table by the IH *)
-          destruct (proj1 (fold_valid_and_ones (fun m => cvalid pi fuel m bufs) _ ss input den)
-                      Hval) as [Hv Hall].
-          apply (fold_valid_and_ones (fun m => cvalid pi fuel m (sample_bufs act a_idx))).
-          split; [ exact (Hchild dn pi ltac:(in_args Hop) Hv) |].
-          intros x Hin. exact (Hchild (fst x) pi ltac:(in_args Hop) (Hall x Hin)).
-        + exact (Hchild sn pi ltac:(in_args Hop) Hval).
-        + apply valid_and_ones in Hval as [Hv1 Hv2]. apply valid_and_ones.
-          exact (conj (Hchild ja pi ltac:(in_args Hop) Hv1)
-                      (Hchild jb pi ltac:(in_args Hop) Hv2)).
-        + exfalso. exact (node_op_not_empty act n Hn1 Hnlen Hop).
+        revert Hval. apply compile_node_valid_transfer.
+        + intros x Hx. exact (Hchild x pi Hx).
+        + (* a selecting phi: the two tables agree on its condition's value *)
+          intros c tb eb Hop. split; [ exact (fun H => H) |]. split.
+          * intros b. apply Hchild. destruct b; in_args Hop.
+          * assert (Hfg : node_args_sz (build_dfg ctx act)
+                            (nth n (graph (build_dfg ctx act))
+                               {| nid := 0; op := DFG_Empty; sz := 0 |}))
+              by (apply wfg_build_dfg, nth_In; exact Hnlen).
+            unfold node_args_sz in Hfg. rewrite Hop in Hfg. destruct Hfg as [Hf1 _].
+            destruct (Harg c ltac:(in_args Hop)) as [Hc1 Hc2].
+            destruct (wsz_node_sz act c 1 Hf1) as [Hclen Hcsz].
+            exact (compile_subst_valid_gen_at Hinv bufs Hsub fuel c 1 pi
+                     ltac:(intros y Hy; apply Hsam_sub; lia)
+                     ltac:(intros y my mszy Hy; apply Hsam_same; lia)
+                     Hc1 Hclen ltac:(lia) (eq_sym Hcsz)).
     Qed.
 
     (* The unbounded form, for the callers that pass the whole table. *)
@@ -10966,41 +10791,11 @@ Section SchedulerSimulation.
       - (* not buffered: the validity is built from the args' validities *)
         rewrite (compile_unbuffered Hla).
         pose proof (node_args_range act n Hn1 Hnlen) as Harg.
-        set (node := nth n (graph (build_dfg ctx act))
-                       {| nid := 0; op := DFG_Empty; sz := 0 |}) in *.
-        assert (Hchild : forall x (p: list lit), In x (get_args ctx node) ->
-                  eval1 (cvalid p fuel x bufs) ss input = Bits.ones 1).
-        { intros x p Hx. destruct (Harg x Hx) as [Hx1 Hx2].
-          pose proof (node_rank_child act x n bound Hx2 Hnb) as Hr.
-          exact (IH x p Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen) ltac:(lia)
-                   (Nat.lt_le_incl _ _ Hr) (or_intror Hr)). }
-        case_op (op node) as Hop; cbn [compile_node fst snd].
-        + apply eval1_const1.
-        + apply eval1_const1.
-        + destruct v; apply eval1_const1.
-        + exact (Hchild arg pi ltac:(in_args Hop)).
-        + apply valid_and_ones.
-          exact (conj (Hchild arg1 pi ltac:(in_args Hop)) (Hchild arg2 pi ltac:(in_args Hop))).
-        + exact (Hchild arg pi ltac:(in_args Hop)).
-        + destruct (crit_at pi cnd).
-          * apply valid_and_ones. split; [ apply valid_and_ones; split |];
-              apply Hchild; in_args Hop.
-          * apply valid_and_ones. split; [ apply Hchild; in_args Hop |].
-            apply valid_if_eval; apply Hchild; in_args Hop.
-        + (* Stall: validity passes through unchanged here.  A counting stall
-             delays it, so this lemma restates over a cycle index rather than
-             holding pointwise. *)
-          exact (Hchild sa pi ltac:(in_args Hop)).
-        + (* Drive: the argument's validity and every literal's source, all of
-             them arguments, so [Hchild] covers each *)
-          apply (fold_valid_and_ones (fun m => cvalid pi fuel m bufs)).
-          split; [ exact (Hchild dn pi ltac:(in_args Hop)) |].
-          intros x Hin. exact (Hchild (fst x) pi ltac:(in_args Hop)).
-        + (* Sample: its validity IS the token's *)
-          exact (Hchild sn pi ltac:(in_args Hop)).
-        + apply valid_and_ones.
-          exact (conj (Hchild ja pi ltac:(in_args Hop)) (Hchild jb pi ltac:(in_args Hop))).
-        + exfalso. exact (node_op_not_empty act n Hn1 Hnlen Hop).
+        apply compile_node_valid_fires; [| exact (node_op_not_empty act n Hn1 Hnlen) ].
+        intros p x Hx. destruct (Harg x Hx) as [Hx1 Hx2].
+        pose proof (node_rank_child act x n bound Hx2 Hnb) as Hr.
+        exact (IH x p Hx1 (Nat.lt_trans _ _ _ Hx2 Hnlen) ltac:(lia)
+                 (Nat.lt_le_incl _ _ Hr) (or_intror Hr)).
     Qed.
 
     Lemma compile_valid_ones :

@@ -1209,10 +1209,6 @@ Section SchedulerRoundTrip.
              (Hfold en _ Hval)).
   Qed.
 
-  (* Componentwise equality of a pair, without [injection] on its terms. *)
-  Lemma pair_inj {A B} {a c: A} {b d: B} : (a, b) = (c, d) -> a = c /\ b = d.
-  Proof. intro H. exact (conj (f_equal fst H) (f_equal snd H)). Qed.
-
   Section DFGSem.
     Context (act: tfs_action sched)
             (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))

@@ -9,10 +9,10 @@ Tactic Notation "case_op" constr(o) "as" ident(Hop) :=
   destruct o as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid
                 | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Hop.
 
-(* [In x (get_args ctx node)] for an argument [x] of the op [Hop] names, a
-   drive's guard literal [x] given as [In l en] with [x = fst l]. *)
+(* [In x (get_args ctx node)] for an argument [x] of the op [Hop] names (or of
+   an op already in the goal), a guard literal's [x] given as [In l en]. *)
 Ltac in_args Hop :=
-  unfold get_args; rewrite Hop;
+  unfold get_args; try rewrite Hop;
   first [ left; reflexivity | right; left; reflexivity
         | right; right; left; reflexivity | right; apply in_map; assumption ].
 
