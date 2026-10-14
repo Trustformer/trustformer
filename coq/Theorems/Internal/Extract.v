@@ -483,25 +483,22 @@ Section Ideal.
     rewrite Hop in Hd.
     assert (Hhead : forall h, ProofDefinitions.sample_drive_head ctx cost_limit act p h = Some d -> d <= h).
     { intros h Hh. unfold ProofDefinitions.sample_drive_head, AttackerClock.node_op in Hh.
-      destruct (op (nth h (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}))
-        as [c | v | v | uop x | bop x y | x | c t e | sl x | dp x den | sp x sen | jd jb | ]
-        eqn:Hoh; try discriminate.
-      - destruct (eq_dec dp p); [ injection Hh as Hhd; lia | discriminate ].
-      - destruct (op (nth jd (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}))
-          as [c | v | v | uop x | bop x y | x | c t e | sl x | dp x den | sp x sen | ja jc | ];
+      case_op (op (nth h (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})) as Hoh;
+        try discriminate.
+      - destruct (eq_dec dov p); [ injection Hh as Hhd; lia | discriminate ].
+      - case_op (op (nth ja (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}));
           try discriminate.
-        destruct (eq_dec dp p); [ injection Hh as Hjd | discriminate ].
-        subst jd. apply Nat.lt_le_incl. apply (arg_below h d).
+        destruct (eq_dec dov p); [ injection Hh as Hjd | discriminate ].
+        subst ja. apply Nat.lt_le_incl. apply (arg_below h d).
         + change (op (node_at G h))
             with (op (nth h (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})).
           rewrite Hoh. discriminate.
         + unfold get_args, node_at. rewrite Hoh. left. reflexivity. }
-    destruct (op (nth tok (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop x | bop x y | x | c t e | sl hd | dp x den | sp x sen | ja jc | ]
-      eqn:Hot; try (pose proof (Hhead tok Hd); lia).
+    case_op (op (nth tok (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})) as Hot;
+      try (pose proof (Hhead tok Hd); lia).
     pose proof (Hhead _ Hd) as Hdh.
-    assert (Hht : hd < tok).
-    { apply (arg_below tok hd).
+    assert (Hht : sa < tok).
+    { apply (arg_below tok sa).
       + change (op (node_at G tok))
           with (op (nth tok (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})).
         rewrite Hot. discriminate.

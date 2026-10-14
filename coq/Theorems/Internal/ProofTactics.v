@@ -5,17 +5,29 @@ Require Import Coq.Lists.List.
 Require Import Trustformer.Scheduler.Build.
 
 (* Split on a DFG op, naming its fields the same way in every proof, so a new
-   node kind adds its branch here rather than at each such split. *)
-Tactic Notation "case_op" constr(o) "as" ident(Hop) :=
-  destruct o as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid
-                | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Hop.
+   node kind adds its branch here rather than at each such split.  A name
+   already taken gets a fresh variant, so a discarded branch never clashes. *)
+Ltac case_op_names o Hop split_vars :=
+  let c := fresh "c" in let v := fresh "v" in let sv := fresh "sv" in
+  let ov := fresh "ov" in let op1 := fresh "op1" in let arg := fresh "arg" in
+  let arg1 := fresh "arg1" in let arg2 := fresh "arg2" in let cnd := fresh "cnd" in
+  let tid := fresh "tid" in let eid := fresh "eid" in let slat := fresh "slat" in
+  let sa := fresh "sa" in let dov := fresh "dov" in let dn := fresh "dn" in
+  let den := fresh "den" in let siv := fresh "siv" in let sn := fresh "sn" in
+  let sen := fresh "sen" in let ja := fresh "ja" in let jb := fresh "jb" in
+  match split_vars with
+  | false =>
+      destruct o as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid
+                    | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Hop
+  | true =>
+      destruct o as [c | v | [sv | ov] | op1 arg | op1 arg1 arg2 | arg | cnd tid eid
+                    | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Hop
+  end.
+Tactic Notation "case_op" constr(o) "as" ident(Hop) := case_op_names o Hop false.
 Tactic Notation "case_op" constr(o) :=
   let H := fresh "Hop" in case_op o as H; clear H.
-(* The same, a variable read split into a state's [sv] and an output's [ov];
-   the second list of node kinds, kept in step with the first. *)
-Tactic Notation "case_op_vars" constr(o) "as" ident(Hop) :=
-  destruct o as [c | v | [sv | ov] | op1 arg | op1 arg1 arg2 | arg | cnd tid eid
-                | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Hop.
+(* The same, a variable read split into a state's [sv] and an output's [ov]. *)
+Tactic Notation "case_op_vars" constr(o) "as" ident(Hop) := case_op_names o Hop true.
 Tactic Notation "case_op_vars" constr(o) :=
   let H := fresh "Hop" in case_op_vars o as H; clear H.
 

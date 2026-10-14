@@ -2719,8 +2719,7 @@ Section SchedulerSimulation.
       cbn [fold_left].
       destruct Hns as [Hxn | Hns].
       - subst x.
-        destruct (op ns) as [ c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid
-                            | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo;
+        case_op (op ns) as Eo;
           try discriminate Hop.
         injection Hop as Hp1 Hp2 Hp3. subst siv. subst sn. subst sen.
         destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) p p) as [_ | Hne];
@@ -2739,8 +2738,7 @@ Section SchedulerSimulation.
           exists nd, tk.
           split; [ exact Hnd |]. split; [ exact Hnid |].
           split; [ exact Hndop |]. rewrite guards_disjoint_sym. exact Hfr.
-      - destruct (op x) as [ c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid
-                          | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo;
+      - case_op (op x) as Eo;
           try exact (IHg acc Hdg' Hsub' Hlt' Hacc Hns).
         destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) siv p) as [-> | Hne];
           [| exact (IHg acc Hdg' Hsub' Hlt' Hacc Hns) ].
@@ -3108,12 +3106,12 @@ Section SchedulerSimulation.
   (* [read_var] either reuses a [DFG_Var v] node already in the graph (state
      untouched) or emits a fresh one.  The guards in its [find] predicate are
      exactly the three facts the reuse case has to supply. *)
-  Lemma read_var_cases (v: dfg_vars_t (states_var:=s_var) (outputs_var:=o_var))
+  Lemma read_var_cases (dv: dfg_vars_t (states_var:=s_var) (outputs_var:=o_var))
         (s: wst) id s' :
-    read_var ctx v s = (id, s') ->
-    (In {| nid := id; op := DFG_Var v; sz := dfg_var_size ctx v |} (graph s)
+    read_var ctx dv s = (id, s') ->
+    (In {| nid := id; op := DFG_Var dv; sz := dfg_var_size ctx dv |} (graph s)
      /\ 1 <= id /\ s' = s)
-    \/ emit ctx (DFG_Var v) (dfg_var_size ctx v) s = (id, s').
+    \/ emit ctx (DFG_Var dv) (dfg_var_size ctx dv) s = (id, s').
   Proof.
     unfold read_var, bind, get_state.
     match goal with
@@ -3121,14 +3119,14 @@ Section SchedulerSimulation.
     end; intro H.
     - unfold ret in H. injection H as Hid Hs. subst s'. left.
       apply find_some in Ef. destruct Ef as [Hin Hpred]. cbv beta in Hpred.
-      destruct (op nd) as [ c | iv | v2 | uop a | bop a1 a2 | a | cd t e | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo;
+      case_op (op nd) as Eo;
         try discriminate Hpred.
       apply andb_true_iff in Hpred. destruct Hpred as [Hpred Hpos].
       apply andb_true_iff in Hpred. destruct Hpred as [Hveq Hsz].
-      destruct (eq_dec v2 v) as [Hvv | _]; [ | discriminate Hveq ].
+      destruct (eq_dec v dv) as [Hvv | _]; [ | discriminate Hveq ].
       apply Nat.eqb_eq in Hsz. apply Nat.ltb_lt in Hpos.
-      assert (Hnd : nd = {| nid := id; op := DFG_Var v; sz := dfg_var_size ctx v |}).
-      { destruct nd as [n0 o0 z0]; cbn in *. subst o0. subst v2. subst z0.
+      assert (Hnd : nd = {| nid := id; op := DFG_Var dv; sz := dfg_var_size ctx dv |}).
+      { destruct nd as [n0 o0 z0]; cbn in *. subst o0. subst v. subst z0.
         rewrite <- Hid. reflexivity. }
       rewrite Hnd in Hin. split; [ exact Hin | split; [ rewrite <- Hid; exact Hpos | reflexivity ] ].
     - right. exact H.
@@ -5325,10 +5323,9 @@ Section SchedulerSimulation.
     node_args_sz s node -> wgmono s s' -> node_args_sz s' node.
   Proof.
     unfold node_args_sz. intros H Hg.
-    destruct (op node) as [c|v|v|uop a|bop a1 a2|a|cd t e|sa|dov dn den|siv sn sen|ja jb|];
-      [ exact I | exact I | exact I | | | exact I | | exact H | | exact I | exact I | exact I ].
-    - destruct uop; eapply wsz_gmono; eauto.
-    - destruct bop; destruct H as [H1 H2]; split; eapply wsz_gmono; eauto.
+    case_op (op node); try exact I; try exact H.
+    - destruct op1; eapply wsz_gmono; eauto.
+    - destruct op1; destruct H as [H1 H2]; split; eapply wsz_gmono; eauto.
     - destruct H as [H1 [H2 H3]]; repeat split; eapply wsz_gmono; eauto.
     - (* only the drive carries a value; stall, sample and join are [True] *)
       eapply wsz_gmono; eauto.
@@ -8492,8 +8489,7 @@ Section SchedulerSimulation.
     sx = sz (nth x (graph (build_dfg ctx act)) {| nid := 0; op := DFG_Empty; sz := 0 |}).
   Proof.
     unfold node_args_sz. intros Hfg Hr.
-    destruct (op node) as [ | | | uop a | bop a b | a | c t e | | p a en | | | ];
-      try destruct uop; try destruct bop; cbn [reads_at In] in Hr;
+    case_op (op node); try destruct op1; cbn [reads_at In] in Hr;
       repeat match goal with
              | H : _ \/ _ |- _ => destruct H as [H | H]
              | H : False |- _ => destruct H
@@ -10741,29 +10737,28 @@ Section SchedulerSimulation.
         pose proof Hst as Hst0. unfold stall_lat_of, node_op in Hst0.
         match type of Hst0 with
         | match ?o with _ => _ end = _ =>
-            destruct o as [cn|iv|dv|uop ua|bop b1 b2|ra|pc pt pe|slat sarg
-                          |dp da den|sp stok sen|ja jb|] eqn:Hop
+            case_op o as Hop
         end; try discriminate Hst0.
         injection Hst0 as Hslat. subst slat.
-        assert (Hargin : In sarg (get_args ctx
+        assert (Hargin : In sa (get_args ctx
                    (nth (vreg_nid a_idx n_idx) (graph (build_dfg ctx act))
                       {| nid := 0; op := DFG_Empty; sz := 0 |})))
           by (unfold get_args; rewrite Hop; left; reflexivity).
         pose proof (build_dfg_args_pos act) as [_ [Hargpos _]].
-        pose proof (Hargpos _ Hnode sarg Hargin) as Hs1.
-        pose proof (args_lt_fwd act _ Hnode sarg Hargin) as Hslt.
+        pose proof (Hargpos _ Hnode sa Hargin) as Hs1.
+        pose proof (args_lt_fwd act _ Hnode sa Hargin) as Hslt.
         rewrite (node_nid_at act _ Hnlen) in Hslt.
-        assert (Hslen : sarg < length (graph (build_dfg ctx act))) by lia.
-        pose proof (node_rank_stall act (vreg_nid a_idx n_idx) sarg l Hst Hslt) as Hrk.
+        assert (Hslen : sa < length (graph (build_dfg ctx act))) by lia.
+        pose proof (node_rank_stall act (vreg_nid a_idx n_idx) sa l Hst Hslt) as Hrk.
         (* the gate IS the argument's validity, up from the argument's rank on *)
-        assert (Hgate : forall j, S (node_rank act sarg) <= j <= m ->
+        assert (Hgate : forall j, S (node_rank act sa) <= j <= m ->
                   eval1 (buf_gate act a_idx n_idx) (run_n j act input resp ss0)
                     (sched_input input (resp j)) = Bits.ones 1).
         { intros j Hj.
-          rewrite (compile_stall_valid (build_dfg ctx act) _ _ a_idx _ _ sarg _ []
+          rewrite (compile_stall_valid (build_dfg ctx act) _ _ a_idx _ _ sa _ []
                      (length (graph (build_dfg ctx act))) Hop
                      (list_assoc_filter_out _ _) ltac:(lia)).
-          rewrite (compile_fuel_irrel act a_idx _ sarg Hs1 Hslen
+          rewrite (compile_fuel_irrel act a_idx _ sa Hs1 Hslen
                      (pred (length (graph (build_dfg ctx act))))
                      (length (graph (build_dfg ctx act))) ltac:(lia) Hslen).
           apply (compile_valid_ones act a_idx (run_n j act input resp ss0)
@@ -10778,7 +10773,7 @@ Section SchedulerSimulation.
         assert (Hcnt : Bits.to_nat
                   ((fst (run_n m act input resp ss0)).[tf_dfg_b a_idx n_idx]) = pred l).
         { apply (stall_counter_run act a_idx n_idx input resp ss0 l
-                   (S (node_rank act sarg)) m Halign Hst
+                   (S (node_rank act sa)) m Halign Hst
                    (Hzero (tf_dfg_b a_idx n_idx) I)
                    ltac:(intros i Hi; apply Hnd; lia)).
           - intros j Hj. apply Hgate. lia.
@@ -12035,8 +12030,7 @@ Section SchedulerSimulation.
                               | _ => false
                               end) (graph (build_dfg ctx act))) as [nd |] eqn:Ef1.
     - exfalso. apply find_some in Ef1. destruct Ef1 as [Hin Hp]. cbv beta in Hp.
-      destruct (op nd) as [ c | iv | v2 | uop a | bop a1 a2 | a | cd t e
-                          | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo;
+      case_op (op nd) as Eo;
         try discriminate Hp.
       apply Nat.eqb_eq in Hp. subst sa.
       destruct (node_at_nid act nd Hin) as [_ Hnth].
@@ -12054,8 +12048,7 @@ Section SchedulerSimulation.
         [| discriminate Hcg ].
       injection Hcg as Hg Hh.
       apply find_some in Ef2. destruct Ef2 as [Hin2 Hp2]. cbv beta in Hp2.
-      destruct (op j2) as [ c | iv | v2 | uop a | bop a1 a2 | a | cd t e
-                          | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo2;
+      case_op (op j2) as Eo2;
         try discriminate Hp2.
       apply Nat.eqb_eq in Hp2. subst ja.
       destruct (node_at_nid act j2 Hin2) as [_ Hnth2].
@@ -12139,8 +12132,7 @@ Section SchedulerSimulation.
                               | _ => false
                               end) (graph (build_dfg ctx act))) as [j2 |] eqn:Ef2.
     - apply find_some in Ef2. destruct Ef2 as [Hin2 Hp2]. cbv beta in Hp2.
-      destruct (op j2) as [ c | iv | v2 | uop a1 | bop a1 a2 | a1 | cd t1 e1
-                          | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eo2;
+      case_op (op j2) as Eo2;
         try discriminate Hp2.
       apply Nat.eqb_eq in Hp2. subst ja.
       destruct (node_at_nid act j2 Hin2) as [_ Hnth2].
@@ -12219,13 +12211,12 @@ Section SchedulerSimulation.
           /\ node_op act d = DFG_Drive p arg en).
   Proof.
     unfold sample_drive_head.
-    destruct (node_op act h) as [ c | iv | v2 | uop a1 | bop a1 a2 | a1 | cd t1 e1
-                               | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Eh;
+    case_op (node_op act h) as Eh;
       try discriminate.
     - destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) dov p) as [-> | Hne];
         [| discriminate ].
       intro H. injection H as <-. left. split; [ reflexivity | exists dn, den; reflexivity ].
-    - destruct (node_op act ja) as [ | | | | | | | | dov dn den | | | ] eqn:Ea;
+    - case_op (node_op act ja) as Ea;
         try discriminate.
       destruct ((tfs_spec_ips_eq_dec ctx).(eq_dec) dov p) as [-> | Hne];
         [| discriminate ].

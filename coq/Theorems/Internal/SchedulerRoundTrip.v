@@ -3878,120 +3878,13 @@ Section SchedulerRoundTrip.
     induction fuel as [| fuel IH]; intros n pi ss input Hn1 Hnlen Hnf; [ lia |].
     assert (Hla : BitsToLists.list_assoc (sample_bufs act a_idx) n = None)
       by (rewrite Hnb; reflexivity).
-    assert (Harg : forall x, In x (get_args ctx (nth n (graph (build_dfg ctx act))
-                                {| nid := 0; op := DFG_Empty; sz := 0 |})) ->
-              forall p, eval1 (snd (compile_dfg_expr_at ctx bneeds p (Init.Nat.pred (S fuel)) a_idx
-                            (build_dfg ctx act) x (sample_bufs act a_idx))) ss input
-                        = Bits.ones 1).
-    { intros x Hx p.
+    (* every argument is valid below the fuel, so the node is *)
+    rewrite (compile_unbuffered Hla).
+    apply (SchedulerSimulationLemmas.compile_node_valid_fires ctx cost_limit).
+    - intros p x Hx.
       destruct (node_args_range act n Hn1 Hnlen x Hx) as [Hx1 Hxn].
-      exact (IH x p ss input Hx1 ltac:(lia) ltac:(lia)). }
-    destruct (op (nth n (graph (build_dfg ctx act))
-                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | iv | [sv | ov] | uop arg | bop a1 a2 | src | cnd tid eid
-         | slat sa | dp darg den | sp stok sen | ja jb | ] eqn:Hop.
-    all: try (cbn [compile_dfg_expr_aux]; rewrite Hla; cbv beta iota;
-              rewrite Hop; cbn [snd]; exact (eval1_const1 ss input)).
-    - rewrite (compile_unary_valid act a_idx n uop arg (sample_bufs act a_idx) pi
-                 (S fuel) Hop Hla ltac:(lia)).
-      exact (Harg arg ltac:(unfold get_args; rewrite Hop; left; reflexivity) pi).
-    - rewrite (compile_binary_valid act a_idx n bop a1 a2 (sample_bufs act a_idx) pi
-                 (S fuel) Hop Hla ltac:(lia)), valid_and_eval.
-      assert (Hv1 := Harg a1 ltac:(unfold get_args; rewrite Hop; left; reflexivity) pi).
-      assert (Hv2 := Harg a2 ltac:(unfold get_args; rewrite Hop; right; left; reflexivity) pi).
-      match goal with
-      | |- Bits.and ?X ?Y = _ =>
-          replace X with (Bits.ones 1) by (symmetry; exact Hv1);
-          replace Y with (Bits.ones 1) by (symmetry; exact Hv2)
-      end.
-      reflexivity.
-    - rewrite (compile_resize_valid act a_idx n src (sample_bufs act a_idx) pi
-                 (S fuel) Hop Hla ltac:(lia)).
-      exact (Harg src ltac:(unfold get_args; rewrite Hop; left; reflexivity) pi).
-    - destruct (phi_crit (get_tainted ctx (build_dfg ctx act))
-                  (decl_facts ctx (build_dfg ctx act)) cnd pi) eqn:Hcrit.
-      + rewrite (compile_phi_valid_crit act a_idx n cnd tid eid
-                   (sample_bufs act a_idx) pi (S fuel) Hop Hla ltac:(lia) Hcrit),
-                valid_and_eval, valid_and_eval.
-        assert (Hc := Harg cnd ltac:(unfold get_args; rewrite Hop;
-                                     left; reflexivity) pi).
-        assert (Ht := Harg tid ltac:(unfold get_args; rewrite Hop;
-                                     right; left; reflexivity) pi).
-        assert (He := Harg eid ltac:(unfold get_args; rewrite Hop;
-                                     right; right; left; reflexivity) pi).
-        match goal with
-        | |- Bits.and (Bits.and ?T ?E) ?C = _ =>
-            replace T with (Bits.ones 1) by (symmetry; exact Ht);
-            replace E with (Bits.ones 1) by (symmetry; exact He);
-            replace C with (Bits.ones 1) by (symmetry; exact Hc)
-        end.
-        reflexivity.
-      + rewrite (compile_phi_valid_sel act a_idx n cnd tid eid
-                   (sample_bufs act a_idx) pi (S fuel) Hop Hla ltac:(lia) Hcrit),
-                valid_and_eval.
-        assert (Hc := Harg cnd ltac:(unfold get_args; rewrite Hop;
-                                     left; reflexivity) pi).
-        rewrite (valid_if_eval _ _ _ ss input
-                   (Harg tid ltac:(unfold get_args; rewrite Hop;
-                                   right; left; reflexivity) ((cnd, true) :: pi))
-                   (Harg eid ltac:(unfold get_args; rewrite Hop;
-                                   right; right; left; reflexivity) ((cnd, false) :: pi))).
-        match goal with
-        | |- Bits.and ?C _ = _ =>
-            replace C with (Bits.ones 1) by (symmetry; exact Hc)
-        end.
-        reflexivity.
-    - rewrite (SchedulerSimulationLemmas.compile_stall_valid ctx cost_limit
-                 (build_dfg ctx act) (get_tainted ctx (build_dfg ctx act))
-                 (decl_facts ctx (build_dfg ctx act)) a_idx n slat sa
-                 (sample_bufs act a_idx) pi (S fuel) Hop Hla ltac:(lia)).
-      exact (Harg sa ltac:(unfold get_args; rewrite Hop; left; reflexivity) pi).
-    - rewrite (SchedulerSimulationLemmas.compile_drive_valid ctx cost_limit
-                 (build_dfg ctx act) (get_tainted ctx (build_dfg ctx act))
-                 (decl_facts ctx (build_dfg ctx act)) a_idx n dp darg den
-                 (sample_bufs act a_idx) pi (S fuel) Hop Hla ltac:(lia)).
-      assert (Hd := Harg darg ltac:(unfold get_args; rewrite Hop;
-                                    left; reflexivity) pi).
-      assert (Hen : forall l, In l den ->
-                eval1 (snd (compile_dfg_expr_at ctx bneeds pi
-                        (Init.Nat.pred (S fuel)) a_idx
-                        (build_dfg ctx act) (fst l) (sample_bufs act a_idx))) ss input
-                = Bits.ones 1).
-      { intros l Hl. apply (Harg (fst l)).
-        unfold get_args. rewrite Hop. right. exact (in_map fst den l Hl). }
-      revert Hen. generalize den. intro l.
-      induction l as [| a l IHl]; intro Hen.
-      + cbn [fold_right]. exact Hd.
-      + cbn [fold_right]. rewrite valid_and_eval.
-        assert (Ha := Hen a (or_introl eq_refl)).
-        assert (Hr := IHl (fun x Hx => Hen x (or_intror Hx))).
-        match goal with
-        | |- Bits.and ?A ?R = _ =>
-            replace A with (Bits.ones 1) by (symmetry; exact Ha);
-            replace R with (Bits.ones 1) by (symmetry; exact Hr)
-        end.
-        reflexivity.
-    - rewrite (SchedulerSimulationLemmas.compile_sample_valid ctx cost_limit
-                 (build_dfg ctx act) (get_tainted ctx (build_dfg ctx act))
-                 (decl_facts ctx (build_dfg ctx act)) a_idx n sp stok sen
-                 (sample_bufs act a_idx) pi (S fuel) Hop Hla ltac:(lia)).
-      exact (Harg stok ltac:(unfold get_args; rewrite Hop; left; reflexivity) pi).
-    - rewrite (SchedulerSimulationLemmas.compile_join_valid ctx cost_limit
-                 (build_dfg ctx act) (get_tainted ctx (build_dfg ctx act))
-                 (decl_facts ctx (build_dfg ctx act)) a_idx n ja jb
-                 (sample_bufs act a_idx) pi (S fuel) Hop Hla ltac:(lia)),
-              valid_and_eval.
-      assert (Hva := Harg ja ltac:(unfold get_args; rewrite Hop;
-                                   left; reflexivity) pi).
-      assert (Hvb := Harg jb ltac:(unfold get_args; rewrite Hop;
-                                   right; left; reflexivity) pi).
-      match goal with
-      | |- Bits.and ?A ?B = _ =>
-          replace A with (Bits.ones 1) by (symmetry; exact Hva);
-          replace B with (Bits.ones 1) by (symmetry; exact Hvb)
-      end.
-      reflexivity.
-    - exfalso. exact (node_op_not_empty act n Hn1 Hnlen Hop).
+      exact (IH x p ss input Hx1 ltac:(lia) ltac:(lia)).
+    - intro He. exact (node_op_not_empty act n Hn1 Hnlen He).
   Qed.
 
   (* No IP attached means no sample node, hence no sample buffer. *)
