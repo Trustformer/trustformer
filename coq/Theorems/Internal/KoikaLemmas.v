@@ -9,8 +9,6 @@ Require Import Coq.Lists.List.
 Require Import Coq.Logic.EqdepFacts.
 Require Import Coq.Program.Equality.
 
-Require Import Hammer.Plugin.Hammer.
-Set Hammer GSMode 63.
 
 Section Schedule.
 
@@ -61,7 +59,7 @@ Section Environments.
       k <> k' ->
       ContextEnv.(getenv) (ContextEnv.(putenv) ev k v) k' = ContextEnv.(getenv) ev k'.
   Proof.
-    intros. rewrite get_put_neq. reflexivity. sfirstorder.
+    intros. rewrite get_put_neq. reflexivity. assumption.
   Qed.
 
   Lemma cassoc_put_neq:
@@ -186,7 +184,7 @@ Section LogHelpers.
     intros. unfold latest_write.
     destruct (eq_dec idx' idx).
     - subst idx'. rewrite SemanticProperties.log_find_cons_eq. destruct le; simpl; auto. destruct kind; simpl; auto.
-      contradict H. sauto.
+      contradict H. discriminate.
     - rewrite SemanticProperties.log_find_cons_neq; auto.
   Qed.
 
