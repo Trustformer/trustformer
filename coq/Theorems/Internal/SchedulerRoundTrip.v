@@ -58,6 +58,7 @@ Section SchedulerRoundTrip.
   Local Notation compile_table_irrel_gen := (SchedulerSimulationLemmas.compile_table_irrel_gen ctx cost_limit).
   Local Notation compile_valid_state_indep_gen := (SchedulerSimulationLemmas.compile_valid_state_indep_gen ctx cost_limit).
   Local Notation covers := (SchedulerSimulationLemmas.covers ctx).
+  Local Notation dataflow_expr_inv := (SchedulerSimulationLemmas.dataflow_expr_inv ctx).
   Local Notation dataflow_expr_fg := (SchedulerSimulationLemmas.dataflow_expr_fg ctx).
   Local Notation dataflow_expr_pos := (SchedulerSimulationLemmas.dataflow_expr_pos ctx).
   Local Notation dataflow_expr_sz := (SchedulerSimulationLemmas.dataflow_expr_sz ctx).
@@ -1702,68 +1703,16 @@ Section SchedulerRoundTrip.
     Lemma dataflow_expr_vmap : forall e sz (s: wst) id s',
       dataflow_expr ctx e sz s = (id, s') -> var_map s' = var_map s.
     Proof.
-      induction e as [ c | sv | iv | ov | uop e1 IH1 | bop e1 IH1 e2 IH2
-                     | ec IHc et IHt ee IHe ]; intros sz s id s' Hde.
-      - exact (emit_vm _ _ s id s' Hde).
-      - cbn [dataflow_expr] in Hde. unfold bind in Hde.
-        destruct (get_var ctx (DFG_SVar sv) s) as [src_id s1] eqn:Egv.
-        cbv beta in Hde. rewrite <- (get_var_vmap (DFG_SVar sv) s src_id s1 Egv).
-        destruct (Nat.eqb _ sz).
-        + unfold ret in Hde. injection Hde as _ <-. reflexivity.
-        + exact (emit_vm _ _ s1 id s' Hde).
-      - cbn [dataflow_expr] in Hde. unfold bind in Hde.
-        destruct (emit ctx (DFG_Input iv) sz s) as [src_id s1] eqn:Eem.
-        cbv beta in Hde. rewrite <- (emit_vm _ _ s src_id s1 Eem).
-        destruct (Nat.eqb _ sz).
-        + unfold ret in Hde. injection Hde as _ <-. reflexivity.
-        + exact (emit_vm _ _ s1 id s' Hde).
-      - cbn [dataflow_expr] in Hde. unfold bind in Hde.
-        destruct (get_var ctx (DFG_OVar ov) s) as [src_id s1] eqn:Egv.
-        cbv beta in Hde. rewrite <- (get_var_vmap (DFG_OVar ov) s src_id s1 Egv).
-        destruct (Nat.eqb _ sz).
-        + unfold ret in Hde. injection Hde as _ <-. reflexivity.
-        + exact (emit_vm _ _ s1 id s' Hde).
-      - destruct uop as [ | source_size | source_size offset ]; cbn [dataflow_expr] in Hde;
-          unfold bind in Hde.
-        + destruct (dataflow_expr ctx e1 sz s) as [src_id s1] eqn:Ee1.
-          cbv beta in Hde. rewrite <- (IH1 sz s src_id s1 Ee1).
-          exact (emit_vm _ _ s1 id s' Hde).
-        + destruct (dataflow_expr ctx e1 source_size s) as [src_id s1] eqn:Ee1.
-          cbv beta in Hde. rewrite <- (IH1 source_size s src_id s1 Ee1).
-          exact (emit_vm _ _ s1 id s' Hde).
-        + destruct (dataflow_expr ctx e1 source_size s) as [src_id s1] eqn:Ee1.
-          cbv beta in Hde. rewrite <- (IH1 source_size s src_id s1 Ee1).
-          exact (emit_vm _ _ s1 id s' Hde).
-      - destruct bop as [ | | | | | | | | | szC cop | hz lz | isz ]; cbn [dataflow_expr] in Hde;
-          unfold bind in Hde;
-          [ destruct (dataflow_expr ctx e1 sz s) as [id1 s1] eqn:Ee1 ..
-          | destruct (dataflow_expr ctx e1 szC s) as [id1 s1] eqn:Ee1
-          | destruct (dataflow_expr ctx e1 hz s) as [id1 s1] eqn:Ee1
-          | destruct (dataflow_expr ctx e1 isz s) as [id1 s1] eqn:Ee1 ];
-          cbv beta in Hde.
-        1-9: (destruct (dataflow_expr ctx e2 sz s1) as [id2 s2] eqn:Ee2;
-              cbv beta in Hde;
-              rewrite <- (IH1 sz s id1 s1 Ee1), <- (IH2 sz s1 id2 s2 Ee2);
-              exact (emit_vm _ _ s2 id s' Hde)).
-        + destruct (dataflow_expr ctx e2 szC s1) as [id2 s2] eqn:Ee2.
-          cbv beta in Hde.
-          rewrite <- (IH1 szC s id1 s1 Ee1), <- (IH2 szC s1 id2 s2 Ee2).
-          exact (emit_vm _ _ s2 id s' Hde).
-        + destruct (dataflow_expr ctx e2 lz s1) as [id2 s2] eqn:Ee2.
-          cbv beta in Hde.
-          rewrite <- (IH1 hz s id1 s1 Ee1), <- (IH2 lz s1 id2 s2 Ee2).
-          exact (emit_vm _ _ s2 id s' Hde).
-        + destruct (dataflow_expr ctx e2 (Nat.log2_up isz) s1) as [id2 s2] eqn:Ee2.
-          cbv beta in Hde.
-          rewrite <- (IH1 isz s id1 s1 Ee1), <- (IH2 (Nat.log2_up isz) s1 id2 s2 Ee2).
-          exact (emit_vm _ _ s2 id s' Hde).
-      - cbn [dataflow_expr] in Hde. unfold bind in Hde.
-        destruct (dataflow_expr ctx ec 1 s) as [cid s1] eqn:Ec. cbv beta in Hde.
-        destruct (dataflow_expr ctx et sz s1) as [tid s2] eqn:Et. cbv beta in Hde.
-        destruct (dataflow_expr ctx ee sz s2) as [eid s3] eqn:El. cbv beta in Hde.
-        rewrite <- (IHc 1 s cid s1 Ec), <- (IHt sz s1 tid s2 Et),
-                <- (IHe sz s2 eid s3 El).
-        exact (emit_vm _ _ s3 id s' Hde).
+      intros e sz s id s' Hde.
+      enough (H : let (i, t') := dataflow_expr ctx e sz s in var_map t' = var_map s /\ True)
+        by (rewrite Hde in H; exact (proj1 H)).
+      refine (dataflow_expr_inv (fun t => var_map t = var_map s) (fun _ _ _ => True)
+                _ _ _ e sz s eq_refl); clear Hde.
+      - exact (fun _ _ _ _ _ _ => Logic.I).
+      - intros o w t _ Ht _ _. destruct (emit ctx o w t) as [i t'] eqn:E.
+        exact (conj (eq_trans (emit_vm _ _ _ _ _ E) Ht) Logic.I).
+      - intros v t Ht. destruct (get_var ctx v t) as [i t'] eqn:E.
+        exact (conj (eq_trans (get_var_vmap v t i t' E) Ht) Logic.I).
     Qed.
 
     (* A variable READ shares one node across the whole action, so an id an
