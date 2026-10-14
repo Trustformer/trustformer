@@ -1034,7 +1034,7 @@ Section IPRProof.
          destruct (Hrange x Hx) as [Hx1 Hx2]. exact (Hone x pi Hx1 Hx2 Hpi Hpok). }
     (* a phi: critical reads both arms, selecting reads the condition *)
     pose proof (wfg_build_dfg ctx cost_limit act _ Hnode_in) as Hfg.
-    unfold node_args_sz in Hfg. rewrite Hop in Hfg |- *.
+    unfold node_args_sz, SchedulerSimulationLemmas.args_at in Hfg. rewrite Hop in Hfg |- *.
     cbn [AttackerClock.avalid_node compile_node].
     destruct (Hrange cnd ltac:(unfold get_args; rewrite Hop; left; reflexivity))
       as [Hc1 Hc2].

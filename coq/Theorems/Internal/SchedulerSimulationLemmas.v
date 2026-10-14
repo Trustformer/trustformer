@@ -3182,6 +3182,130 @@ Section SchedulerSimulation.
       apply grows_bind; [ apply IHe | intro z ]. apply grows_emit.
   Qed.
 
+  (* The width each argument of a node is read at, related by [R]:
+     [node_args_sz] takes [R] to be [wsz]. *)
+  Definition args_at (R: nid_t -> sz_t -> Prop)
+      (node: @dfg_node_t s_var i_var o_var p_var) : Prop :=
+    match op node with
+    | DFG_Unary uop a =>
+        match uop with
+        | tf_not => R a (sz node)
+        | tf_resize source_size => R a source_size
+        | tf_slice source_size _ => R a source_size
+        end
+    | DFG_Binary bop a1 a2 =>
+        match bop with
+        | tf_cmp szC _ => R a1 szC /\ R a2 szC
+        (* SPIKE: concat reads its operands at their declared widths. *)
+        | tf_concat hz lz => R a1 hz /\ R a2 lz
+        | tf_islice isz0 => R a1 isz0 /\ R a2 (Nat.log2_up isz0)
+        | _ => R a1 (sz node) /\ R a2 (sz node)
+        end
+    | DFG_Phi c t e => R c 1 /\ R t (sz node) /\ R e (sz node)
+    (* The round trip is a VALIDITY chain; only the drive carries a value, read at
+       its own width.  A stall (its COUNTER's width), a sample (token for validity,
+       value [tf_ivar (inr p)]) and the ordering join relate no two widths. *)
+    | DFG_Drive _ a _ => R a (sz node)
+    (* A stall's own width is its COUNTER's: [stall_chain] emits it at
+       [counter_sz lat], and emits nothing at all at latency zero. *)
+    | DFG_Stall l _ => 1 <= l /\ sz node = counter_sz l
+    | DFG_Sample _ _ _ => True
+    | DFG_Join _ _ => True
+    | _ => True
+    end.
+
+  (* [args_at] is monotone in the relation it reads the arguments by. *)
+  Lemma args_at_impl (R R': nid_t -> sz_t -> Prop) node :
+    (forall x w, R x w -> R' x w) -> args_at R node -> args_at R' node.
+  Proof.
+    intros HR. unfold args_at. case_op (op node); try destruct op1; intuition.
+  Qed.
+
+  (* The nodes an expression emits: no call's spine, no variable, no sentinel. *)
+  Definition expr_op (o: @dfg_op_t s_var i_var o_var p_var) : Prop :=
+    match o with
+    | DFG_Drive _ _ _ | DFG_Sample _ _ _ | DFG_Join _ _ | DFG_Stall _ _
+    | DFG_Var _ | DFG_Empty => False
+    | _ => True
+    end.
+
+  (* AN INVARIANT [P] OF THE BUILDER STATE that every node an expression emits
+     and every variable read keeps is kept by the whole expression.  [N s w x]:
+     node [x] stands at width [w]; an emitted node finds its arguments at the
+     widths [args_at] reads them at.  A new expression kind adds a case here. *)
+  Lemma dataflow_expr_inv (P: wst -> Prop) (N: wst -> sz_t -> nid_t -> Prop) :
+    (forall s s' w x, N s w x -> wgmono s s' -> N s' w x) ->
+    (forall o w (s: wst), expr_op o -> P s ->
+       (forall x, In x (get_args ctx {| nid := length (graph s); op := o; sz := w |}) ->
+          exists wx, N s wx x) ->
+       args_at (fun x wx => N s wx x) {| nid := length (graph s); op := o; sz := w |} ->
+       let (id, s') := emit ctx o w s in P s' /\ N s' w id) ->
+    (forall v (s: wst), P s ->
+       let (id, s') := get_var ctx v s in P s' /\ N s' (dfg_var_size ctx v) id) ->
+    forall e w (s: wst), P s -> let (id, s') := dataflow_expr ctx e w s in P s' /\ N s' w id.
+  Proof.
+    intros Nmono Hemit Hvar.
+    (* a read, resized when the expression wants another width *)
+    assert (Hresize : forall src (b: bool) w (s: wst), P s ->
+              (b = true -> N s w src) -> (exists w0, N s w0 src) ->
+              let (id, s') := (if b then ret ctx src else emit ctx (DFG_Resize src) w) s in
+              P s' /\ N s' w id).
+    { intros src b w s Hs Hb [w0 Hn]. destruct b.
+      - unfold ret. exact (conj Hs (Hb eq_refl)).
+      - apply Hemit; [ exact Logic.I | exact Hs | intros x [<- | []]; exists w0; exact Hn
+                     | exact Logic.I ]. }
+    (* a recursive operand, at the width [w1] the node reads it at *)
+    assert (Hsub : forall (e1: @tf_expr s_var i_var o_var) w1 (s: wst) (Q: Prop),
+              (forall s, P s -> let (id, s') := dataflow_expr ctx e1 w1 s in P s' /\ N s' w1 id) ->
+              P s -> (forall id1 s1, wgmono s s1 -> P s1 -> N s1 w1 id1 ->
+                        dataflow_expr ctx e1 w1 s = (id1, s1) -> Q) -> Q).
+    { intros e1 w1 s Q IH Hs K. pose proof (IH s Hs) as H.
+      pose proof (dataflow_expr_grows e1 w1 s) as G.
+      destruct (dataflow_expr ctx e1 w1 s) as [id1 s1] eqn:E.
+      exact (K id1 s1 G (proj1 H) (proj2 H) eq_refl). }
+    induction e as [ c | sv | iv | ov | uop e1 IH1 | bop e1 IH1 e2 IH2 | ec IHc et IHt ee IHe ];
+      intros w s Hs; cbn [dataflow_expr]; unfold bind.
+    - apply Hemit; [ exact Logic.I | exact Hs | intros x [] | exact Logic.I ].
+    - pose proof (Hvar (DFG_SVar sv) s Hs) as H.
+      destruct (get_var ctx (DFG_SVar sv) s) as [src s1]. destruct H as [Hs1 Hn1].
+      apply Hresize; [ exact Hs1 | intro Hb; apply Nat.eqb_eq in Hb; rewrite <- Hb; exact Hn1
+                     | eexists; exact Hn1 ].
+    - pose proof (Hemit (DFG_Input iv) w s Logic.I Hs (fun x Hx => match Hx with end) Logic.I)
+        as H.
+      destruct (emit ctx (DFG_Input iv) w s) as [src s1]. destruct H as [Hs1 Hn1].
+      apply Hresize; [ exact Hs1 | intros _; exact Hn1 | eexists; exact Hn1 ].
+    - pose proof (Hvar (DFG_OVar ov) s Hs) as H.
+      destruct (get_var ctx (DFG_OVar ov) s) as [src s1]. destruct H as [Hs1 Hn1].
+      apply Hresize; [ exact Hs1 | intro Hb; apply Nat.eqb_eq in Hb; rewrite <- Hb; exact Hn1
+                     | eexists; exact Hn1 ].
+    - destruct uop;
+        (match goal with |- context [dataflow_expr ctx e1 ?w1 s] =>
+           apply (Hsub e1 w1 s _ (IH1 w1) Hs); intros a s1 _ Hs1 Ha Ea; rewrite Ea
+         end;
+         apply Hemit; [ exact Logic.I | exact Hs1 | intros x [<- | []]; eexists; exact Ha
+                      | exact Ha ]).
+    - destruct bop;
+        (match goal with |- context [dataflow_expr ctx e1 ?w1 s] =>
+           apply (Hsub e1 w1 s _ (IH1 w1) Hs); intros a s1 _ Hs1 Ha Ea; rewrite Ea
+         end;
+         match goal with |- context [dataflow_expr ctx e2 ?w2 ?st] =>
+           apply (Hsub e2 w2 st _ (IH2 w2) Hs1); intros b s2 G2 Hs2 Hb Eb; rewrite Eb
+         end;
+         apply Hemit;
+         [ exact Logic.I | exact Hs2
+         | intros x [<- | [<- | []]]; eexists; [ exact (Nmono _ _ _ _ Ha G2) | exact Hb ]
+         | exact (conj (Nmono _ _ _ _ Ha G2) Hb) ]).
+    - apply (Hsub ec 1 s _ (IHc 1) Hs); intros c s1 _ Hs1 Hc Ec; rewrite Ec.
+      apply (Hsub et w s1 _ (IHt w) Hs1); intros t s2 G2 Hs2 Ht Et; rewrite Et.
+      apply (Hsub ee w s2 _ (IHe w) Hs2); intros f s3 G3 Hs3 Hf Ef; rewrite Ef.
+      pose proof (Nmono _ _ _ _ (Nmono _ _ _ _ Hc G2) G3) as Hc3.
+      pose proof (Nmono _ _ _ _ Ht G3) as Ht3.
+      apply Hemit;
+        [ exact Logic.I | exact Hs3
+        | intros x [<- | [<- | [<- | []]]]; eexists; [ exact Hc3 | exact Ht3 | exact Hf ]
+        | exact (conj Hc3 (conj Ht3 Hf)) ].
+  Qed.
+
   (* The one emit in the builder that IS an ordering join: a call's own, over
      the pending set [join_pendings] has just built. *)
   Lemma js_call_head (s3 s4: wst) (ip: p_var) arg_id en drive_id size prev_opt :
@@ -4942,106 +5066,23 @@ Section SchedulerSimulation.
         rewrite Hem in Hf. exact Hf.
   Qed.
 
-  Lemma ret_full id (s: wst) :
-    wnidwf s id -> winv s ->
-    let (i, s') := ret ctx id s in wgmono s s' /\ wnidwf s' i /\ winv s'.
-  Proof. intros Hn Hp. unfold ret. split; [ apply wgmono_refl | split; assumption ]. Qed.
-
-  Lemma seq_full (m: M ctx nid_t) (f: nid_t -> M ctx nid_t) (s: wst) :
-    (winv s -> let (id, s1) := m s in wgmono s s1 /\ wnidwf s1 id /\ winv s1) ->
-    (forall id s1, wgmono s s1 -> wnidwf s1 id -> winv s1 ->
-       let (id2, s2) := f id s1 in wgmono s1 s2 /\ wnidwf s2 id2 /\ winv s2) ->
-    winv s ->
-    let (id2, s2) := bind ctx m f s in wgmono s s2 /\ wnidwf s2 id2 /\ winv s2.
-  Proof.
-    intros H1 H2 Hinv. specialize (H1 Hinv).
-    unfold bind. destruct (m s) as [id s1] eqn:Em.
-    destruct H1 as [g1 [n1 p1]].
-    specialize (H2 id s1 g1 n1 p1).
-    destruct (f id s1) as [id2 s2]. destruct H2 as [g2 [n2 p2]].
-    split; [ eapply wgmono_trans; eauto | split; assumption ].
-  Qed.
-
   (* --- expression compiler --- *)
 
   Lemma dataflow_expr_full :
     forall e sz (s: wst), winv s ->
       let (id, s') := dataflow_expr ctx e sz s in wgmono s s' /\ wnidwf s' id /\ winv s'.
   Proof.
-    induction e; intros sz s Hinv.
-    - (* tf_const *)
-      simpl. apply emit_full; [ exact Hinv | intros x Hx; simpl in Hx; destruct Hx ].
-    - (* tf_svar *)
-      simpl. apply seq_full.
-      + apply get_var_full.
-      + intros id s1 Hg Hn Hp1. cbn beta.
-        destruct (Nat.eqb _ sz).
-        * apply ret_full; assumption.
-        * apply emit_full; [ exact Hp1 | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn ].
-      + exact Hinv.
-    - (* tf_ivar *)
-      simpl. apply seq_full.
-      + intro Hp. apply emit_full; [ exact Hp | intros x Hx; simpl in Hx; destruct Hx ].
-      + intros id s1 Hg Hn Hp1. cbn beta.
-        destruct (Nat.eqb _ sz).
-        * apply ret_full; assumption.
-        * apply emit_full; [ exact Hp1 | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn ].
-      + exact Hinv.
-    - (* tf_ovar *)
-      simpl. apply seq_full.
-      + apply get_var_full.
-      + intros id s1 Hg Hn Hp1. cbn beta.
-        destruct (Nat.eqb _ sz).
-        * apply ret_full; assumption.
-        * apply emit_full; [ exact Hp1 | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn ].
-      + exact Hinv.
-    - (* tf_op1 *)
-      simpl. destruct op as [| source_size | source_size offset].
-      + apply seq_full.
-        * apply IHe.
-        * intros id1 s1 Hg1 Hn1 Hp1. apply emit_full;
-            [ exact Hp1 | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn1 ].
-        * exact Hinv.
-      + apply seq_full.
-        * apply IHe.
-        * intros id1 s1 Hg1 Hn1 Hp1. apply emit_full;
-            [ exact Hp1 | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn1 ].
-        * exact Hinv.
-      + apply seq_full.
-        * apply IHe.
-        * intros id1 s1 Hg1 Hn1 Hp1. apply emit_full;
-            [ exact Hp1 | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn1 ].
-        * exact Hinv.
-    - (* tf_op2 *)
-      simpl. destruct op;
-        ( apply seq_full;
-          [ apply IHe1
-          | intros id1 s1 Hg1 Hn1 Hp1; apply seq_full;
-            [ apply IHe2
-            | intros id2 s2 Hg2 Hn2 Hp2; apply emit_full;
-              [ exact Hp2
-              | intros x Hx; simpl in Hx;
-                destruct Hx as [<-|[<-|[]]];
-                [ eapply wnidwf_gmono; [ exact Hn1 | exact Hg2 ] | exact Hn2 ] ]
-            | exact Hp1 ]
-          | exact Hinv ]).
-    - (* tf_expr_if *)
-      simpl. apply seq_full.
-      + apply IHe1.
-      + intros idc s1 Hgc Hnc Hpc. apply seq_full.
-        * apply IHe2.
-        * intros idt s2 Hgt Hnt Hpt. apply seq_full.
-          -- apply IHe3.
-          -- intros ide s3 Hge Hne Hpe. apply emit_full.
-             ++ exact Hpe.
-             ++ intros x Hx. simpl in Hx.
-                destruct Hx as [<-|[<-|[<-|[]]]].
-                ** eapply wnidwf_gmono; [ exact Hnc | eapply wgmono_trans; [ exact Hgt | exact Hge ] ].
-                ** eapply wnidwf_gmono; [ exact Hnt | exact Hge ].
-                ** exact Hne.
-          -- exact Hpt.
-        * exact Hpc.
-      + exact Hinv.
+    intros e sz s Hinv.
+    pose proof (dataflow_expr_grows e sz s) as G.
+    enough (H : let (id, s') := dataflow_expr ctx e sz s in winv s' /\ wnidwf s' id)
+      by (destruct (dataflow_expr ctx e sz s); exact (conj G (conj (proj2 H) (proj1 H)))).
+    refine (dataflow_expr_inv winv (fun s _ x => wnidwf s x) _ _ _ e sz s Hinv);
+      clear G Hinv e sz s.
+    - intros s s' _ x Hx G. exact (wnidwf_gmono _ _ _ Hx G).
+    - intros o w s _ Hs Ha _. pose proof (emit_full o w s Hs (fun x Hx => match Ha x Hx with ex_intro _ _ H => H end)) as H.
+      destruct (emit ctx o w s). exact (conj (proj2 (proj2 H)) (proj1 (proj2 H))).
+    - intros v s Hs. pose proof (get_var_full v s Hs) as H.
+      destruct (get_var ctx v s). exact (conj (proj2 (proj2 H)) (proj1 (proj2 H))).
   Qed.
 
   (* STI-1: [dataflow_expr] returns a node of the DEMANDED [sz], with [wvsz] --
@@ -5124,11 +5165,6 @@ Section SchedulerSimulation.
         rewrite Hem in Hf. exact Hf.
   Qed.
 
-  (* weaken the 5-tuple result to the 4-tuple premise seq_sz expects for [m]. *)
-  Lemma sz_weaken (g n w v Q: Prop) :
-    (g /\ n /\ w /\ v /\ Q) -> (g /\ n /\ w /\ v).
-  Proof. intros [a [b [c [d _]]]]. tauto. Qed.
-
   (* threading combinator for the sz-augmented invariant *)
   Lemma seq_sz (m: M ctx nid_t) (f: nid_t -> M ctx nid_t) (s: wst) (size: sz_t) :
     (winv s -> wvsz s ->
@@ -5148,139 +5184,24 @@ Section SchedulerSimulation.
     split; [ eapply wgmono_trans; eauto | split; [ exact n2 | split; [ exact p2 | split; [ exact q2 | exact r2 ] ] ] ].
   Qed.
 
-  (* var-read case: get_var then optional resize, returns node at demanded size. *)
-  Lemma dataflow_var_sz (dv: @dfg_vars_t s_var o_var)
-        (size: sz_t) (s: wst) :
-    winv s -> wvsz s ->
-    let (id, s') :=
-      (bind ctx (get_var ctx dv)
-        (fun src_id =>
-          if Nat.eqb (dfg_var_size ctx dv) size then ret ctx src_id
-          else emit ctx (DFG_Resize src_id) size)) s in
-    wgmono s s' /\ wnidwf s' id /\ winv s' /\ wvsz s' /\ wsz s' id size.
-  Proof.
-    intros Hinv Hvsz. unfold bind.
-    pose proof (get_var_sz dv s Hinv Hvsz) as Hgv.
-    destruct (get_var ctx dv s) as [id s1].
-    destruct Hgv as [Hg1 [Hn1 [Hp1 [Hq1 Hs1]]]].
-    destruct (Nat.eqb (dfg_var_size ctx dv) size) eqn:Eb.
-    - apply Nat.eqb_eq in Eb. unfold ret.
-      split; [ exact Hg1 | split; [ exact Hn1 | split; [ exact Hp1 | split; [ exact Hq1 | ] ] ] ].
-      rewrite <- Eb. exact Hs1.
-    - assert (Hargs : forall x, In x (get_args ctx {| nid := length (graph s1); op := DFG_Resize id; sz := size |}) -> wnidwf s1 x).
-      { intros x Hx. simpl in Hx. destruct Hx as [<-|[]]. exact Hn1. }
-      pose proof (emit_sz (DFG_Resize id) size s1 Hp1 Hq1 Hargs) as He.
-      destruct (emit ctx (DFG_Resize id) size s1) as [id2 s2].
-      destruct He as [Hg2 [Hn2 [Hp2 [Hq2 Hs2]]]].
-      split; [ eapply wgmono_trans; eauto | split; [ exact Hn2 | split; [ exact Hp2 | split; [ exact Hq2 | exact Hs2 ] ] ] ].
-  Qed.
-
   Lemma dataflow_expr_sz :
     forall e size (s: wst), winv s -> wvsz s ->
       let (id, s') := dataflow_expr ctx e size s in
       wgmono s s' /\ wnidwf s' id /\ winv s' /\ wvsz s' /\ wsz s' id size.
   Proof.
-    induction e; intros size s Hinv Hvsz.
-    - (* tf_const *)
-      simpl. apply emit_sz; [ exact Hinv | exact Hvsz | intros x Hx; simpl in Hx; destruct Hx ].
-    - (* tf_svar *)
-      simpl. apply dataflow_var_sz; assumption.
-    - (* tf_ivar *)
-      simpl. unfold bind.
-      assert (Hargs0 : forall x, In x (get_args ctx {| nid := length (graph s); op := DFG_Input v; sz := size |}) -> wnidwf s x).
-      { intros x Hx. simpl in Hx. destruct Hx. }
-      pose proof (emit_sz (DFG_Input v) size s Hinv Hvsz Hargs0) as He.
-      destruct (emit ctx (DFG_Input v) size s) as [id s1].
-      destruct He as [Hg1 [Hn1 [Hp1 [Hq1 Hs1]]]].
-      destruct (Nat.eqb _ size) eqn:Eb.
-      + unfold ret.
-        split; [ exact Hg1 | split; [ exact Hn1 | split; [ exact Hp1 | split; [ exact Hq1 | exact Hs1 ] ] ] ].
-      + assert (Hargs : forall x, In x (get_args ctx {| nid := length (graph s1); op := DFG_Resize id; sz := size |}) -> wnidwf s1 x).
-        { intros x Hx. simpl in Hx. destruct Hx as [<-|[]]. exact Hn1. }
-        pose proof (emit_sz (DFG_Resize id) size s1 Hp1 Hq1 Hargs) as He2.
-        destruct (emit ctx (DFG_Resize id) size s1) as [id2 s2].
-        destruct He2 as [Hg2 [Hn2 [Hp2 [Hq2 Hs2]]]].
-        split; [ eapply wgmono_trans; eauto | split; [ exact Hn2 | split; [ exact Hp2 | split; [ exact Hq2 | exact Hs2 ] ] ] ].
-    - (* tf_ovar *)
-      simpl. apply dataflow_var_sz; assumption.
-    - (* tf_op1 *)
-      simpl. destruct op as [| source_size | source_size offset].
-      + apply (seq_sz _ _ _ size).
-        * intros Hi Hv. pose proof (IHe size s Hi Hv) as H.
-          destruct (dataflow_expr ctx e size s) as [id s1]. exact (sz_weaken _ _ _ _ _ H).
-        * intros id s1 Hg Hn Hp Hq. apply emit_sz;
-            [ exact Hp | exact Hq | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn ].
-        * exact Hinv.
-        * exact Hvsz.
-      + unfold bind. cbv beta.
-        destruct (dataflow_expr ctx e source_size s) as [id s1] eqn:Erun.
-        pose proof (IHe source_size s Hinv Hvsz) as H. rewrite Erun in H.
-        cbv beta iota.
-        destruct H as [Hg1 [Hn1 [Hp1 [Hq1 Hs1]]]].
-        assert (Hargs : forall x,
-            In x (get_args ctx
-              {| nid := length (graph s1); op := DFG_Unary (tf_resize source_size) id; sz := size |}) ->
-            wnidwf s1 x).
-        { intros x Hx. simpl in Hx. destruct Hx as [<-|[]]. exact Hn1. }
-        pose proof (emit_sz (DFG_Unary (tf_resize source_size) id) size s1 Hp1 Hq1 Hargs) as He.
-        destruct (emit ctx (DFG_Unary (tf_resize source_size) id) size s1) as [id2 s2].
-        destruct He as [Hg2 [Hn2 [Hp2 [Hq2 Hs2]]]].
-        split; [ eapply wgmono_trans; eauto
-               | split; [ exact Hn2 | split; [ exact Hp2 | split; [ exact Hq2 | exact Hs2 ] ] ] ].
-      + unfold bind. cbv beta.
-        destruct (dataflow_expr ctx e source_size s) as [id s1] eqn:Erun.
-        pose proof (IHe source_size s Hinv Hvsz) as H. rewrite Erun in H.
-        cbv beta iota.
-        destruct H as [Hg1 [Hn1 [Hp1 [Hq1 Hs1]]]].
-        assert (Hargs : forall x,
-            In x (get_args ctx
-              {| nid := length (graph s1); op := DFG_Unary (tf_slice source_size offset) id; sz := size |}) ->
-            wnidwf s1 x).
-        { intros x Hx. simpl in Hx. destruct Hx as [<-|[]]. exact Hn1. }
-        pose proof (emit_sz (DFG_Unary (tf_slice source_size offset) id) size s1 Hp1 Hq1 Hargs) as He.
-        destruct (emit ctx (DFG_Unary (tf_slice source_size offset) id) size s1) as [id2 s2].
-        destruct He as [Hg2 [Hn2 [Hp2 [Hq2 Hs2]]]].
-        split; [ eapply wgmono_trans; eauto
-               | split; [ exact Hn2 | split; [ exact Hp2 | split; [ exact Hq2 | exact Hs2 ] ] ] ].
-    - (* tf_op2 *)
-      simpl. destruct op;
-        try (apply (seq_sz _ _ _ size);
-          [ intros Hi Hv;
-            match goal with |- context[dataflow_expr ctx e1 ?z _] =>
-              pose proof (IHe1 z s Hi Hv) as H; destruct (dataflow_expr ctx e1 z s) as [id1 s1] end;
-            exact (sz_weaken _ _ _ _ _ H)
-          | intros id1 s1 Hg1 Hn1 Hp1 Hq1; apply (seq_sz _ _ _ size);
-            [ intros Hi Hv;
-              match goal with |- context[dataflow_expr ctx e2 ?z _] =>
-                pose proof (IHe2 z s1 Hi Hv) as H; destruct (dataflow_expr ctx e2 z s1) as [id2 s2] end;
-              exact (sz_weaken _ _ _ _ _ H)
-            | intros id2 s2 Hg2 Hn2 Hp2 Hq2; apply emit_sz;
-              [ exact Hp2 | exact Hq2
-              | intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[]]];
-                [ eapply wnidwf_gmono; [ exact Hn1 | exact Hg2 ] | exact Hn2 ] ]
-            | exact Hp1 | exact Hq1 ]
-          | exact Hinv | exact Hvsz ]).
-    - (* tf_expr_if *)
-      simpl. apply (seq_sz _ _ _ size).
-      + intros Hi Hv. pose proof (IHe1 1 s Hi Hv) as H.
-        destruct (dataflow_expr ctx e1 1 s) as [idc s1]. exact (sz_weaken _ _ _ _ _ H).
-      + intros idc s1 Hgc Hnc Hpc Hqc. apply (seq_sz _ _ _ size).
-        * intros Hi Hv. pose proof (IHe2 size s1 Hi Hv) as H.
-          destruct (dataflow_expr ctx e2 size s1) as [idt s2]. exact (sz_weaken _ _ _ _ _ H).
-        * intros idt s2 Hgt Hnt Hpt Hqt. apply (seq_sz _ _ _ size).
-          -- intros Hi Hv. pose proof (IHe3 size s2 Hi Hv) as H.
-             destruct (dataflow_expr ctx e3 size s2) as [ide s3]. exact (sz_weaken _ _ _ _ _ H).
-          -- intros ide s3 Hge Hne Hpe Hqe. apply emit_sz;
-               [ exact Hpe | exact Hqe
-               | intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[<-|[]]]];
-                 [ eapply wnidwf_gmono; [ exact Hnc | eapply wgmono_trans; [ exact Hgt | exact Hge ] ]
-                 | eapply wnidwf_gmono; [ exact Hnt | exact Hge ] | exact Hne ] ].
-          -- exact Hpt.
-          -- exact Hqt.
-        * exact Hpc.
-        * exact Hqc.
-      + exact Hinv.
-      + exact Hvsz.
+    intros e size s Hinv Hvsz.
+    pose proof (dataflow_expr_grows e size s) as G.
+    enough (H : let (id, s') := dataflow_expr ctx e size s in
+                (winv s' /\ wvsz s') /\ (wnidwf s' id /\ wsz s' id size))
+      by (destruct (dataflow_expr ctx e size s); destruct H as [[P Q] [N Z]];
+          exact (conj G (conj N (conj P (conj Q Z))))).
+    refine (dataflow_expr_inv (fun s => winv s /\ wvsz s) (fun s w x => wnidwf s x /\ wsz s x w)
+              _ _ _ e size s (conj Hinv Hvsz)); clear G Hinv Hvsz e size s.
+    - intros s s' w x [Hn Hz] G. exact (conj (wnidwf_gmono _ _ _ Hn G) (wsz_gmono _ _ _ _ Hz G)).
+    - intros o w s _ [Hinv Hvsz] Ha _. pose proof (emit_sz o w s Hinv Hvsz (fun x Hx => match Ha x Hx with ex_intro _ _ (conj H _) => H end)) as H.
+      destruct (emit ctx o w s). destruct H as [_ [N [P [Q Z]]]]. exact (conj (conj P Q) (conj N Z)).
+    - intros v s [Hinv Hvsz]. pose proof (get_var_sz v s Hinv Hvsz) as H.
+      destruct (get_var ctx v s). destruct H as [_ [N [P [Q Z]]]]. exact (conj (conj P Q) (conj N Z)).
   Qed.
 
   (* STI-2 (wfg): every node's args are recorded at the size its op demands
@@ -5288,33 +5209,7 @@ Section SchedulerSimulation.
      pushes down.  Threaded through dataflow_expr from the args' [wsz]. *)
 
   Definition node_args_sz (s: wst) (node: @dfg_node_t s_var i_var o_var p_var) : Prop :=
-    match op node with
-    | DFG_Unary uop a =>
-        match uop with
-        | tf_not => wsz s a (sz node)
-        | tf_resize source_size => wsz s a source_size
-        | tf_slice source_size _ => wsz s a source_size
-        end
-    | DFG_Binary bop a1 a2 =>
-        match bop with
-        | tf_cmp szC _ => wsz s a1 szC /\ wsz s a2 szC
-        (* SPIKE: concat reads its operands at their declared widths. *)
-        | tf_concat hz lz => wsz s a1 hz /\ wsz s a2 lz
-        | tf_islice isz0 => wsz s a1 isz0 /\ wsz s a2 (Nat.log2_up isz0)
-        | _ => wsz s a1 (sz node) /\ wsz s a2 (sz node)
-        end
-    | DFG_Phi c t e => wsz s c 1 /\ wsz s t (sz node) /\ wsz s e (sz node)
-    (* The round trip is a VALIDITY chain; only the drive carries a value, read at
-       its own width.  A stall (its COUNTER's width), a sample (token for validity,
-       value [tf_ivar (inr p)]) and the ordering join relate no two widths. *)
-    | DFG_Drive _ a _ => wsz s a (sz node)
-    (* A stall's own width is its COUNTER's: [stall_chain] emits it at
-       [counter_sz lat], and emits nothing at all at latency zero. *)
-    | DFG_Stall l _ => 1 <= l /\ sz node = counter_sz l
-    | DFG_Sample _ _ _ => True
-    | DFG_Join _ _ => True
-    | _ => True
-    end.
+    args_at (wsz s) node.
 
   Definition wfg (s: wst) : Prop :=
     forall node, In node (graph s) -> node_args_sz s node.
@@ -5322,7 +5217,7 @@ Section SchedulerSimulation.
   Lemma node_args_sz_gmono s s' node :
     node_args_sz s node -> wgmono s s' -> node_args_sz s' node.
   Proof.
-    unfold node_args_sz. intros H Hg.
+    unfold node_args_sz, args_at. intros H Hg.
     case_op (op node); try exact I; try exact H.
     - destruct op1; eapply wsz_gmono; eauto.
     - destruct op1; destruct H as [H1 H2]; split; eapply wsz_gmono; eauto.
@@ -5378,7 +5273,7 @@ Section SchedulerSimulation.
             assert (HA : A) by
               (intros x Hx; cbn [get_args] in Hx;
                destruct Hx as [<- | [<- | []]]; [ exact Hq | exact (Hn1 h eq_refl) ]);
-            assert (HB : B) by (unfold node_args_sz; cbn [op]; exact I);
+            assert (HB : B) by (unfold node_args_sz, args_at; cbn [op]; exact I);
             specialize (He HA HB)
         end.
         destruct (emit ctx (DFG_Join q h) 1 s1) as [jj s2] eqn:Ej.
@@ -5405,7 +5300,7 @@ Section SchedulerSimulation.
     pose proof (ensure_var_graph v s id s' Ev) as [Hgr Hid].
     split; [ exact Hg | split; [ exact Hn | split; [ exact Hw | split; [ exact Hvs | split; [ exact Hs | ] ] ] ] ].
     intros node Hin. rewrite Hgr in Hin. cbn [In] in Hin. destruct Hin as [<-|Hin].
-    - unfold node_args_sz. cbn [op]. exact I.
+    - unfold node_args_sz, args_at. cbn [op]. exact I.
     - eapply node_args_sz_gmono; [ apply Hfg; exact Hin | exact Hg ].
   Qed.
 
@@ -5433,214 +5328,29 @@ Section SchedulerSimulation.
         rewrite Hem in Hf. exact Hf.
   Qed.
 
-  Lemma dataflow_var_fg (dv: @dfg_vars_t s_var o_var) (size: sz_t) (s: wst) :
-    winv s -> wvsz s -> wfg s ->
-    let (id, s') :=
-      (bind ctx (get_var ctx dv)
-        (fun src_id =>
-          if Nat.eqb (dfg_var_size ctx dv) size then ret ctx src_id
-          else emit ctx (DFG_Resize src_id) size)) s in
-    wgmono s s' /\ wnidwf s' id /\ winv s' /\ wvsz s' /\ wsz s' id size /\ wfg s'.
-  Proof.
-    intros Hinv Hvsz Hfg. unfold bind.
-    pose proof (get_var_fg dv s Hinv Hvsz Hfg) as Hgv.
-    destruct (get_var ctx dv s) as [id s1].
-    destruct Hgv as [Hg1 [Hn1 [Hp1 [Hq1 [Hs1 Hf1]]]]].
-    destruct (Nat.eqb (dfg_var_size ctx dv) size) eqn:Eb.
-    - apply Nat.eqb_eq in Eb. unfold ret.
-      split; [ exact Hg1 | split; [ exact Hn1 | split; [ exact Hp1 | split; [ exact Hq1 | split; [ | exact Hf1 ] ] ] ] ].
-      rewrite <- Eb. exact Hs1.
-    - assert (Hargs : forall x, In x (get_args ctx {| nid := length (graph s1); op := DFG_Resize id; sz := size |}) -> wnidwf s1 x).
-      { intros x Hx. simpl in Hx. destruct Hx as [<-|[]]. exact Hn1. }
-      assert (Hnode : node_args_sz s1 {| nid := length (graph s1); op := DFG_Resize id; sz := size |})
-        by (unfold node_args_sz; cbn [op]; exact I).
-      pose proof (emit_fg (DFG_Resize id) size s1 Hp1 Hq1 Hf1 Hargs Hnode) as He.
-      destruct (emit ctx (DFG_Resize id) size s1) as [id2 s2].
-      destruct He as [Hg2 [Hn2 [Hp2 [Hq2 [Hs2 Hf2]]]]].
-      split; [ eapply wgmono_trans; eauto | split; [ exact Hn2 | split; [ exact Hp2 | split; [ exact Hq2 | split; [ exact Hs2 | exact Hf2 ] ] ] ] ].
-  Qed.
-
   Lemma dataflow_expr_fg :
     forall e size (s: wst), winv s -> wvsz s -> wfg s ->
       let (id, s') := dataflow_expr ctx e size s in
       wgmono s s' /\ wnidwf s' id /\ winv s' /\ wvsz s' /\ wsz s' id size /\ wfg s'.
   Proof.
-    induction e; intros size s Hinv Hvsz Hfg.
-    - (* tf_const *)
-      simpl. apply emit_fg; [ exact Hinv | exact Hvsz | exact Hfg
-        | intros x Hx; simpl in Hx; destruct Hx
-        | unfold node_args_sz; cbn [op]; exact I ].
-    - (* tf_svar *)
-      simpl. apply dataflow_var_fg; assumption.
-    - (* tf_ivar *)
-      cbn [dataflow_expr]. unfold bind.
-      assert (Hargs0 : forall x, In x (get_args ctx {| nid := length (graph s); op := DFG_Input v; sz := size |}) -> wnidwf s x)
-        by (intros x Hx; simpl in Hx; destruct Hx).
-      assert (Hnode0 : node_args_sz s {| nid := length (graph s); op := DFG_Input v; sz := size |})
-        by (unfold node_args_sz; cbn [op]; exact I).
-      pose proof (emit_fg (DFG_Input v) size s Hinv Hvsz Hfg Hargs0 Hnode0) as He.
-      destruct (emit ctx (DFG_Input v) size s) as [id s1].
-      destruct He as [Hg1 [Hn1 [Hp1 [Hq1 [Hs1 Hf1]]]]].
-      destruct (Nat.eqb _ size) eqn:Eb.
-      + unfold ret.
-        split; [ exact Hg1 | split; [ exact Hn1 | split; [ exact Hp1 | split; [ exact Hq1 | split; [ exact Hs1 | exact Hf1 ] ] ] ] ].
-      + assert (Hargs : forall x, In x (get_args ctx {| nid := length (graph s1); op := DFG_Resize id; sz := size |}) -> wnidwf s1 x)
-          by (intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn1).
-        assert (Hnode : node_args_sz s1 {| nid := length (graph s1); op := DFG_Resize id; sz := size |})
-          by (unfold node_args_sz; cbn [op]; exact I).
-        pose proof (emit_fg (DFG_Resize id) size s1 Hp1 Hq1 Hf1 Hargs Hnode) as He2.
-        destruct (emit ctx (DFG_Resize id) size s1) as [id2 s2].
-        destruct He2 as [Hg2 [Hn2 [Hp2 [Hq2 [Hs2 Hf2]]]]].
-        split; [ eapply wgmono_trans; eauto | split; [ exact Hn2 | split; [ exact Hp2 | split; [ exact Hq2 | split; [ exact Hs2 | exact Hf2 ] ] ] ] ].
-    - (* tf_ovar *)
-      simpl. apply dataflow_var_fg; assumption.
-    - (* tf_op1 *)
-      rename op into uop.
-      cbn [dataflow_expr]. destruct uop as [| source_size | source_size offset].
-      + unfold bind.
-        pose proof (IHe size s Hinv Hvsz Hfg) as H1.
-        destruct (dataflow_expr ctx e size s) as [id1 s1].
-        destruct H1 as [Hg1 [Hn1 [Hw1 [Hv1 [Hs1 Hf1]]]]].
-        assert (Hargs : forall x, In x (get_args ctx {| nid := length (graph s1); op := DFG_Unary tf_not id1; sz := size |}) -> wnidwf s1 x)
-          by (intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn1).
-        assert (Hnode : node_args_sz s1 {| nid := length (graph s1); op := DFG_Unary tf_not id1; sz := size |})
-          by (unfold node_args_sz; cbn [op sz]; exact Hs1).
-        pose proof (emit_fg (DFG_Unary tf_not id1) size s1 Hw1 Hv1 Hf1 Hargs Hnode) as He.
-        destruct (emit ctx (DFG_Unary tf_not id1) size s1) as [id2 s2].
-        destruct He as [Hg2 [Hn2 [Hp2 [Hq2 [Hs2 Hf2]]]]].
-        split; [ eapply wgmono_trans; [ exact Hg1 | exact Hg2 ]
-               | split; [ exact Hn2 | split; [ exact Hp2 | split; [ exact Hq2 | split; [ exact Hs2 | exact Hf2 ] ] ] ] ].
-      + unfold bind. cbv beta.
-        destruct (dataflow_expr ctx e source_size s) as [id1 s1] eqn:Erun.
-        pose proof (IHe source_size s Hinv Hvsz Hfg) as H1. rewrite Erun in H1.
-        cbv beta iota. destruct H1 as [Hg1 [Hn1 [Hw1 [Hv1 [Hs1 Hf1]]]]].
-        assert (Hargs : forall x,
-            In x (get_args ctx
-              {| nid := length (graph s1); op := DFG_Unary (tf_resize source_size) id1; sz := size |}) ->
-            wnidwf s1 x)
-          by (intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn1).
-        assert (Hnode : node_args_sz s1
-            {| nid := length (graph s1); op := DFG_Unary (tf_resize source_size) id1; sz := size |})
-          by (unfold node_args_sz; cbn [op]; exact Hs1).
-        pose proof (emit_fg (DFG_Unary (tf_resize source_size) id1) size s1
-          Hw1 Hv1 Hf1 Hargs Hnode) as He.
-        destruct (emit ctx (DFG_Unary (tf_resize source_size) id1) size s1) as [id2 s2].
-        destruct He as [Hg2 [Hn2 [Hp2 [Hq2 [Hs2 Hf2]]]]].
-        split; [ eapply wgmono_trans; [ exact Hg1 | exact Hg2 ]
-               | split; [ exact Hn2 | split; [ exact Hp2 | split; [ exact Hq2 | split; [ exact Hs2 | exact Hf2 ] ] ] ] ].
-      + unfold bind. cbv beta.
-        destruct (dataflow_expr ctx e source_size s) as [id1 s1] eqn:Erun.
-        pose proof (IHe source_size s Hinv Hvsz Hfg) as H1. rewrite Erun in H1.
-        cbv beta iota. destruct H1 as [Hg1 [Hn1 [Hw1 [Hv1 [Hs1 Hf1]]]]].
-        assert (Hargs : forall x,
-            In x (get_args ctx
-              {| nid := length (graph s1); op := DFG_Unary (tf_slice source_size offset) id1; sz := size |}) ->
-            wnidwf s1 x)
-          by (intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hn1).
-        assert (Hnode : node_args_sz s1
-            {| nid := length (graph s1); op := DFG_Unary (tf_slice source_size offset) id1; sz := size |})
-          by (unfold node_args_sz; cbn [op]; exact Hs1).
-        pose proof (emit_fg (DFG_Unary (tf_slice source_size offset) id1) size s1
-          Hw1 Hv1 Hf1 Hargs Hnode) as He.
-        destruct (emit ctx (DFG_Unary (tf_slice source_size offset) id1) size s1) as [id2 s2].
-        destruct He as [Hg2 [Hn2 [Hp2 [Hq2 [Hs2 Hf2]]]]].
-        split; [ eapply wgmono_trans; [ exact Hg1 | exact Hg2 ]
-               | split; [ exact Hn2 | split; [ exact Hp2 | split; [ exact Hq2 | split; [ exact Hs2 | exact Hf2 ] ] ] ] ].
-    - (* tf_op2 *)
-      rename op into bop0.
-      cbn [dataflow_expr]. destruct bop0 as [ | | | | | | | | | szC cop | hz lz | isz ];
-        try (unfold bind;
-         match goal with
-         | |- context[dataflow_expr ctx e1 ?z s] =>
-            pose proof (IHe1 z s Hinv Hvsz Hfg) as H1;
-            destruct (dataflow_expr ctx e1 z s) as [id1 s1];
-            destruct H1 as [Hg1 [Hn1 [Hw1 [Hv1 [Hs1 Hf1]]]]];
-            pose proof (IHe2 z s1 Hw1 Hv1 Hf1) as H2;
-            destruct (dataflow_expr ctx e2 z s1) as [id2 s2];
-            destruct H2 as [Hg2 [Hn2 [Hw2 [Hv2 [Hs2 Hf2]]]]]
-         end;
-         match goal with
-         | |- context[emit ctx ?opn ?szn ?sst] =>
-            assert (Hargs : forall x, In x (get_args ctx {| nid := length (graph sst); op := opn; sz := szn |}) -> wnidwf sst x)
-              by (intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[]]];
-                  [ eapply wnidwf_gmono; [ exact Hn1 | exact Hg2 ] | exact Hn2 ]);
-            assert (Hnode : node_args_sz sst {| nid := length (graph sst); op := opn; sz := szn |})
-              by (unfold node_args_sz; cbn [op sz];
-                  split; [ eapply wsz_gmono; [ exact Hs1 | exact Hg2 ] | exact Hs2 ]);
-            pose proof (emit_fg opn szn sst Hw2 Hv2 Hf2 Hargs Hnode) as He;
-            destruct (emit ctx opn szn sst) as [id3 s3];
-            destruct He as [Hg3 [Hn3 [Hp3 [Hq3 [Hs3 Hf3]]]]]
-         end;
-         split; [ eapply wgmono_trans; [ exact Hg1 | eapply wgmono_trans; [ exact Hg2 | exact Hg3 ] ]
-                | split; [ exact Hn3 | split; [ exact Hp3 | split; [ exact Hq3 | split; [ exact Hs3 | exact Hf3 ] ] ] ] ]).
-      (* tf_concat: the only binary op whose operands are emitted at DIFFERENT
-         widths, so the uniform tactic above cannot bind a single [?z]. *)
-      unfold bind.
-      pose proof (IHe1 hz s Hinv Hvsz Hfg) as H1.
-      destruct (dataflow_expr ctx e1 hz s) as [id1 s1].
-      destruct H1 as [Hg1 [Hn1 [Hw1 [Hv1 [Hs1 Hf1]]]]].
-      pose proof (IHe2 lz s1 Hw1 Hv1 Hf1) as H2.
-      destruct (dataflow_expr ctx e2 lz s1) as [id2 s2].
-      destruct H2 as [Hg2 [Hn2 [Hw2 [Hv2 [Hs2 Hf2]]]]].
-      assert (Hargs : forall x, In x (get_args ctx {| nid := length (graph s2);
-                        op := DFG_Binary (tf_concat hz lz) id1 id2; sz := size |}) -> wnidwf s2 x)
-        by (intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[]]];
-            [ eapply wnidwf_gmono; [ exact Hn1 | exact Hg2 ] | exact Hn2 ]).
-      assert (Hnode : node_args_sz s2 {| nid := length (graph s2);
-                        op := DFG_Binary (tf_concat hz lz) id1 id2; sz := size |})
-        by (unfold node_args_sz; cbn [op sz];
-            split; [ eapply wsz_gmono; [ exact Hs1 | exact Hg2 ] | exact Hs2 ]).
-      pose proof (emit_fg (DFG_Binary (tf_concat hz lz) id1 id2) size s2
-                    Hw2 Hv2 Hf2 Hargs Hnode) as He.
-      destruct (emit ctx (DFG_Binary (tf_concat hz lz) id1 id2) size s2) as [id3 s3].
-      destruct He as [Hg3 [Hn3 [Hp3 [Hq3 [Hs3 Hf3]]]]].
-      split; [ eapply wgmono_trans; [ exact Hg1 | eapply wgmono_trans; [ exact Hg2 | exact Hg3 ] ]
-             | split; [ exact Hn3 | split; [ exact Hp3 | split; [ exact Hq3 | split; [ exact Hs3 | exact Hf3 ] ] ] ] ].
-      unfold bind.
-      pose proof (IHe1 isz s Hinv Hvsz Hfg) as H1.
-      destruct (dataflow_expr ctx e1 isz s) as [id1 s1].
-      destruct H1 as [Hg1 [Hn1 [Hw1 [Hv1 [Hs1 Hf1]]]]].
-      pose proof (IHe2 (Nat.log2_up isz) s1 Hw1 Hv1 Hf1) as H2.
-      destruct (dataflow_expr ctx e2 (Nat.log2_up isz) s1) as [id2 s2].
-      destruct H2 as [Hg2 [Hn2 [Hw2 [Hv2 [Hs2 Hf2]]]]].
-      assert (Hargs : forall x, In x (get_args ctx {| nid := length (graph s2);
-                        op := DFG_Binary (tf_islice isz) id1 id2; sz := size |}) -> wnidwf s2 x)
-        by (intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[]]];
-            [ eapply wnidwf_gmono; [ exact Hn1 | exact Hg2 ] | exact Hn2 ]).
-      assert (Hnode : node_args_sz s2 {| nid := length (graph s2);
-                        op := DFG_Binary (tf_islice isz) id1 id2; sz := size |})
-        by (unfold node_args_sz; cbn [op sz];
-            split; [ eapply wsz_gmono; [ exact Hs1 | exact Hg2 ] | exact Hs2 ]).
-      pose proof (emit_fg (DFG_Binary (tf_islice isz) id1 id2) size s2
-                    Hw2 Hv2 Hf2 Hargs Hnode) as He.
-      destruct (emit ctx (DFG_Binary (tf_islice isz) id1 id2) size s2) as [id3 s3].
-      destruct He as [Hg3 [Hn3 [Hp3 [Hq3 [Hs3 Hf3]]]]].
-      split; [ eapply wgmono_trans; [ exact Hg1 | eapply wgmono_trans; [ exact Hg2 | exact Hg3 ] ]
-             | split; [ exact Hn3 | split; [ exact Hp3 | split; [ exact Hq3 | split; [ exact Hs3 | exact Hf3 ] ] ] ] ].
-    - (* tf_expr_if *)
-      cbn [dataflow_expr]. unfold bind.
-      pose proof (IHe1 1 s Hinv Hvsz Hfg) as H1.
-      destruct (dataflow_expr ctx e1 1 s) as [idc s1].
-      destruct H1 as [Hgc [Hnc [Hwc [Hvc [Hsc Hfc]]]]].
-      pose proof (IHe2 size s1 Hwc Hvc Hfc) as H2.
-      destruct (dataflow_expr ctx e2 size s1) as [idt s2].
-      destruct H2 as [Hgt [Hnt [Hwt [Hvt [Hst Hft]]]]].
-      pose proof (IHe3 size s2 Hwt Hvt Hft) as H3.
-      destruct (dataflow_expr ctx e3 size s2) as [ide s3].
-      destruct H3 as [Hge [Hne [Hwe [Hve [Hse Hfe]]]]].
-      assert (Hargs : forall x, In x (get_args ctx {| nid := length (graph s3); op := DFG_Phi idc idt ide; sz := size |}) -> wnidwf s3 x)
-        by (intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[<-|[]]]];
-            [ eapply wnidwf_gmono; [ exact Hnc | eapply wgmono_trans; [ exact Hgt | exact Hge ] ]
-            | eapply wnidwf_gmono; [ exact Hnt | exact Hge ] | exact Hne ]).
-      assert (Hnode : node_args_sz s3 {| nid := length (graph s3); op := DFG_Phi idc idt ide; sz := size |})
-        by (unfold node_args_sz; cbn [op sz];
-            split; [ eapply wsz_gmono; [ exact Hsc | eapply wgmono_trans; [ exact Hgt | exact Hge ] ]
-                   | split; [ eapply wsz_gmono; [ exact Hst | exact Hge ] | exact Hse ] ]).
-      pose proof (emit_fg (DFG_Phi idc idt ide) size s3 Hwe Hve Hfe Hargs Hnode) as He.
-      destruct (emit ctx (DFG_Phi idc idt ide) size s3) as [idp s4].
-      destruct He as [Hg4 [Hn4 [Hp4 [Hq4 [Hs4 Hf4]]]]].
-      split; [ eapply wgmono_trans; [ exact Hgc | eapply wgmono_trans; [ exact Hgt | eapply wgmono_trans; [ exact Hge | exact Hg4 ] ] ]
-             | split; [ exact Hn4 | split; [ exact Hp4 | split; [ exact Hq4 | split; [ exact Hs4 | exact Hf4 ] ] ] ] ].
+    intros e size s Hinv Hvsz Hfg.
+    pose proof (dataflow_expr_grows e size s) as G.
+    enough (H : let (id, s') := dataflow_expr ctx e size s in
+                (winv s' /\ wvsz s' /\ wfg s') /\ (wnidwf s' id /\ wsz s' id size))
+      by (destruct (dataflow_expr ctx e size s); destruct H as [[P [Q F]] [N Z]];
+          exact (conj G (conj N (conj P (conj Q (conj Z F)))))).
+    refine (dataflow_expr_inv (fun s => winv s /\ wvsz s /\ wfg s)
+              (fun s w x => wnidwf s x /\ wsz s x w)
+              _ _ _ e size s (conj Hinv (conj Hvsz Hfg))); clear G Hinv Hvsz Hfg e size s.
+    - intros s s' w x [Hn Hz] G. exact (conj (wnidwf_gmono _ _ _ Hn G) (wsz_gmono _ _ _ _ Hz G)).
+    - intros o w s _ [Hinv [Hvsz Hfg]] Ha Hat.
+      pose proof (emit_fg o w s Hinv Hvsz Hfg (fun x Hx => match Ha x Hx with ex_intro _ _ (conj H _) => H end)
+                    (args_at_impl _ _ _ (fun x wx H => proj2 H) Hat)) as H.
+      destruct (emit ctx o w s). destruct H as [_ [N [P [Q [Z F]]]]].
+      exact (conj (conj P (conj Q F)) (conj N Z)).
+    - intros v s [Hinv [Hvsz Hfg]]. pose proof (get_var_fg v s Hinv Hvsz Hfg) as H.
+      destruct (get_var ctx v s). destruct H as [_ [N [P [Q [Z F]]]]].
+      exact (conj (conj P (conj Q F)) (conj N Z)).
   Qed.
 
   (* --- map merger --- *)
@@ -5972,7 +5682,7 @@ Section SchedulerSimulation.
         { intros x Hx. simpl in Hx. destruct Hx as [<-|[<-|[<-|[]]]].
           - exact Hcondn. - apply Hvtn; reflexivity. - apply Hven; reflexivity. }
         assert (Hnode : node_args_sz s {| nid := length (graph s); op := DFG_Phi cond_id vt ve; sz := dfg_var_size ctx k |}).
-        { unfold node_args_sz. cbn [op sz].
+        { unfold node_args_sz, args_at. cbn [op sz].
           split; [ exact Hconds | split; [ apply Hvts; reflexivity | apply Hves; reflexivity ] ]. }
         pose proof (emit_fg (DFG_Phi cond_id vt ve) (dfg_var_size ctx k) s Hinv Hvsz Hfg Harg Hnode) as He.
         destruct (emit ctx (DFG_Phi cond_id vt ve) (dfg_var_size ctx k) s) as [phi s1] eqn:Ee.
@@ -5994,7 +5704,7 @@ Section SchedulerSimulation.
         - eapply wnidwf_gmono; [ apply Hvtn; reflexivity | exact Gv ].
         - exact Nv. }
       assert (Hnode : node_args_sz s1 {| nid := length (graph s1); op := DFG_Phi cond_id vt ve0; sz := dfg_var_size ctx k |}).
-      { unfold node_args_sz. cbn [op sz].
+      { unfold node_args_sz, args_at. cbn [op sz].
         split; [ eapply wsz_gmono; [ exact Hconds | exact Gv ]
                | split; [ eapply wsz_gmono; [ apply Hvts; reflexivity | exact Gv ] | exact Sv ] ]. }
       pose proof (emit_fg (DFG_Phi cond_id vt ve0) (dfg_var_size ctx k) s1 Pv Qv Fv Harg Hnode) as He.
@@ -6017,7 +5727,7 @@ Section SchedulerSimulation.
         - exact Nv.
         - eapply wnidwf_gmono; [ apply Hven; reflexivity | exact Gv ]. }
       assert (Hnode : node_args_sz s1 {| nid := length (graph s1); op := DFG_Phi cond_id vt0 ve; sz := dfg_var_size ctx k |}).
-      { unfold node_args_sz. cbn [op sz].
+      { unfold node_args_sz, args_at. cbn [op sz].
         split; [ eapply wsz_gmono; [ exact Hconds | exact Gv ]
                | split; [ exact Sv | eapply wsz_gmono; [ apply Hves; reflexivity | exact Gv ] ] ]. }
       pose proof (emit_fg (DFG_Phi cond_id vt0 ve) (dfg_var_size ctx k) s1 Pv Qv Fv Harg Hnode) as He.
@@ -6199,7 +5909,7 @@ Section SchedulerSimulation.
     { apply emit_fg; [ exact PJ | exact QJ | exact FJ | | ].
       - intros x Hx. cbn [get_args] in Hx.
         destruct Hx as [<- | Hx]; [ exact NJ_arg | exact (Hen_j x Hx) ].
-      - unfold node_args_sz. cbn [op].
+      - unfold node_args_sz, args_at. cbn [op].
         eapply wsz_gmono; [ exact Sa | exact GJ ]. }
     destruct (emit ctx (DFG_Drive ip arg_id en) (ip_req_sz (tfs_spec_ip ctx ip)) sj)
       as [drive_id sd] eqn:Ed.
@@ -6221,7 +5931,7 @@ Section SchedulerSimulation.
               (intros x Hx; cbn [get_args] in Hx;
                destruct Hx as [<- | [<- | []]]; [ exact Nd |];
                eapply wnidwf_gmono; [ exact (NJ prev eq_refl) | exact Gd ]);
-            assert (HB : B) by (unfold node_args_sz; cbn [op]; exact I);
+            assert (HB : B) by (unfold node_args_sz, args_at; cbn [op]; exact I);
             specialize (Hj HA HB)
         end.
         destruct (emit ctx (DFG_Join drive_id prev) 1 sd) as [hid sh].
@@ -6250,7 +5960,7 @@ Section SchedulerSimulation.
               (intros x Hx; cbn [get_args] in Hx;
                destruct Hx as [<- | []]; exact Nh);
             assert (HB : B) by
-              (unfold node_args_sz; cbn [op sz]; split; [ lia | reflexivity ]);
+              (unfold node_args_sz, args_at; cbn [op sz]; split; [ lia | reflexivity ]);
             specialize (Ht HA HB)
         end.
         destruct (emit ctx (DFG_Stall (S l) head_id) (counter_sz (S l)) sh) as [sid s1].
@@ -6270,7 +5980,7 @@ Section SchedulerSimulation.
                   wsz s' id (dfg_var_size ctx (DFG_SVar dst)) /\ wfg s').
     { apply emit_fg; [ exact Pt | exact Qt | exact Ft | | ].
       - intros x Hx. cbn [get_args] in Hx. destruct Hx as [<- | []]. exact Nt.
-      - unfold node_args_sz. cbn [op]. exact I. }
+      - unfold node_args_sz, args_at. cbn [op]. exact I. }
     destruct (emit ctx (DFG_Sample ip stall_id en)
                 (dfg_var_size ctx (DFG_SVar dst)) s1) as [samp_id s2] eqn:Esm.
     destruct Hsm as [Gm [Nm [Pm [Qm [Sm Fm]]]]].
@@ -6475,89 +6185,21 @@ Section SchedulerSimulation.
         rewrite Hem in Hf. exact Hf.
   Qed.
 
-  Lemma ret_pos id (s: wst) :
-    1 <= id -> gpos s -> let (i, s') := ret ctx id s in 1 <= i /\ gpos s'.
-  Proof. intros Hi Hp. unfold ret. split; assumption. Qed.
-
-  Lemma seq_pos (m: M ctx nid_t) (f: nid_t -> M ctx nid_t) (s: wst) :
-    (gpos s -> let (id, s1) := m s in 1 <= id /\ gpos s1) ->
-    (forall id s1, 1 <= id -> gpos s1 ->
-       let (id2, s2) := f id s1 in 1 <= id2 /\ gpos s2) ->
-    gpos s ->
-    let (id2, s2) := bind ctx m f s in 1 <= id2 /\ gpos s2.
-  Proof.
-    intros H1 H2 Hp. specialize (H1 Hp).
-    unfold bind. destruct (m s) as [id s1] eqn:Em.
-    destruct H1 as [n1 p1]. specialize (H2 id s1 n1 p1).
-    destruct (f id s1) as [id2 s2]. exact H2.
-  Qed.
-
   Lemma dataflow_expr_pos :
     forall e sz (s: wst), gpos s ->
       let (id, s') := dataflow_expr ctx e sz s in 1 <= id /\ gpos s'.
   Proof.
-    induction e; intros sz s Hp.
-    - simpl. apply emit_pos; [ exact Hp | discriminate | intros x Hx; simpl in Hx; destruct Hx ].
-    - simpl. apply seq_pos.
-      + apply get_var_pos.
-      + intros id s1 Hid Hp1. cbn beta. destruct (Nat.eqb _ sz).
-        * apply ret_pos; assumption.
-        * apply emit_pos; [ exact Hp1 | discriminate | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hid ].
-      + exact Hp.
-    - simpl. apply seq_pos.
-      + intro Hp0. apply emit_pos; [ exact Hp0 | discriminate | intros x Hx; simpl in Hx; destruct Hx ].
-      + intros id s1 Hid Hp1. cbn beta. destruct (Nat.eqb _ sz).
-        * apply ret_pos; assumption.
-        * apply emit_pos; [ exact Hp1 | discriminate | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hid ].
-      + exact Hp.
-    - simpl. apply seq_pos.
-      + apply get_var_pos.
-      + intros id s1 Hid Hp1. cbn beta. destruct (Nat.eqb _ sz).
-        * apply ret_pos; assumption.
-        * apply emit_pos; [ exact Hp1 | discriminate | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hid ].
-      + exact Hp.
-    - simpl. destruct op as [| source_size | source_size offset].
-      + apply seq_pos.
-        * apply IHe.
-        * intros id1 s1 Hid1 Hp1. apply emit_pos;
-            [ exact Hp1 | discriminate | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hid1 ].
-        * exact Hp.
-      + apply seq_pos.
-        * apply IHe.
-        * intros id1 s1 Hid1 Hp1. apply emit_pos;
-            [ exact Hp1 | discriminate
-            | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hid1 ].
-        * exact Hp.
-      + apply seq_pos.
-        * apply IHe.
-        * intros id1 s1 Hid1 Hp1. apply emit_pos;
-            [ exact Hp1 | discriminate
-            | intros x Hx; simpl in Hx; destruct Hx as [<-|[]]; exact Hid1 ].
-        * exact Hp.
-    - simpl. destruct op;
-        ( apply seq_pos;
-          [ apply IHe1
-          | intros id1 s1 Hid1 Hp1; apply seq_pos;
-            [ apply IHe2
-            | intros id2 s2 Hid2 Hp2; apply emit_pos;
-              [ exact Hp2 | discriminate
-              | intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[]]]; [ exact Hid1 | exact Hid2 ] ]
-            | exact Hp1 ]
-          | exact Hp ]).
-    - simpl. apply seq_pos.
-      + apply IHe1.
-      + intros idc s1 Hidc Hpc. apply seq_pos.
-        * apply IHe2.
-        * intros idt s2 Hidt Hpt. apply seq_pos.
-          -- apply IHe3.
-          -- intros ide s3 Hide Hpe. apply emit_pos.
-             ++ exact Hpe.
-             ++ discriminate.
-             ++ intros x Hx; simpl in Hx; destruct Hx as [<-|[<-|[<-|[]]]];
-                  [ exact Hidc | exact Hidt | exact Hide ].
-          -- exact Hpt.
-        * exact Hpc.
-      + exact Hp.
+    intros e sz s Hp.
+    enough (H : let (id, s') := dataflow_expr ctx e sz s in gpos s' /\ 1 <= id)
+      by (destruct (dataflow_expr ctx e sz s); exact (conj (proj2 H) (proj1 H))).
+    refine (dataflow_expr_inv gpos (fun _ _ x => 1 <= x) _ _ _ e sz s Hp); clear Hp e sz s.
+    - exact (fun _ _ _ _ Hx _ => Hx).
+    - intros o w s Ho Hs Ha _.
+      assert (Hne : o <> DFG_Empty) by (intros ->; exact Ho).
+      pose proof (emit_pos o w s Hs Hne (fun x Hx => match Ha x Hx with ex_intro _ _ H => H end)) as H.
+      destruct (emit ctx o w s). exact (conj (proj2 H) (proj1 H)).
+    - intros v s Hs. pose proof (get_var_pos v s Hs) as H.
+      destruct (get_var ctx v s). exact (conj (proj2 H) (proj1 H)).
   Qed.
 
   Lemma merge_key_pos cond_id k vt_opt ve_opt (s: wst) res s' :
@@ -6790,7 +6432,7 @@ Section SchedulerSimulation.
     wfg {| graph := [ {| nid := 0; op := DFG_Empty; sz := 0 |} ]; var_map := [] |}.
   Proof.
     intros node Hin. simpl in Hin. destruct Hin as [<-|[]].
-    unfold node_args_sz. cbn [op]. exact I.
+    unfold node_args_sz, args_at. cbn [op]. exact I.
   Qed.
 
   Lemma start_gpos :
@@ -7177,24 +6819,6 @@ Section SchedulerSimulation.
     exact (conj G (conj V (N Hv))).
   Qed.
 
-  Lemma ret_vv id (s: wst) :
-    vm_values s -> names_value s id ->
-    let (i, s') := ret ctx id s in wgmono s s' /\ vm_values s' /\ names_value s' i.
-  Proof. intros H Hn. unfold ret. split; [ apply wgmono_refl | split; assumption ]. Qed.
-
-  Lemma seq_vv (m: M ctx nid_t) (f: nid_t -> M ctx nid_t) (s: wst) :
-    (let (x, s1) := m s in wgmono s s1 /\ vm_values s1 /\ names_value s1 x) ->
-    (forall x s1, vm_values s1 -> names_value s1 x ->
-       let (id2, s2) := f x s1 in wgmono s1 s2 /\ vm_values s2 /\ names_value s2 id2) ->
-    let (id2, s2) := bind ctx m f s in wgmono s s2 /\ vm_values s2 /\ names_value s2 id2.
-  Proof.
-    intros H1 H2. unfold bind.
-    destruct (m s) as [x s1] eqn:Em. destruct H1 as [G1 [V1 N1]].
-    specialize (H2 x s1 V1 N1). destruct (f x s1) as [id2 s2].
-    destruct H2 as [G2 [V2 N2]].
-    split; [ exact (wgmono_trans _ _ _ G1 G2) | split; assumption ].
-  Qed.
-
   Lemma set_var_vv v id (s: wst) :
     vm_values s -> names_value s id ->
     let (u, s') := set_var ctx v id s in wgmono s s' /\ vm_values s'.
@@ -7247,26 +6871,20 @@ Section SchedulerSimulation.
       let (id, s') := dataflow_expr ctx e sz s in
       wgmono s s' /\ vm_values s' /\ names_value s' id.
   Proof.
-    induction e as [ c | v | v | v | uop src IHsrc | bop e1 IH1 e2 IH2 | c IHc t IHt e IHe ];
-      intros sz s H; cbn [dataflow_expr].
-    - apply emit_value_vv; [ exact I | exact H ].
-    - apply seq_vv; [ apply get_var_vv; exact H | intros x s1 V1 N1 ].
-      destruct (Nat.eqb _ sz); [ apply ret_vv; assumption | apply emit_value_vv; [ exact I | exact V1 ] ].
-    - apply seq_vv; [ apply emit_value_vv; [ exact I | exact H ] | intros x s1 V1 N1 ].
-      destruct (Nat.eqb _ sz); [ apply ret_vv; assumption | apply emit_value_vv; [ exact I | exact V1 ] ].
-    - apply seq_vv; [ apply get_var_vv; exact H | intros x s1 V1 N1 ].
-      destruct (Nat.eqb _ sz); [ apply ret_vv; assumption | apply emit_value_vv; [ exact I | exact V1 ] ].
-    - destruct uop;
-        (apply seq_vv; [ apply IHsrc; exact H | intros x s1 V1 N1 ];
-         apply emit_value_vv; [ exact I | exact V1 ]).
-    - destruct bop;
-        (apply seq_vv; [ apply IH1; exact H | intros x t1 V1 N1 ];
-         apply seq_vv; [ apply IH2; exact V1 | intros y t2 V2 N2 ];
-         apply emit_value_vv; [ exact I | exact V2 ]).
-    - apply seq_vv; [ apply IHc; exact H | intros x t1 V1 N1 ].
-      apply seq_vv; [ apply IHt; exact V1 | intros y t2 V2 N2 ].
-      apply seq_vv; [ apply IHe; exact V2 | intros z t3 V3 N3 ].
-      apply emit_value_vv; [ exact I | exact V3 ].
+    intros e sz s Hv.
+    pose proof (dataflow_expr_grows e sz s) as G.
+    enough (H : let (id, s') := dataflow_expr ctx e sz s in vm_values s' /\ names_value s' id)
+      by (destruct (dataflow_expr ctx e sz s); exact (conj G H)).
+    refine (dataflow_expr_inv vm_values (fun s _ x => names_value s x) _ _ _ e sz s Hv);
+      clear G Hv e sz s.
+    - intros s s' _ x Hx G. exact (names_value_gmono _ _ _ G Hx).
+    - intros o w s Ho Hs _ _.
+      (* an expression's nodes are value nodes *)
+      assert (Hval : value_op o) by (destruct o; first [ exact Logic.I | destruct Ho ]).
+      pose proof (emit_vv o w s Hs) as H.
+      destruct (emit ctx o w s). exact (conj (proj1 (proj2 H)) (proj2 (proj2 H) Hval)).
+    - intros v s Hs. pose proof (get_var_vv v s Hs) as H.
+      destruct (get_var ctx v s). exact (proj2 H).
   Qed.
 
   Lemma merge_key_vv cond_id k vt_opt ve_opt (s: wst) res s' :
@@ -7948,7 +7566,7 @@ Section SchedulerSimulation.
          {| nid := 0; op := DFG_Empty; sz := 0 |})
       (nth_In _ _ Hlen)) as Hfg.
     unfold stall_lat_of, node_op in Hst.
-    unfold node_args_sz in Hfg.
+    unfold node_args_sz, args_at in Hfg.
     destruct (op (nth (vreg_nid a_idx n_idx) (graph (build_dfg ctx act))
                     {| nid := 0; op := DFG_Empty; sz := 0 |})) eqn:Hop;
       try discriminate Hst.
@@ -8488,7 +8106,7 @@ Section SchedulerSimulation.
     In (x, sx) (reads_at (build_dfg ctx act) (op node) (sz node)) ->
     sx = sz (nth x (graph (build_dfg ctx act)) {| nid := 0; op := DFG_Empty; sz := 0 |}).
   Proof.
-    unfold node_args_sz. intros Hfg Hr.
+    unfold node_args_sz, args_at. intros Hfg Hr.
     case_op (op node); try destruct op1; cbn [reads_at In] in Hr;
       repeat match goal with
              | H : _ \/ _ |- _ => destruct H as [H | H]
@@ -9685,7 +9303,7 @@ Section SchedulerSimulation.
                             (nth n (graph (build_dfg ctx act))
                                {| nid := 0; op := DFG_Empty; sz := 0 |}))
               by (apply wfg_build_dfg, nth_In; exact Hnlen).
-            unfold node_args_sz in Hfg. rewrite Hop in Hfg. destruct Hfg as [Hf1 _].
+            unfold node_args_sz, args_at in Hfg. rewrite Hop in Hfg. destruct Hfg as [Hf1 _].
             destruct (Harg c ltac:(in_args Hop)) as [Hc1 Hc2].
             destruct (wsz_node_sz act c 1 Hf1) as [Hclen Hcsz].
             exact (compile_subst_valid_gen_at Hinv bufs Hsub fuel c 1 pi
@@ -11841,7 +11459,7 @@ Section SchedulerSimulation.
     - exfalso.
       pose proof (stall_cost_gap act s t l a Hs Ht Harg Hop) as Hgap.
       pose proof (wfg_build_dfg act t Ht) as Hfg.
-      unfold node_args_sz in Hfg. rewrite Hop in Hfg.
+      unfold node_args_sz, args_at in Hfg. rewrite Hop in Hfg.
       destruct Hfg as [Hl _].
       pose proof (clim_pos cost_limit) as Hcl.
       rewrite !node_cycle_is_div in Heq.
