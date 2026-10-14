@@ -1106,231 +1106,75 @@ Section SchedulerRoundTrip.
             rewrite (Hval pi Hgp (nrv_peel_resize act a_idx id src_id pi ss sinput
                                     Rop Hsrcp R2 Hv)).
             cbn [src_get dfg_var_size]. reflexivity.
-      - (* tf_op1 *)
-        destruct uop as [ | source_size | source_size offset ].
-        + (* tf_not *)
-          cbn [dataflow_expr] in Hde. unfold bind in Hde.
-          pose proof (dataflow_expr_sz e1 szE s Hinv Hvsz) as Hsz1.
-          destruct (dataflow_expr ctx e1 szE s) as [src_id s1] eqn:Ee1.
-          destruct Hsz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hz1]]]].
-          cbv beta in Hde.
-          assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
-          assert (Hg1F : wgmono s1 F)
-            by exact (wgmono_trans s1 s' F (emit_gmono _ _ _ _ _ Hde) Hg').
-          assert (Hposp : 1 <= src_id /\ gpos s1).
-          { pose proof (dataflow_expr_pos e1 szE s Hpos) as Hq.
-            rewrite Ee1 in Hq. exact Hq. }
-          destruct Hposp as [Hsrcp Hpos1].
-          destruct (IH1 szE s s1 src_id sp Hne Hinv Hvsz Hpos Ee1 Hg1F Hsem) as [Hsem1 Hv1].
-          destruct (emitted_node_at act F s1 s' (DFG_Unary tf_not src_id) szE id
-                      HF Hne1 Hde Hg') as [R1 [R2 [Rop _]]].
-          split.
-          * apply (sem_inv_vm s1 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem1 ].
-          * intros pi Hgp Hv.
-            unfold ProofDefinitions.nval in Hv1 |- *.
-            rewrite (nre_unary act a_idx id tf_not src_id R1 R2 Rop).
-            cbn [tf_eval_expr].
-            rewrite (Hv1 pi Hgp (nrv_peel_unary act a_idx id tf_not src_id pi ss sinput
-                                   Rop Hsrcp R2 Hv)).
-            reflexivity.
-        + (* tf_resize *)
-          cbn [dataflow_expr] in Hde. unfold bind in Hde.
-          pose proof (dataflow_expr_sz e1 source_size s Hinv Hvsz) as Hsz1.
-          destruct (dataflow_expr ctx e1 source_size s) as [src_id s1] eqn:Ee1.
-          destruct Hsz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hz1]]]].
-          cbv beta in Hde.
-          assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
-          assert (Hg1F : wgmono s1 F)
-            by exact (wgmono_trans s1 s' F (emit_gmono _ _ _ _ _ Hde) Hg').
-          assert (Hposp : 1 <= src_id /\ gpos s1).
-          { pose proof (dataflow_expr_pos e1 source_size s Hpos) as Hq.
-            rewrite Ee1 in Hq. exact Hq. }
-          destruct Hposp as [Hsrcp Hpos1].
-          destruct (IH1 source_size s s1 src_id sp Hne Hinv Hvsz Hpos Ee1 Hg1F Hsem)
-            as [Hsem1 Hv1].
-          destruct (emitted_node_at act F s1 s'
-                      (DFG_Unary (tf_resize source_size) src_id) szE id
-                      HF Hne1 Hde Hg') as [R1 [R2 [Rop _]]].
-          split.
-          * apply (sem_inv_vm s1 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem1 ].
-          * intros pi Hgp Hv.
-            unfold ProofDefinitions.nval in Hv1 |- *.
-            rewrite (nre_unary act a_idx id (tf_resize source_size) src_id R1 R2 Rop).
-            cbn [tf_eval_expr].
-            rewrite (Hv1 pi Hgp (nrv_peel_unary act a_idx id (tf_resize source_size)
-                                   src_id pi ss sinput Rop Hsrcp R2 Hv)).
-            reflexivity.
-        + cbn [dataflow_expr] in Hde. unfold bind in Hde.
-          pose proof (dataflow_expr_sz e1 source_size s Hinv Hvsz) as Hsz1.
-          destruct (dataflow_expr ctx e1 source_size s) as [src_id s1] eqn:Ee1.
-          destruct Hsz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hz1]]]].
-          cbv beta in Hde.
-          assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
-          assert (Hg1F : wgmono s1 F)
-            by exact (wgmono_trans s1 s' F (emit_gmono _ _ _ _ _ Hde) Hg').
-          assert (Hposp : 1 <= src_id /\ gpos s1).
-          { pose proof (dataflow_expr_pos e1 source_size s Hpos) as Hq.
-            rewrite Ee1 in Hq. exact Hq. }
-          destruct Hposp as [Hsrcp Hpos1].
-          destruct (IH1 source_size s s1 src_id sp Hne Hinv Hvsz Hpos Ee1 Hg1F Hsem)
-            as [Hsem1 Hv1].
-          destruct (emitted_node_at act F s1 s'
-                      (DFG_Unary (tf_slice source_size offset) src_id) szE id
-                      HF Hne1 Hde Hg') as [R1 [R2 [Rop _]]].
-          split.
-          * apply (sem_inv_vm s1 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem1 ].
-          * intros pi Hgp Hv.
-            unfold ProofDefinitions.nval in Hv1 |- *.
-            rewrite (nre_unary act a_idx id (tf_slice source_size offset) src_id R1 R2 Rop).
-            cbn [tf_eval_expr].
-            rewrite (Hv1 pi Hgp (nrv_peel_unary act a_idx id (tf_slice source_size offset)
-                                   src_id pi ss sinput Rop Hsrcp R2 Hv)).
-            reflexivity.
-      - (* tf_op2 *)
-        destruct bop as [ | | | | | | | | | szC cop | hz lz | isz ].
-        1-9: (cbn [dataflow_expr] in Hde; unfold bind in Hde;
-              pose proof (dataflow_expr_sz e1 szE s Hinv Hvsz) as Hsz1;
-              destruct (dataflow_expr ctx e1 szE s) as [id1 s1] eqn:Ee1;
-              destruct Hsz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hz1]]]];
-              pose proof (dataflow_expr_sz e2 szE s1 Hp1 Hq1) as Hsz2;
-              destruct (dataflow_expr ctx e2 szE s1) as [id2 s2] eqn:Ee2;
-              destruct Hsz2 as [Hg2 [Hn2 [Hp2 [Hq2 Hz2]]]];
-              cbv beta in Hde;
-              assert (Hpp1 : 1 <= id1 /\ gpos s1)
-                by (pose proof (dataflow_expr_pos e1 szE s Hpos) as Hq;
-                    rewrite Ee1 in Hq; exact Hq);
-              destruct Hpp1 as [Hid1p Hpos1];
-              assert (Hpp2 : 1 <= id2 /\ gpos s2)
-                by (pose proof (dataflow_expr_pos e2 szE s1 Hpos1) as Hq;
-                    rewrite Ee2 in Hq; exact Hq);
-              destruct Hpp2 as [Hid2p Hpos2];
-              assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne);
-              assert (Hne2 : 0 < length (graph s2)) by exact (gne_gmono s1 s2 Hg2 Hne1);
-              assert (Hg2F : wgmono s2 F)
-                by exact (wgmono_trans s2 s' F (emit_gmono _ _ _ _ _ Hde) Hg');
-              assert (Hg1F : wgmono s1 F) by exact (wgmono_trans s1 s2 F Hg2 Hg2F);
-              destruct (IH1 szE s s1 id1 sp Hne Hinv Hvsz Hpos Ee1 Hg1F Hsem)
-                as [Hsem1 Hv1];
-              destruct (IH2 szE s1 s2 id2 sp Hne1 Hp1 Hq1 Hpos1 Ee2 Hg2F Hsem1)
-                as [Hsem2 Hv2];
-              destruct (emitted_node_at act F s2 s' _ szE id HF Hne2 Hde Hg')
-                as [R1 [R2 [Rop _]]];
-              split;
-              [ apply (sem_inv_vm s2 s');
-                [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem2 ]
-              | intros pi Hgp Hv;
-                destruct (nrv_peel_binary act a_idx id _ id1 id2 pi ss sinput
-                            Rop Hid1p Hid2p R2 Hv) as [Hb1 Hb2];
-                unfold ProofDefinitions.nval in Hv1, Hv2 |- *;
-                rewrite (nre_binary act a_idx id _ id1 id2 R1 R2 Rop);
-                cbn [tf_eval_expr];
-                rewrite (Hv1 pi Hgp Hb1), (Hv2 pi Hgp Hb2); reflexivity ]).
-        (* tf_cmp: both operands are compiled at the COMPARISON width szC. *)
-        cbn [dataflow_expr] in Hde. unfold bind in Hde.
-        pose proof (dataflow_expr_sz e1 szC s Hinv Hvsz) as Hsz1.
-        destruct (dataflow_expr ctx e1 szC s) as [id1 s1] eqn:Ee1.
-        destruct Hsz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hz1]]]].
-        pose proof (dataflow_expr_sz e2 szC s1 Hp1 Hq1) as Hsz2.
-        destruct (dataflow_expr ctx e2 szC s1) as [id2 s2] eqn:Ee2.
-        destruct Hsz2 as [Hg2 [Hn2 [Hp2 [Hq2 Hz2]]]].
-        cbv beta in Hde.
-        assert (Hpp1 : 1 <= id1 /\ gpos s1).
-        { pose proof (dataflow_expr_pos e1 szC s Hpos) as Hq.
-          rewrite Ee1 in Hq. exact Hq. }
-        destruct Hpp1 as [Hid1p Hpos1].
-        assert (Hpp2 : 1 <= id2 /\ gpos s2).
-        { pose proof (dataflow_expr_pos e2 szC s1 Hpos1) as Hq.
-          rewrite Ee2 in Hq. exact Hq. }
-        destruct Hpp2 as [Hid2p Hpos2].
-        assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
-        assert (Hne2 : 0 < length (graph s2)) by exact (gne_gmono s1 s2 Hg2 Hne1).
-        assert (Hg2F : wgmono s2 F)
-          by exact (wgmono_trans s2 s' F (emit_gmono _ _ _ _ _ Hde) Hg').
-        assert (Hg1F : wgmono s1 F) by exact (wgmono_trans s1 s2 F Hg2 Hg2F).
-        destruct (IH1 szC s s1 id1 sp Hne Hinv Hvsz Hpos Ee1 Hg1F Hsem) as [Hsem1 Hv1].
-        destruct (IH2 szC s1 s2 id2 sp Hne1 Hp1 Hq1 Hpos1 Ee2 Hg2F Hsem1) as [Hsem2 Hv2].
-        destruct (emitted_node_at act F s2 s' (DFG_Binary (tf_cmp szC cop) id1 id2)
-                    szE id HF Hne2 Hde Hg') as [R1 [R2 [Rop _]]].
-        split;
-        [ apply (sem_inv_vm s2 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem2 ]
-        | intros pi Hgp Hv;
-          destruct (nrv_peel_binary act a_idx id (tf_cmp szC cop) id1 id2 pi ss sinput
-                      Rop Hid1p Hid2p R2 Hv) as [Hb1 Hb2];
-          unfold ProofDefinitions.nval in Hv1, Hv2 |- *;
-          rewrite (nre_binary act a_idx id (tf_cmp szC cop) id1 id2 R1 R2 Rop);
-          cbn [tf_eval_expr];
-          rewrite (Hv1 pi Hgp Hb1), (Hv2 pi Hgp Hb2); reflexivity ].
-        (* tf_concat: e1 is compiled at hz and e2 at lz.  Every other binary op
-           compiles both operands at ONE width, which is why this case cannot
-           share the tactic above. *)
-        cbn [dataflow_expr] in Hde. unfold bind in Hde.
-        pose proof (dataflow_expr_sz e1 hz s Hinv Hvsz) as Hsz1.
-        destruct (dataflow_expr ctx e1 hz s) as [id1 s1] eqn:Ee1.
-        destruct Hsz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hz1]]]].
-        pose proof (dataflow_expr_sz e2 lz s1 Hp1 Hq1) as Hsz2.
-        destruct (dataflow_expr ctx e2 lz s1) as [id2 s2] eqn:Ee2.
-        destruct Hsz2 as [Hg2 [Hn2 [Hp2 [Hq2 Hz2]]]].
-        cbv beta in Hde.
-        assert (Hpp1 : 1 <= id1 /\ gpos s1).
-        { pose proof (dataflow_expr_pos e1 hz s Hpos) as Hq.
-          rewrite Ee1 in Hq. exact Hq. }
-        destruct Hpp1 as [Hid1p Hpos1].
-        assert (Hpp2 : 1 <= id2 /\ gpos s2).
-        { pose proof (dataflow_expr_pos e2 lz s1 Hpos1) as Hq.
-          rewrite Ee2 in Hq. exact Hq. }
-        destruct Hpp2 as [Hid2p Hpos2].
-        assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
-        assert (Hne2 : 0 < length (graph s2)) by exact (gne_gmono s1 s2 Hg2 Hne1).
-        assert (Hg2F : wgmono s2 F)
-          by exact (wgmono_trans s2 s' F (emit_gmono _ _ _ _ _ Hde) Hg').
-        assert (Hg1F : wgmono s1 F) by exact (wgmono_trans s1 s2 F Hg2 Hg2F).
-        destruct (IH1 hz s s1 id1 sp Hne Hinv Hvsz Hpos Ee1 Hg1F Hsem) as [Hsem1 Hv1].
-        destruct (IH2 lz s1 s2 id2 sp Hne1 Hp1 Hq1 Hpos1 Ee2 Hg2F Hsem1) as [Hsem2 Hv2].
-        destruct (emitted_node_at act F s2 s' (DFG_Binary (tf_concat hz lz) id1 id2)
-                    szE id HF Hne2 Hde Hg') as [R1 [R2 [Rop _]]].
-        split;
-        [ apply (sem_inv_vm s2 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem2 ]
-        | intros pi Hgp Hv;
-          destruct (nrv_peel_binary act a_idx id (tf_concat hz lz) id1 id2 pi ss sinput
-                      Rop Hid1p Hid2p R2 Hv) as [Hb1 Hb2];
-          unfold ProofDefinitions.nval in Hv1, Hv2 |- *;
-          rewrite (nre_binary act a_idx id (tf_concat hz lz) id1 id2 R1 R2 Rop);
-          cbn [tf_eval_expr];
-          rewrite (Hv1 pi Hgp Hb1), (Hv2 pi Hgp Hb2); reflexivity ].
-        cbn [dataflow_expr] in Hde. unfold bind in Hde.
-        pose proof (dataflow_expr_sz e1 isz s Hinv Hvsz) as Hsz1.
-        destruct (dataflow_expr ctx e1 isz s) as [id1 s1] eqn:Ee1.
-        destruct Hsz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hz1]]]].
-        pose proof (dataflow_expr_sz e2 (Nat.log2_up isz) s1 Hp1 Hq1) as Hsz2.
-        destruct (dataflow_expr ctx e2 (Nat.log2_up isz) s1) as [id2 s2] eqn:Ee2.
-        destruct Hsz2 as [Hg2 [Hn2 [Hp2 [Hq2 Hz2]]]].
-        cbv beta in Hde.
-        assert (Hpp1 : 1 <= id1 /\ gpos s1).
-        { pose proof (dataflow_expr_pos e1 isz s Hpos) as Hq.
-          rewrite Ee1 in Hq. exact Hq. }
-        destruct Hpp1 as [Hid1p Hpos1].
-        assert (Hpp2 : 1 <= id2 /\ gpos s2).
-        { pose proof (dataflow_expr_pos e2 (Nat.log2_up isz) s1 Hpos1) as Hq.
-          rewrite Ee2 in Hq. exact Hq. }
-        destruct Hpp2 as [Hid2p Hpos2].
-        assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne).
-        assert (Hne2 : 0 < length (graph s2)) by exact (gne_gmono s1 s2 Hg2 Hne1).
-        assert (Hg2F : wgmono s2 F)
-          by exact (wgmono_trans s2 s' F (emit_gmono _ _ _ _ _ Hde) Hg').
-        assert (Hg1F : wgmono s1 F) by exact (wgmono_trans s1 s2 F Hg2 Hg2F).
-        destruct (IH1 isz s s1 id1 sp Hne Hinv Hvsz Hpos Ee1 Hg1F Hsem) as [Hsem1 Hv1].
-        destruct (IH2 (Nat.log2_up isz) s1 s2 id2 sp Hne1 Hp1 Hq1 Hpos1 Ee2 Hg2F Hsem1) as [Hsem2 Hv2].
-        destruct (emitted_node_at act F s2 s' (DFG_Binary (tf_islice isz) id1 id2)
-                    szE id HF Hne2 Hde Hg') as [R1 [R2 [Rop _]]].
-        split;
-        [ apply (sem_inv_vm s2 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem2 ]
-        | intros pi Hgp Hv;
-          destruct (nrv_peel_binary act a_idx id (tf_islice isz) id1 id2 pi ss sinput
-                      Rop Hid1p Hid2p R2 Hv) as [Hb1 Hb2];
-          unfold ProofDefinitions.nval in Hv1, Hv2 |- *;
-          rewrite (nre_binary act a_idx id (tf_islice isz) id1 id2 R1 R2 Rop);
-          cbn [tf_eval_expr];
-          rewrite (Hv1 pi Hgp Hb1), (Hv2 pi Hgp Hb2); reflexivity ].
+      - (* tf_op1: each op builds its operand at the width it reads it at *)
+        let op1_case w :=
+          (cbn [dataflow_expr] in Hde; unfold bind in Hde;
+           pose proof (dataflow_expr_sz e1 w s Hinv Hvsz) as Hsz1;
+           destruct (dataflow_expr ctx e1 w s) as [src_id s1] eqn:Ee1;
+           destruct Hsz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hz1]]]];
+           cbv beta in Hde;
+           assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne);
+           assert (Hg1F : wgmono s1 F)
+             by exact (wgmono_trans s1 s' F (emit_gmono _ _ _ _ _ Hde) Hg');
+           assert (Hposp : 1 <= src_id /\ gpos s1)
+             by (pose proof (dataflow_expr_pos e1 w s Hpos) as Hq; rewrite Ee1 in Hq; exact Hq);
+           destruct Hposp as [Hsrcp Hpos1];
+           destruct (IH1 w s s1 src_id sp Hne Hinv Hvsz Hpos Ee1 Hg1F Hsem) as [Hsem1 Hv1];
+           destruct (emitted_node_at act F s1 s' (DFG_Unary _ src_id) szE id
+                       HF Hne1 Hde Hg') as [R1 [R2 [Rop _]]];
+           split;
+           [ apply (sem_inv_vm s1 s'); [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem1 ]
+           | intros pi Hgp Hv;
+             unfold ProofDefinitions.nval in Hv1 |- *;
+             rewrite (nre_unary act a_idx id _ src_id R1 R2 Rop);
+             cbn [tf_eval_expr];
+             rewrite (Hv1 pi Hgp (nrv_peel_unary act a_idx id _ src_id pi ss sinput
+                                    Rop Hsrcp R2 Hv));
+             reflexivity ]) in
+        destruct uop as [ | source_size | source_size offset ];
+          [ op1_case szE | op1_case source_size | op1_case source_size ].
+      - (* tf_op2: each op builds its operands at the widths it reads them at *)
+        let op2_case w1 w2 :=
+          (cbn [dataflow_expr] in Hde; unfold bind in Hde;
+                pose proof (dataflow_expr_sz e1 w1 s Hinv Hvsz) as Hsz1;
+                destruct (dataflow_expr ctx e1 w1 s) as [id1 s1] eqn:Ee1;
+                destruct Hsz1 as [Hg1 [Hn1 [Hp1 [Hq1 Hz1]]]];
+                pose proof (dataflow_expr_sz e2 w2 s1 Hp1 Hq1) as Hsz2;
+                destruct (dataflow_expr ctx e2 w2 s1) as [id2 s2] eqn:Ee2;
+                destruct Hsz2 as [Hg2 [Hn2 [Hp2 [Hq2 Hz2]]]];
+                cbv beta in Hde;
+                assert (Hpp1 : 1 <= id1 /\ gpos s1)
+                  by (pose proof (dataflow_expr_pos e1 w1 s Hpos) as Hq;
+                      rewrite Ee1 in Hq; exact Hq);
+                destruct Hpp1 as [Hid1p Hpos1];
+                assert (Hpp2 : 1 <= id2 /\ gpos s2)
+                  by (pose proof (dataflow_expr_pos e2 w2 s1 Hpos1) as Hq;
+                      rewrite Ee2 in Hq; exact Hq);
+                destruct Hpp2 as [Hid2p Hpos2];
+                assert (Hne1 : 0 < length (graph s1)) by exact (gne_gmono s s1 Hg1 Hne);
+                assert (Hne2 : 0 < length (graph s2)) by exact (gne_gmono s1 s2 Hg2 Hne1);
+                assert (Hg2F : wgmono s2 F)
+                  by exact (wgmono_trans s2 s' F (emit_gmono _ _ _ _ _ Hde) Hg');
+                assert (Hg1F : wgmono s1 F) by exact (wgmono_trans s1 s2 F Hg2 Hg2F);
+                destruct (IH1 w1 s s1 id1 sp Hne Hinv Hvsz Hpos Ee1 Hg1F Hsem)
+                  as [Hsem1 Hv1];
+                destruct (IH2 w2 s1 s2 id2 sp Hne1 Hp1 Hq1 Hpos1 Ee2 Hg2F Hsem1)
+                  as [Hsem2 Hv2];
+                destruct (emitted_node_at act F s2 s' _ szE id HF Hne2 Hde Hg')
+                  as [R1 [R2 [Rop _]]];
+                split;
+                [ apply (sem_inv_vm s2 s');
+                  [ exact (emit_vm _ _ _ _ _ Hde) | exact Hsem2 ]
+                | intros pi Hgp Hv;
+                  destruct (nrv_peel_binary act a_idx id _ id1 id2 pi ss sinput
+                              Rop Hid1p Hid2p R2 Hv) as [Hb1 Hb2];
+                  unfold ProofDefinitions.nval in Hv1, Hv2 |- *;
+                  rewrite (nre_binary act a_idx id _ id1 id2 R1 R2 Rop);
+                  cbn [tf_eval_expr];
+                  rewrite (Hv1 pi Hgp Hb1), (Hv2 pi Hgp Hb2); reflexivity ]) in
+        destruct bop as [ | | | | | | | | | szC cop | hz lz | isz ];
+          [ op2_case szE szE .. | op2_case szC szC | op2_case hz lz
+          | op2_case isz (Nat.log2_up isz) ].
       - (* tf_expr_if *)
         cbn [dataflow_expr] in Hde. unfold bind in Hde.
         pose proof (dataflow_expr_sz ec 1 s Hinv Hvsz) as HszC.
