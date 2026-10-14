@@ -12,16 +12,16 @@ Ltac case_op_names o Hop split_vars :=
   let ov := fresh "ov" in let op1 := fresh "op1" in let arg := fresh "arg" in
   let arg1 := fresh "arg1" in let arg2 := fresh "arg2" in let cnd := fresh "cnd" in
   let tid := fresh "tid" in let eid := fresh "eid" in let slat := fresh "slat" in
-  let sa := fresh "sa" in let dov := fresh "dov" in let dn := fresh "dn" in
-  let den := fresh "den" in let siv := fresh "siv" in let sn := fresh "sn" in
+  let sarg := fresh "sarg" in let dip := fresh "dip" in let darg := fresh "darg" in
+  let den := fresh "den" in let sip := fresh "sip" in let stok := fresh "stok" in
   let sen := fresh "sen" in let ja := fresh "ja" in let jb := fresh "jb" in
   match split_vars with
   | false =>
       destruct o as [c | v | v | op1 arg | op1 arg1 arg2 | arg | cnd tid eid
-                    | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Hop
+                    | slat sarg | dip darg den | sip stok sen | ja jb | ] eqn:Hop
   | true =>
       destruct o as [c | v | [sv | ov] | op1 arg | op1 arg1 arg2 | arg | cnd tid eid
-                    | slat sa | dov dn den | siv sn sen | ja jb | ] eqn:Hop
+                    | slat sarg | dip darg den | sip stok sen | ja jb | ] eqn:Hop
   end.
 Tactic Notation "case_op" constr(o) "as" ident(Hop) := case_op_names o Hop false.
 Tactic Notation "case_op" constr(o) :=

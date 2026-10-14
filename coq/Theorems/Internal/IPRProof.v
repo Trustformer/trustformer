@@ -936,17 +936,17 @@ Section IPRProof.
       exact (and1_iff _ _ _ _ (Ha arg1 ltac:(in_args Hop)) (Ha arg2 ltac:(in_args Hop))).
     - exact (Ha arg ltac:(in_args Hop)).
     - exfalso. exact (Hnp cnd tid eid eq_refl).
-    - exact (Ha sa ltac:(in_args Hop)).
+    - exact (Ha sarg ltac:(in_args Hop)).
     - (* a drive waits on its argument and on every literal of its guard *)
       assert (Hl : forall l, List.In l den -> av pi (fst l) = true
                      <-> eval1 (snd (rec pi (fst l))) ss input = Bits.ones 1)
         by (intros l Hl; apply Ha; in_args Hop).
-      pose proof (Ha dn ltac:(in_args Hop)) as Hb. clear Ha Hnp Hop. revert Hl.
+      pose proof (Ha darg ltac:(in_args Hop)) as Hb. clear Ha Hnp Hop. revert Hl.
       induction den as [| l rest IH]; intro Hl; cbn [fold_right]; [ exact Hb |].
       rewrite valid_and_eval.
       exact (and1_iff _ _ _ _ (Hl l (or_introl eq_refl))
                (IH (fun l' H' => Hl l' (or_intror H')))).
-    - exact (Ha sn ltac:(in_args Hop)).
+    - exact (Ha stok ltac:(in_args Hop)).
     - rewrite valid_and_eval.
       exact (and1_iff _ _ _ _ (Ha ja ltac:(in_args Hop)) (Ha jb ltac:(in_args Hop))).
     - split; [ discriminate | intro H0; exfalso; exact (ones1_neq_zero (eq_sym H0)) ].
@@ -1034,7 +1034,7 @@ Section IPRProof.
          destruct (Hrange x Hx) as [Hx1 Hx2]. exact (Hone x pi Hx1 Hx2 Hpi Hpok). }
     (* a phi: critical reads both arms, selecting reads the condition *)
     pose proof (wfg_build_dfg ctx cost_limit act _ Hnode_in) as Hfg.
-    unfold node_args_sz, SchedulerSimulationLemmas.args_at in Hfg. rewrite Hop in Hfg |- *.
+    unfold args_at in Hfg. rewrite Hop in Hfg |- *.
     cbn [AttackerClock.avalid_node compile_node].
     destruct (Hrange cnd ltac:(unfold get_args; rewrite Hop; left; reflexivity))
       as [Hc1 Hc2].

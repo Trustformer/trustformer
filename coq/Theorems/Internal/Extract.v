@@ -485,10 +485,10 @@ Section Ideal.
     { intros h Hh. unfold ProofDefinitions.sample_drive_head, AttackerClock.node_op in Hh.
       case_op (op (nth h (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})) as Hoh;
         try discriminate.
-      - destruct (eq_dec dov p); [ injection Hh as Hhd; lia | discriminate ].
+      - destruct (eq_dec dip p); [ injection Hh as Hhd; lia | discriminate ].
       - case_op (op (nth ja (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}));
           try discriminate.
-        destruct (eq_dec dov p); [ injection Hh as Hjd | discriminate ].
+        destruct (eq_dec dip p); [ injection Hh as Hjd | discriminate ].
         subst ja. apply Nat.lt_le_incl. apply (arg_below h d).
         + change (op (node_at G h))
             with (op (nth h (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})).
@@ -497,8 +497,8 @@ Section Ideal.
     case_op (op (nth tok (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})) as Hot;
       try (pose proof (Hhead tok Hd); lia).
     pose proof (Hhead _ Hd) as Hdh.
-    assert (Hht : sa < tok).
-    { apply (arg_below tok sa).
+    assert (Hht : sarg < tok).
+    { apply (arg_below tok sarg).
       + change (op (node_at G tok))
           with (op (nth tok (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})).
         rewrite Hot. discriminate.
@@ -659,7 +659,7 @@ Section Ideal.
       [ | rewrite nth_overflow by exact Hge; exact I ].
     pose proof (wfg_build_dfg ctx cost_limit act _
                   (nth_In _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hlt)) as Hfg.
-    unfold node_args_sz, SchedulerSimulationLemmas.args_at in Hfg.
+    unfold args_at in Hfg.
     case_op (op (nth n (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}));
       try exact I.
     - destruct op1; exact (proj2 (wsz_node_sz ctx cost_limit act _ _ Hfg)).
@@ -922,7 +922,7 @@ Section Settled.
                     Hop' Ha1 Hnlen Hv) as Hva.
       pose proof (wfg_build_dfg ctx cost_limit act _ (nth_In _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hnlen))
         as Hfg.
-      unfold node_args_sz, SchedulerSimulationLemmas.args_at in Hfg. rewrite Hop' in Hfg.
+      unfold args_at in Hfg. rewrite Hop' in Hfg.
       destruct (wsz_node_sz ctx cost_limit act darg _ Hfg) as [_ Hdsz].
       rewrite videal_unfold. cbn [videal_f]. rewrite Hop. cbv beta iota.
       rewrite (videal_f_irrel ctx cost_limit act sp0 input darg n Ha).
@@ -951,7 +951,7 @@ Section Settled.
       destruct (node_args_range ctx cost_limit act d Hd1 Hdlen av Hain) as [Hav1 Havd].
       pose proof (wfg_build_dfg ctx cost_limit act _
                     (nth_In _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hdlen)) as Hfgd.
-      unfold node_args_sz, SchedulerSimulationLemmas.args_at in Hfgd. rewrite Hdop in Hfgd.
+      unfold args_at in Hfgd. rewrite Hdop in Hfgd.
       destruct (wsz_node_sz ctx cost_limit act av _ Hfgd) as [_ Havsz].
       pose proof (drives_sized_holds ctx cost_limit act d sp av en Hdop) as Hdz.
       assert (Hreg : (fst (ssk k)).[tf_dfg_v a_idx n_idx] = Bits.ones 1).
@@ -1573,7 +1573,7 @@ Section Settled.
         as [_ Hmlen].
       pose proof (wfg_build_dfg ctx cost_limit act _
                     (nth_In _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hmlen)) as Hfg.
-      unfold node_args_sz, SchedulerSimulationLemmas.args_at in Hfg. unfold AttackerClock.node_op in Hopm. rewrite Hopm in Hfg.
+      unfold args_at in Hfg. unfold AttackerClock.node_op in Hopm. rewrite Hopm in Hfg.
       destruct Hfg as [Hcw _].
       pose proof (proj2 (wsz_node_sz ctx cost_limit act _ _ Hcw)) as Hw1.
       pose proof (bit_of_nonzero

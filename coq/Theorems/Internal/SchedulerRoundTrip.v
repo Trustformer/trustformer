@@ -3692,7 +3692,7 @@ Section SchedulerRoundTrip.
     { unfold ProofDefinitions.is_sample_of.
       case_op (node_op act m);
         try reflexivity.
-      exfalso. exact (Hno siv). }
+      exfalso. exact (Hno sip). }
     rewrite Hf. exact IH.
   Qed.
 
@@ -3891,7 +3891,7 @@ Section SchedulerRoundTrip.
       destruct (node_at_nid act nd Hin) as [_ Hnth].
       case_op (op nd) as Hop;
         try discriminate Hp.
-      apply Nat.eqb_eq in Hp. subst sa.
+      apply Nat.eqb_eq in Hp. subst sarg.
       exists slat. unfold AttackerClock.node_op. rewrite Hnth. exact Hop. }
     unfold chain_gate. cbv zeta.
     destruct (find (fun nd => match op nd with
