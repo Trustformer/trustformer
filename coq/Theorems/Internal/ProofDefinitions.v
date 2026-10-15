@@ -263,6 +263,15 @@ Section ProofWorld.
              (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
              (0, (0, 0))).
 
+  (* Register [n_idx] caches node [n]: the table has an entry for [n] at that
+     register.  Stated by entry, so a register shared by nodes caches each. *)
+  Definition caches
+      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
+      (n_idx : Vect.index (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
+      (n: nat) : Prop :=
+    exists msz, In (n, (index_to_nat n_idx, msz))
+                   (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []).
+
   (* The validity that goes with [node_ref_expr]: ones exactly when every sample
      buffer the reference reads has already latched. *)
   Definition node_ref_valid
@@ -288,7 +297,7 @@ Section ProofWorld.
            {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p) ->
       (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
       pi_holds act a_idx input en ss ->
-      (fst ss).[tf_dfg_b a_idx n_idx]
+      (fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
       = convert (ip_fn (tfs_spec_ip ctx p)
           (tf_eval_expr ss_sz si_sz oo_sz
              (szB := ip_req_sz (tfs_spec_ip ctx p))
@@ -303,7 +312,7 @@ Section ProofWorld.
         = DFG_Sample p tok en ->
       (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
       ~ pi_holds act a_idx input en ss ->
-      (fst ss).[tf_dfg_b a_idx n_idx] = Bits.zero.
+      (fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)] = Bits.zero.
 
   (* Its companion: a latched sample's request carried a SETTLED argument.
      [sample_arg_settled] discharges it at any pre-done cycle. *)

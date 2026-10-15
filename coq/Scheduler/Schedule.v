@@ -95,7 +95,7 @@ Section Schedule.
   Context (get_tainted : dfg_state -> list nid_t).
   Context (decl_facts : dfg_state -> list Taint.gfact).
 
-  Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (ips_var:=ips_var) (buffer_needs:=bn)).
+  Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (ips_var:=ips_var) (buffer_needs:=bn) (slots:=slot_keys bn)).
   Hint Extern 0 (Show tf_dfg_states) => exact (States.show_tf_dfg_states ctx bn) : typeclass_instances.
   Hint Extern 0 (FiniteType2 tf_dfg_states) => exact (States.tf_dfg_states_fin2 ctx bn) : typeclass_instances.
   Hint Extern 0 (FiniteType tf_dfg_states) => exact (States.tf_dfg_states_fin ctx bn) : typeclass_instances.
@@ -437,7 +437,7 @@ Section Schedule.
   Lemma buffers_tags_in (idx: nat) (DFG: dfg_state)
         (BUF: list (nid_t * (nat * sz_t))) t:
     In t (flat_map OPTAG (compile_dfg_buffers idx DFG BUF)) ->
-    exists a' n', t = StOp (tf_dfg_b a' n') \/ t = StOp (tf_dfg_v a' n').
+    exists a' n', t = StOp (tf_dfg_b (slot_idx bn a' n')) \/ t = StOp (tf_dfg_v a' n').
   Proof.
     intro Hin. apply in_flat_map in Hin. destruct Hin as [op [Hop Ht]].
     unfold compile_dfg_buffers in Hop.
@@ -464,7 +464,7 @@ Section Schedule.
     apply NoDup_flat_map_of_key
       with (g := fun '(_, x) => fst x)
            (key := fun t => match t with
-                    | StOp (tf_dfg_b _ n) => index_to_nat n
+                    | StOp (tf_dfg_b k) => slot_owner bn (index_to_nat a') (index_to_nat k)
                     | StOp (tf_dfg_v _ n) => index_to_nat n
                     | _ => 0
                     end).
@@ -480,8 +480,10 @@ Section Schedule.
       | Hb : In b (flat_map _ (let '(_, _) := ?E in _)) |- _ =>
           destruct E as [expr valid]
       end.
-      simpl in Hb. destruct Hb as [<-|[<-|[]]]; simpl;
-        apply index_to_nat_of_nat in Hn; exact Hn.
+      apply index_to_nat_of_nat in Hn.
+      simpl in Hb. destruct Hb as [<-|[<-|[]]]; simpl; [ | exact Hn ].
+      rewrite slot_idx_to_nat, slot_owner_of; [ exact Hn | apply index_to_nat_bounded | ].
+      apply index_to_nat_bounded.
   Qed.
 
   (* --- final-op tags --- *)
@@ -667,71 +669,90 @@ Section Schedule.
     left. reflexivity.
   Qed.
 
+  Lemma reset_v_shape (x: tf_dfg_states) :
+    In x (flat_map
+      (fun a_idx => match index_of_nat (length bn) a_idx with
+        | Some a_idx' =>
+          flat_map (fun n_idx => match index_of_nat (length (nth (index_to_nat a_idx') bn [])) n_idx with
+            | Some n_idx' => [ tf_dfg_v a_idx' n_idx' ]
+            | None => []
+            end ) (List.seq 0 (length (nth (index_to_nat a_idx') bn [])))
+        | None => []
+        end)
+      (List.seq 0 (length bn))) ->
+    exists a n, x = tf_dfg_v a n.
+  Proof.
+    intro Hin. apply in_flat_map in Hin. destruct Hin as [a_idx [_ Hin]].
+    destruct (index_of_nat (length bn) a_idx) as [a'|]; [| contradiction].
+    apply in_flat_map in Hin. destruct Hin as [n_idx [_ Hin]].
+    destruct (index_of_nat _ n_idx) as [n'|]; [| contradiction].
+    destruct Hin as [<- | []]. exists a', n'. reflexivity.
+  Qed.
+
   Theorem reset_states_nodup: NoDup reset_states.
   Proof.
     unfold reset_states.
-    (* recover the a-index and n-index from an element *)
+    (* recover the a-index and n-index from a validity bit *)
     pose (a_of := fun v : tf_dfg_states =>
       match v with
-      | tf_dfg_b a _ => index_to_nat a
       | tf_dfg_v a _ => index_to_nat a
       | _ => 0
       end).
     pose (n_of := fun v : tf_dfg_states =>
       match v with
-      | tf_dfg_b _ n => index_to_nat n
       | tf_dfg_v _ n => index_to_nat n
       | _ => 0
       end).
-    apply NoDup_flat_map_key.
-    - apply seq_NoDup.
-    - (* each outer chunk is NoDup *)
-      intros a_idx _.
-      destruct (index_of_nat (length bn) a_idx) as [a'|] eqn:Ha;
-        [| constructor].
-      apply NoDup_flat_map_key.
+    apply NoDup_app.
+    - (* one register per slot *)
+      apply FinFun.Injective_map_NoDup; [ intros k1 k2 H; injection H as H; exact H | ].
+      apply NoDup_map_inv with (f := finite_index). apply finite_injective.
+    - apply NoDup_flat_map_key.
       + apply seq_NoDup.
-      + (* each inner chunk [b; v] is NoDup *)
-        intros n_idx _.
-        destruct (index_of_nat _ n_idx) as [n'|] eqn:Hn; [| constructor].
-        repeat constructor.
-        * simpl. intros [H | []]. discriminate H.
-        * simpl. tauto.
-      + (* inner disjointness: element recovers its n-index *)
+      + (* each outer chunk is NoDup *)
+        intros a_idx _.
+        destruct (index_of_nat (length bn) a_idx) as [a'|] eqn:Ha;
+          [| constructor].
+        apply NoDup_flat_map_key.
+        * apply seq_NoDup.
+        * intros n_idx _.
+          destruct (index_of_nat _ n_idx) as [n'|] eqn:Hn; [| constructor].
+          repeat constructor. simpl. tauto.
+        * (* inner disjointness: element recovers its n-index *)
+          intros x y b Hx Hy Hbx Hby.
+          assert (forall m b0, In b0 (match index_of_nat _ m with
+                                | Some n' => [tf_dfg_v a' n']
+                                | None => [] end) -> n_of b0 = m) as Hrec.
+          { intros m b0 Hb0. destruct (index_of_nat _ m) as [n'|] eqn:Hm; [| destruct Hb0].
+            apply index_to_nat_of_nat in Hm.
+            destruct Hb0 as [<- | []]; simpl; exact Hm. }
+          rewrite <- (Hrec x b Hbx). rewrite <- (Hrec y b Hby). reflexivity.
+      + (* outer disjointness: element recovers its a-index *)
         intros x y b Hx Hy Hbx Hby.
-        assert (forall m b0, In b0 (match index_of_nat _ m with
-                              | Some n' => [tf_dfg_b a' n'; tf_dfg_v a' n']
-                              | None => [] end) -> n_of b0 = m) as Hrec.
-        { intros m b0 Hb0. destruct (index_of_nat _ m) as [n'|] eqn:Hm; [| destruct Hb0].
+        assert (forall m b0, In b0 (match index_of_nat (length bn) m with
+                              | Some a' => flat_map (fun n_idx =>
+                                  match index_of_nat (length (nth (index_to_nat a') bn [])) n_idx with
+                                  | Some n' => [tf_dfg_v a' n']
+                                  | None => [] end)
+                                  (List.seq 0 (length (nth (index_to_nat a') bn [])))
+                              | None => [] end) -> a_of b0 = m) as Hrec.
+        { intros m b0 Hb0. destruct (index_of_nat (length bn) m) as [a'|] eqn:Hm;
+            [| destruct Hb0].
           apply index_to_nat_of_nat in Hm.
-          simpl in Hb0. destruct Hb0 as [<- | [<- | []]]; simpl; exact Hm. }
+          apply in_flat_map in Hb0. destruct Hb0 as [n_idx [_ Hb0]].
+          destruct (index_of_nat _ n_idx) as [n'|] eqn:Hn; [| destruct Hb0].
+          destruct Hb0 as [<- | []]; simpl; exact Hm. }
         rewrite <- (Hrec x b Hbx). rewrite <- (Hrec y b Hby). reflexivity.
-    - (* outer disjointness: element recovers its a-index *)
-      intros x y b Hx Hy Hbx Hby.
-      assert (forall m b0, In b0 (match index_of_nat (length bn) m with
-                            | Some a' => flat_map (fun n_idx =>
-                                match index_of_nat (length (nth (index_to_nat a') bn [])) n_idx with
-                                | Some n' => [tf_dfg_b a' n'; tf_dfg_v a' n']
-                                | None => [] end)
-                                (List.seq 0 (length (nth (index_to_nat a') bn [])))
-                            | None => [] end) -> a_of b0 = m) as Hrec.
-      { intros m b0 Hb0. destruct (index_of_nat (length bn) m) as [a'|] eqn:Hm;
-          [| destruct Hb0].
-        apply index_to_nat_of_nat in Hm.
-        apply in_flat_map in Hb0. destruct Hb0 as [n_idx [_ Hb0]].
-        destruct (index_of_nat _ n_idx) as [n'|] eqn:Hn; [| destruct Hb0].
-        simpl in Hb0. destruct Hb0 as [<- | [<- | []]]; simpl; exact Hm. }
-      rewrite <- (Hrec x b Hbx). rewrite <- (Hrec y b Hby). reflexivity.
+    - (* slots and validity bits are different registers *)
+      intros x Hb Hv. apply in_map_iff in Hb. destruct Hb as [k [<- _]].
+      destruct (reset_v_shape _ Hv) as [a [n Hx]]. discriminate Hx.
   Qed.
 
   Theorem reset_states_init_zero: forall v, In v reset_states -> tf_dfg_states_init v = Bits.zero.
   Proof.
-    intros v Hin. unfold reset_states in Hin.
-    apply in_flat_map in Hin. destruct Hin as [a_idx [_ Hin]].
-    destruct (index_of_nat (length bn) a_idx) as [a_idx'|]; [|contradiction].
-    apply in_flat_map in Hin. destruct Hin as [n_idx [_ Hin]].
-    destruct (index_of_nat _ n_idx) as [n_idx'|]; [|contradiction].
-    simpl in Hin. destruct Hin as [<-|[<-|[]]]; reflexivity.
+    intros v Hin. unfold reset_states in Hin. apply in_app_iff in Hin. destruct Hin as [Hb | Hv].
+    - apply in_map_iff in Hb. destruct Hb as [k [<- _]]. reflexivity.
+    - destruct (reset_v_shape _ Hv) as [a [n ->]]. reflexivity.
   Qed.
 
   Definition tfs_schedule_bn : TFSchedule :=

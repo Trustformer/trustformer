@@ -35,9 +35,6 @@ Require Import Coq.Program.Tactics.
 
 Require Import Coq.Logic.ProofIrrelevance.
 
-Require Import Hammer.Plugin.Hammer.
-Set Hammer ATPLimit 5.
-Set Hammer GSMode 63.
 
 Section SynthesisProof.
 
@@ -61,15 +58,11 @@ Section SynthesisProof.
   Opaque tfs_states_fin.
   Local Notation spec_states_size := (tfs_states_size (tf_sched_ctx tf_ctx)).
   Opaque tfs_states_size.
-  Local Notation spec_states_t := (tf_states_type spec_states_size).
   Opaque tf_states_type.
-  Local Notation spec_states_init := (tfs_states_init (tf_sched_ctx tf_ctx)).
   Opaque tfs_states_init.
   Local Notation spec_all_states := (@finite_elements spec_states spec_states_fin).
   Opaque finite_elements.
-  Local Notation spec_state_index := (@finite_index spec_states spec_states_fin).
   Opaque finite_index.
-  Local Notation spec_state_num := (Datatypes.length spec_all_states).
 
   Local Notation spec_inputs := (tfs_inputs (tf_sched_ctx tf_ctx)).
   Opaque tfs_inputs.
@@ -77,13 +70,10 @@ Section SynthesisProof.
   Opaque tfs_inputs_fin.
   Local Notation spec_inputs_size := (tfs_inputs_size (tf_sched_ctx tf_ctx)).
   Opaque tfs_inputs_size.
-  Local Notation spec_inputs_t := (tf_inputs_type spec_inputs_size).
   Opaque tf_inputs_type.
   Local Notation spec_all_inputs := (@finite_elements spec_inputs spec_inputs_fin).
   Opaque finite_elements.
-  Local Notation spec_input_index := (@finite_index spec_inputs spec_inputs_fin).
   Opaque finite_index.
-  Local Notation spec_input_num := (Datatypes.length spec_all_inputs).
 
   Local Notation spec_outputs := (tfs_outputs (tf_sched_ctx tf_ctx)).
   Opaque tfs_outputs.
@@ -91,13 +81,10 @@ Section SynthesisProof.
   Opaque tfs_outputs_fin.
   Local Notation spec_outputs_size := (tfs_outputs_size (tf_sched_ctx tf_ctx)).
   Opaque tfs_outputs_size.
-  Local Notation spec_outputs_t := (tf_outputs_type spec_outputs_size).
   Opaque tf_outputs_type.
   Local Notation spec_all_outputs := (@finite_elements spec_outputs spec_outputs_fin).
   Opaque finite_elements.
-  Local Notation spec_output_index := (@finite_index spec_outputs spec_outputs_fin).
   Opaque finite_index.
-  Local Notation spec_output_num := (Datatypes.length spec_all_outputs).
 
   Local Notation spec_ips := (tfs_ips (tf_sched_ctx tf_ctx)).
   Opaque tfs_ips.
@@ -111,11 +98,8 @@ Section SynthesisProof.
   Opaque tfs_action_fin.
   Local Notation spec_all_actions := (@finite_elements spec_action spec_action_fin).
   Opaque finite_elements.
-  Local Notation spec_action_index := (@finite_index spec_action spec_action_fin).
   Opaque finite_index.
-  Local Notation spec_action_num := (Datatypes.length spec_all_actions).
 
-  Local Notation spec_action_reg_size := (tf_action_reg_size tf_ctx).
   Local Notation spec_action_encoding := (tf_action_encoding tf_ctx).
   Opaque tf_action_encoding.
   Local Notation spec_action_encoding_inj := (tf_action_encoding_inj tf_ctx).
@@ -128,9 +112,7 @@ Section SynthesisProof.
   Local Definition spec_schedule_ops_nodup := (tfs_schedule_no_duplicates (tf_sched_ctx tf_ctx)).
 
   Local Notation reg_t := (@_reg_t spec_states spec_inputs spec_outputs spec_ips).
-  Local Notation reg_t_finite := (@_reg_t_finite tf_ctx).
   Opaque _reg_t_finite.
-  Local Notation ext_fn_t := (@_ext_fn_t spec_inputs spec_outputs spec_ips).
 
   Local Notation st_env := (ContextEnv.(env_t) (tf_states_type spec_states_size)).
   Local Notation out_env := (ContextEnv.(env_t) (tf_outputs_type spec_outputs_size)).
@@ -423,7 +405,15 @@ Section SynthesisProof.
     unfold state_equal in H. destruct H as [H1 H2].
     unfold env_equal in H0. destruct H0 as [H3 H4].
     unfold state_env_matches, state_matches, env_matches.
-    repeat split; sauto.
+    split; intros [[Hs Ho] [Hc Hi]]; (split; [ split | split ]).
+    - intro x. rewrite <- H1. exact (Hs x).
+    - intro x. rewrite <- H2. exact (Ho x).
+    - rewrite <- H3. exact Hc.
+    - intros x Hx. rewrite <- H4. exact (Hi x Hx).
+    - intro x. rewrite H1. exact (Hs x).
+    - intro x. rewrite H2. exact (Ho x).
+    - rewrite H3. exact Hc.
+    - intros x Hx. rewrite H4. exact (Hi x Hx).
   Qed.
 
   (* ====== Initial State Correctness ====== *)
@@ -700,12 +690,18 @@ Section SynthesisProof.
       Lemma may_read_log_empty :
         forall port idx,
           may_read log_empty port idx = true.
-      Proof. intros. unfold may_read. rewrite !SemanticProperties.log_existsb_empty. sauto. Qed.
+      Proof.
+        intros. unfold may_read. rewrite !SemanticProperties.log_existsb_empty.
+        destruct port; reflexivity.
+      Qed.
 
       Lemma may_write_log_empty :
         forall port idx,
           may_write log_empty log_empty port idx = true.
-      Proof. intros. unfold may_write. rewrite !SemanticProperties.log_existsb_app. rewrite !SemanticProperties.log_existsb_empty. sauto. Qed.
+      Proof.
+        intros. unfold may_write. rewrite !SemanticProperties.log_existsb_app.
+        rewrite !SemanticProperties.log_existsb_empty. destruct port; reflexivity.
+      Qed.
 
       Lemma may_read_all_log_empty :
         forall port regs,
@@ -921,7 +917,7 @@ Section SynthesisProof.
     assert (NoDup (map (tf_in (states_var:=spec_states) (inputs_var:=spec_inputs) (outputs_var:=spec_outputs) (ips_var:=spec_ips)) (rev spec_all_inputs))) as Hnodup.
     { 
       rewrite map_rev. apply NoDup_rev. apply FinFun.Injective_map_NoDup. 
-      + unfold FinFun.Injective. intros. (* hammer *) timeout 10 sfirstorder.
+      + unfold FinFun.Injective. intros. congruence.
       + apply nodup_spec_all_inputs.
     }
 
@@ -1011,13 +1007,13 @@ Section SynthesisProof.
         2: { intro. rewrite in_map_iff in H. destruct H as [x [Heq Hin]]. congruence. }
 
         set (MW := may_write _ _ P0 tf_cmd). assert (MW = true) as HMW
-          by abstract (subst MW; rewrite !may_write_log_cons_neq; try assumption; timeout 10 sauto).
+          by abstract (subst MW; rewrite !may_write_log_cons_neq; try assumption; discriminate).
         rewrite HMW. clear HMW MW.
         cbn.
 
         set (MW := may_write _ _ P0 tf_ready). assert (MW = true) as HMW.
         { 
-          subst MW. rewrite !may_write_log_cons_neq; [|(* hammer *) timeout 10 sauto]. rewrite may_write_fold_cons_w0_inputs. 
+          subst MW. rewrite !may_write_log_cons_neq; [|discriminate]. rewrite may_write_fold_cons_w0_inputs. 
           2: { intro. rewrite in_map_iff in H. destruct H as [x [Heq Hin]]. congruence. }
           rewrite !may_write_log_cons_eq. rewrite Hwr0_ready. ring. 
         } rewrite HMW. clear HMW MW.
@@ -1778,7 +1774,8 @@ Section SynthesisProof.
 
     unfold synth_convert, convert.
     destruct (eq_dec szA szB) as [Heq | Hneq]; subst.
-    - sauto.
+    - cbn [eq_rect].
+      destruct (interp_action r sigma CtxEmpty log_r log_a expr) as [[[l v] g] |]; reflexivity.
     - destruct (Nat.leb szA szB) eqn:Hle.
       + apply Nat.leb_le in Hle.
         cbn. unfold opt_bind.
@@ -2113,8 +2110,8 @@ Section SynthesisProof.
     intros ops v. unfold affected_regs. induction ops as [| op ops IH].
     - auto.
     - destruct op as [| d e | d e | p d e]; simpl; try apply IH.
-      + (* hammer. *) timeout 10 sfirstorder.
-      + (* hammer. *) timeout 10 sfirstorder.
+      + intuition congruence.
+      + intuition congruence.
       + destruct p.
   Qed.
 
@@ -2197,7 +2194,7 @@ Section SynthesisProof.
         rewrite (interp_action_expr sys r act input sigma log_r log_a expr); try assumption.
         extract_match_term. assert (MT = true).
         * subst. apply may_write_expr_log.
-          -- intros. (* hammer. *) timeout 10 sauto.
+          -- intros. discriminate.
           -- assumption.
         * rewrite H. apply H0; clear H0.   
           -- simpl in HNoDup_aff. inversion HNoDup_aff; subst. assumption.
@@ -2213,7 +2210,7 @@ Section SynthesisProof.
         rewrite (interp_action_expr sys r act input sigma log_r log_a expr); try assumption.
         extract_match_term. assert (MT = true).
         * subst. apply may_write_expr_log.
-          -- intros. (* hammer. *) timeout 10 sauto.
+          -- intros. discriminate.
           -- assumption.
         * rewrite H. apply H0; clear H0.   
           -- simpl in HNoDup_aff. inversion HNoDup_aff; subst. assumption.
@@ -2474,12 +2471,12 @@ Section SynthesisProof.
           destruct a.
           -- simpl. apply IHl0. exact IHl.
           -- simpl. destruct (eq_dec dst dst0) as [Heq | Hneq]; subst.
-              ++ contradict Hnotin. sauto.
+              ++ contradict Hnotin. firstorder congruence.
               ++ intro. destruct H.
-              ** timeout 10 sauto.
+              ** congruence.
               ** inversion IHl; subst. apply IHl0; assumption.
           -- simpl. intro. destruct H.
-              ** timeout 10 sauto.
+              ** discriminate.
               ** inversion IHl; subst. apply IHl0; assumption.
           (* vacuous: a lowered schedule is over [Empty_set] IPs *)
           -- destruct ip.
@@ -2492,12 +2489,12 @@ Section SynthesisProof.
           destruct a.
           -- simpl. apply IHl0. exact IHl.
           -- simpl. intro. destruct H.
-              ** timeout 10 sauto.
+              ** discriminate.
               ** inversion IHl; subst. apply IHl0; assumption.
           -- simpl. destruct (eq_dec dst dst0) as [Heq | Hneq]; subst.
-              ++ contradict Hnotin. sauto.
+              ++ contradict Hnotin. firstorder congruence.
               ++ intro. destruct H.
-              ** timeout 10 sauto.
+              ** congruence.
               ** inversion IHl; subst. apply IHl0; assumption.
           (* vacuous: a lowered schedule is over [Empty_set] IPs *)
           -- destruct ip.
@@ -2526,12 +2523,12 @@ Section SynthesisProof.
           destruct a.
           -- simpl. apply IHl0. exact IHl.
           -- simpl. destruct (eq_dec dst dst0) as [Heq | Hneq]; subst.
-              ++ contradict Hnotin. sauto.
+              ++ contradict Hnotin. firstorder congruence.
               ++ intro. destruct H.
-              ** timeout 10 sauto.
+              ** congruence.
               ** inversion IHl; subst. apply IHl0; assumption.
           -- simpl. intro. destruct H.
-              ** timeout 10 sauto.
+              ** discriminate.
               ** inversion IHl; subst. apply IHl0; assumption.
           (* vacuous: a lowered schedule is over [Empty_set] IPs *)
           -- destruct ip.
@@ -2544,12 +2541,12 @@ Section SynthesisProof.
           destruct a.
           -- simpl. apply IHl0. exact IHl.
           -- simpl. intro. destruct H.
-              ** timeout 10 sauto.
+              ** discriminate.
               ** inversion IHl; subst. apply IHl0; assumption.
           -- simpl. destruct (eq_dec dst dst0) as [Heq | Hneq]; subst.
-              ++ contradict Hnotin. sauto.
+              ++ contradict Hnotin. firstorder congruence.
               ++ intro. destruct H.
-              ** timeout 10 sauto.
+              ** congruence.
               ** inversion IHl; subst. apply IHl0; assumption.
           (* vacuous: a lowered schedule is over [Empty_set] IPs *)
           -- destruct ip.
@@ -3794,7 +3791,7 @@ Section SynthesisProof.
   Proof.
     intros r sigma log x Hx. unfold system_schedule_ips.
 
-    assert (forall t, tf_ip_ack t <> x). { intros t. (* hammer *) sfirstorder. } clear Hx.
+    assert (forall t, tf_ip_ack t <> x). { intros t. intros <-; exact Hx. } clear Hx.
 
     generalize dependent log.
     induction (spec_all_ips) as [|p ips IH]; intros log.
@@ -3822,7 +3819,7 @@ Section SynthesisProof.
 
     assert (Hip : match x with | tf_ip_ack _ => False | _ => True end)
       by (destruct x; exact Hx || exact I).
-    assert (forall t, tf_out_ack t <> x). { intros t. (* hammer *) sfirstorder. } clear Hx.
+    assert (forall t, tf_out_ack t <> x). { intros t. intros <-; exact Hx. } clear Hx.
 
     generalize dependent log.
     induction (spec_all_outputs) as [|o outputs IH]; intros log.
@@ -3937,7 +3934,7 @@ Section SynthesisProof.
       interp_rule r sigma log_empty (rules rule_busy) = None.
   Proof.
     intros r sigma Hready. unfold rules, interp_rule. unfold interp_action. 
-    rewrite Hready. destruct may_read; sauto.
+    rewrite Hready. destruct may_read; reflexivity.
   Qed.
 
   Lemma interp_rule_busy_not_ready : 
@@ -3967,8 +3964,8 @@ Section SynthesisProof.
     { 
       subst mw. rewrite !may_write_log_cons_neq.
       - rewrite may_write_log_empty. reflexivity.
-      - sauto.
-      - sauto.
+      - discriminate.
+      - discriminate.
     }
     rewrite H, Hready. reflexivity.
   Qed.
@@ -4018,20 +4015,20 @@ Section SynthesisProof.
         * exact not_in_reg_cmd_ack_all_outputs.
       + rewrite !SemanticProperties.log_app_empty_l. rewrite may_read_log1_cons_neq. rewrite !may_read_log1_cons_eq.
         * rewrite may_read_log_empty. ring.
-        * sauto.
+        * discriminate.
       + rewrite !SemanticProperties.log_app_empty_l. rewrite may_write_log1_cons_neq. rewrite !may_write_log1_cons_eq.
         * rewrite may_write_log_empty. ring.
-        * sauto.
+        * discriminate.
       + rewrite !SemanticProperties.log_app_empty_l. rewrite !may_read_log1_cons_neq.
         * apply may_read_log_empty.
-        * sauto.
-        * sauto.
-        * sauto.
+        * discriminate.
+        * discriminate.
+        * discriminate.
       + rewrite !SemanticProperties.log_app_empty_l. rewrite !may_write_log1_cons_neq.
         * apply may_write_log_empty.
-        * sauto.
-        * sauto.
-        * sauto.
+        * discriminate.
+        * discriminate.
+        * discriminate.
   Qed.
 
   (* ONE CYCLE of the circuit is one step of the scheduled IR. *)

@@ -8,6 +8,7 @@ Require Import Trustformer.Semantics.
 Require Import Trustformer.Backend.Lowering.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
+Require Import Trustformer.Scheduler.MergeCalls.
 
 Require Import Coq.Logic.EqdepFacts.
 Require Import Coq.Lists.List.
@@ -789,7 +790,9 @@ Section Instance.
       (n_calls act_regread ip_sha, n_calls act_regread ip_hmac) = (0, 0).
     Proof. vm_compute. reflexivity. Qed.
 
-    Definition tf_schedule := tfs_schedule tfs_ctx 10.
+    (* Built through the opt-in call merging (Scheduler/MergeCalls.v): one call
+       per IP where exclusive arms each make one, at the same cycle counts. *)
+    Definition tf_schedule := tfs_schedule (merge_calls_ctx tfs_ctx) 10.
 
     Definition tf_ctx : TFSynthContext := {|
         tf_sched_ctx := tf_schedule;

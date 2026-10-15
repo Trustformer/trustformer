@@ -394,6 +394,7 @@ Require Import Trustformer.Theorems.IPRDefinitions.
 Require Import Trustformer.Theorems.Internal.ProofDefinitions.
 Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
 Require Import Trustformer.Theorems.Internal.IPRProof.
+Require Import Trustformer.Theorems.Internal.ProofTactics.
 
 Lemma guard_true_ext {s i o p} (g: @dfg_state_t s i o p) (V1 V2: valuation g) en :
   (forall l, In l en -> V1 (fst l) = V2 (fst l)) -> guard_true g V1 en = guard_true g V2 en.
@@ -482,25 +483,22 @@ Section Ideal.
     rewrite Hop in Hd.
     assert (Hhead : forall h, ProofDefinitions.sample_drive_head ctx cost_limit act p h = Some d -> d <= h).
     { intros h Hh. unfold ProofDefinitions.sample_drive_head, AttackerClock.node_op in Hh.
-      destruct (op (nth h (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}))
-        as [c | v | v | uop x | bop x y | x | c t e | sl x | dp x den | sp x sen | jd jb | ]
-        eqn:Hoh; try discriminate.
-      - destruct (eq_dec dp p); [ injection Hh as Hhd; lia | discriminate ].
-      - destruct (op (nth jd (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}))
-          as [c | v | v | uop x | bop x y | x | c t e | sl x | dp x den | sp x sen | ja jc | ];
+      case_op (op (nth h (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})) as Hoh;
+        try discriminate.
+      - destruct (eq_dec dip p); [ injection Hh as Hhd; lia | discriminate ].
+      - case_op (op (nth ja (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}));
           try discriminate.
-        destruct (eq_dec dp p); [ injection Hh as Hjd | discriminate ].
-        subst jd. apply Nat.lt_le_incl. apply (arg_below h d).
+        destruct (eq_dec dip p); [ injection Hh as Hjd | discriminate ].
+        subst ja. apply Nat.lt_le_incl. apply (arg_below h d).
         + change (op (node_at G h))
             with (op (nth h (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})).
           rewrite Hoh. discriminate.
         + unfold get_args, node_at. rewrite Hoh. left. reflexivity. }
-    destruct (op (nth tok (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop x | bop x y | x | c t e | sl hd | dp x den | sp x sen | ja jc | ]
-      eqn:Hot; try (pose proof (Hhead tok Hd); lia).
+    case_op (op (nth tok (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})) as Hot;
+      try (pose proof (Hhead tok Hd); lia).
     pose proof (Hhead _ Hd) as Hdh.
-    assert (Hht : hd < tok).
-    { apply (arg_below tok hd).
+    assert (Hht : sarg < tok).
+    { apply (arg_below tok sarg).
       + change (op (node_at G tok))
           with (op (nth tok (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |})).
         rewrite Hot. discriminate.
@@ -661,13 +659,11 @@ Section Ideal.
       [ | rewrite nth_overflow by exact Hge; exact I ].
     pose proof (wfg_build_dfg ctx cost_limit act _
                   (nth_In _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hlt)) as Hfg.
-    unfold node_args_sz in Hfg.
-    destruct (op (nth n (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | iv | dv | uop a | bop a b | a | cnd t e | slat sa | dp darg den
-         | sp tok en | ja jb | ];
+    unfold args_at in Hfg.
+    case_op (op (nth n (graph G) {| nid := 0; op := DFG_Empty; sz := 0 |}));
       try exact I.
-    - destruct uop; exact (proj2 (wsz_node_sz ctx cost_limit act _ _ Hfg)).
-    - destruct bop; destruct Hfg as [H1 H2]; split;
+    - destruct op1; exact (proj2 (wsz_node_sz ctx cost_limit act _ _ Hfg)).
+    - destruct op1; destruct Hfg as [H1 H2]; split;
         first [ exact (proj2 (wsz_node_sz ctx cost_limit act _ _ H1))
               | exact (proj2 (wsz_node_sz ctx cost_limit act _ _ H2)) ].
     - destruct Hfg as [Hc [Ht He]].
@@ -926,7 +922,7 @@ Section Settled.
                     Hop' Ha1 Hnlen Hv) as Hva.
       pose proof (wfg_build_dfg ctx cost_limit act _ (nth_In _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hnlen))
         as Hfg.
-      unfold node_args_sz in Hfg. rewrite Hop' in Hfg.
+      unfold args_at in Hfg. rewrite Hop' in Hfg.
       destruct (wsz_node_sz ctx cost_limit act darg _ Hfg) as [_ Hdsz].
       rewrite videal_unfold. cbn [videal_f]. rewrite Hop. cbv beta iota.
       rewrite (videal_f_irrel ctx cost_limit act sp0 input darg n Ha).
@@ -938,6 +934,7 @@ Section Settled.
       assert (Hsam : is_sample_of ctx cost_limit act n = true)
         by (unfold ProofDefinitions.is_sample_of, AttackerClock.node_op; rewrite Hop'; reflexivity).
       destruct (sample_index ctx cost_limit act a_idx n Halign Hsam) as [n_idx Hvid].
+      apply (caches_vreg ctx cost_limit act a_idx _ _ Halign) in Hvid.
       assert (Hopn : AttackerClock.node_op ctx cost_limit act n = DFG_Sample sp tok en)
         by exact Hop'.
       destruct (sample_has_drive ctx cost_limit act n sp tok en Hopn) as [d [av [Hsd Hdop]]].
@@ -954,7 +951,7 @@ Section Settled.
       destruct (node_args_range ctx cost_limit act d Hd1 Hdlen av Hain) as [Hav1 Havd].
       pose proof (wfg_build_dfg ctx cost_limit act _
                     (nth_In _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hdlen)) as Hfgd.
-      unfold node_args_sz in Hfgd. rewrite Hdop in Hfgd.
+      unfold args_at in Hfgd. rewrite Hdop in Hfgd.
       destruct (wsz_node_sz ctx cost_limit act av _ Hfgd) as [_ Havsz].
       pose proof (drives_sized_holds ctx cost_limit act d sp av en Hdop) as Hdz.
       assert (Hreg : (fst (ssk k)).[tf_dfg_v a_idx n_idx] = Bits.ones 1).
@@ -990,7 +987,7 @@ Section Settled.
         - intros H [c b] Hin. cbn [fst snd]. pose proof (H c b Hin) as Hcb.
           pose proof (Hlit (c, b) Hin) as Hl. cbn [fst] in Hl. rewrite Hl in Hcb.
           destruct (nonzero (V c)), b; first [ reflexivity | discriminate Hcb ]. }
-      assert (Hnre : node_ref_expr ctx cost_limit act a_idx n = tf_svar (tf_dfg_b a_idx n_idx)).
+      assert (Hnre : node_ref_expr ctx cost_limit act a_idx n = tf_svar (tf_dfg_b (slot_idx (buffer_needs ctx cost_limit) a_idx n_idx))).
       { rewrite <- Hvid. apply (nre_sample ctx cost_limit act a_idx n_idx Halign).
         rewrite Hvid. exact Hsam. }
       destruct (guard_true G V en) eqn:Hg.
@@ -1051,10 +1048,11 @@ Section Settled.
       as [Hans [_ [Hargs _]]].
     destruct (dfg_action_semantics ctx cost_limit act a_idx sp0 (ssk k) input (sik k)
                 Halign (fun v => eq_refl)
-                ltac:(intros n_idx p tok en d av en' Ho1 Ho2 Ho3 Ho4 Hg Hv;
+                ltac:(intros n n_idx Hc p tok en d av en' Ho1 Ho2 Ho3 Ho4 Hg Hv;
+                      rewrite <- (caches_vreg ctx cost_limit act a_idx n_idx n Halign Hc) in Ho1, Ho2;
                       exact (Hans n_idx p tok en d av en' Ho1 Ho2 Ho3 Ho4 Hv
                                (guard_pi_holds ctx cost_limit act a_idx (sik k) en (ssk k) Hg)))
-                Hargs
+                ltac:(per_node constr:(caches_vreg ctx cost_limit) Halign Hargs)
                 ltac:(intro sv; rewrite (run_preserves_svar ctx cost_limit act input resp ss0 k Hnd sv);
                       rewrite <- Hmm, getenv_maps_from; reflexivity)
                 ltac:(intro ov; rewrite (run_preserves_ovar ctx cost_limit act input resp ss0 k Hnd ov);
@@ -1575,7 +1573,7 @@ Section Settled.
         as [_ Hmlen].
       pose proof (wfg_build_dfg ctx cost_limit act _
                     (nth_In _ {| nid := 0; op := DFG_Empty; sz := 0 |} Hmlen)) as Hfg.
-      unfold node_args_sz in Hfg. unfold AttackerClock.node_op in Hopm. rewrite Hopm in Hfg.
+      unfold args_at in Hfg. unfold AttackerClock.node_op in Hopm. rewrite Hopm in Hfg.
       destruct Hfg as [Hcw _].
       pose proof (proj2 (wsz_node_sz ctx cost_limit act _ _ Hcw)) as Hw1.
       pose proof (bit_of_nonzero

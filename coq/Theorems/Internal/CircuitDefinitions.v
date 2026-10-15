@@ -46,11 +46,7 @@ Section CircuitVocab.
   Local Notation circuit_state := (ContextEnv.(env_t) (R synth)).
   Local Notation wires := (forall f, Sig_denote (Sigma synth f)).
 
-  Local Notation s_sz := (tfs_spec_states_size ctx).
   Local Notation i_sz := (tfs_spec_inputs_size ctx).
-  Local Notation o_sz := (tfs_spec_outputs_size ctx).
-  Local Notation src_sys_state :=
-    (ContextEnv.(env_t) (tf_states_type s_sz) * ContextEnv.(env_t) (tf_outputs_type o_sz))%type.
   Local Notation input_t :=
     (forall x : tfs_spec_inputs ctx, type_denote (tf_inputs_type i_sz x)).
   Local Notation pub_inputs := (forall v, option (type_denote (tf_inputs_type i_sz v))).

@@ -70,7 +70,7 @@ Section Codegen.
   Context (bn : list (list (nid_t * (nat * sz_t)))).
 
   (* --- the register file, from States.v --- *)
-  Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (ips_var:=ips_var) (buffer_needs:=bn)).
+  Local Notation tf_dfg_states := (tf_dfg_states_t (states_var:=states_var) (ips_var:=ips_var) (buffer_needs:=bn) (slots:=slot_keys bn)).
   Hint Extern 0 (Show tf_dfg_states) => exact (States.show_tf_dfg_states ctx bn) : typeclass_instances.
 
   (* --- Step 5, from Taint.v --- *)
@@ -141,7 +141,7 @@ Section Codegen.
                                   match op (nth nid (graph dfg) {| nid := 0; op := DFG_Empty; sz := 0; |}) with
                                   | DFG_Stall _ _ =>
                                       (tf_const 0, tf_svar (tf_dfg_v a_idx n_idx'))
-                                  | _ => (tf_svar (tf_dfg_b a_idx n_idx'), tf_svar (tf_dfg_v a_idx n_idx'))
+                                  | _ => (tf_svar (tf_dfg_b (slot_idx bn a_idx n_idx')), tf_svar (tf_dfg_v a_idx n_idx'))
                                   end
                               | None => (tf_const 0, tf_const 0) (* should not happen *)
                               end
@@ -264,12 +264,12 @@ Section Codegen.
                 | DFG_Stall l _ => Some l
                 | _ => None
                 end in
-              let cnt := tf_svar (tf_dfg_b a_idx' n_idx') in
+              let cnt := tf_svar (tf_dfg_b (slot_idx bn a_idx' n_idx')) in
               let bexpr :=
                 match stall_lat with
                 | Some l =>
                     tf_expr_if (tf_op2 tf_and valid
-                                  (tf_op1 tf_not (tf_op2 (tf_cmp (snd x) tf_eq) cnt (tf_const (pred l)))))
+                                  (tf_op1 tf_not (tf_op2 (tf_cmp (slot_width bn (slot_idx bn a_idx' n_idx')) tf_eq) cnt (tf_const (pred l)))))
                       (tf_op2 tf_add cnt (tf_const 1)) cnt
                 | None =>
                   match sample_en with
@@ -281,7 +281,7 @@ Section Codegen.
                                     (tf_op2 tf_and valid
                                        (tf_op1 tf_not (tf_svar (tf_dfg_v a_idx' n_idx'))))
                                     (guard_expr tainted dfacts fuel a_idx' dfg sbufs en))
-                        expr (tf_svar (tf_dfg_b a_idx' n_idx'))
+                        expr (tf_svar (tf_dfg_b (slot_idx bn a_idx' n_idx')))
                   | None => expr
                   end
                 end in
@@ -292,10 +292,10 @@ Section Codegen.
                 match stall_lat with
                 | Some l =>
                     tf_op2 tf_and valid
-                      (tf_op2 (tf_cmp (snd x) tf_eq) cnt (tf_const (pred l)))
+                      (tf_op2 (tf_cmp (slot_width bn (slot_idx bn a_idx' n_idx')) tf_eq) cnt (tf_const (pred l)))
                 | None => valid
                 end in
-              [ tf_assign (tf_dfg_b a_idx' n_idx') bexpr; tf_assign (tf_dfg_v a_idx' n_idx') vexpr ]
+              [ tf_assign (tf_dfg_b (slot_idx bn a_idx' n_idx')) bexpr; tf_assign (tf_dfg_v a_idx' n_idx') vexpr ]
             | None => [] (* should not happen *)
             end ) buffers
     end.
@@ -355,7 +355,7 @@ Section Codegen.
     | Some (n_idx, n_sz) =>
         match index_of_nat (length (nth (index_to_nat a_idx) bn [])) n_idx with
         | Some n_idx' =>
-            tf_op2 (tf_cmp n_sz tf_eq) (tf_svar (tf_dfg_b a_idx n_idx')) (tf_const 0)
+            tf_op2 (tf_cmp (slot_width bn (slot_idx bn a_idx n_idx')) tf_eq) (tf_svar (tf_dfg_b (slot_idx bn a_idx n_idx'))) (tf_const 0)
         | None => tf_const 0
         end
     | None => tf_const 0

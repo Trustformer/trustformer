@@ -12,6 +12,7 @@ Require Import Trustformer.Semantics.
 Require Import Trustformer.Contract.
 Require Import Trustformer.Scheduler.Schedule.
 Require Import Trustformer.Theorems.Internal.SchedulerRoundTrip.
+Require Import Trustformer.Theorems.Internal.ProofTactics.
 Require Import Trustformer.Declassification.Recover.
 
 Require Import Coq.Lists.List.
@@ -163,20 +164,12 @@ Section IPRProof.
   Context (cost_limit: nat).
 
   (* Bound at this section's context. *)
-  Local Notation sample_args_settled := (ProofDefinitions.sample_args_settled ctx cost_limit).
-  Local Notation sample_guards_settled := (ProofDefinitions.sample_guards_settled ctx cost_limit).
-  Local Notation samples_answered := (ProofDefinitions.samples_answered ctx cost_limit).
-  Local Notation samples_zeroed := (ProofDefinitions.samples_zeroed ctx cost_limit).
   Local Notation settled := (ProofDefinitions.settled ctx cost_limit).
-
-  (* Bound here at this section's context. *)
   Local Notation L := (ProofDefinitions.L ctx cost_limit).
   Local Notation bit_of := ProofDefinitions.bit_of.
   Local Notation done_test := (ProofDefinitions.done_test ctx cost_limit).
-  Local Notation drives_sized := (ProofDefinitions.drives_sized ctx cost_limit).
   Local Notation emulate := (IRDefinitions.emulate ctx).
   Local Notation first_done := (IRDefinitions.first_done ctx cost_limit).
-  Local Notation guards_sized := (ProofDefinitions.guards_sized ctx cost_limit).
   Local Notation is_plumbing := (ProofDefinitions.is_plumbing ctx cost_limit).
   Local Notation pi_holds := (ProofDefinitions.pi_holds ctx cost_limit).
   Local Notation plumbing_not_root := (ProofDefinitions.plumbing_not_root ctx cost_limit).
@@ -186,8 +179,8 @@ Section IPRProof.
   Local Notation sstate := AttackerClock.sstate.
   Local Notation slot_valid := AttackerClock.slot_valid.
   Local Notation avalid := (AttackerClock.avalid ctx cost_limit).
+  Local Notation avalid_node := (AttackerClock.avalid_node ctx cost_limit).
   Local Notation vv_matches := (ProofDefinitions.vv_matches ctx cost_limit).
-  Local Notation settled_at := (ProofDefinitions.settled_at ctx cost_limit).
   Local Notation vals_sound := (ProofDefinitions.vals_sound ctx cost_limit).
   Local Notation selectors_extractable :=
     (ProofDefinitions.selectors_extractable ctx cost_limit).
@@ -910,20 +903,54 @@ Section IPRProof.
       = Some n_idx.
   Proof.
     intros Halign Hsub Hla.
-    assert (Hin_gsi : List.In (n, (j, jsz))
-              (get_sizes_and_idx ctx (build_dfg ctx act)
-                 (require_buffer ctx (build_dfg ctx act)
-                    (calc_target_cycle cost_limit
-                       (calc_backward_cost ctx cost_limit (build_dfg ctx act))))))
-      by (rewrite <- (buffer_slot_eq ctx cost_limit act a_idx Halign);
-          apply Hsub, wla_in, Hla).
-    assert (Hlt : j < length
-              (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])).
-    { rewrite (buffer_slot_eq ctx cost_limit act a_idx Halign), gsi_length.
-      exact (gsi_idx_bound ctx _ _ n j jsz Hin_gsi). }
-    exact (index_of_nat_bounded Hlt).
+    destruct (buffer_slot_in ctx cost_limit act a_idx n j jsz Halign (Hsub _ (wla_in _ _ _ Hla)))
+      as [n_idx [Hidx _]].
+    exists n_idx. exact Hidx.
   Qed.
 
+
+  (* An op is a phi or not: the one node whose validity reads a selector. *)
+  Lemma phi_cases (o: @dfg_op_t s_var i_var o_var p_var) :
+    (exists c t e, o = DFG_Phi c t e) \/ (forall c t e, o <> DFG_Phi c t e).
+  Proof.
+    destruct o; try (right; intros ? ? ? Hc; discriminate Hc); left; do 3 eexists; reflexivity.
+  Qed.
+
+  (* Off a phi, the attacker's validity of a node reflects the compiled one
+     once its arguments' does, at the same path. *)
+  Lemma avalid_node_reflect act vals (av: list lit -> nid_t -> bool) rec tainted dfacts dfg
+        pi o (ss: sched_sys_state) (input: sched_input_t) :
+    (forall c t e, o <> DFG_Phi c t e) ->
+    (forall x, List.In x (get_args ctx {| nid := 0; op := o; sz := 0 |}) ->
+       av pi x = true <-> eval1 (snd (rec pi x)) ss input = Bits.ones 1) ->
+    (avalid_node act vals av pi o = true
+     <-> eval1 (snd (compile_node ctx cost_limit tainted dfacts dfg rec pi o)) ss input
+         = Bits.ones 1).
+  Proof.
+    intros Hnp Ha. case_op o as Hop; cbn [AttackerClock.avalid_node compile_node snd].
+    - split; [ intros _; reflexivity | reflexivity ].
+    - split; [ intros _; reflexivity | reflexivity ].
+    - destruct v; (split; [ intros _; reflexivity | reflexivity ]).
+    - exact (Ha arg ltac:(in_args Hop)).
+    - rewrite valid_and_eval.
+      exact (and1_iff _ _ _ _ (Ha arg1 ltac:(in_args Hop)) (Ha arg2 ltac:(in_args Hop))).
+    - exact (Ha arg ltac:(in_args Hop)).
+    - exfalso. exact (Hnp cnd tid eid eq_refl).
+    - exact (Ha sarg ltac:(in_args Hop)).
+    - (* a drive waits on its argument and on every literal of its guard *)
+      assert (Hl : forall l, List.In l den -> av pi (fst l) = true
+                     <-> eval1 (snd (rec pi (fst l))) ss input = Bits.ones 1)
+        by (intros l Hl; apply Ha; in_args Hop).
+      pose proof (Ha darg ltac:(in_args Hop)) as Hb. clear Ha Hnp Hop. revert Hl.
+      induction den as [| l rest IH]; intro Hl; cbn [fold_right]; [ exact Hb |].
+      rewrite valid_and_eval.
+      exact (and1_iff _ _ _ _ (Hl l (or_introl eq_refl))
+               (IH (fun l' H' => Hl l' (or_intror H')))).
+    - exact (Ha stok ltac:(in_args Hop)).
+    - rewrite valid_and_eval.
+      exact (and1_iff _ _ _ _ (Ha ja ltac:(in_args Hop)) (Ha jb ltac:(in_args Hop))).
+    - split; [ discriminate | intro H0; exfalso; exact (ones1_neq_zero (eq_sym H0)) ].
+  Qed.
 
   (* [avalid] is the run's validity bit, where the attacker's vector matches the
      registers and its values are the run's.  The premises are [compile_subst]'s:
@@ -983,11 +1010,12 @@ Section IPRProof.
     destruct (BitsToLists.list_assoc bufs n) as [[j jsz] |] eqn:Hla.
     { destruct (buf_slot_indexed act a_idx bufs n j jsz Halign Hsub Hla)
         as [n_idx Hidx].
-      cbn [avalid compile_dfg_expr_aux]. rewrite Hla, Hidx. cbv beta iota.
-      destruct (op (nth n (graph (build_dfg ctx act))
-                      {| nid := 0; op := DFG_Empty; sz := 0 |}));
-        cbn [snd]; rewrite eval1_svar_v; exact (Hvv n j jsz n_idx Hla Hidx). }
-    cbn [avalid compile_dfg_expr_aux]. rewrite Hla. cbv beta iota.
+      rewrite (AttackerClock.avalid_buffered ctx cost_limit act vals vv bufs fuel pi n j jsz Hla),
+              (compile_buffered_valid ctx cost_limit (build_dfg ctx act) _ _ a_idx n bufs j jsz
+                 n_idx (S fuel) pi Hla Hidx ltac:(lia)), eval1_svar_v.
+      exact (Hvv n j jsz n_idx Hla Hidx). }
+    rewrite (AttackerClock.avalid_unbuffered ctx cost_limit act vals vv bufs fuel pi n Hla),
+            (compile_unbuffered ctx cost_limit Hla).
     unfold AttackerClock.node_op.
     assert (Hnode_in : List.In (nth n (graph (build_dfg ctx act))
                                   {| nid := 0; op := DFG_Empty; sz := 0 |})
@@ -998,217 +1026,140 @@ Section IPRProof.
                                          {| nid := 0; op := DFG_Empty; sz := 0 |})) ->
               1 <= x /\ x < n)
       by (intros x Hx; exact (node_args_range ctx cost_limit act n Hn1 Hnlen x Hx)).
+    (* off a phi, a node is valid exactly when its arguments are *)
+    destruct (phi_cases (op (nth n (graph (build_dfg ctx act))
+                               {| nid := 0; op := DFG_Empty; sz := 0 |})))
+      as [(cnd & tid & eid & Hop) | Hnp].
+    2: { apply avalid_node_reflect; [ exact Hnp | intros x Hx ].
+         destruct (Hrange x Hx) as [Hx1 Hx2]. exact (Hone x pi Hx1 Hx2 Hpi Hpok). }
+    (* a phi: critical reads both arms, selecting reads the condition *)
     pose proof (wfg_build_dfg ctx cost_limit act _ Hnode_in) as Hfg.
-    unfold node_args_sz in Hfg.
-    destruct (op (nth n (graph (build_dfg ctx act))
-                    {| nid := 0; op := DFG_Empty; sz := 0 |}))
-      as [c | v | v | uop arg | bop a1 a2 | arg | cnd tid eid | slat sa
-         | dp darg den | sp stok sen | ja jb | ] eqn:Hop.
-    - split; [ intros _ | reflexivity ]. reflexivity.
-    - split; [ intros _ | reflexivity ]. reflexivity.
-    - destruct v; (split; [ intros _ | reflexivity ]); reflexivity.
-    - destruct (Hrange arg ltac:(unfold get_args; rewrite Hop; left; reflexivity))
-        as [Ha1 Ha2].
+    unfold args_at in Hfg. rewrite Hop in Hfg |- *.
+    cbn [AttackerClock.avalid_node compile_node].
+    destruct (Hrange cnd ltac:(unfold get_args; rewrite Hop; left; reflexivity))
+      as [Hc1 Hc2].
+    destruct (Hrange tid ltac:(unfold get_args; rewrite Hop; right; left; reflexivity))
+      as [Ht1 Ht2].
+    destruct (Hrange eid ltac:(unfold get_args; rewrite Hop; right; right; left; reflexivity))
+      as [He1 He2].
+    destruct Hfg as [Hf1 [_ _]].
+    destruct (wsz_node_sz ctx cost_limit act cnd 1 Hf1) as [Hclen Hcsz].
+    destruct (phi_crit (get_tainted ctx (build_dfg ctx act))
+                (decl_facts ctx (build_dfg ctx act)) cnd pi) eqn:Hcrit;
+      cbn [phi_path]; cbv beta iota.
+    + destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                  cnd bufs) as [ce cv] eqn:Ec.
       destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                  arg bufs) as [ae ve] eqn:E1.
-      pose proof (Hone arg pi Ha1 Ha2 Hpi Hpok) as Ha. rewrite E1 in Ha.
-      cbn [snd] in Ha |- *. exact Ha.
-    - destruct (Hrange a1 ltac:(unfold get_args; rewrite Hop; left; reflexivity))
-        as [Hb1 Hb2].
-      destruct (Hrange a2 ltac:(unfold get_args; rewrite Hop; right; left; reflexivity))
-        as [Hd1 Hd2].
+                  tid bufs) as [te tv] eqn:Et.
       destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                  a1 bufs) as [a1e v1e] eqn:E1.
-      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                  a2 bufs) as [a2e v2e] eqn:E2.
-      pose proof (Hone a1 pi Hb1 Hb2 Hpi Hpok) as Hx1. rewrite E1 in Hx1.
-      pose proof (Hone a2 pi Hd1 Hd2 Hpi Hpok) as Hx2. rewrite E2 in Hx2.
-      cbn [snd] in Hx1, Hx2 |- *. rewrite valid_and_eval.
-      exact (and1_iff _ _ _ _ Hx1 Hx2).
-    - destruct (Hrange arg ltac:(unfold get_args; rewrite Hop; left; reflexivity))
-        as [Ha1 Ha2].
-      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                  arg bufs) as [ae ve] eqn:E1.
-      pose proof (Hone arg pi Ha1 Ha2 Hpi Hpok) as Ha. rewrite E1 in Ha.
-      cbn [snd] in Ha |- *. exact Ha.
-    - (* a phi: critical reads both arms, selecting reads the condition *)
-      destruct (Hrange cnd ltac:(unfold get_args; rewrite Hop; left; reflexivity))
-        as [Hc1 Hc2].
-      destruct (Hrange tid ltac:(unfold get_args; rewrite Hop; right; left; reflexivity))
-        as [Ht1 Ht2].
-      destruct (Hrange eid ltac:(unfold get_args; rewrite Hop; right; right; left; reflexivity))
-        as [He1 He2].
-      destruct Hfg as [Hf1 [_ _]].
-      destruct (wsz_node_sz ctx cost_limit act cnd 1 Hf1) as [Hclen Hcsz].
-      destruct (phi_crit (get_tainted ctx (build_dfg ctx act))
-                  (decl_facts ctx (build_dfg ctx act)) cnd pi) eqn:Hcrit;
-        cbn [phi_path]; cbv beta iota.
-      + destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                    cnd bufs) as [ce cv] eqn:Ec.
-        destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                    tid bufs) as [te tv] eqn:Et.
-        destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                    eid bufs) as [ee ev] eqn:Ee.
-        pose proof (Hone cnd pi Hc1 Hc2 Hpi Hpok) as Hc. rewrite Ec in Hc.
-        pose proof (Hone tid pi Ht1 Ht2 Hpi Hpok) as Ht. rewrite Et in Ht.
-        pose proof (Hone eid pi He1 He2 Hpi Hpok) as He. rewrite Ee in He.
-        cbn [snd] in Hc, Ht, He |- *. rewrite !valid_and_eval.
-        exact (and1_iff _ _ _ _ (and1_iff _ _ _ _ Ht He) Hc).
-      + destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                    cnd bufs) as [ce cv] eqn:Ec.
-        destruct (compile_dfg_expr_at ctx bneeds ((cnd, true) :: pi) fuel a_idx
-                    (build_dfg ctx act) tid bufs) as [te tv] eqn:Et.
-        destruct (compile_dfg_expr_at ctx bneeds ((cnd, false) :: pi) fuel a_idx
-                    (build_dfg ctx act) eid bufs) as [ee ev] eqn:Ee.
-        pose proof (Hone cnd pi Hc1 Hc2 Hpi Hpok) as Hc. rewrite Ec in Hc.
-        cbn [snd] in Hc |- *. rewrite valid_and_eval.
-        destruct (avalid act vals vv bufs fuel pi cnd) eqn:Hav; cbn [andb].
-        * (* the condition has settled, so the arm it names is the one read *)
-          assert (Hcv : eval1 cv ss input = Bits.ones 1) by (apply Hc; reflexivity).
-          rewrite Hcv, Bits.and_ones_l.
-          assert (Hvalc : eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
-                            (build_dfg ctx act) cnd bufs)) ss input = Bits.ones 1)
-            by (rewrite Ec; cbn [snd]; exact Hcv).
-          pose proof (compile_subst_valid_gen_at ctx cost_limit act a_idx ss input
-                        Halign Hvs bufs Hsub fuel cnd 1 pi
-                        ltac:(intros y Hy; exact (Hsam_sub y ltac:(lia)))
-                        ltac:(intros y my mszy Hy; exact (Hsam_same y my mszy ltac:(lia)))
-                        Hc1 Hclen ltac:(lia) (eq_sym Hcsz) Hvalc) as S1.
-          rewrite Ec in S1. cbn [fst] in S1.
-          rewrite (compile_fst_pi_irrel ctx cost_limit _ _ a_idx _
-                     (sample_bufs ctx cost_limit act a_idx) fuel cnd pi []) in S1.
-          rewrite (compile_fuel_irrel ctx cost_limit act a_idx
-                     (sample_bufs ctx cost_limit act a_idx) cnd Hc1 Hclen
-                     fuel (length (graph (build_dfg ctx act))) ltac:(lia) Hclen)
-            in S1.
-          assert (Hrvc : rvalid act a_idx pi cnd ss input = Bits.ones 1).
-          { rewrite <- (compile_fuel_irrel_gen ctx cost_limit act a_idx
-                          (sample_bufs ctx cost_limit act a_idx) _ _ cnd Hc1 Hclen
-                          fuel (length (graph (build_dfg ctx act))) pi
-                          ltac:(lia) Hclen).
-            exact (compile_subst_ref_valid_gen_at ctx cost_limit act a_idx ss input
-                     Halign Hvs Hrf bufs Hsub fuel cnd pi
-                     ltac:(intros y Hy; exact (Hsam_sub y ltac:(lia)))
-                     ltac:(intros y my mszy Hy; exact (Hsam_same y my mszy ltac:(lia)))
-                     Hc1 Hclen ltac:(lia) Hvalc). }
-          destruct (Hsel n cnd tid eid pi
-                      ltac:(unfold AttackerClock.node_op; rewrite Hop; reflexivity)
-                      Hcrit Hpi Hpok Hrvc) as [v Hb].
-          rewrite Hb. cbn beta iota.
-          pose proof (Hvals cnd v pi Hb Hpi Hrvc) as Hcl.
-          remember (nonzero v) as b eqn:Hbdef.
-          assert (Hbv : nval ctx cost_limit act a_idx ss input 1 cnd
-                        = ProofDefinitions.bit_of b).
-          { subst b.
-            exact (bit_of_nonzero
-                     (fun w => nval ctx cost_limit act a_idx ss input w cnd)
-                     _ v Hcsz Hcl). }
-          assert (Hce : eval1 ce ss input = ProofDefinitions.bit_of b).
-          { rewrite S1. unfold nval, node_ref_expr in Hbv. exact Hbv. }
-          (* the arm the condition names is read under the extended path, and
-             that path holds: [b] IS the condition's bit *)
-          pose proof (pi_holds_cons act a_idx input cnd b pi ss Hpi Hbv) as Hpib.
-          assert (Hpokb : path_ok act a_idx ss input ((cnd, b) :: pi)).
-          { split; [ exact Hpok | split; [ | split; [ exact Hpi | exact Hrvc ] ] ].
-            exists n, tid, eid. split; [ unfold AttackerClock.node_op; exact Hop | exact Hcrit ]. }
-          assert (Hcase : (tv = tf_const 1 /\ ev = tf_const 1)
-                          \/ valid_expr_if ctx bneeds ce tv ev
-                             = tf_expr_if ce tv ev).
-          { unfold valid_expr_if.
-            destruct tv as [vt| | | | | |]; try (right; reflexivity).
-            destruct vt as [|[|vt]]; try (right; reflexivity).
-            destruct ev as [vee| | | | | |]; try (right; reflexivity).
-            destruct vee as [|[|vee]]; try (right; reflexivity).
-            left; split; reflexivity. }
-          destruct Hcase as [[Htc Hec] | Hcs].
-          -- (* both arms are unconditionally valid *)
-             rewrite Htc, Hec. cbn [valid_expr_if].
-             split; [ intros _; reflexivity | intros _ ].
-             destruct b.
-             ++ pose proof (Hone tid ((cnd, true) :: pi) Ht1 Ht2 Hpib Hpokb) as Ht.
-                rewrite Et in Ht. cbn [snd] in Ht. apply Ht.
-                rewrite Htc. reflexivity.
-             ++ pose proof (Hone eid ((cnd, false) :: pi) He1 He2 Hpib Hpokb) as He.
-                rewrite Ee in He. cbn [snd] in He. apply He.
-                rewrite Hec. reflexivity.
-          -- rewrite Hcs. cbn [tf_eval_expr]. rewrite Hce.
-             destruct b.
-             ++ match goal with
-                | |- context [@beq_dec ?T ?E ?a ?z] =>
-                    destruct (@beq_dec T E a z) eqn:Hbd
-                end.
-                ** exfalso. apply beq_dec_iff in Hbd.
-                   exact (ones1_neq_zero Hbd).
-                ** pose proof (Hone tid ((cnd, true) :: pi) Ht1 Ht2 Hpib Hpokb) as Ht.
-                   rewrite Et in Ht. cbn [snd] in Ht. exact Ht.
-             ++ match goal with
-                | |- context [@beq_dec ?T ?E ?a ?z] =>
-                    replace (@beq_dec T E a z) with true
-                      by (symmetry; apply beq_dec_iff; reflexivity)
-                end.
-                pose proof (Hone eid ((cnd, false) :: pi) He1 He2 Hpib Hpokb) as He.
-                rewrite Ee in He. cbn [snd] in He. exact He.
-        * (* the condition has not settled, and nothing downstream has *)
-          assert (Hcz : eval1 cv ss input = Bits.zero).
-          { destruct (SchedulerSimulationLemmas.bits1_cases (eval1 cv ss input))
-              as [Ho | Hz]; [ | exact Hz ].
-            exfalso. discriminate (proj2 Hc Ho). }
-          rewrite Hcz, bits1_and_zero_l.
-          split; [ discriminate | intro Hc0 ].
-          exfalso. exact (ones1_neq_zero (eq_sym Hc0)).
-    - destruct (Hrange sa ltac:(unfold get_args; rewrite Hop; left; reflexivity))
-        as [Ha1 Ha2].
-      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                  sa bufs) as [ae ve] eqn:E1.
-      pose proof (Hone sa pi Ha1 Ha2 Hpi Hpok) as Ha. rewrite E1 in Ha.
-      cbn [snd] in Ha |- *. exact Ha.
-    - (* a drive waits on its argument AND on every literal of its guard *)
-      destruct (Hrange darg ltac:(unfold get_args; rewrite Hop; left; reflexivity))
-        as [Ha1 Ha2].
-      assert (Hfold : forall (gs: list lit) (bb: bool)
-                        (base: @tf_expr (tfs_states sched) (tfs_inputs sched) o_var),
-                (forall l, List.In l gs -> 1 <= fst l /\ fst l < n) ->
-                (bb = true <-> eval1 base ss input = Bits.ones 1) ->
-                (fold_right (fun l acc =>
-                   andb (avalid act vals vv bufs fuel pi (fst l)) acc) bb gs = true
-                 <-> eval1 (fold_right (fun l acc =>
-                       valid_expr_and ctx bneeds
-                         (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
-                                 (build_dfg ctx act) (fst l) bufs)) acc)
-                       base gs) ss input = Bits.ones 1)).
-      { induction gs as [| l rest IHgs]; intros bb base Hr Hb;
-          cbn [fold_right]; [ exact Hb | ].
-        rewrite valid_and_eval.
-        destruct (Hr l (or_introl eq_refl)) as [Hl1 Hl2].
-        exact (and1_iff _ _ _ _ (Hone (fst l) pi Hl1 Hl2 Hpi Hpok)
-                 (IHgs bb base ltac:(intros l' Hl'; apply Hr; right; exact Hl') Hb)). }
-      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                  darg bufs) as [ae ve] eqn:E1.
-      pose proof (Hone darg pi Ha1 Ha2 Hpi Hpok) as Ha. rewrite E1 in Ha.
-      cbn [snd] in Ha |- *.
-      apply Hfold; [ | exact Ha ].
-      intros l Hl. apply Hrange.
-      unfold get_args; rewrite Hop; right; apply in_map; exact Hl.
-    - destruct (Hrange stok ltac:(unfold get_args; rewrite Hop; left; reflexivity))
-        as [Ha1 Ha2].
-      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                  stok bufs) as [ae ve] eqn:E1.
-      pose proof (Hone stok pi Ha1 Ha2 Hpi Hpok) as Ha. rewrite E1 in Ha.
-      cbn [snd] in Ha |- *. exact Ha.
-    - destruct (Hrange ja ltac:(unfold get_args; rewrite Hop; left; reflexivity))
-        as [Hja1 Hja2].
-      destruct (Hrange jb ltac:(unfold get_args; rewrite Hop; right; left; reflexivity))
-        as [Hjb1 Hjb2].
-      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                  ja bufs) as [ae ve] eqn:E1.
-      destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
-                  jb bufs) as [be vb] eqn:E2.
-      pose proof (Hone ja pi Hja1 Hja2 Hpi Hpok) as Hxa. rewrite E1 in Hxa.
-      pose proof (Hone jb pi Hjb1 Hjb2 Hpi Hpok) as Hxb. rewrite E2 in Hxb.
-      cbn [snd] in Hxa, Hxb |- *. rewrite valid_and_eval.
-      exact (and1_iff _ _ _ _ Hxa Hxb).
-    - split; [ discriminate | intro H0 ].
-      exfalso. exact (ones1_neq_zero (eq_sym H0)).
+                  eid bufs) as [ee ev] eqn:Ee.
+      pose proof (Hone cnd pi Hc1 Hc2 Hpi Hpok) as Hc. rewrite Ec in Hc.
+      pose proof (Hone tid pi Ht1 Ht2 Hpi Hpok) as Ht. rewrite Et in Ht.
+      pose proof (Hone eid pi He1 He2 Hpi Hpok) as He. rewrite Ee in He.
+      cbn [snd] in Hc, Ht, He |- *. rewrite !valid_and_eval.
+      exact (and1_iff _ _ _ _ (and1_iff _ _ _ _ Ht He) Hc).
+    + destruct (compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
+                  cnd bufs) as [ce cv] eqn:Ec.
+      destruct (compile_dfg_expr_at ctx bneeds ((cnd, true) :: pi) fuel a_idx
+                  (build_dfg ctx act) tid bufs) as [te tv] eqn:Et.
+      destruct (compile_dfg_expr_at ctx bneeds ((cnd, false) :: pi) fuel a_idx
+                  (build_dfg ctx act) eid bufs) as [ee ev] eqn:Ee.
+      pose proof (Hone cnd pi Hc1 Hc2 Hpi Hpok) as Hc. rewrite Ec in Hc.
+      cbn [fst snd] in Hc |- *. rewrite valid_and_eval.
+      destruct (avalid act vals vv bufs fuel pi cnd) eqn:Hav; cbn [andb].
+      * (* the condition has settled, so the arm it names is the one read *)
+        assert (Hcv : eval1 cv ss input = Bits.ones 1) by (apply Hc; reflexivity).
+        rewrite Hcv, Bits.and_ones_l.
+        assert (Hvalc : eval1 (snd (compile_dfg_expr_at ctx bneeds pi fuel a_idx
+                          (build_dfg ctx act) cnd bufs)) ss input = Bits.ones 1)
+          by (rewrite Ec; cbn [snd]; exact Hcv).
+        pose proof (compile_subst_valid_gen_at ctx cost_limit act a_idx ss input
+                      Halign Hvs bufs Hsub fuel cnd 1 pi
+                      ltac:(intros y Hy; exact (Hsam_sub y ltac:(lia)))
+                      ltac:(intros y my mszy Hy; exact (Hsam_same y my mszy ltac:(lia)))
+                      Hc1 Hclen ltac:(lia) (eq_sym Hcsz) Hvalc) as S1.
+        rewrite Ec in S1. cbn [fst] in S1.
+        rewrite (compile_fst_pi_irrel ctx cost_limit _ _ a_idx _
+                   (sample_bufs ctx cost_limit act a_idx) fuel cnd pi []) in S1.
+        rewrite (compile_fuel_irrel ctx cost_limit act a_idx
+                   (sample_bufs ctx cost_limit act a_idx) cnd Hc1 Hclen
+                   fuel (length (graph (build_dfg ctx act))) ltac:(lia) Hclen)
+          in S1.
+        assert (Hrvc : rvalid act a_idx pi cnd ss input = Bits.ones 1).
+        { rewrite <- (compile_fuel_irrel_gen ctx cost_limit act a_idx
+                        (sample_bufs ctx cost_limit act a_idx) _ _ cnd Hc1 Hclen
+                        fuel (length (graph (build_dfg ctx act))) pi
+                        ltac:(lia) Hclen).
+          exact (compile_subst_ref_valid_gen_at ctx cost_limit act a_idx ss input
+                   Halign Hvs Hrf bufs Hsub fuel cnd pi
+                   ltac:(intros y Hy; exact (Hsam_sub y ltac:(lia)))
+                   ltac:(intros y my mszy Hy; exact (Hsam_same y my mszy ltac:(lia)))
+                   Hc1 Hclen ltac:(lia) Hvalc). }
+        destruct (Hsel n cnd tid eid pi
+                    ltac:(unfold AttackerClock.node_op; rewrite Hop; reflexivity)
+                    Hcrit Hpi Hpok Hrvc) as [v Hb].
+        rewrite Hb. cbn beta iota.
+        pose proof (Hvals cnd v pi Hb Hpi Hrvc) as Hcl.
+        remember (nonzero v) as b eqn:Hbdef.
+        assert (Hbv : nval ctx cost_limit act a_idx ss input 1 cnd
+                      = ProofDefinitions.bit_of b).
+        { subst b.
+          exact (bit_of_nonzero
+                   (fun w => nval ctx cost_limit act a_idx ss input w cnd)
+                   _ v Hcsz Hcl). }
+        assert (Hce : eval1 ce ss input = ProofDefinitions.bit_of b).
+        { rewrite S1. unfold nval, node_ref_expr in Hbv. exact Hbv. }
+        (* the arm the condition names is read under the extended path, and
+           that path holds: [b] IS the condition's bit *)
+        pose proof (pi_holds_cons act a_idx input cnd b pi ss Hpi Hbv) as Hpib.
+        assert (Hpokb : path_ok act a_idx ss input ((cnd, b) :: pi)).
+        { split; [ exact Hpok | split; [ | split; [ exact Hpi | exact Hrvc ] ] ].
+          exists n, tid, eid. split; [ unfold AttackerClock.node_op; exact Hop | exact Hcrit ]. }
+        assert (Hcase : (tv = tf_const 1 /\ ev = tf_const 1)
+                        \/ valid_expr_if ctx bneeds ce tv ev
+                           = tf_expr_if ce tv ev).
+        { unfold valid_expr_if.
+          destruct tv as [vt| | | | | |]; try (right; reflexivity).
+          destruct vt as [|[|vt]]; try (right; reflexivity).
+          destruct ev as [vee| | | | | |]; try (right; reflexivity).
+          destruct vee as [|[|vee]]; try (right; reflexivity).
+          left; split; reflexivity. }
+        destruct Hcase as [[Htc Hec] | Hcs].
+        -- (* both arms are unconditionally valid *)
+           rewrite Htc, Hec. cbn [valid_expr_if].
+           split; [ intros _; reflexivity | intros _ ].
+           destruct b.
+           ++ pose proof (Hone tid ((cnd, true) :: pi) Ht1 Ht2 Hpib Hpokb) as Ht.
+              rewrite Et in Ht. cbn [snd] in Ht. apply Ht.
+              rewrite Htc. reflexivity.
+           ++ pose proof (Hone eid ((cnd, false) :: pi) He1 He2 Hpib Hpokb) as He.
+              rewrite Ee in He. cbn [snd] in He. apply He.
+              rewrite Hec. reflexivity.
+        -- rewrite Hcs. cbn [tf_eval_expr]. rewrite Hce.
+           destruct b.
+           ++ match goal with
+              | |- context [@beq_dec ?T ?E ?a ?z] =>
+                  destruct (@beq_dec T E a z) eqn:Hbd
+              end.
+              ** exfalso. apply beq_dec_iff in Hbd.
+                 exact (ones1_neq_zero Hbd).
+              ** pose proof (Hone tid ((cnd, true) :: pi) Ht1 Ht2 Hpib Hpokb) as Ht.
+                 rewrite Et in Ht. cbn [snd] in Ht. exact Ht.
+           ++ match goal with
+              | |- context [@beq_dec ?T ?E ?a ?z] =>
+                  replace (@beq_dec T E a z) with true
+                    by (symmetry; apply beq_dec_iff; reflexivity)
+              end.
+              pose proof (Hone eid ((cnd, false) :: pi) He1 He2 Hpib Hpokb) as He.
+              rewrite Ee in He. cbn [snd] in He. exact He.
+      * (* the condition has not settled, and nothing downstream has *)
+        assert (Hcz : eval1 cv ss input = Bits.zero).
+        { destruct (SchedulerSimulationLemmas.bits1_cases (eval1 cv ss input))
+            as [Ho | Hz]; [ | exact Hz ].
+          exfalso. discriminate (proj2 Hc Ho). }
+        rewrite Hcz, bits1_and_zero_l.
+        split; [ discriminate | intro Hc0 ].
+        exfalso. exact (ones1_neq_zero (eq_sym Hc0)).
   Qed.
 
   (* ---- THE SHADOW MACHINE RUNS WITH THE DESIGN ---- *)
@@ -1255,10 +1206,7 @@ Section IPRProof.
     m < length (nth (index_to_nat a_idx) bneeds []) ->
     fst (snd (nth m (nth (index_to_nat a_idx) bneeds []) (0, (0, 0)))) = m.
   Proof.
-    intros Halign Hm.
-    rewrite (buffer_slot_eq ctx cost_limit act a_idx Halign) in Hm |- *.
-    rewrite gsi_length in Hm.
-    exact (gsi_idx_at ctx _ _ m Hm).
+    intros Halign Hm. exact (slot_index_at ctx cost_limit act a_idx m Halign Hm).
   Qed.
 
   (* THE SHADOW MACHINE IS THE REGISTERS: at every pre-done cycle the attacker's
@@ -1287,7 +1235,7 @@ Section IPRProof.
                 = Some l ->
               nth (index_to_nat n_idx) (snd (srun act a_idx vals k)) 0
               = Bits.to_nat
-                  ((fst (ss_run k act input resp ss0)).[tf_dfg_b a_idx n_idx])
+                  ((fst (ss_run k act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)])
               /\ nth (index_to_nat n_idx) (snd (srun act a_idx vals k)) 0
                  <= pred l).
   Proof.
@@ -1298,10 +1246,10 @@ Section IPRProof.
       rewrite !nth_repeat. split.
       - rewrite (Hz (tf_dfg_v a_idx n_idx) I). split; [ discriminate | ].
         intro Hc. exfalso. exact (ones1_neq_zero (eq_sym Hc)).
-      - intros l _. rewrite (Hz (tf_dfg_b a_idx n_idx) I).
+      - intros l _. rewrite (Hz (tf_dfg_b (slot_idx bneeds a_idx n_idx)) I).
         split; [ | lia ].
-        change (@Bits.zero (ss_sz (tf_dfg_b a_idx n_idx)))
-          with (Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) 0).
+        change (@Bits.zero (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))))
+          with (Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) 0).
         symmetry. apply Bits.to_nat_of_nat. unfold pow2. lia. }
     assert (Hndk : forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input resp ss0))
       by (intros i Hi; apply Hnd; lia).
@@ -1418,7 +1366,7 @@ Section IPRProof.
       + cbn [tf_eval_expr]. rewrite !convert_same.
         match goal with
         | |- _ <-> Bits.and _ (if @beq_dec ?T ?E ?r _ then _ else _) = _ =>
-            replace r with ((fst (ss_run k act input resp ss0)).[tf_dfg_b a_idx n_idx])
+            replace r with ((fst (ss_run k act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)])
               by reflexivity
         end.
         apply and1_iff; [ exact Hgate | ].
@@ -1433,7 +1381,7 @@ Section IPRProof.
         * split.
           -- intro He. exfalso. apply Nat.eqb_eq in He.
              apply (proj1 (beq_dec_false_iff _ _ _) Hb).
-             apply (bits_to_nat_inj (ss_sz (tf_dfg_b a_idx n_idx))).
+             apply (bits_to_nat_inj (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx)))).
              rewrite <- Hcnt, He.
              symmetry. apply Bits.to_nat_of_nat. exact Hwide.
           -- intro H0. exfalso. revert H0. vm_compute. discriminate.

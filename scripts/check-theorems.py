@@ -26,6 +26,12 @@ HEADLINE = [
      "at rest; IPR itself only speaks of what the attacker sees",
      [("Trustformer.Theorems.IPR", "synthesis_correct")]),
 
+    ("opt-in call merging keeps the spec",
+     "a design built from merge_calls_ctx is checked against a spec that steps exactly "
+     "like the one written, so every guarantee above carries over",
+     [("Trustformer.Scheduler.MergeCalls", "merge_calls_correct"),
+      ("Trustformer.Theorems.MergeCalls", "merged_spec_step")]),
+
     ("no secret leaks by value",
      "what the attacker can see never depends on a secret",
      [("Trustformer.Theorems.Confidentiality", "seq_confidential"),
