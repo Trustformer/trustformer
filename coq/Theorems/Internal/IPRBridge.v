@@ -243,19 +243,24 @@ Section Bridge.
     at_rest (cycle w c) sp /\ atk_out_of c (cycle w c) = (Ob~1, mask_out ctx (snd sp)).
   Proof.
     intros Hw Hr.
+    (* the request registers go quiet; at rest says nothing about them *)
     assert (Hid : forall x, match x with tf_out_ack _ | tf_ip_ack _ => False | _ => True end ->
+                    (forall p, x <> tf_reg (tfs_drive_reg tsched p)) ->
                     (cycle w c).[x] = c.[x]).
-    { intros x Hx. apply (SynthesisProof.cycle_idle synth c w x (proj1 Hr)); [| exact Hx ].
+    { intros x Hx Hd. apply (SynthesisProof.cycle_idle synth c w x (proj1 Hr)); [| exact Hx | exact Hd ].
       intro a. left. exact Hw. }
+    assert (Hnd : forall s: tfs_states tsched, match s with tf_dfg_ov _ => False | _ => True end ->
+                    forall p, (tf_reg s : reg_t) <> tf_reg (tfs_drive_reg tsched p)).
+    { intros s Hs p E. injection E as E. change (s = tf_dfg_ov p) in E. subst s. exact Hs. }
     destruct Hr as [Hrdy [Hout Hreg]].
     assert (Houts : circuit_outputs (cycle w c) = snd sp).
     { apply equiv_eq. intro o. unfold IPRDefinitions.circuit_outputs. rewrite getenv_create.
-      rewrite Hid by exact I. exact (Hout o). }
+      rewrite Hid; [ exact (Hout o) | exact I | intros p E; discriminate E ]. }
     split.
-    - split; [ rewrite Hid by exact I; exact Hrdy | split ].
-      + intro o. rewrite Hid by exact I. exact (Hout o).
+    - split; [ rewrite Hid; [ exact Hrdy | exact I | intros p E; discriminate E ] | split ].
+      + intro o. rewrite Hid; [ exact (Hout o) | exact I | intros p E; discriminate E ].
       + intro x. specialize (Hreg x). destruct x; cbv iota in *; try exact I;
-          rewrite Hid by exact I; exact Hreg.
+          (rewrite Hid; [ exact Hreg | exact I | apply Hnd; exact I ]).
     - unfold IPRDefinitions.atk_out_of. rewrite Hrdy, Houts. reflexivity.
   Qed.
 

@@ -541,16 +541,13 @@ Section Schedule.
   Lemma drives_tags_eq (idx: nat) (DFG: dfg_state)
         (BUF: list (nid_t * (nat * sz_t))):
     flat_map OPTAG (compile_dfg_drives idx DFG BUF)
-    = match index_of_nat (length bn) idx with
-      | None => []
-      | Some _ => map (fun o => @StOp tf_dfg_states outputs_var (tf_dfg_ov o)) (driven_ports DFG)
-      end.
+    = map (fun o => @StOp tf_dfg_states outputs_var (tf_dfg_ov o)) (driven_ports DFG).
   Proof.
     unfold compile_dfg_drives.
-    destruct (index_of_nat (length bn) idx) as [a'|]; [| reflexivity].
-    rewrite flat_map_map.
-    induction (driven_ports DFG) as [|o l IH]; simpl;
-      [reflexivity | rewrite IH; reflexivity].
+    destruct (index_of_nat (length bn) idx) as [a'|];
+      rewrite flat_map_map;
+      induction (driven_ports DFG) as [|o l IH]; simpl;
+      try reflexivity; rewrite IH; reflexivity.
   Qed.
 
   Lemma drives_tags_in (idx: nat) (DFG: dfg_state)
@@ -559,7 +556,6 @@ Section Schedule.
     exists o, t = @StOp tf_dfg_states outputs_var (tf_dfg_ov o) /\ In o (driven_ports DFG).
   Proof.
     rewrite drives_tags_eq.
-    destruct (index_of_nat (length bn) idx) as [a'|]; [| intros []].
     intro Hin. apply in_map_iff in Hin. destruct Hin as [o [<- Ho]].
     exists o. split; [reflexivity | exact Ho].
   Qed.
@@ -580,7 +576,6 @@ Section Schedule.
     NoDup (flat_map OPTAG (compile_dfg_drives idx DFG BUF)).
   Proof.
     rewrite drives_tags_eq.
-    destruct (index_of_nat (length bn) idx) as [a'|]; [| constructor].
     apply NoDup_map_StOp_ov. unfold driven_ports.
     apply finite_nodup.
   Qed.
@@ -687,6 +682,16 @@ Section Schedule.
     apply in_flat_map in Hin. destruct Hin as [n_idx [_ Hin]].
     destruct (index_of_nat _ n_idx) as [n'|]; [| contradiction].
     destruct Hin as [<- | []]. exists a', n'. reflexivity.
+  Qed.
+
+  Theorem schedule_drive_assigned: forall a p,
+    In (StOp (tf_dfg_ov p)) (flat_map OPTAG (fst (schedule a))).
+  Proof.
+    intros a p. unfold schedule. cbn [fst flat_map]. apply in_or_app. right.
+    rewrite flat_map_app. apply in_or_app. right.
+    rewrite drives_tags_eq.
+    apply (in_map (fun o => @StOp tf_dfg_states outputs_var (tf_dfg_ov o))). unfold driven_ports.
+    exact (nth_error_In _ _ (@finite_surjective ips_var ips_var_fin p)).
   Qed.
 
   Theorem reset_states_nodup: NoDup reset_states.
@@ -807,6 +812,7 @@ Section Schedule.
       tfs_schedule_no_duplicates := schedule_no_dup;
       tfs_done_signal_size := eq_refl;
       tfs_done_signal_assigned_by_always := schedule_done_assigned;
+      tfs_drive_assigned_by_always := schedule_drive_assigned;
       tfs_reset_states_nodup := reset_states_nodup;
       tfs_reset_states_init_zero := reset_states_init_zero;
     |}.

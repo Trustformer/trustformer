@@ -69,7 +69,6 @@ Section SchedulerRoundTrip.
   Local Notation drive_has_sample := (SchedulerSimulationLemmas.drive_has_sample ctx cost_limit).
   Local Notation drive_nodes_spec := (SchedulerSimulationLemmas.drive_nodes_spec ctx cost_limit).
   Local Notation drive_payload := (IRDefinitions.drive_payload ctx cost_limit).
-  Local Notation drive_payload_hold := (SchedulerSimulationLemmas.drive_payload_hold ctx cost_limit).
   Local Notation if_run := (SchedulerSimulationLemmas.if_run ctx).
   Local Notation ip_contract := (IRDefinitions.ip_contract ctx cost_limit).
   Local Notation port_strobe_quiet := (SchedulerSimulationLemmas.port_strobe_quiet ctx cost_limit).
@@ -4883,13 +4882,17 @@ Section SchedulerRoundTrip.
     exact Hlater.
   Qed.
 
-  Lemma port_holds_request
-        (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val) (ss0: sched_sys_state) M
-        n_idx (p: p_var) tok en d av en' j :
+  (* The answer a sample latches is [ip_fn] of its own call's argument: the IP
+     answers [ip_lat] cycles after the pulse, from the payload on the port in the
+     pulse cycle, which is the drive's settled argument. *)
+  Lemma answer_is_request
+        (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val)
+        (ss0: sched_sys_state) M n_idx (p: p_var) tok en d av en' j :
     act_idx_aligned act a_idx ->
     1 < length (graph (build_dfg ctx act)) ->
     (forall x, zeroed_at_start x -> (fst ss0).[x] = Bits.zero) ->
     (forall i, 1 <= i <= M -> ~ done_set (run_n i act input resp ss0)) ->
+    ip_contract act input resp ss0 ->
     requests_sent act a_idx input resp ss0 M ->
     node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
     sample_drive act (vreg_nid a_idx n_idx) = Some d ->
@@ -4901,27 +4904,65 @@ Section SchedulerRoundTrip.
     j < M ->
     (fst (run_n j act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero ->
     (fst (run_n (S j) act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-    drive_payload (run_n j act input resp ss0) p
-    = tf_eval_expr ss_sz si_sz oo_sz (szB := ip_req_sz (tfs_spec_ip ctx p))
-        (node_ref_expr act a_idx av)
-        (run_n M act input resp ss0) (sched_input input (resp M)).
+    resp j p
+    = ip_fn (tfs_ip sched p)
+        (tf_eval_expr ss_sz si_sz oo_sz (szB := ip_req_sz (tfs_spec_ip ctx p))
+           (node_ref_expr act a_idx av)
+           (run_n M act input resp ss0) (sched_input input (resp M))).
   Proof.
-    intros Halign Hlen Hz0 Hpre Hrs Hsamp Hsd Hdop Hdsz Hgd Hjm Hvj HvSj.
-    pose proof (samples_ordered_holds act a_idx input resp ss0 Halign Hz0 Hlen) as Hord.
-    assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
-      by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
-    destruct (node_op_pos act d ltac:(rewrite Hdop; discriminate)) as [Hd1 Hdlen].
-    (* no answer at or after this one has been latched, up to cycle [j] *)
+    intros Halign Hlen Hz0 Hpre Hipc Hrs Hsamp Hsd Hdop Hdsz Hgd Hjm Hvj HvSj.
+    assert (Hlat : S (pred (ip_lat (tfs_ip sched p))) = ip_lat (tfs_ip sched p)).
+    { apply Nat.succ_pred_pos.
+      pose proof (ip_lat_pos (tfs_ip sched p)) as Hlp. lia. }
     assert (Hlater := no_later_drive_upto act a_idx input resp ss0 M n_idx p tok en d j
                         Halign Hlen Hz0 Hpre Hsamp Hsd Hgd Hjm Hvj).
     destruct (Hrs n_idx p tok en d j Hsamp Hsd Hgd Hjm Hvj HvSj)
       as [t [Htj [Hpulse [Hdval [Hearly [Htime Hgdj]]]]]].
     pose proof (sample_drive_in_drive_nodes act (vreg_nid a_idx n_idx) d p tok en
                   Hsamp Hsd) as Hdin.
-    (* the drive puts its request on the port ... *)
+    (* no drive at all takes the port strictly between the pulse and the latch *)
+    assert (Hquiet : forall u, t < u -> u < j -> forall mm,
+              In mm (drive_nodes ctx (build_dfg ctx act) p) ->
+              eval1 (drive_pulse act a_idx mm) (run_n u act input resp ss0)
+                (sched_input input (resp u)) = Bits.zero).
+    { intros u Hu1 Hu2 mm Hin.
+      destruct (Nat.ltb d mm) eqn:Hcmp.
+      - apply Nat.ltb_lt in Hcmp.
+        assert (Hu : u <= j) by lia. exact (Hlater u Hu mm Hin Hcmp).
+      - apply Nat.ltb_ge in Hcmp. exact (Hearly mm Hin Hcmp u Hu1 Hu2). }
     assert (Hndt : ~ done_set (sched_step act (run_n t act input resp ss0)
                      (sched_input input (resp t))))
       by (exact (Hpre (S t) ltac:(lia))).
+    (* the port takes this request at [S t] ... *)
+    assert (Hstrobe : port_strobe (run_n (S t) act input resp ss0) p = Bits.ones 1).
+    { change (run_n (S t) act input resp ss0)
+        with (sched_step act (run_n t act input resp ss0)
+                (sched_input input (resp t))).
+      apply (port_strobe_take_later act a_idx p d _ _ Halign Hndt Hdin); [| exact Hpulse ].
+      intros mm Hin2 Hlt2. assert (Ht : t <= j) by lia.
+      exact (Hlater t Ht mm Hin2 Hlt2). }
+    (* ... and nothing else strobes while the answer is in flight *)
+    assert (Hqs : forall w, S t < w -> w < S t + pred (ip_lat (tfs_ip sched p)) ->
+              port_strobe (run_n w act input resp ss0) p = Bits.zero).
+    { intros w Hw1 Hw2. destruct w as [| w']; [ lia |].
+      assert (Hnw : ~ done_set (run_n (S w') act input resp ss0)) by (apply Hpre; lia).
+      change (run_n (S w') act input resp ss0)
+        with (sched_step act (run_n w' act input resp ss0)
+                (sched_input input (resp w'))) in Hnw |- *.
+      apply (port_strobe_quiet act a_idx p _ _ Halign Hnw).
+      intros mm Hin. assert (H1 : t < w') by lia. assert (H2 : w' < j) by lia.
+      exact (Hquiet w' H1 H2 mm Hin). }
+    assert (Hidx : S t + pred (ip_lat (tfs_ip sched p)) = j) by lia.
+    (* the answer is due at [j < M], while the action still runs *)
+    assert (Hlive : forall i, 0 < i <= S t + pred (ip_lat (tfs_ip sched p)) ->
+              ~ done_set (run_n i act input resp ss0))
+      by (intros i Hi; apply Hpre; lia).
+    pose proof (Hipc p (S t) Hlive Hstrobe Hqs) as Hans.
+    rewrite Hidx in Hans. rewrite Hans. f_equal.
+    (* the payload of the pulse cycle is the drive's argument *)
+    assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
+      by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
+    destruct (node_op_pos act d ltac:(rewrite Hdop; discriminate)) as [Hd1 Hdlen].
     assert (Htake : drive_payload
                       (sched_step act (run_n t act input resp ss0)
                          (sched_input input (resp t))) p
@@ -4933,27 +4974,6 @@ Section SchedulerRoundTrip.
                   (run_n t act input resp ss0) (sched_input input (resp t))).
     { apply (drive_payload_take_later act a_idx p d _ _ Halign Hndt Hdin);
         [ intros mm Hin2 Hlt2; exact (Hlater t ltac:(lia) mm Hin2 Hlt2) | exact Hpulse ]. }
-    (* ... and nothing moves it before the answer is latched *)
-    assert (Hhold : forall k, S t + k <= j ->
-              drive_payload (run_n (S t + k) act input resp ss0) p
-              = drive_payload (run_n (S t) act input resp ss0) p).
-    { intro k. induction k as [| k IH]; intro Hk.
-      - rewrite Nat.add_0_r. reflexivity.
-      - rewrite <- (IH ltac:(lia)). rewrite Nat.add_succ_r.
-        change (run_n (S (S t + k)) act input resp ss0)
-          with (sched_step act (run_n (S t + k) act input resp ss0)
-                  (sched_input input (resp (S t + k)))).
-        apply (drive_payload_hold act a_idx p _ _ Halign (Hpre (S (S t + k)) ltac:(lia))).
-        intros mm Hin2.
-        destruct (Nat.ltb d mm) eqn:Hcmp.
-        + apply Nat.ltb_lt in Hcmp. exact (Hlater (S t + k) ltac:(lia) mm Hin2 Hcmp).
-        + apply Nat.ltb_ge in Hcmp.
-          exact (Hearly mm Hin2 Hcmp (S t + k) ltac:(lia) ltac:(lia)). }
-    assert (Hjeq : drive_payload (run_n j act input resp ss0) p
-                   = drive_payload (run_n (S t) act input resp ss0) p).
-    { assert (He : S t + (j - S t) = j) by lia.
-      rewrite <- He. apply Hhold. lia. }
-    rewrite Hjeq.
     change (run_n (S t) act input resp ss0)
       with (sched_step act (run_n t act input resp ss0)
               (sched_input input (resp t))).
@@ -5037,100 +5057,6 @@ Section SchedulerRoundTrip.
                (ip_req_sz (tfs_spec_ip ctx p)) Hdlen Hrv).
     pose proof (nre_drive act a_idx d p av en' Hd1 Hdlen Hdop) as Hnre.
     unfold ProofDefinitions.node_ref_expr in Hnre. rewrite Hnre. reflexivity.
-  Qed.
-
-  (* The answer on the channel when a sample latches is the answer to its OWN
-     request: [ip_contract] delivers it [ip_lat] cycles after the pulse, and
-     [requests_sent] puts the pulse there. *)
-  Lemma answer_on_wire
-        (act: tfs_action sched) a_idx (input: input_t) (resp: nat -> resp_val)
-        (ss0: sched_sys_state) M n_idx (p: p_var) tok en d av en' j :
-    act_idx_aligned act a_idx ->
-    1 < length (graph (build_dfg ctx act)) ->
-    (forall x, zeroed_at_start x -> (fst ss0).[x] = Bits.zero) ->
-    (forall i, 1 <= i <= M -> ~ done_set (run_n i act input resp ss0)) ->
-    ip_contract act input resp ss0 ->
-    requests_sent act a_idx input resp ss0 M ->
-    node_op act (vreg_nid a_idx n_idx) = DFG_Sample p tok en ->
-    sample_drive act (vreg_nid a_idx n_idx) = Some d ->
-    node_op act d = DFG_Drive p av en' ->
-    en_holds act a_idx (run_n M act input resp ss0)
-      (sched_input input (resp M)) en ->
-    j < M ->
-    (fst (run_n j act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero ->
-    (fst (run_n (S j) act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-    resp j p
-    = ip_fn (tfs_ip sched p) (drive_payload (run_n j act input resp ss0) p).
-  Proof.
-    intros Halign Hlen Hz0 Hpre Hipc Hrs Hsamp Hsd Hdop Hgd Hjm Hvj HPN.
-    assert (Hlat : S (pred (ip_lat (tfs_ip sched p))) = ip_lat (tfs_ip sched p)).
-    { apply Nat.succ_pred_pos.
-      pose proof (ip_lat_pos (tfs_ip sched p)) as Hlp. lia. }
-    assert (Hlater := no_later_drive_upto act a_idx input resp ss0 M n_idx p tok en d j
-                        Halign Hlen Hz0 Hpre Hsamp Hsd Hgd Hjm Hvj).
-    destruct (Hrs n_idx p tok en d j Hsamp Hsd Hgd Hjm Hvj HPN)
-      as [t [Htj [Hpulse [Hdval [Hearly [Htime Hgdj]]]]]].
-    pose proof (sample_drive_in_drive_nodes act (vreg_nid a_idx n_idx) d p tok en
-                  Hsamp Hsd) as Hdin.
-    (* no drive at all takes the port strictly between the pulse and the latch *)
-    assert (Hquiet : forall u, t < u -> u < j -> forall mm,
-              In mm (drive_nodes ctx (build_dfg ctx act) p) ->
-              eval1 (drive_pulse act a_idx mm) (run_n u act input resp ss0)
-                (sched_input input (resp u)) = Bits.zero).
-    { intros u Hu1 Hu2 mm Hin.
-      destruct (Nat.ltb d mm) eqn:Hcmp.
-      - apply Nat.ltb_lt in Hcmp.
-        assert (Hu : u <= j) by lia. exact (Hlater u Hu mm Hin Hcmp).
-      - apply Nat.ltb_ge in Hcmp. exact (Hearly mm Hin Hcmp u Hu1 Hu2). }
-    assert (Hndt : ~ done_set (sched_step act (run_n t act input resp ss0)
-                     (sched_input input (resp t))))
-      by (exact (Hpre (S t) ltac:(lia))).
-    (* the port takes this request at [S t] ... *)
-    assert (Hstrobe : port_strobe (run_n (S t) act input resp ss0) p = Bits.ones 1).
-    { change (run_n (S t) act input resp ss0)
-        with (sched_step act (run_n t act input resp ss0)
-                (sched_input input (resp t))).
-      apply (port_strobe_take_later act a_idx p d _ _ Halign Hndt Hdin); [| exact Hpulse ].
-      intros mm Hin2 Hlt2. assert (Ht : t <= j) by lia.
-      exact (Hlater t Ht mm Hin2 Hlt2). }
-    (* ... and nothing else strobes while the answer is in flight *)
-    assert (Hqs : forall w, S t < w -> w < S t + pred (ip_lat (tfs_ip sched p)) ->
-              port_strobe (run_n w act input resp ss0) p = Bits.zero).
-    { intros w Hw1 Hw2. destruct w as [| w']; [ lia |].
-      assert (Hnw : ~ done_set (run_n (S w') act input resp ss0)) by (apply Hpre; lia).
-      change (run_n (S w') act input resp ss0)
-        with (sched_step act (run_n w' act input resp ss0)
-                (sched_input input (resp w'))) in Hnw |- *.
-      apply (port_strobe_quiet act a_idx p _ _ Halign Hnw).
-      intros mm Hin. assert (H1 : t < w') by lia. assert (H2 : w' < j) by lia.
-      exact (Hquiet w' H1 H2 mm Hin). }
-    assert (Hidx : S t + pred (ip_lat (tfs_ip sched p)) = j) by lia.
-    (* the answer is due at [j < M], while the action still runs *)
-    assert (Hlive : forall i, 0 < i <= S t + pred (ip_lat (tfs_ip sched p)) ->
-              ~ done_set (run_n i act input resp ss0))
-      by (intros i Hi; apply Hpre; lia).
-    pose proof (Hipc p (S t) Hlive Hstrobe Hqs) as Hans.
-    rewrite Hidx in Hans. rewrite Hans. f_equal.
-    (* the payload has not moved since the pulse *)
-    assert (Hhold : forall k, S t + k <= j ->
-              drive_payload (run_n (S t + k) act input resp ss0) p
-              = drive_payload (run_n (S t) act input resp ss0) p).
-    { intro k. induction k as [| k IH]; intro Hk.
-      - rewrite Nat.add_0_r. reflexivity.
-      - rewrite <- (IH ltac:(lia)). rewrite Nat.add_succ_r.
-        assert (Hnk : ~ done_set (run_n (S (S t + k)) act input resp ss0))
-          by (apply Hpre; lia).
-        change (run_n (S (S t + k)) act input resp ss0)
-          with (sched_step act (run_n (S t + k) act input resp ss0)
-                  (sched_input input (resp (S t + k)))) in Hnk |- *.
-        apply (drive_payload_hold act a_idx p _ _ Halign Hnk).
-        intros mm Hin. assert (H1 : t < S t + k) by lia.
-        assert (H2 : S t + k < j) by lia.
-        exact (Hquiet (S t + k) H1 H2 mm Hin). }
-    assert (Hk : S t + (j - S t) <= j) by lia.
-    pose proof (Hhold (j - S t) Hk) as Hfin.
-    assert (He : S t + (j - S t) = j) by lia.
-    rewrite He in Hfin. exact (eq_sym Hfin).
   Qed.
 
   (* A latch that is up at [k] rose on some earlier cycle, and that cycle is
@@ -5294,11 +5220,8 @@ Section SchedulerRoundTrip.
         replace (@beq_dec T E x z) with false by (vm_compute; reflexivity)
     end.
     cbn beta iota. cbn [sched_input].
-    rewrite (answer_on_wire act a_idx input resp ss0 M n_idx p tok en d av en' j
-               Halign Hlen Hz0 Hpre Hipc Hrs Hsamp Hsd Hdop Hgd Hjm Hvj HPN).
-    rewrite (port_holds_request act a_idx input resp ss0 M n_idx p tok en d av en' j
-               Halign Hlen Hz0 Hpre Hrs Hsamp Hsd Hdop Hdsz Hgd
-               Hjm Hvj HPN).
+    rewrite (answer_is_request act a_idx input resp ss0 M n_idx p tok en d av en' j
+               Halign Hlen Hz0 Hpre Hipc Hrs Hsamp Hsd Hdop Hdsz Hgd Hjm Hvj HPN).
     reflexivity.
   Qed.
 

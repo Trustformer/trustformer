@@ -362,8 +362,8 @@ Section Codegen.
     end.
 
   (* A drive is an ALWAYS-op, so the request is on the wire during the action.
-     The port HOLDS its old value until the drive's validity fires, and validity
-     is monotone, so it stays stable from there to the response. *)
+     The payload is there only in the pulse cycle, zero otherwise: an IP takes
+     its request at the strobe, and nothing then reads the register back. *)
 
   Definition compile_dfg_drives (a_idx: nat) (dfg: dfg_state)
     (buffers: list (nid_t * (nat * sz_t)))
@@ -379,11 +379,11 @@ Section Codegen.
                            | _ => false
                            end) buffers in
     match index_of_nat (length bn) a_idx with
-    | None => []
+    | None => map (fun p => tf_assign (tf_dfg_ov p) (tf_const 0)) (driven_ports dfg)
     | Some a_idx' =>
         (* ONE scheduler register per driven port, holding {strobe, payload}.
            BOTH halves select on the PULSE: pulses are one cycle and disjoint,
-           so request k's payload is taken at its own cycle and then HELD. *)
+           so request k's payload is on the port in its own cycle only. *)
         map (fun p =>
                tf_assign (tf_dfg_ov p)
                  (tf_op2 (tf_concat 1 (ip_req_sz (ip_of p)))
@@ -428,7 +428,7 @@ Section Codegen.
                             end in
                           tf_expr_if (tf_op2 tf_and en_val (tf_op2 tf_and vgate vfirst))
                             e acc)
-                       (tf_svar (tf_dfg_ov p)) (drive_nodes dfg p))))
+                       (tf_const 0) (drive_nodes dfg p))))
             (driven_ports dfg)
     end.
 
