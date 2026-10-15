@@ -59,12 +59,13 @@ Section SchedulerTypes.
     var_map : list (dfg_vars_t * nid_t);
   }.
 
-  Context {A} {buffer_needs: list (list A)}.
+  Context {A} {buffer_needs: list (list A)} {K} {slots: list K}.
 
   Inductive tf_dfg_states_t :=
     | tf_dfg_done
     | tf_dfg_s (state: states_var)
-    | tf_dfg_b (a_idx: Vect.index (length buffer_needs)) (n_idx: Vect.index (length (nth (index_to_nat a_idx) buffer_needs [])))
+    (* A value register, which the actions' buffers share (Buffers.slot_idx). *)
+    | tf_dfg_b (slot: Vect.index (length slots))
     | tf_dfg_v (a_idx: Vect.index (length buffer_needs)) (n_idx: Vect.index (length (nth (index_to_nat a_idx) buffer_needs [])))
     (* The scheduler's register for an IP request's {strobe, payload}. *)
     | tf_dfg_ov (p: ips_var)

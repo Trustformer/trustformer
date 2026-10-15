@@ -182,7 +182,7 @@ Section CircuitWorld.
     /\ (forall x: tfs_states tsched,
           match x with
           | tf_dfg_s s => c.[tf_reg (tf_dfg_s s)] = (fst sp).[s]
-          | tf_dfg_b _ _ | tf_dfg_v _ _ => c.[tf_reg x] = Bits.zero
+          | tf_dfg_b _ | tf_dfg_v _ _ => c.[tf_reg x] = Bits.zero
           | _ => True
           end).
 

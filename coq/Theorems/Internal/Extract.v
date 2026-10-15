@@ -987,7 +987,7 @@ Section Settled.
         - intros H [c b] Hin. cbn [fst snd]. pose proof (H c b Hin) as Hcb.
           pose proof (Hlit (c, b) Hin) as Hl. cbn [fst] in Hl. rewrite Hl in Hcb.
           destruct (nonzero (V c)), b; first [ reflexivity | discriminate Hcb ]. }
-      assert (Hnre : node_ref_expr ctx cost_limit act a_idx n = tf_svar (tf_dfg_b a_idx n_idx)).
+      assert (Hnre : node_ref_expr ctx cost_limit act a_idx n = tf_svar (tf_dfg_b (slot_idx (buffer_needs ctx cost_limit) a_idx n_idx))).
       { rewrite <- Hvid. apply (nre_sample ctx cost_limit act a_idx n_idx Halign).
         rewrite Hvid. exact Hsam. }
       destruct (guard_true G V en) eqn:Hg.

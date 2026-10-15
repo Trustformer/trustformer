@@ -272,10 +272,7 @@ Section SchedulerRoundTrip.
             (filter (fun '(b_nid, _) => negb (Nat.eqb b_nid (vreg_nid a_idx n_idx)))
                (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))).
   Local Notation buf_valid_next act a_idx n_idx :=
-    (buf_valid_expr act a_idx n_idx
-       (snd (snd (nth (index_to_nat n_idx)
-                    (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
-                    (0, (0, 0)))))
+    (buf_valid_expr act a_idx n_idx (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx)))
        (buf_gate act a_idx n_idx) (vreg_nid a_idx n_idx)).
   Local Notation gexpr act a_idx sbufs en :=
     (guard_expr ctx bneeds (get_tainted ctx (build_dfg ctx act))
@@ -868,7 +865,7 @@ Section SchedulerRoundTrip.
       en_holds en ->
       (* and the answer has been latched *)
       (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-      (fst ss).[tf_dfg_b a_idx n_idx]
+      (fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
       = convert (ip_fn (tfs_spec_ip ctx p)
           (tf_eval_expr ss_sz si_sz oo_sz
              (szB := ip_req_sz (tfs_spec_ip ctx p))
@@ -3021,7 +3018,7 @@ Section SchedulerRoundTrip.
             by (unfold ProofDefinitions.is_sample_of, AttackerClock.node_op;
                 rewrite MsmOp; reflexivity).
           destruct (sample_index act a_idx samp_id Hali Hsampv) as [n_idx Hc].
-          assert (Hbsz : ss_sz (tf_dfg_b a_idx n_idx)
+          assert (Hbsz : ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))
                          = dfg_var_size ctx (DFG_SVar dst))
             by (rewrite (caches_size act a_idx n_idx samp_id Hali Hc); exact MsmSz).
           assert (Hdrop2 : node_op act drive_id = DFG_Drive ip arg_id en) by exact MdrOp.
@@ -3228,7 +3225,7 @@ Section SchedulerRoundTrip.
             {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p) ->
        en_holds act a_idx ss sinput en ->
        (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-       (fst ss).[tf_dfg_b a_idx n_idx]
+       (fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
        = convert (ip_fn (tfs_spec_ip ctx p)
            (tf_eval_expr ss_sz si_sz oo_sz
               (szB := ip_req_sz (tfs_spec_ip ctx p))
@@ -3427,11 +3424,11 @@ Section SchedulerRoundTrip.
     is_sample_of act (vreg_nid a_idx n_idx) = true ->
     (forall i, i <= j ->
        (fst (run_n i act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.zero) ->
-    (fst (run_n j act input resp ss0)).[tf_dfg_b a_idx n_idx] = Bits.zero.
+    (fst (run_n j act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)] = Bits.zero.
   Proof.
     intros Halign Hz0 Hpre Hsam Hdown.
     induction j as [| j IH].
-    - cbn [run_n]. exact (Hz0 (tf_dfg_b a_idx n_idx) I).
+    - cbn [run_n]. exact (Hz0 (tf_dfg_b (slot_idx bneeds a_idx n_idx)) I).
     - assert (Hpre' : forall i, 1 <= i <= j -> ~ done_set (run_n i act input resp ss0))
         by (intros i Hi; apply Hpre; lia).
       assert (Hdown' : forall i, i <= j ->
@@ -3457,8 +3454,8 @@ Section SchedulerRoundTrip.
     (forall i, 1 <= i <= t + d -> ~ done_set (run_n i act input resp ss0)) ->
     is_sample_of act (vreg_nid a_idx n_idx) = true ->
     (fst (run_n t act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-    (fst (run_n (t + d) act input resp ss0)).[tf_dfg_b a_idx n_idx]
-      = (fst (run_n t act input resp ss0)).[tf_dfg_b a_idx n_idx]
+    (fst (run_n (t + d) act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
+      = (fst (run_n t act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
     /\ (fst (run_n (t + d) act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1.
   Proof.
     intros Halign Hz0 Hpre Hsam Hv.
@@ -3776,8 +3773,8 @@ Section SchedulerRoundTrip.
       rewrite (run_preserves_ovar act input resp ss0 u Hpre o). reflexivity. }
     assert (Hbfroz : forall q_idx, is_sample_of act (vreg_nid a_idx q_idx) = true ->
               (fst (run_n w act input resp ss0)).[tf_dfg_v a_idx q_idx] = Bits.ones 1 ->
-              (fst (run_n w act input resp ss0)).[tf_dfg_b a_idx q_idx]
-              = (fst (run_n u act input resp ss0)).[tf_dfg_b a_idx q_idx]).
+              (fst (run_n w act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx q_idx)]
+              = (fst (run_n u act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx q_idx)]).
     { intros q_idx Hsq Hvq.
       assert (He : w + (u - w) = u) by lia.
       assert (Hpt : forall i, 1 <= i <= w + (u - w) ->
@@ -5021,8 +5018,8 @@ Section SchedulerRoundTrip.
       rewrite (run_preserves_ovar act input resp ss0 M Hpre o). reflexivity. }
     assert (Hbfroz : forall q_idx, is_sample_of act (vreg_nid a_idx q_idx) = true ->
               (fst (run_n t act input resp ss0)).[tf_dfg_v a_idx q_idx] = Bits.ones 1 ->
-              (fst (run_n t act input resp ss0)).[tf_dfg_b a_idx q_idx]
-              = (fst (run_n M act input resp ss0)).[tf_dfg_b a_idx q_idx]).
+              (fst (run_n t act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx q_idx)]
+              = (fst (run_n M act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx q_idx)]).
     { intros q_idx Hsq Hvq.
       assert (He : t + (M - t) = M) by lia.
       assert (Hpt : forall i, 1 <= i <= t + (M - t) -> ~ done_set (run_n i act input resp ss0))
@@ -5197,7 +5194,7 @@ Section SchedulerRoundTrip.
          {| nid := 0; op := DFG_Empty; sz := 0 |}) = ip_req_sz (tfs_spec_ip ctx p) ->
     en_holds act a_idx (run_n M act input resp ss0)
       (sched_input input (resp M)) en ->
-    (fst (run_n M act input resp ss0)).[tf_dfg_b a_idx n_idx]
+    (fst (run_n M act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
     = convert (ip_fn (tfs_spec_ip ctx p)
         (tf_eval_expr ss_sz si_sz oo_sz (szB := ip_req_sz (tfs_spec_ip ctx p))
            (node_ref_expr act a_idx av) (run_n M act input resp ss0)
@@ -5315,7 +5312,7 @@ Section SchedulerRoundTrip.
       (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) h = Some (m, msz) ->
     index_of_nat (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m
       = Some n_idx ->
-    (fst ss).[tf_dfg_b a_idx n_idx] = Bits.zero ->
+    (fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)] = Bits.zero ->
     eval1 (stall_start ctx bneeds a_idx (build_dfg ctx act)
              (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) h) ss input
     = Bits.ones 1.
@@ -5602,7 +5599,7 @@ Section SchedulerRoundTrip.
       (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m0
       = Some t_idx ->
     t <= M ->
-    Bits.to_nat ((fst (run_n t act input resp ss0)).[tf_dfg_b a_idx t_idx]) = 0 ->
+    Bits.to_nat ((fst (run_n t act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx t_idx)]) = 0 ->
     eval1 (buf_gate act a_idx t_idx) (run_n t act input resp ss0)
       (sched_input input (resp t)) = Bits.ones 1 ->
     chain_gate ctx (build_dfg ctx act) d = Some (aa, tok)
@@ -5827,12 +5824,12 @@ Section SchedulerRoundTrip.
     { unfold AttackerClock.stall_lat_of. rewrite Htvn, Htok. reflexivity. }
     destruct (stall_counter_wide act a_idx t_idx (ip_lat (tfs_spec_ip ctx p))
                 Halign Hstlat) as [Hlt1 Hwide].
-    assert (Hbz : (fst (run_n t act input resp ss0)).[tf_dfg_b a_idx t_idx]
+    assert (Hbz : (fst (run_n t act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx t_idx)]
                   = Bits.zero).
-    { apply (bits_to_nat_inj (ss_sz (tf_dfg_b a_idx t_idx))).
+    { apply (bits_to_nat_inj (ss_sz (tf_dfg_b (slot_idx bneeds a_idx t_idx)))).
       rewrite Hct. symmetry.
-      change (@Bits.zero (ss_sz (tf_dfg_b a_idx t_idx)))
-        with (Bits.of_nat (ss_sz (tf_dfg_b a_idx t_idx)) 0).
+      change (@Bits.zero (ss_sz (tf_dfg_b (slot_idx bneeds a_idx t_idx))))
+        with (Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx t_idx))) 0).
       apply Bits.to_nat_of_nat. lia. }
     assert (Hvfirst : eval1 (stall_start ctx bneeds a_idx (build_dfg ctx act)
                         (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) tok)
@@ -6158,10 +6155,10 @@ Section SchedulerRoundTrip.
     act_idx_aligned act a_idx ->
     stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
     (forall i, 1 <= i <= u + dd -> ~ done_set (run_n i act input resp ss0)) ->
-    (fst (run_n u act input resp ss0)).[tf_dfg_b a_idx n_idx]
-      = Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) (pred l) ->
-    (fst (run_n (u + dd) act input resp ss0)).[tf_dfg_b a_idx n_idx]
-      = Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) (pred l).
+    (fst (run_n u act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
+      = Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) (pred l) ->
+    (fst (run_n (u + dd) act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
+      = Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) (pred l).
   Proof.
     intros Halign Hst Hpre Hreg.
     induction dd as [| dd IH].
@@ -6195,8 +6192,8 @@ Section SchedulerRoundTrip.
     vreg_nid a_idx t_idx = tok ->
     (fst (run_n u act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
     u <= w -> w <= M ->
-    (fst (run_n w act input resp ss0)).[tf_dfg_b a_idx t_idx]
-      = Bits.of_nat (ss_sz (tf_dfg_b a_idx t_idx))
+    (fst (run_n w act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx t_idx)]
+      = Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx t_idx)))
           (pred (ip_lat (tfs_spec_ip ctx p))).
   Proof.
     intros Halign Hlen Hz0 Hpre Hsamp Htvn Hv Huw HwM.
@@ -6389,13 +6386,13 @@ Section SchedulerRoundTrip.
       (* a finished wait leaves the counter off zero *)
       destruct (stall_token_slot act a_idx p samp_m tok_m en_m Halign Hsm)
         as [m1 [msz1 [tm_idx [Hta1 [Htidx1 Htvn1]]]]].
-      assert (Hcnt : (fst (run_n w act input resp ss0)).[tf_dfg_b a_idx tm_idx]
-                     = Bits.of_nat (ss_sz (tf_dfg_b a_idx tm_idx))
+      assert (Hcnt : (fst (run_n w act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx tm_idx)]
+                     = Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx tm_idx)))
                          (pred (ip_lat (tfs_spec_ip ctx p)))).
       { apply (latched_sample_saturated act a_idx input resp ss0 M sm_idx p tok_m en_m
                  tm_idx t w Halign Hlen Hz0 Hpre
                  ltac:(rewrite Hvn1; exact Hsm) Htvn1 Hv_sm ltac:(lia) HwM). }
-      assert (Hnz : (fst (run_n w act input resp ss0)).[tf_dfg_b a_idx tm_idx]
+      assert (Hnz : (fst (run_n w act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx tm_idx)]
                     <> Bits.zero).
       { rewrite Hcnt.
         assert (Hstl : stall_lat_of act (vreg_nid a_idx tm_idx)
@@ -6405,11 +6402,11 @@ Section SchedulerRoundTrip.
         destruct (stall_counter_wide act a_idx tm_idx (ip_lat (tfs_spec_ip ctx p))
                     Halign Hstl) as [_ Hwide].
         intro Hc.
-        assert (Hz : Bits.to_nat (Bits.of_nat (ss_sz (tf_dfg_b a_idx tm_idx))
+        assert (Hz : Bits.to_nat (Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx tm_idx)))
                        (pred (ip_lat (tfs_spec_ip ctx p)))) = 0).
         { rewrite Hc.
-          change (@Bits.zero (ss_sz (tf_dfg_b a_idx tm_idx)))
-            with (Bits.of_nat (ss_sz (tf_dfg_b a_idx tm_idx)) 0).
+          change (@Bits.zero (ss_sz (tf_dfg_b (slot_idx bneeds a_idx tm_idx))))
+            with (Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx tm_idx))) 0).
           apply Bits.to_nat_of_nat. lia. }
         rewrite (Bits.to_nat_of_nat _ _ Hwide) in Hz. lia. }
       (* and the pulse reads that counter *)
@@ -6456,18 +6453,18 @@ Section SchedulerRoundTrip.
          = Some t_idx
       /\ t < j
       /\ j = t + ip_lat (tfs_spec_ip ctx p)
-      /\ Bits.to_nat ((fst (run_n t act input resp ss0)).[tf_dfg_b a_idx t_idx]) = 0
+      /\ Bits.to_nat ((fst (run_n t act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx t_idx)]) = 0
       /\ eval1 (buf_gate act a_idx t_idx) (run_n t act input resp ss0)
            (sched_input input (resp t)) = Bits.ones 1
       /\ (forall w, t < w -> w < j ->
-            Bits.to_nat ((fst (run_n w act input resp ss0)).[tf_dfg_b a_idx t_idx]) <> 0).
+            Bits.to_nat ((fst (run_n w act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx t_idx)]) <> 0).
   Proof.
     intros Halign Hlen Hz0 Hpre Hsamp Hjm Hvj HvSj.
     assert (Hlen0 : 0 < length (graph (build_dfg ctx act))) by lia.
     assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
       by (intro q; exact (Hz0 (tf_dfg_v a_idx q) I)).
-    assert (Hzb : forall q, (fst ss0).[tf_dfg_b a_idx q] = Bits.zero)
-      by (intro q; exact (Hz0 (tf_dfg_b a_idx q) I)).
+    assert (Hzb : forall q, (fst ss0).[tf_dfg_b (slot_idx bneeds a_idx q)] = Bits.zero)
+      by (intro q; exact (Hz0 (tf_dfg_b (slot_idx bneeds a_idx q)) I)).
     destruct (sample_tok_is_stall act (vreg_nid a_idx n_idx) p tok en Hsamp)
       as [aa Htok].
     set (lt := ip_lat (tfs_spec_ip ctx p)) in *.
@@ -6523,16 +6520,16 @@ Section SchedulerRoundTrip.
                 (sched_input input (resp j')) lt _ Hstlat Hwide Hgate_j)
       as [Hgstall Hcnt].
     assert (Hcntn : Bits.to_nat
-              ((fst (run_n j' act input resp ss0)).[tf_dfg_b a_idx t_idx]) = pred lt).
+              ((fst (run_n j' act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx t_idx)]) = pred lt).
     { rewrite Hcnt. apply Bits.to_nat_of_nat. exact Hwide. }
     assert (WAIT : exists t, t <= j'
               /\ Bits.to_nat
-                   ((fst (run_n t act input resp ss0)).[tf_dfg_b a_idx t_idx]) = 0
+                   ((fst (run_n t act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx t_idx)]) = 0
               /\ eval1 (buf_gate act a_idx t_idx) (run_n t act input resp ss0)
                    (sched_input input (resp t)) = Bits.ones 1
               /\ (forall w, t < w -> w <= j' ->
                     Bits.to_nat
-                      ((fst (run_n w act input resp ss0)).[tf_dfg_b a_idx t_idx]) <> 0)).
+                      ((fst (run_n w act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx t_idx)]) <> 0)).
     { destruct (Nat.eq_dec (pred lt) 0) as [Hpl0 | Hpl0].
       - exists j'. split; [ lia | split; [ rewrite Hcntn; exact Hpl0 | ]].
         split; [ exact Hgstall | intros w Hw1 Hw2; lia ].
@@ -6590,7 +6587,7 @@ Section SchedulerRoundTrip.
         [ apply Nat.leb_le; exact Hcmp |].
       exfalso. apply Nat.leb_gt in Hcmp.
       assert (HcT : Bits.to_nat ((fst (run_n (t + pred lt) act input resp ss0))
-                       .[tf_dfg_b a_idx t_idx]) = pred lt).
+                       .[tf_dfg_b (slot_idx bneeds a_idx t_idx)]) = pred lt).
       { assert (HpreJ : forall i, 1 <= i <= j' -> ~ done_set (run_n i act input resp ss0))
           by (intros i Hi; apply Hpre; lia).
         assert (HadvJ : forall w, t <= w < j' ->
@@ -6600,9 +6597,9 @@ Section SchedulerRoundTrip.
         assert (HkJ : t + pred lt <= t + pred lt <= j') by lia.
         exact (stall_counter_run act a_idx t_idx input resp ss0 lt t j'
                  Halign Hstlat (Hzb t_idx) HpreJ HadvJ (t + pred lt) HkJ). }
-      assert (HcTb : (fst (run_n (t + pred lt) act input resp ss0)).[tf_dfg_b a_idx t_idx]
-                     = Bits.of_nat (ss_sz (tf_dfg_b a_idx t_idx)) (pred lt)).
-      { apply (bits_to_nat_inj (ss_sz (tf_dfg_b a_idx t_idx))).
+      assert (HcTb : (fst (run_n (t + pred lt) act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx t_idx)]
+                     = Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx t_idx))) (pred lt)).
+      { apply (bits_to_nat_inj (ss_sz (tf_dfg_b (slot_idx bneeds a_idx t_idx)))).
         rewrite HcT. symmetry. apply Bits.to_nat_of_nat. exact Hwide. }
       assert (HvstallT : (fst (run_n (S (t + pred lt)) act input resp ss0))
                            .[tf_dfg_v a_idx t_idx] = Bits.ones 1).
@@ -6695,11 +6692,11 @@ Section SchedulerRoundTrip.
     split; [ exact Htj | split; [ exact Hpulse | split; [ exact Hdval | split ]]].
     - intros mm Hmin Hmd w Hw1 Hw2.
       destruct (Nat.eq_dec mm d) as [-> | Hne].
-      + assert (Hnzb : (fst (run_n w act input resp ss0)).[tf_dfg_b a_idx t_idx]
+      + assert (Hnzb : (fst (run_n w act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx t_idx)]
                        <> Bits.zero).
         { intro Hc. apply (Hnzc w Hw1 Hw2). rewrite Hc.
-          change (@Bits.zero (ss_sz (tf_dfg_b a_idx t_idx)))
-            with (Bits.of_nat (ss_sz (tf_dfg_b a_idx t_idx)) 0).
+          change (@Bits.zero (ss_sz (tf_dfg_b (slot_idx bneeds a_idx t_idx))))
+            with (Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx t_idx))) 0).
           apply Bits.to_nat_of_nat. lia. }
         exact (drive_pulse_zero_of_counter act a_idx d aa tok m0 msz t_idx
                  (run_n w act input resp ss0) (sched_input input (resp w))
@@ -6948,7 +6945,7 @@ Section SchedulerRoundTrip.
     (fst (run_n k act input resp ss0)).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
     ~ en_holds act a_idx (run_n k act input resp ss0)
         (sched_input input (resp k)) en ->
-    (fst (run_n k act input resp ss0)).[tf_dfg_b a_idx n_idx] = Bits.zero.
+    (fst (run_n k act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)] = Bits.zero.
   Proof.
     intros Halign Hlen Hz0 Hpre Hsamp Hvk Hngk.
     assert (Hzv : forall q, (fst ss0).[tf_dfg_v a_idx q] = Bits.zero)
@@ -6990,11 +6987,11 @@ Section SchedulerRoundTrip.
       split; [ intro Hb; rewrite <- Heq; exact (Ht Hb)
              | intro Hb; rewrite <- Heq; exact (Hf Hb) ]. }
     (* so the latch enable was down at the rise, and nothing moved after it *)
-    assert (Hbj : (fst (run_n j act input resp ss0)).[tf_dfg_b a_idx n_idx]
+    assert (Hbj : (fst (run_n j act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
                   = Bits.zero).
     { apply (sample_buffer_zero_before act a_idx input resp ss0 n_idx j
                Halign Hz0 ltac:(intros i Hi; apply Hpre; lia) Hsam Hvdown). }
-    assert (HbSj : (fst (run_n (S j) act input resp ss0)).[tf_dfg_b a_idx n_idx]
+    assert (HbSj : (fst (run_n (S j) act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
                    = Bits.zero).
     { change (run_n (S j) act input resp ss0)
         with (sched_step act (run_n j act input resp ss0)
@@ -7129,7 +7126,7 @@ Section SchedulerRoundTrip.
                 = ip_req_sz (tfs_spec_ip ctx p) ->
               en_holds act a_idx ssM (sched_input input (resp M)) en ->
               (fst ssM).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-              (fst ssM).[tf_dfg_b a_idx n_idx]
+              (fst ssM).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
               = convert (ip_fn (tfs_spec_ip ctx p)
                   (tf_eval_expr ss_sz si_sz oo_sz
                      (szB := ip_req_sz (tfs_spec_ip ctx p))

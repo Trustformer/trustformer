@@ -104,7 +104,7 @@ Section IRWorld.
      the done flag: a done cycle leaves it set for the next action. *)
   Definition zeroed_at_start (x: tfs_states sched) : Prop :=
     match x with
-    | tf_dfg_b _ _ => True
+    | tf_dfg_b _ => True
     | tf_dfg_v _ _ => True
     | _            => False
     end.

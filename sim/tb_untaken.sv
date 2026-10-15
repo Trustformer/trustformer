@@ -89,13 +89,13 @@ module tb_untaken;
   always @(posedge clk) begin
     if (rst_n) begin
       if (dut.st_v_0_7 && !seen_t[run_idx]) begin
-        seen_t[run_idx] <= 1; buf_t[run_idx] <= dut.st_b_0_7; cyc_t[run_idx] <= cyc;
+        seen_t[run_idx] <= 1; buf_t[run_idx] <= dut.st_b_32_3; cyc_t[run_idx] <= cyc;
       end
       if (dut.st_v_0_8 && !seen_e[run_idx]) begin
-        seen_e[run_idx] <= 1; buf_e[run_idx] <= dut.st_b_0_8; cyc_e[run_idx] <= cyc;
+        seen_e[run_idx] <= 1; buf_e[run_idx] <= dut.st_b_32_4; cyc_e[run_idx] <= cyc;
       end
       if (dut.st_v_0_9 && !seen_z[run_idx]) begin
-        seen_z[run_idx] <= 1; buf_z[run_idx] <= dut.st_b_0_9; cyc_z[run_idx] <= cyc;
+        seen_z[run_idx] <= 1; buf_z[run_idx] <= dut.st_b_32_5; cyc_z[run_idx] <= cyc;
       end
     end
   end

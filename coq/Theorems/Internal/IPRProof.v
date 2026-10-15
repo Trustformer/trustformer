@@ -1235,7 +1235,7 @@ Section IPRProof.
                 = Some l ->
               nth (index_to_nat n_idx) (snd (srun act a_idx vals k)) 0
               = Bits.to_nat
-                  ((fst (ss_run k act input resp ss0)).[tf_dfg_b a_idx n_idx])
+                  ((fst (ss_run k act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)])
               /\ nth (index_to_nat n_idx) (snd (srun act a_idx vals k)) 0
                  <= pred l).
   Proof.
@@ -1246,10 +1246,10 @@ Section IPRProof.
       rewrite !nth_repeat. split.
       - rewrite (Hz (tf_dfg_v a_idx n_idx) I). split; [ discriminate | ].
         intro Hc. exfalso. exact (ones1_neq_zero (eq_sym Hc)).
-      - intros l _. rewrite (Hz (tf_dfg_b a_idx n_idx) I).
+      - intros l _. rewrite (Hz (tf_dfg_b (slot_idx bneeds a_idx n_idx)) I).
         split; [ | lia ].
-        change (@Bits.zero (ss_sz (tf_dfg_b a_idx n_idx)))
-          with (Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) 0).
+        change (@Bits.zero (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))))
+          with (Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) 0).
         symmetry. apply Bits.to_nat_of_nat. unfold pow2. lia. }
     assert (Hndk : forall i, 1 <= i <= k -> ~ ss_done (ss_run i act input resp ss0))
       by (intros i Hi; apply Hnd; lia).
@@ -1366,7 +1366,7 @@ Section IPRProof.
       + cbn [tf_eval_expr]. rewrite !convert_same.
         match goal with
         | |- _ <-> Bits.and _ (if @beq_dec ?T ?E ?r _ then _ else _) = _ =>
-            replace r with ((fst (ss_run k act input resp ss0)).[tf_dfg_b a_idx n_idx])
+            replace r with ((fst (ss_run k act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)])
               by reflexivity
         end.
         apply and1_iff; [ exact Hgate | ].
@@ -1381,7 +1381,7 @@ Section IPRProof.
         * split.
           -- intro He. exfalso. apply Nat.eqb_eq in He.
              apply (proj1 (beq_dec_false_iff _ _ _) Hb).
-             apply (bits_to_nat_inj (ss_sz (tf_dfg_b a_idx n_idx))).
+             apply (bits_to_nat_inj (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx)))).
              rewrite <- Hcnt, He.
              symmetry. apply Bits.to_nat_of_nat. exact Hwide.
           -- intro H0. exfalso. revert H0. vm_compute. discriminate.

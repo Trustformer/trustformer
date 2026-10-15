@@ -721,8 +721,8 @@ Section CircuitProof.
       + apply equiv_eq. intro s. unfold States.maps_from. cbn [fst].
         rewrite !getenv_create. exact (Hreg (tf_dfg_s s)).
       + intros x Hx. cbn [fst]. rewrite getenv_create.
-        destruct x as [| s | a n | a n | p]; try contradiction;
-          [ exact (Hreg (tf_dfg_b a n)) | exact (Hreg (tf_dfg_v a n)) ].
+        destruct x as [| s | k | a n | p]; try contradiction;
+          [ exact (Hreg (tf_dfg_b k)) | exact (Hreg (tf_dfg_v a n)) ].
     - eexists. split; [ reflexivity | split; reflexivity ].
   Qed.
 
@@ -834,10 +834,10 @@ Section CircuitProof.
   Proof.
     intros Hr [Hreg Hout] [Hso [Hmap Hz]]. split; [ exact Hr | split ].
     - intro o. rewrite (Hout o). exact (f_equal (fun e => e.[o]) Hso).
-    - intro x. destruct x as [| s | a n | a n | p]; cbv iota; try exact I.
+    - intro x. destruct x as [| s | k | a n | p]; cbv iota; try exact I.
       + transitivity ((fst ss).[tf_dfg_s s]); [ exact (Hreg (tf_dfg_s s)) |].
         rewrite <- Hmap. unfold States.maps_from. rewrite getenv_create. reflexivity.
-      + transitivity ((fst ss).[tf_dfg_b a n]); [ exact (Hreg (tf_dfg_b a n)) |].
+      + transitivity ((fst ss).[tf_dfg_b k]); [ exact (Hreg (tf_dfg_b k)) |].
         apply Hz. exact I.
       + transitivity ((fst ss).[tf_dfg_v a n]); [ exact (Hreg (tf_dfg_v a n)) |].
         apply Hz. exact I.

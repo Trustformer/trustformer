@@ -352,12 +352,8 @@ Section SchedulerSimulation.
   Lemma reset_states_not_done v :
     In v (reset_states ctx bneeds) -> v <> done_signal ctx bneeds.
   Proof.
-    unfold reset_states, done_signal. rewrite in_flat_map.
-    intros [a [_ Ha]].
-    destruct (index_of_nat _ a) as [a' |]; [| destruct Ha].
-    rewrite in_flat_map in Ha. destruct Ha as [n [_ Hn]].
-    destruct (index_of_nat _ n) as [n' |]; [| destruct Hn].
-    cbn [In] in Hn. destruct Hn as [Hn | [Hn | []]]; subst v; discriminate.
+    intro Hv. destruct (reset_states_shape ctx bneeds v Hv) as [[k ->] | [a [n ->]]];
+      discriminate.
   Qed.
 
   (* The reset updates never assign the done flag (they reset buffer/valid regs). *)
@@ -1346,6 +1342,13 @@ Section SchedulerSimulation.
 
   (* The interface: proofs outside this section use these, never the layout. *)
 
+  (* A buffer's register, shared with other actions' buffers, is as wide as its
+     entry in this action's table. *)
+  Lemma breg_size a_idx n_idx :
+    ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))
+    = snd (snd (nth (index_to_nat n_idx) (nth (index_to_nat a_idx) bneeds []) (0, (0, 0)))).
+  Proof. exact (slot_idx_width bneeds a_idx n_idx). Qed.
+
   (* A dependent buffer index selects an entry carrying that same plain index. *)
   Lemma buffer_entry_at
         (act: tfs_action sched)
@@ -1387,7 +1390,7 @@ Section SchedulerSimulation.
         (n_idx : Vect.index
           (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))) :
     act_idx_aligned act a_idx ->
-    ss_sz (tf_dfg_b a_idx n_idx)
+    ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))
     = sz (nth (vreg_nid a_idx n_idx) (graph (build_dfg ctx act))
             {| nid := 0; op := DFG_Empty; sz := 0 |}).
   Proof.
@@ -1401,7 +1404,7 @@ Section SchedulerSimulation.
         (0, (0, 0))))) ) as Hsize.
     rewrite <- (buffer_slot_eq act a_idx Halign) in Hsize.
     specialize (Hsize Hentry).
-    exact Hsize.
+    rewrite breg_size. exact Hsize.
   Qed.
 
   (* The nodes an action's table has entries for are the ones it buffers. *)
@@ -1507,13 +1510,11 @@ Section SchedulerSimulation.
     In (n, (m, msz)) (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) ->
     index_of_nat (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m
       = Some n_idx' ->
-    ss_sz (tf_dfg_b a_idx n_idx') = msz.
+    ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx')) = msz.
   Proof.
     intros Halign Hin Hidx.
     assert (Hmi : index_to_nat n_idx' = m) by (apply index_to_nat_of_nat; exact Hidx).
-    change (ss_sz (tf_dfg_b a_idx n_idx'))
-      with (snd (snd (nth (index_to_nat n_idx')
-                       (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))).
+    rewrite breg_size.
     rewrite Hmi, (buffer_slot_eq act a_idx Halign).
     rewrite (gsi_entry_at _ _ n m msz
                ltac:(rewrite <- (buffer_slot_eq act a_idx Halign); exact Hin)).
@@ -1559,7 +1560,7 @@ Section SchedulerSimulation.
   (* A register is as wide as each node it caches. *)
   Lemma caches_size (act: tfs_action sched) a_idx n_idx n :
     act_idx_aligned act a_idx -> caches a_idx n_idx n ->
-    ss_sz (tf_dfg_b a_idx n_idx)
+    ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))
     = sz (nth n (graph (build_dfg ctx act)) {| nid := 0; op := DFG_Empty; sz := 0 |}).
   Proof.
     intros Halign [msz Hin].
@@ -1607,7 +1608,7 @@ Section SchedulerSimulation.
       (buffers: list (nid_t * (nat * sz_t))) (n: nid_t)
       : @tf_expr (tfs_states sched) si_var o_var :=
     let dfg := build_dfg ctx act in
-    let cnt := tf_svar (tf_dfg_b a_idx n_idx) in
+    let cnt := tf_svar (tf_dfg_b (slot_idx bneeds a_idx n_idx)) in
     let sbufs := filter (fun '(m, _) =>
                            match op (nth m (graph dfg)
                                        {| nid := 0; op := DFG_Empty; sz := 0 |}) with
@@ -1660,7 +1661,7 @@ Section SchedulerSimulation.
     match stall_lat_of act n with
     | Some l =>
         tf_op2 tf_and valid
-          (tf_op2 (tf_cmp sz tf_eq) (tf_svar (tf_dfg_b a_idx n_idx))
+          (tf_op2 (tf_cmp sz tf_eq) (tf_svar (tf_dfg_b (slot_idx bneeds a_idx n_idx)))
              (tf_const (pred l)))
     | None => valid
     end.
@@ -1668,10 +1669,7 @@ Section SchedulerSimulation.
   (* The whole assignment the validity register takes next cycle: the gate for
      a plain buffer, the gate AND the count for a stall. *)
   Local Notation buf_valid_next act a_idx n_idx :=
-    (buf_valid_expr act a_idx n_idx
-       (snd (snd (nth (index_to_nat n_idx)
-                    (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])
-                    (0, (0, 0)))))
+    (buf_valid_expr act a_idx n_idx (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx)))
        (buf_gate act a_idx n_idx) (vreg_nid a_idx n_idx)).
 
   (* ONE CYCLE of a stall's counter, as compile_dfg_buffers emits it: it advances
@@ -1681,16 +1679,16 @@ Section SchedulerSimulation.
         (act: tfs_action sched) a_idx n_idx
         (ss: sched_sys_state) (input: sched_input_t) l expr valid buffers :
     stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
-    pred l < pow2 (ss_sz (tf_dfg_b a_idx n_idx)) ->
-    Bits.to_nat ((fst ss).[tf_dfg_b a_idx n_idx]) <= pred l ->
+    pred l < pow2 (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) ->
+    Bits.to_nat ((fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) <= pred l ->
     Bits.to_nat
-      (eval_st (tf_dfg_b a_idx n_idx)
-         (buf_value_expr act a_idx n_idx (ss_sz (tf_dfg_b a_idx n_idx))
+      (eval_st (tf_dfg_b (slot_idx bneeds a_idx n_idx))
+         (buf_value_expr act a_idx n_idx (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx)))
             expr valid buffers (vreg_nid a_idx n_idx)) ss input)
     = (if andb (if beq_dec (eval1 valid ss input) Bits.zero then false else true)
-               (negb (Nat.eqb (Bits.to_nat ((fst ss).[tf_dfg_b a_idx n_idx])) (pred l)))
-       then S (Bits.to_nat ((fst ss).[tf_dfg_b a_idx n_idx]))
-       else Bits.to_nat ((fst ss).[tf_dfg_b a_idx n_idx])).
+               (negb (Nat.eqb (Bits.to_nat ((fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)])) (pred l)))
+       then S (Bits.to_nat ((fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]))
+       else Bits.to_nat ((fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)])).
   Proof.
     intros Hst Hwide Hinv.
     unfold buf_value_expr. rewrite Hst. cbv beta iota.
@@ -1700,9 +1698,9 @@ Section SchedulerSimulation.
        of each other's.  Put the statement's form back before the case split. *)
     match goal with
     | |- Bits.to_nat (if _ then ?r else _) = _ =>
-        replace r with ((fst ss).[tf_dfg_b a_idx n_idx]) by reflexivity
+        replace r with ((fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) by reflexivity
     end.
-    assert (Hpl : Bits.to_nat (Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) (pred l))
+    assert (Hpl : Bits.to_nat (Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) (pred l))
                   = pred l) by (apply Bits.to_nat_of_nat; exact Hwide).
     destruct (bits1_cases (eval1 valid ss input)) as [Hv | Hv];
       change (tf_eval_expr ss_sz si_sz oo_sz (szB := 1) valid ss input)
@@ -1732,7 +1730,7 @@ Section SchedulerSimulation.
             assert (H : @beq_dec T E c z = false) by (vm_compute; reflexivity);
             rewrite H; clear H
         end.
-        assert (Hne : Bits.to_nat ((fst ss).[tf_dfg_b a_idx n_idx]) <> pred l).
+        assert (Hne : Bits.to_nat ((fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) <> pred l).
         { intro Heq. apply (proj1 (beq_dec_false_iff _ _ _) Hb).
           apply bits_to_nat_inj. rewrite Hpl. exact Heq. }
         rewrite (proj2 (Nat.eqb_neq _ _) Hne). cbn [negb].
@@ -1756,8 +1754,8 @@ Section SchedulerSimulation.
     let compiled := compile_dfg_expr ctx bneeds
                       (length (graph (build_dfg ctx act))) a_idx
                       (build_dfg ctx act) n buffers' in
-    let sz := snd (snd entry) in
-    In (tf_assign (tf_dfg_b a_idx n_idx)
+    let sz := ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx)) in
+    In (tf_assign (tf_dfg_b (slot_idx bneeds a_idx n_idx))
           (buf_value_expr act a_idx n_idx sz (fst compiled) (snd compiled)
              buffers n))
        (compile_dfg_buffers ctx bneeds (get_tainted ctx) (decl_facts ctx) (index_to_nat a_idx)
@@ -7555,7 +7553,7 @@ Section SchedulerSimulation.
         (act: tfs_action sched) a_idx n_idx l :
     act_idx_aligned act a_idx ->
     stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
-    1 <= l /\ pred l < pow2 (ss_sz (tf_dfg_b a_idx n_idx)).
+    1 <= l /\ pred l < pow2 (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))).
   Proof.
     intros Halign Hst.
     destruct (vreg_nid_node_range act a_idx n_idx Halign) as [_ Hlen].
@@ -7794,7 +7792,7 @@ Section SchedulerSimulation.
 
   (* The compiler's own expression type, so [fst]/[snd] below match its terms. *)
   Local Notation sexpr :=
-    (@tf_expr (tf_dfg_states_t (states_var:=s_var) (ips_var:=p_var) (buffer_needs:=bneeds))
+    (@tf_expr (tf_dfg_states_t (states_var:=s_var) (ips_var:=p_var) (buffer_needs:=bneeds) (slots:=Buffers.slot_keys bneeds))
        (i_var + p_var) o_var).
 
   (* One step of [compile_dfg_expr_aux] at an unbuffered node, its recursive
@@ -8231,7 +8229,7 @@ Section SchedulerSimulation.
       (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) h = Some (m, msz) ->
     index_of_nat (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m
       = Some n_idx ->
-    (fst ss).[tf_dfg_b a_idx n_idx] <> Bits.zero ->
+    (fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)] <> Bits.zero ->
     eval1 (stall_start ctx bneeds a_idx (build_dfg ctx act)
              (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) h) ss input
     = Bits.zero.
@@ -8260,7 +8258,7 @@ Section SchedulerSimulation.
       (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []) h = Some (m, msz) ->
     index_of_nat (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) m
       = Some n_idx ->
-    (fst ss).[tf_dfg_b a_idx n_idx] <> Bits.zero ->
+    (fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)] <> Bits.zero ->
     eval1 (drive_pulse act a_idx n) ss input = Bits.zero.
   Proof.
     intros Halign Hcg Hassoc Hidx Hnz.
@@ -8287,7 +8285,7 @@ Section SchedulerSimulation.
     (* a buffer of the table whose bit is up reads the same in both states *)
     (forall n n_idx, caches a_idx n_idx n -> BitsToLists.list_assoc bufs n <> None ->
        (fst ss1).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-       (fst ss1).[tf_dfg_b a_idx n_idx] = (fst ss2).[tf_dfg_b a_idx n_idx]) ->
+       (fst ss1).[tf_dfg_b (slot_idx bneeds a_idx n_idx)] = (fst ss2).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) ->
     forall fuel n szB (pi: list lit),
       n < length (graph (build_dfg ctx act)) ->
       (* the table keeps every sample the expression can reach *)
@@ -8353,7 +8351,7 @@ Section SchedulerSimulation.
     (forall v, input1 (inl v) = input2 (inl v)) ->
     (forall n n_idx, caches a_idx n_idx n -> is_sample_of act n = true ->
        (fst ss1).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-       (fst ss1).[tf_dfg_b a_idx n_idx] = (fst ss2).[tf_dfg_b a_idx n_idx]) ->
+       (fst ss1).[tf_dfg_b (slot_idx bneeds a_idx n_idx)] = (fst ss2).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) ->
     forall fuel n szB,
       n < length (graph (build_dfg ctx act)) ->
       eval1 (snd (compile_dfg_expr ctx bneeds fuel a_idx (build_dfg ctx act)
@@ -8396,7 +8394,7 @@ Section SchedulerSimulation.
        In e (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])) ->
     (forall n n_idx, caches a_idx n_idx n -> BitsToLists.list_assoc bufs n <> None ->
        (fst ss1).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-       (fst ss1).[tf_dfg_b a_idx n_idx] = (fst ss2).[tf_dfg_b a_idx n_idx]) ->
+       (fst ss1).[tf_dfg_b (slot_idx bneeds a_idx n_idx)] = (fst ss2).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) ->
     (forall n_idx, (fst ss1).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
        (fst ss2).[tf_dfg_v a_idx n_idx] = Bits.ones 1) ->
     forall fuel n (pi: list lit),
@@ -8659,7 +8657,7 @@ Section SchedulerSimulation.
         | Some (m, _) =>
             match index_of_nat
                     (Datatypes.length (nth (index_to_nat a_idx) bneeds [])) m with
-            | Some n_idx' => tf_svar (tf_dfg_b a_idx n_idx')
+            | Some n_idx' => tf_svar (tf_dfg_b (slot_idx bneeds a_idx n_idx'))
             | None => tf_const 0
             end
         | None =>
@@ -8707,7 +8705,7 @@ Section SchedulerSimulation.
       = Some n_idx' ->
     0 < fuel ->
     fst (compile_dfg_expr_aux ctx bneeds tainted dfacts pi fuel a_idx dfg n bufs)
-    = tf_svar (tf_dfg_b a_idx n_idx').
+    = tf_svar (tf_dfg_b (slot_idx bneeds a_idx n_idx')).
   Proof.
     intros Hns Hbuf Hidx Hf. destruct fuel as [| fuel]; [ lia |].
     cbn [compile_dfg_expr_aux]. rewrite Hbuf. cbv beta iota.
@@ -8990,7 +8988,7 @@ Section SchedulerSimulation.
     forall (pi: list lit) fuel, vreg_nid a_idx n_idx < fuel ->
       compile_dfg_expr_at ctx bneeds pi fuel a_idx (build_dfg ctx act)
         (vreg_nid a_idx n_idx) (sample_bufs act a_idx)
-      = (tf_svar (tf_dfg_b a_idx n_idx), tf_svar (tf_dfg_v a_idx n_idx)).
+      = (tf_svar (tf_dfg_b (slot_idx bneeds a_idx n_idx)), tf_svar (tf_dfg_v a_idx n_idx)).
   Proof.
     intros Halign Hsam pi fuel Hfuel.
     destruct (BitsToLists.list_assoc (sample_bufs act a_idx)
@@ -9036,8 +9034,8 @@ Section SchedulerSimulation.
          expression reads it as a value, so settledness says nothing there. *)
       stall_lat_of act n = None ->
       (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-      (fst ss).[tf_dfg_b a_idx n_idx]
-      = eval_st (tf_dfg_b a_idx n_idx) (node_ref_expr act a_idx n) ss input.
+      (fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
+      = eval_st (tf_dfg_b (slot_idx bneeds a_idx n_idx)) (node_ref_expr act a_idx n) ss input.
 
   (* The third conjunct: the assignment that refreshes a set bit is itself up.
      Uniform over stalls and plain buffers, which is what makes monotonicity a
@@ -9155,7 +9153,7 @@ Section SchedulerSimulation.
             try discriminate Hns.
           rewrite !(compile_stall_value _ _ _ a_idx n _ _ Hopn) by lia. reflexivity.
         + (* any other node reads its register, which [valid_settled] pins *)
-          assert (Hsz : ss_sz (tf_dfg_b a_idx n_idx') = szB)
+          assert (Hsz : ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx')) = szB)
             by (rewrite (caches_size act a_idx n_idx' n Halign Hc); symmetry; exact HszB).
           rewrite (compile_buffered_reg _ _ _ a_idx n bufs m msz n_idx' (S fuel) pi
                      (not_stall_of_lat act n Hns) Hla Hn_idx' ltac:(lia)).
@@ -9603,9 +9601,9 @@ Section SchedulerSimulation.
     let compiled := compile_dfg_expr ctx bneeds
                       (length (graph (build_dfg ctx act))) a_idx
                       (build_dfg ctx act) n buffers' in
-    let sz := snd (snd entry) in
-    (fst (sched_step act ss input)).[tf_dfg_b a_idx n_idx]
-      = eval_st (tf_dfg_b a_idx n_idx)
+    let sz := ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx)) in
+    (fst (sched_step act ss input)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
+      = eval_st (tf_dfg_b (slot_idx bneeds a_idx n_idx))
           (buf_value_expr act a_idx n_idx sz (fst compiled) (snd compiled) buffers n) ss input
     /\
     (fst (sched_step act ss input)).[tf_dfg_v a_idx n_idx]
@@ -9628,18 +9626,16 @@ Section SchedulerSimulation.
     { pose proof (tfs_schedule_no_duplicates sched act) as Hnd_all.
       unfold tfs_ops_no_duplicates in *. rewrite flat_map_app in Hnd_all.
       apply (NoDup_app_l _ _ Hnd_all). }
-    assert (Hvalue_ops : In (tf_assign (tf_dfg_b a_idx n_idx)
+    assert (Hvalue_ops : In (tf_assign (tf_dfg_b (slot_idx bneeds a_idx n_idx))
                                (buf_value_expr act a_idx n_idx
-                                  (snd (snd (nth (index_to_nat n_idx)
-                                     (nth (index_to_nat a_idx) bneeds []) (0, (0, 0)))))
+                                  (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx)))
                                   expr valid (nth (index_to_nat a_idx) bneeds [])
                                   (vreg_nid a_idx n_idx)))
               (fst (Contract.tfs_schedule sched act))).
     { rewrite Hops. right. apply in_or_app. left. exact Hvalue. }
     assert (Hvalid_ops : In (tf_assign (tf_dfg_v a_idx n_idx)
                                (buf_valid_expr act a_idx n_idx
-                                  (snd (snd (nth (index_to_nat n_idx)
-                                     (nth (index_to_nat a_idx) bneeds []) (0, (0, 0)))))
+                                  (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx)))
                                   valid (vreg_nid a_idx n_idx)))
               (fst (Contract.tfs_schedule sched act))).
     { rewrite Hops. right. apply in_or_app. left. exact Hvalid. }
@@ -9775,8 +9771,8 @@ Section SchedulerSimulation.
     ~ done_set (sched_step act ss input) ->
     is_sample_of act (vreg_nid a_idx n_idx) = true ->
     (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-    (fst ss).[tf_dfg_b a_idx n_idx]
-    = (fst (sched_step act ss input)).[tf_dfg_b a_idx n_idx].
+    (fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
+    = (fst (sched_step act ss input)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)].
   Proof.
     intros Halign Hnd Hsam Hv.
     pose proof (buffer_after_cycle act a_idx n_idx ss input Halign Hnd) as Hba.
@@ -9849,8 +9845,8 @@ Section SchedulerSimulation.
     ~ done_set (sched_step act ss input) ->
     is_sample_of act (vreg_nid a_idx n_idx) = true ->
     (fst (sched_step act ss input)).[tf_dfg_v a_idx n_idx] = Bits.zero ->
-    (fst (sched_step act ss input)).[tf_dfg_b a_idx n_idx]
-    = (fst ss).[tf_dfg_b a_idx n_idx].
+    (fst (sched_step act ss input)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
+    = (fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)].
   Proof.
     intros Halign Hnd Hsam HvS.
     pose proof (buffer_gate_zero act a_idx n_idx ss input Halign Hnd Hsam HvS)
@@ -9883,8 +9879,8 @@ Section SchedulerSimulation.
     ~ done_set (sched_step act ss input) ->
     sample_en_of act (vreg_nid a_idx n_idx) = Some en ->
     eval1 (gexpr act a_idx (sample_bufs act a_idx) en) ss input = Bits.zero ->
-    (fst (sched_step act ss input)).[tf_dfg_b a_idx n_idx]
-    = (fst ss).[tf_dfg_b a_idx n_idx].
+    (fst (sched_step act ss input)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
+    = (fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)].
   Proof.
     intros Halign Hnd Hen Hgz.
     pose proof (buffer_after_cycle act a_idx n_idx ss input Halign Hnd) as Hba.
@@ -9960,8 +9956,8 @@ Section SchedulerSimulation.
     valid_settled act a_idx ss input ->
     valid_gates act a_idx ss input ->
     (fst ss).[tf_dfg_v a_idx n_idx] = Bits.ones 1 ->
-    (fst ss).[tf_dfg_b a_idx n_idx]
-    = (fst (sched_step act ss input)).[tf_dfg_b a_idx n_idx].
+    (fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
+    = (fst (sched_step act ss input)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)].
   Proof.
     intros Halign Hnd Hset Hg Hv.
     destruct (vreg_nid_node_range act a_idx n_idx Halign) as [Hn1 Hnlen].
@@ -9977,19 +9973,19 @@ Section SchedulerSimulation.
       destruct (stall_counter_wide act a_idx n_idx l Halign Hst) as [_ Hwide].
       cbn [tf_eval_expr] in Hgv. rewrite !convert_same in Hgv.
       destruct (bits1_and_split _ _ Hgv) as [_ Hcmp].
-      assert (Hreg : (fst ss).[tf_dfg_b a_idx n_idx]
-                     = Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) (pred l)).
+      assert (Hreg : (fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
+                     = Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) (pred l)).
       { revert Hcmp.
         match goal with
         | |- context [ @beq_dec ?T ?E ?c ?d ] =>
-            replace c with ((fst ss).[tf_dfg_b a_idx n_idx]) by reflexivity;
-            destruct (@beq_dec T E ((fst ss).[tf_dfg_b a_idx n_idx]) d) eqn:Hb
+            replace c with ((fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) by reflexivity;
+            destruct (@beq_dec T E ((fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) d) eqn:Hb
         end.
         - intros _. exact (proj1 (beq_dec_iff _ _ _) Hb).
         - intro Hc. exfalso. revert Hc. vm_compute. discriminate. }
-      assert (Hcnt : Bits.to_nat ((fst ss).[tf_dfg_b a_idx n_idx]) = pred l)
+      assert (Hcnt : Bits.to_nat ((fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) = pred l)
         by (rewrite Hreg; apply Bits.to_nat_of_nat; exact Hwide).
-      apply (bits_to_nat_inj (ss_sz (tf_dfg_b a_idx n_idx))).
+      apply (bits_to_nat_inj (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx)))).
       rewrite (stall_counter_step act a_idx n_idx ss input l _ _ _ Hst Hwide
                  ltac:(lia)).
       rewrite (proj2 (Nat.eqb_eq _ _) Hcnt). cbn [negb].
@@ -10040,13 +10036,13 @@ Section SchedulerSimulation.
         (act: tfs_action sched) a_idx n_idx (ss: sched_sys_state)
         (input: sched_input_t) l gate :
     stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
-    pred l < pow2 (ss_sz (tf_dfg_b a_idx n_idx)) ->
+    pred l < pow2 (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) ->
     eval_st (tf_dfg_v a_idx n_idx)
-      (buf_valid_expr act a_idx n_idx (ss_sz (tf_dfg_b a_idx n_idx)) gate
+      (buf_valid_expr act a_idx n_idx (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) gate
          (vreg_nid a_idx n_idx)) ss input = Bits.ones 1 ->
     eval1 gate ss input = Bits.ones 1
-    /\ (fst ss).[tf_dfg_b a_idx n_idx]
-       = Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) (pred l).
+    /\ (fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
+       = Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) (pred l).
   Proof.
     intros Hst Hwide Hv. unfold buf_valid_expr in Hv. rewrite Hst in Hv.
     cbn [tf_eval_expr] in Hv. rewrite !convert_same in Hv.
@@ -10054,8 +10050,8 @@ Section SchedulerSimulation.
     split; [ exact Hg |]. revert Hcmp.
     match goal with
     | |- context [ @beq_dec ?T ?E ?c ?d ] =>
-        replace c with ((fst ss).[tf_dfg_b a_idx n_idx]) by reflexivity;
-        destruct (@beq_dec T E ((fst ss).[tf_dfg_b a_idx n_idx]) d) eqn:Hb
+        replace c with ((fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) by reflexivity;
+        destruct (@beq_dec T E ((fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) d) eqn:Hb
     end.
     - intros _. exact (proj1 (beq_dec_iff _ _ _) Hb).
     - intro Hc. exfalso. revert Hc. vm_compute. discriminate.
@@ -10066,21 +10062,21 @@ Section SchedulerSimulation.
         (input: sched_input_t) l gate :
     stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
     eval1 gate ss input = Bits.ones 1 ->
-    (fst ss).[tf_dfg_b a_idx n_idx]
-      = Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) (pred l) ->
+    (fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
+      = Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) (pred l) ->
     eval_st (tf_dfg_v a_idx n_idx)
-      (buf_valid_expr act a_idx n_idx (ss_sz (tf_dfg_b a_idx n_idx)) gate
+      (buf_valid_expr act a_idx n_idx (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) gate
          (vreg_nid a_idx n_idx)) ss input = Bits.ones 1.
   Proof.
     intros Hst Hg Hreg. unfold buf_valid_expr. rewrite Hst.
     cbn [tf_eval_expr]. rewrite !convert_same.
     match goal with
     | |- context [ @beq_dec ?T ?E ?c ?d ] =>
-        replace c with ((fst ss).[tf_dfg_b a_idx n_idx]) by reflexivity
+        replace c with ((fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) by reflexivity
     end.
     match goal with
     | |- context [ beq_dec _ ?d ] =>
-        assert (Hr2 : (fst ss).[tf_dfg_b a_idx n_idx] = d)
+        assert (Hr2 : (fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)] = d)
           by (rewrite Hreg; reflexivity)
     end.
     rewrite Hr2, beq_dec_refl.
@@ -10098,21 +10094,21 @@ Section SchedulerSimulation.
     act_idx_aligned act a_idx ->
     ~ done_set (sched_step act ss input) ->
     stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
-    (fst ss).[tf_dfg_b a_idx n_idx]
-      = Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) (pred l) ->
-    (fst (sched_step act ss input)).[tf_dfg_b a_idx n_idx]
-      = Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) (pred l).
+    (fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
+      = Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) (pred l) ->
+    (fst (sched_step act ss input)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]
+      = Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) (pred l).
   Proof.
     intros Halign Hnd Hst Hreg.
     destruct (stall_counter_wide act a_idx n_idx l Halign Hst) as [_ Hwide].
-    assert (Hcnt : Bits.to_nat ((fst ss).[tf_dfg_b a_idx n_idx]) = pred l)
+    assert (Hcnt : Bits.to_nat ((fst ss).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) = pred l)
       by (rewrite Hreg; apply Bits.to_nat_of_nat; exact Hwide).
     pose proof (buffer_after_cycle act a_idx n_idx ss input Halign Hnd) as Hba.
     cbv zeta in Hba. destruct Hba as [Hvalue _]. rewrite Hvalue.
     change (fst (nth (index_to_nat n_idx)
                    (nth (index_to_nat a_idx) bneeds []) (0, (0, 0))))
       with (vreg_nid a_idx n_idx).
-    apply (bits_to_nat_inj (ss_sz (tf_dfg_b a_idx n_idx))).
+    apply (bits_to_nat_inj (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx)))).
     rewrite (stall_counter_step act a_idx n_idx ss input l _ _ _ Hst Hwide
                ltac:(lia)).
     rewrite (proj2 (Nat.eqb_eq _ _) Hcnt). cbn [negb].
@@ -10168,18 +10164,18 @@ Section SchedulerSimulation.
         (ss0: sched_sys_state) l r K :
     act_idx_aligned act a_idx ->
     stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
-    (fst ss0).[tf_dfg_b a_idx n_idx] = Bits.zero ->
+    (fst ss0).[tf_dfg_b (slot_idx bneeds a_idx n_idx)] = Bits.zero ->
     (forall i, 1 <= i <= K -> ~ done_set (run_n i act input resp ss0)) ->
     (forall j, r <= j < K ->
        eval1 (buf_gate act a_idx n_idx) (run_n j act input resp ss0)
          (sched_input input (resp j)) = Bits.ones 1) ->
     forall k, r + pred l <= k <= K ->
-      Bits.to_nat ((fst (run_n k act input resp ss0)).[tf_dfg_b a_idx n_idx]) = pred l.
+      Bits.to_nat ((fst (run_n k act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) = pred l.
   Proof.
     intros Halign Hst Hzero Hnd Hadv.
     destruct (stall_counter_wide act a_idx n_idx l Halign Hst) as [Hl Hwide].
-    apply (counter_saturates (ss_sz (tf_dfg_b a_idx n_idx)) (pred l) r K
-             (fun j => (fst (run_n j act input resp ss0)).[tf_dfg_b a_idx n_idx])
+    apply (counter_saturates (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) (pred l) r K
+             (fun j => (fst (run_n j act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)])
              (fun j => if beq_dec
                             (eval1 (buf_gate act a_idx n_idx)
                                (run_n j act input resp ss0)
@@ -10188,8 +10184,8 @@ Section SchedulerSimulation.
                        then false else true)).
     - exact Hwide.
     - cbn [run_n]. rewrite Hzero.
-      change (@Bits.zero (ss_sz (tf_dfg_b a_idx n_idx)))
-        with (Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) 0).
+      change (@Bits.zero (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))))
+        with (Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) 0).
       apply Bits.to_nat_of_nat. lia.
     - intros j HjK Hinv. cbn beta in Hinv |- *.
       change (run_n (S j) act input resp ss0)
@@ -10212,17 +10208,17 @@ Section SchedulerSimulation.
         (ss0: sched_sys_state) l K :
     act_idx_aligned act a_idx ->
     stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
-    (fst ss0).[tf_dfg_b a_idx n_idx] = Bits.zero ->
+    (fst ss0).[tf_dfg_b (slot_idx bneeds a_idx n_idx)] = Bits.zero ->
     (forall i, 1 <= i <= K -> ~ done_set (run_n i act input resp ss0)) ->
     forall t k, t <= k -> k <= K ->
-      Bits.to_nat ((fst (run_n k act input resp ss0)).[tf_dfg_b a_idx n_idx])
-      <= Bits.to_nat ((fst (run_n t act input resp ss0)).[tf_dfg_b a_idx n_idx])
+      Bits.to_nat ((fst (run_n k act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)])
+      <= Bits.to_nat ((fst (run_n t act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)])
          + (k - t).
   Proof.
     intros Halign Hst Hzero Hnd.
     destruct (stall_counter_wide act a_idx n_idx l Halign Hst) as [Hl Hwide].
-    apply (counter_bounded (ss_sz (tf_dfg_b a_idx n_idx)) (pred l) K
-             (fun j => (fst (run_n j act input resp ss0)).[tf_dfg_b a_idx n_idx])
+    apply (counter_bounded (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) (pred l) K
+             (fun j => (fst (run_n j act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)])
              (fun j => if beq_dec
                             (eval1 (buf_gate act a_idx n_idx)
                                (run_n j act input resp ss0)
@@ -10230,8 +10226,8 @@ Section SchedulerSimulation.
                             Bits.zero
                        then false else true)).
     - cbn [run_n]. rewrite Hzero.
-      change (@Bits.zero (ss_sz (tf_dfg_b a_idx n_idx)))
-        with (Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) 0).
+      change (@Bits.zero (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))))
+        with (Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) 0).
       apply Bits.to_nat_of_nat. lia.
     - intros jj HjK Hinv. cbn beta in Hinv |- *.
       change (run_n (S jj) act input resp ss0)
@@ -10251,21 +10247,21 @@ Section SchedulerSimulation.
         (ss0: sched_sys_state) l K :
     act_idx_aligned act a_idx ->
     stall_lat_of act (vreg_nid a_idx n_idx) = Some l ->
-    (fst ss0).[tf_dfg_b a_idx n_idx] = Bits.zero ->
+    (fst ss0).[tf_dfg_b (slot_idx bneeds a_idx n_idx)] = Bits.zero ->
     (forall i, 1 <= i <= K -> ~ done_set (run_n i act input resp ss0)) ->
     forall k, k <= K ->
-      Bits.to_nat ((fst (run_n k act input resp ss0)).[tf_dfg_b a_idx n_idx]) <> 0 ->
+      Bits.to_nat ((fst (run_n k act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) <> 0 ->
       exists t, t < k
-        /\ Bits.to_nat ((fst (run_n t act input resp ss0)).[tf_dfg_b a_idx n_idx]) = 0
+        /\ Bits.to_nat ((fst (run_n t act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) = 0
         /\ eval1 (buf_gate act a_idx n_idx) (run_n t act input resp ss0)
              (sched_input input (resp t)) = Bits.ones 1
         /\ (forall w, t < w -> w <= k ->
-              Bits.to_nat ((fst (run_n w act input resp ss0)).[tf_dfg_b a_idx n_idx])
+              Bits.to_nat ((fst (run_n w act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)])
               <> 0).
   Proof.
     intros Halign Hst Hzero Hnd.
     destruct (stall_counter_wide act a_idx n_idx l Halign Hst) as [Hl Hwide].
-    pose (b := fun j => (fst (run_n j act input resp ss0)).[tf_dfg_b a_idx n_idx]).
+    pose (b := fun j => (fst (run_n j act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]).
     pose (adv := fun j => if beq_dec
                                (eval1 (buf_gate act a_idx n_idx)
                                   (run_n j act input resp ss0)
@@ -10274,8 +10270,8 @@ Section SchedulerSimulation.
                           then false else true).
     assert (Hz0 : Bits.to_nat (b 0) = 0).
     { unfold b. cbn [run_n]. rewrite Hzero.
-      change (@Bits.zero (ss_sz (tf_dfg_b a_idx n_idx)))
-        with (Bits.of_nat (ss_sz (tf_dfg_b a_idx n_idx)) 0).
+      change (@Bits.zero (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))))
+        with (Bits.of_nat (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) 0).
       apply Bits.to_nat_of_nat. lia. }
     assert (Hrec : forall j, j < K -> Bits.to_nat (b j) <= pred l ->
               Bits.to_nat (b (S j))
@@ -10291,7 +10287,7 @@ Section SchedulerSimulation.
       cbv zeta in Hba. destruct Hba as [Hvalb _]. rewrite Hvalb.
       exact (stall_counter_step act a_idx n_idx _ _ l _ _ _ Hst Hwide Hinv). }
     intros k HK Hne.
-    destruct (counter_started (ss_sz (tf_dfg_b a_idx n_idx)) (pred l) K b adv
+    destruct (counter_started (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx))) (pred l) K b adv
                 Hwide Hz0 Hrec k HK Hne) as [t [Ht1 [Ht2 [Ht3 Ht4]]]].
     exists t. split; [ exact Ht1 | split; [ exact Ht2 | split; [| exact Ht4 ]]].
     unfold adv in Ht3.
@@ -10387,10 +10383,10 @@ Section SchedulerSimulation.
           + lia.
           + right. lia. }
         assert (Hcnt : Bits.to_nat
-                  ((fst (run_n m act input resp ss0)).[tf_dfg_b a_idx n_idx]) = pred l).
+                  ((fst (run_n m act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) = pred l).
         { apply (stall_counter_run act a_idx n_idx input resp ss0 l
                    (S (node_rank act sarg)) m Halign Hst
-                   (Hzero (tf_dfg_b a_idx n_idx) I)
+                   (Hzero (tf_dfg_b (slot_idx bneeds a_idx n_idx)) I)
                    ltac:(intros i Hi; apply Hnd; lia)).
           - intros j Hj. apply Hgate. lia.
           - lia. }
@@ -10401,15 +10397,15 @@ Section SchedulerSimulation.
         match goal with
         | |- context [ @beq_dec ?T ?E ?c ?d ] =>
             replace c with
-              ((fst (run_n m act input resp ss0)).[tf_dfg_b a_idx n_idx]) by reflexivity
+              ((fst (run_n m act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)]) by reflexivity
         end.
         (* the width comes from the goal too: [Bits.to_nat] carries it as an
            implicit, and a second copy of it breaks the rewrite *)
         match goal with
         | |- context [ beq_dec _ ?d ] =>
-            assert (Hreg : (fst (run_n m act input resp ss0)).[tf_dfg_b a_idx n_idx] = d)
+            assert (Hreg : (fst (run_n m act input resp ss0)).[tf_dfg_b (slot_idx bneeds a_idx n_idx)] = d)
         end.
-        { apply (bits_to_nat_inj (ss_sz (tf_dfg_b a_idx n_idx))).
+        { apply (bits_to_nat_inj (ss_sz (tf_dfg_b (slot_idx bneeds a_idx n_idx)))).
           rewrite Hcnt. symmetry. apply Bits.to_nat_of_nat. exact Hwide. }
         rewrite Hreg, beq_dec_refl.
         (* and the gate, which the AND now needs as well *)
@@ -10581,12 +10577,8 @@ Section SchedulerSimulation.
   Lemma reset_states_not_svar (s: s_var) v :
     In v (reset_states ctx bneeds) -> v <> tf_dfg_s s.
   Proof.
-    unfold reset_states. rewrite in_flat_map.
-    intros [a [_ Ha]].
-    destruct (index_of_nat _ a) as [a' |]; [| destruct Ha].
-    rewrite in_flat_map in Ha. destruct Ha as [n [_ Hn]].
-    destruct (index_of_nat _ n) as [n' |]; [| destruct Hn].
-    cbn [In] in Hn. destruct Hn as [Hn | [Hn | []]]; subst v; discriminate.
+    intro Hv. destruct (reset_states_shape ctx bneeds v Hv) as [[k ->] | [a [n ->]]];
+      discriminate.
   Qed.
 
   Lemma reset_updates_no_svar (s: s_var) :
@@ -10859,15 +10851,7 @@ Section SchedulerSimulation.
       (n_idx : Vect.index
         (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))) :
     In (tf_dfg_v a_idx n_idx) (reset_states ctx bneeds).
-  Proof.
-    unfold reset_states. rewrite in_flat_map.
-    exists (index_to_nat a_idx). split.
-    - apply in_seq. pose proof (index_to_nat_bounded a_idx). lia.
-    - rewrite index_of_nat_to_nat, in_flat_map.
-      exists (index_to_nat n_idx). split.
-      + apply in_seq. pose proof (index_to_nat_bounded n_idx). lia.
-      + rewrite index_of_nat_to_nat. right; left; reflexivity.
-  Qed.
+  Proof. apply States.reset_states_has_v. Qed.
 
   Lemma reset_updates_v
       (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
@@ -10881,30 +10865,12 @@ Section SchedulerSimulation.
     - intros v Hv. exact (tfs_reset_states_init_zero sched v Hv).
   Qed.
 
-  Lemma reset_states_has_b
-      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
-      (n_idx : Vect.index
-        (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))) :
-    In (tf_dfg_b a_idx n_idx) (reset_states ctx bneeds).
-  Proof.
-    unfold reset_states. rewrite in_flat_map.
-    exists (index_to_nat a_idx). split.
-    - apply in_seq. pose proof (index_to_nat_bounded a_idx). lia.
-    - rewrite index_of_nat_to_nat, in_flat_map.
-      exists (index_to_nat n_idx). split.
-      + apply in_seq. pose proof (index_to_nat_bounded n_idx). lia.
-      + rewrite index_of_nat_to_nat. left; reflexivity.
-  Qed.
-
-  Lemma reset_updates_b
-      (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
-      (n_idx : Vect.index
-        (length (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) []))) :
-    find_st_update sched (tf_dfg_b a_idx n_idx)
+  Lemma reset_updates_b (k: Vect.index (length (Buffers.slot_keys bneeds))) :
+    find_st_update sched (tf_dfg_b k)
       (tfs_reset_updates sched (tfs_reset_states sched)) = Some Bits.zero.
   Proof.
     unfold tfs_reset_updates. apply find_st_update_map_init.
-    - exact (reset_states_has_b a_idx n_idx).
+    - exact (States.reset_states_has_b ctx bneeds k).
     - intros v Hv. exact (tfs_reset_states_init_zero sched v Hv).
   Qed.
 
@@ -10933,10 +10899,10 @@ Section SchedulerSimulation.
     forall x, zeroed_at_start x -> (fst (sched_step act ss input)).[x] = Bits.zero.
   Proof.
     intros Hdone x Hx.
-    destruct x as [| s | a_idx n_idx | a_idx n_idx | p]; destruct Hx.
+    destruct x as [| s | k | a_idx n_idx | p]; destruct Hx.
     - rewrite sched_step_getst, (cycle_updates_done act ss input Hdone).
       unfold find_st_val.
-      rewrite (find_st_update_app_Some _ _ _ _ (reset_updates_b a_idx n_idx)).
+      rewrite (find_st_update_app_Some _ _ _ _ (reset_updates_b k)).
       reflexivity.
     - exact (sched_step_done_v act a_idx n_idx ss input Hdone).
   Qed.
@@ -10994,8 +10960,8 @@ Section SchedulerSimulation.
                 (sched_input input (resp k)) Halign Hnd IHg Hx)).
         assert (Hfroz : forall m,
                   (fst ssk).[tf_dfg_v a_idx m] = Bits.ones 1 ->
-                  (fst ssk).[tf_dfg_b a_idx m]
-                  = (fst (sched_step act ssk (sched_input input (resp k)))).[tf_dfg_b a_idx m])
+                  (fst ssk).[tf_dfg_b (slot_idx bneeds a_idx m)]
+                  = (fst (sched_step act ssk (sched_input input (resp k)))).[tf_dfg_b (slot_idx bneeds a_idx m)])
           by (intros m Hx; exact (buffer_frozen_step act a_idx m ssk
                 (sched_input input (resp k)) Halign Hnd IHs IHg Hx)).
         assert (Hgk : forall m,
@@ -12390,7 +12356,7 @@ Section SchedulerSimulation.
     act_idx_aligned act a_idx ->
     is_sample_of act (vreg_nid a_idx n_idx) = true ->
     node_ref_expr act a_idx (vreg_nid a_idx n_idx)
-    = tf_svar (tf_dfg_b a_idx n_idx).
+    = tf_svar (tf_dfg_b (slot_idx bneeds a_idx n_idx)).
   Proof.
     intros Halign Hsam.
     destruct (vreg_nid_node_range act a_idx n_idx Halign) as [_ Hnlen].
