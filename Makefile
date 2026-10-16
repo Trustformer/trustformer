@@ -41,7 +41,13 @@ test: all
 	@python3 scripts/check-ranges.py build/*.v
 	@python3 scripts/run-sim.py
 
+# --------------------------------------------------------------- Evaluation
+
+eval: theorems
+	@scripts/modes-report.sh
+	@scripts/loc-report.sh
+
 clean:
 	rm -rf build/*
 
-.PHONY: coq copy_build compile all theorems check sim test clean default
+.PHONY: coq copy_build compile all theorems check sim test eval clean default
