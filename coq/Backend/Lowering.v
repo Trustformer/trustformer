@@ -54,6 +54,7 @@ Section SynthesisTypes.
     | rule_out (out: outputs_var)
     | rule_ip (p: ips_var)
     | rule_busy
+    | rule_quiet
     .
 
   Inductive _ext_fn_t := 
@@ -379,6 +380,7 @@ Section Lowering.
           | rule_out out => String.append "rule_out_" (show out)
           | rule_ip p => String.append "rule_ip_" (show p)
           | rule_busy => "rule_busy"
+          | rule_quiet => "rule_quiet"
           end
       }.
 
@@ -388,8 +390,12 @@ Section Lowering.
     Definition system_schedule_outputs : scheduler :=
       List.fold_right (fun t acc => @rule_out spec_outputs spec_ips spec_action t |> acc) system_schedule_ips spec_all_outputs.
 
+    Definition system_schedule_quiet : scheduler :=
+      @rule_quiet spec_outputs spec_ips spec_action |> system_schedule_outputs.
+
     Definition system_schedule_actions : scheduler  :=
-      List.fold_right (fun t acc => @rule_cmd spec_outputs spec_ips spec_action t |> acc) system_schedule_outputs spec_all_actions.
+      List.fold_right (fun t acc => @rule_cmd spec_outputs spec_ips spec_action t |> acc)
+        system_schedule_quiet spec_all_actions.
 
     Definition system_schedule := rule_busy |> system_schedule_actions.
     
@@ -613,6 +619,17 @@ Section Lowering.
           Guard (Binop (PrimTyped.Bits2 (PrimTyped.EqBits spec_action_reg_size false)) (Read P0 tf_cmd) (Const cmd_enc))
         ).
 
+    (* A cycle no command writes a request in: every port is quiet.  A command
+       writing one first makes this rule fail, so the old request is never read. *)
+    Fixpoint rule_quiet_ports {sig} (ps: list spec_ips) : action sig unit_t :=
+      match ps with
+      | [] => Const (tau:=unit_t) vect_nil
+      | p :: rest =>
+          Seq (Write P0 (tf_reg (tfs_drive_reg (tf_sched_ctx tf_ctx) p))
+                 (Const (tau:=R (tf_reg (tfs_drive_reg (tf_sched_ctx tf_ctx) p))) Bits.zero))
+              (rule_quiet_ports rest)
+      end.
+
     Program Definition rules {sig} (rl: rule_name_t) : action sig unit_t :=
       match rl with
       | rule_busy =>
@@ -629,6 +646,7 @@ Section Lowering.
       (* The request is presented from the scheduler register holding
          {strobe, payload}.  [synth_convert] is exact -- the widths are equal by
          tfs_drive_reg_size. *)
+      | rule_quiet => rule_quiet_ports spec_all_ips
       | rule_ip p =>
             Write P1 (tf_ip_ack p)
               (ExternalCall (ext_ip_req p)

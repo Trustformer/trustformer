@@ -138,6 +138,18 @@ Record TFSchedule := {
           | _ => []
           end) (fst (tfs_schedule a)));
 
+  (* Every action assigns every request register in its always-ops, so the
+     Lowering's quiet rule, which zeroes the requests, writes only when idle. *)
+  tfs_drive_assigned_by_always: forall a p,
+    In (StOp (tfs_drive_reg p))
+       (flat_map (fun op =>
+          match op with
+          | tf_assign dst _ => [StOp dst]
+          | tf_output dst _ => [OutOp dst]
+          | tf_call _ dst _ => [StOp dst]
+          | _ => []
+          end) (fst (tfs_schedule a)));
+
   (* the buffer-reset registers are pairwise distinct; the HW resets them with a
      fold of P1 writes, whose validity requires no register is written twice *)
   tfs_reset_states_nodup: NoDup tfs_reset_states;

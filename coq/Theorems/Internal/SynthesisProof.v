@@ -839,6 +839,12 @@ Section SynthesisProof.
         Some (log_cons idx {| kind := LogWrite; port := prt; val := v |} log_a, Bits.nil, ctx).
     Proof. intros; simpl. rewrite H. reflexivity. Qed.
 
+    Lemma interp_action_write_const_fail :
+      forall r sigma sig (ctx: tcontext sig) log_r log_a prt idx (v: R idx),
+        may_write log_r log_a prt idx = false ->
+        interp_action (tau:=unit_t) r sigma ctx log_r log_a (Write prt idx (Const (tau:=R idx) v)) = None.
+    Proof. intros; simpl. rewrite H. reflexivity. Qed.
+
     Lemma interp_action_reset_buffers_cons :
       forall r sigma log_r log_a s rest code,
         may_write log_r log_a P1 (tf_reg s) = true ->
@@ -3832,6 +3838,142 @@ Section SynthesisProof.
       rewrite SemanticProperties.latest_write_empty. reflexivity.
   Qed.
 
+  (* ====== The quiet rule ====== *)
+
+  (* A register with a write in the cycle log takes no P0 write. *)
+  Lemma may_write0_written (log_r log_a: Log R ContextEnv) idx v :
+    latest_write log_r idx = Some v -> may_write log_r log_a P0 idx = false.
+  Proof.
+    intro H.
+    Local Transparent may_write.
+    unfold may_write. rewrite !SemanticProperties.log_existsb_app.
+    assert (Hw : log_existsb log_r idx is_write0 || log_existsb log_r idx is_write1 = true).
+    { unfold latest_write, log_find in H. unfold log_existsb.
+      induction (getenv ContextEnv log_r idx) as [| [k pt w] l IH]; cbn in H |- *;
+        [ discriminate H |].
+      destruct k, pt; cbn; rewrite ?Bool.orb_true_r; try reflexivity; apply IH; exact H. }
+    destruct (log_existsb log_r idx is_write0), (log_existsb log_r idx is_write1);
+      cbn in Hw; try discriminate Hw;
+      rewrite ?Bool.orb_true_r; cbn; rewrite ?Bool.andb_false_r; reflexivity.
+  Qed.
+  Local Opaque may_write.
+
+  (* An assigned register has an update in the ops' updates. *)
+  Lemma find_st_update_of_tag :
+    forall ops sys input x,
+      In (StOp x) (ops_tags ops) ->
+      find_st_update sched_ctx x (tfs_get_updates sched_ctx ops sys input) <> None.
+  Proof.
+    induction ops as [| op ops IH]; intros sys input x Hin; [ destruct Hin |].
+    rewrite tfs_get_updates_cons.
+    destruct op; cbn [ops_tags flat_map app] in Hin; cbn [find_st_update tf_op_step_updates].
+    - apply IH. exact Hin.
+    - destruct (eq_dec dst x) as [Heq | Hneq]; [ discriminate |].
+      destruct Hin as [Heq | Hin]; [ injection Heq as Heq; contradiction | apply IH; exact Hin ].
+    - destruct Hin as [Heq | Hin]; [ discriminate Heq | apply IH; exact Hin ].
+    - destruct ip.
+  Qed.
+
+  (* The commanded action's rule writes every request register. *)
+  Lemma drive_written_after_cmd :
+    forall (sys: sys_state_t) (r: ContextEnv.(env_t) R)
+           (act: spec_action) (input: input_t)
+           (sigma: forall f, Sig_denote (Sigma f)) log p,
+      state_matches sys r ->
+      ( r.[tf_ready] = Ob~1 -> input_matches act input sigma ) ->
+      ( r.[tf_ready] = Ob~0 -> env_matches act input r ) ->
+      live_inputs_match input sigma ->
+      good_log log ->
+      exists v, latest_write match interp_rule r sigma log (rules (rule_cmd act)) with
+                             | Some l => log_app l log
+                             | None => log
+                             end (tf_reg (tfs_drive_reg sched_ctx p)) = Some v.
+  Proof.
+    intros sys r act input sigma log p Hstate Hrdy Hnrdy Hlive Hlog.
+    rewrite (latest_write_reg sys r act input sigma log _ Hstate Hrdy Hnrdy Hlive Hlog).
+    pose proof (find_st_update_of_tag (fst (spec_schedule act)) sys input (tfs_drive_reg sched_ctx p)
+                  (tfs_drive_assigned_by_always sched_ctx act p)) as Hf.
+    destruct (beq_dec _ _).
+    - destruct (find_st_update sched_ctx _ (tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input))
+        as [v |]; [ exists v; reflexivity | contradiction ].
+    - rewrite !find_st_update_app.
+      destruct (find_st_update sched_ctx _ (tfs_reset_updates sched_ctx spec_reset_states))
+        as [v |]; [ exists v; reflexivity |].
+      destruct (find_st_update sched_ctx _ (tfs_get_updates sched_ctx (snd (spec_schedule act)) sys input))
+        as [v |]; [ exists v; reflexivity |].
+      destruct (find_st_update sched_ctx _ (tfs_get_updates sched_ctx (fst (spec_schedule act)) sys input))
+        as [v |]; [ exists v; reflexivity | contradiction ].
+  Qed.
+
+  (* [rule_quiet] writes the request registers and nothing else. *)
+  Lemma interp_quiet_other :
+    forall (r: ContextEnv.(env_t) R) (sigma: forall f, Sig_denote (Sigma f)) log_r ps log_a l v c x,
+      interp_action (tau:=unit_t) r sigma CtxEmpty log_r log_a (rule_quiet_ports tf_ctx ps)
+        = Some (l, v, c) ->
+      (forall p, x <> tf_reg (tfs_drive_reg sched_ctx p)) ->
+      latest_write l x = latest_write log_a x.
+  Proof.
+    intros r sigma log_r ps. induction ps as [| p ps IH]; intros log_a l v c x Hq Hx.
+    - cbn in Hq. injection Hq; intros; subst; reflexivity.
+    - cbn [rule_quiet_ports] in Hq. rewrite interp_action_seq in Hq.
+      destruct (may_write (R:=R) (REnv:=REnv) (reg_t:=reg_t) log_r log_a P0
+                  (tf_reg (tfs_drive_reg sched_ctx p))) eqn:Hmw.
+      + rewrite (interp_action_write_const r sigma _ CtxEmpty log_r log_a P0 _ _ Hmw) in Hq.
+        cbn [opt_bind] in Hq.
+        rewrite (IH _ _ _ _ _ Hq Hx).
+        rewrite SemanticProperties.latest_write_cons_neq; [ reflexivity | exact (Hx p) ].
+      + rewrite (interp_action_write_const_fail r sigma _ CtxEmpty log_r log_a P0 _ _ Hmw) in Hq.
+        discriminate Hq.
+  Qed.
+
+  (* Its first write is refused once a request register has been written. *)
+  Lemma interp_quiet_written :
+    forall (r: ContextEnv.(env_t) R) (sigma: forall f, Sig_denote (Sigma f)) log_r p ps log_a v,
+      latest_write log_r (tf_reg (tfs_drive_reg sched_ctx p)) = Some v ->
+      interp_action (tau:=unit_t) r sigma CtxEmpty log_r log_a (rule_quiet_ports tf_ctx (p :: ps)) = None.
+  Proof.
+    intros r sigma log_r p ps log_a v Hw.
+    cbn [rule_quiet_ports]. rewrite interp_action_seq.
+    rewrite (interp_action_write_const_fail r sigma _ CtxEmpty log_r log_a P0 _ _
+               (may_write0_written log_r log_a _ v Hw)).
+    reflexivity.
+  Qed.
+
+  (* Through the quiet rule and the rest: a register no rule there writes. *)
+  Lemma latest_write_schedule_quiet_other :
+    forall (r: ContextEnv.(env_t) R) (sigma: forall f, Sig_denote (Sigma f)) log x,
+      match x with | tf_out_ack _ => False | tf_ip_ack _ => False | _ => True end ->
+      (forall p, x <> tf_reg (tfs_drive_reg sched_ctx p)) ->
+      latest_write (interp_scheduler' r sigma rules log (system_schedule_quiet tf_ctx)) x
+      = latest_write log x.
+  Proof.
+    intros r sigma log x Hx Hd. unfold system_schedule_quiet.
+    cbn [interp_scheduler']. unfold interp_rule. cbn [rules].
+    destruct (interp_action r sigma CtxEmpty log log_empty (rule_quiet_ports tf_ctx spec_all_ips))
+      as [[[l v] c] |] eqn:Hq; rewrite latest_write_schedule_outputs by exact Hx; [| reflexivity ].
+    rewrite SemanticProperties.latest_write_app.
+    rewrite (interp_quiet_other r sigma log spec_all_ips log_empty l v c x Hq Hd).
+    rewrite SemanticProperties.latest_write_empty. reflexivity.
+  Qed.
+
+  (* ... and every register, once the request registers have been written. *)
+  Lemma latest_write_schedule_quiet_busy :
+    forall (r: ContextEnv.(env_t) R) (sigma: forall f, Sig_denote (Sigma f)) log x,
+      match x with | tf_out_ack _ => False | tf_ip_ack _ => False | _ => True end ->
+      (forall p, exists v, latest_write log (tf_reg (tfs_drive_reg sched_ctx p)) = Some v) ->
+      latest_write (interp_scheduler' r sigma rules log (system_schedule_quiet tf_ctx)) x
+      = latest_write log x.
+  Proof.
+    intros r sigma log x Hx Hw. unfold system_schedule_quiet.
+    cbn [interp_scheduler']. unfold interp_rule. cbn [rules].
+    destruct spec_all_ips as [| p ps].
+    - cbn [rule_quiet_ports interp_action]. rewrite latest_write_schedule_outputs by exact Hx.
+      rewrite SemanticProperties.latest_write_app, SemanticProperties.latest_write_empty. reflexivity.
+    - destruct (Hw p) as [v Hv].
+      rewrite (interp_quiet_written r sigma log p ps log_empty v Hv).
+      apply latest_write_schedule_outputs. exact Hx.
+  Qed.
+
   Lemma cycle_correct_aux2 :
     forall (sys: sys_state_t) (r: ContextEnv.(env_t) R) 
            (act: spec_action) (input: input_t)
@@ -3846,8 +3988,8 @@ Section SynthesisProof.
       state_env_matches (tfs_next_cycle sched_ctx act sys input) act input
         (commit_update r
           match interp_rule r sigma log (rules (rule_cmd act)) with
-          | Some l => interp_scheduler' r sigma rules (log_app l log) (fold_right (fun (t : spec_action) (acc : scheduler) => rule_cmd t |> acc) (system_schedule_outputs tf_ctx) actions)
-          | None => interp_scheduler' r sigma rules log (fold_right (fun (t : spec_action) (acc : scheduler) => rule_cmd t |> acc) (system_schedule_outputs tf_ctx) actions)
+          | Some l => interp_scheduler' r sigma rules (log_app l log) (fold_right (fun (t : spec_action) (acc : scheduler) => rule_cmd t |> acc) (system_schedule_quiet tf_ctx) actions)
+          | None => interp_scheduler' r sigma rules log (fold_right (fun (t : spec_action) (acc : scheduler) => rule_cmd t |> acc) (system_schedule_quiet tf_ctx) actions)
           end)
       <->
       state_env_matches (tfs_next_cycle sched_ctx act sys input) act input (commit_update r
@@ -3863,19 +4005,26 @@ Section SynthesisProof.
 
       remember (commit_update r
                   match interp_rule r sigma log (rules (rule_cmd act)) with
-                  | Some l => interp_scheduler' r sigma rules (log_app l log) (system_schedule_outputs tf_ctx)
-                  | None => interp_scheduler' r sigma rules log (system_schedule_outputs tf_ctx)
+                  | Some l => interp_scheduler' r sigma rules (log_app l log) (system_schedule_quiet tf_ctx)
+                  | None => interp_scheduler' r sigma rules log (system_schedule_quiet tf_ctx)
                   end) as r1.
       remember (commit_update r
                   match interp_rule r sigma log (rules (rule_cmd act)) with
                   | Some l => log_app l log
                   | None => log
                   end) as r2.
+      pose proof (drive_written_after_cmd sys r act input sigma log) as Hdrv.
       assert (state_equal r1 r2) as Heq_s. {
-        subst r1 r2. unfold state_equal, env_equal; split; intros x; unfold commit_update; rewrite !getenv_create; match_eq; destruct interp_rule; apply latest_write_schedule_outputs; reflexivity.
+        subst r1 r2. unfold state_equal, env_equal; split; intros x; unfold commit_update; rewrite !getenv_create; match_eq;
+          destruct (interp_rule r sigma log (rules (rule_cmd act))) eqn:Hi;
+          apply latest_write_schedule_quiet_busy; try reflexivity;
+          intro p; destruct (Hdrv p Hstate Hin_rdy Hin_nrdy Hlive Hlog) as [v Hv]; exists v; exact Hv.
       }
       assert (env_equal r1 r2) as Heq_e. {
-        subst r1 r2. unfold state_equal, env_equal; split; try intros x; unfold commit_update; rewrite !getenv_create; match_eq; destruct interp_rule; apply latest_write_schedule_outputs; reflexivity.
+        subst r1 r2. unfold state_equal, env_equal; split; try intros x; unfold commit_update; rewrite !getenv_create; match_eq;
+          destruct (interp_rule r sigma log (rules (rule_cmd act))) eqn:Hi;
+          apply latest_write_schedule_quiet_busy; try reflexivity;
+          intro p; destruct (Hdrv p Hstate Hin_rdy Hin_nrdy Hlive Hlog) as [v Hv]; exists v; exact Hv.
       }
 
       apply state_env_matches_comp with (r1:=r1) (r2:=r2); try assumption.
@@ -4076,23 +4225,25 @@ Section SynthesisProof.
       exfalso. apply Hc. apply beq_dec_iff in E. exact E.
   Qed.
 
-  (* AN IDLE CYCLE, [in_cmd] invalid or naming no action: only the acks change. *)
+  (* AN IDLE CYCLE, [in_cmd] invalid or naming no action: only the acks and the
+     request registers, which go quiet, change. *)
   Lemma cycle_idle :
     forall (r: ContextEnv.(env_t) R) (sigma: forall f, Sig_denote (Sigma f)) x,
       r.[tf_ready] = Ob~1 ->
       (forall a, fst (sigma ext_in_cmd Ob~1) = Ob~0
                  \/ fst (snd (sigma ext_in_cmd Ob~1)) <> spec_action_encoding a) ->
       match x with tf_out_ack _ | tf_ip_ack _ => False | _ => True end ->
+      (forall p, x <> tf_reg (tfs_drive_reg sched_ctx p)) ->
       (interp_cycle sigma rules system_schedule r).[x] = r.[x].
   Proof.
-    intros r sigma x Hready Hidle Hx.
+    intros r sigma x Hready Hidle Hx Hd.
     unfold interp_cycle, interp_scheduler, system_schedule.
     cbn [interp_scheduler'].
     rewrite (interp_rule_busy_ready r sigma Hready).
     unfold commit_update. rewrite getenv_create.
     unfold system_schedule_actions.
     induction spec_all_actions as [| a acts IH].
-    - cbn [fold_right]. rewrite latest_write_schedule_outputs by exact Hx.
+    - cbn [fold_right]. rewrite (latest_write_schedule_quiet_other r sigma log_empty x Hx Hd).
       rewrite SemanticProperties.latest_write_empty. reflexivity.
     - cbn [fold_right interp_scheduler'].
       rewrite (interp_rule_cmd_idle r sigma log_empty a Hready (Hidle a)). exact IH.
@@ -4112,7 +4263,7 @@ Section SynthesisProof.
           match interp_rule r sigma log (rules (rule_cmd act)) with
           | Some l => log_app l log
           | None => log
-          end (system_schedule_outputs tf_ctx).
+          end (system_schedule_quiet tf_ctx).
   Proof.
     intros sys r act input sigma log Hstate Hrdy Hnrdy Hlive.
     unfold system_schedule_actions.
@@ -4123,8 +4274,8 @@ Section SynthesisProof.
     cbn [fold_right interp_scheduler'].
     destruct Hin as [-> | Hin].
     - assert (Hskip : forall log', interp_scheduler' r sigma rules log'
-                (fold_right (fun t acc => rule_cmd t |> acc) (system_schedule_outputs tf_ctx) acts)
-              = interp_scheduler' r sigma rules log' (system_schedule_outputs tf_ctx)).
+                (fold_right (fun t acc => rule_cmd t |> acc) (system_schedule_quiet tf_ctx) acts)
+              = interp_scheduler' r sigma rules log' (system_schedule_quiet tf_ctx)).
       { clear IH Hnodup. induction acts as [| b acts IHb]; intro log'; [ reflexivity |].
         cbn [fold_right interp_scheduler'].
         rewrite (interp_rule_cmd_wrong sys r act input sigma log' b Hstate Hrdy Hnrdy Hlive)
@@ -4167,7 +4318,7 @@ Section SynthesisProof.
     lazymatch type of Hgood with good_log ?L => set (log := L) in * end.
     rewrite (interp_actions_one sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hlive).
     unfold commit_update. rewrite getenv_create.
-    rewrite latest_write_schedule_outputs by exact I.
+    rewrite latest_write_schedule_quiet_other; [| exact I | intros p' Hp'; discriminate Hp' ].
     rewrite (interp_rule_correct sys r act input sigma log Hstate Hin_rdy Hin_nrdy Hlive Hgood).
     cbv zeta. rewrite SemanticProperties.latest_write_app.
     unfold construct_log. destruct (beq_dec _ _) eqn:Hdone.

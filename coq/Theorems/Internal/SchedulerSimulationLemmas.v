@@ -26,7 +26,6 @@ Import ListNotations.
 Section FindUpdateAppend.
   Context (SCH: TFSchedule).
 
-
   Local Notation upd :=
     (tf_update (tfs_states_size SCH) (tfs_outputs_size SCH)).
 
@@ -106,7 +105,6 @@ Section SchedulerSimulation.
   Local Notation i_sz  := (tfs_spec_inputs_size ctx).
   Local Notation o_sz  := (tfs_spec_outputs_size ctx).
 
-
   Local Notation src_st_env  := (ContextEnv.(env_t) (tf_states_type s_sz)).
   Local Notation src_out_env := (ContextEnv.(env_t) (tf_outputs_type o_sz)).
   Local Notation src_sys_state := (src_st_env * src_out_env)%type.
@@ -135,7 +133,6 @@ Section SchedulerSimulation.
   (* What each IP presents on its response channel during one cycle. *)
   Local Notation resp_val :=
     (forall p : tfs_ips sched, bits_t (ip_resp_sz (tfs_ip sched p))).
-
 
   (* ==================================================================== *)
   (* Phase 1: concrete characterization of ONE scheduled cycle.           *)
@@ -268,7 +265,6 @@ Section SchedulerSimulation.
       cbn [tf_op_step_updates]; try discriminate; try destruct ip.
     intro H. inversion H. subst dst. apply Hne. exists e. reflexivity.
   Qed.
-
 
   (* If no op in the list assigns x, find_st_update returns None. *)
   Lemma find_st_update_not_in x ops ss input :
@@ -514,19 +510,6 @@ Section SchedulerSimulation.
     = Bits.slice 0 (ip_req_sz (tfs_spec_ip ctx p)) ((fst ss).[tf_dfg_ov p]).
   Proof. reflexivity. Qed.
 
-  (* The payload half of a drive register is what [tf_svar] reads at the request
-     width: the cast down from [1 + req] is exactly that slice. *)
-  Lemma drive_payload_eval (p: p_var) (ss: sched_sys_state) (input: sched_input_t) :
-    drive_payload ss p
-    = tf_eval_expr ss_sz si_sz oo_sz (szB := ip_req_sz (tfs_spec_ip ctx p))
-        (tf_svar (tf_dfg_ov p)) ss input.
-  Proof.
-    cbn [tf_eval_expr]. unfold Semantics.convert, drive_payload.
-    destruct (eq_dec (ss_sz (tf_dfg_ov p)) (ip_req_sz (tfs_spec_ip ctx p))) as [e | ne].
-    - exfalso. cbn in e. lia.
-    - reflexivity.
-  Qed.
-
   (* Reading any state register through tf_svar at its OWN size is the register
      itself (convert is the identity when szB = ss_sz v). *)
   Lemma eval_svar_same (v: tfs_states sched) (ss: sched_sys_state) (input: sched_input_t) :
@@ -566,7 +549,6 @@ Section SchedulerSimulation.
   Proof.
     cbn [tf_eval_expr]. rewrite convert_same. reflexivity.
   Qed.
-
 
   (* ---- The stall counter's arithmetic ---- *)
 
@@ -648,7 +630,6 @@ Section SchedulerSimulation.
     pose proof (Hmono (r + top) k ltac:(lia) ltac:(lia)). lia.
   Qed.
 
-
   (* The backward twin of [counter_saturates]: a counter that has left zero
      started somewhere, and has not been back since. *)
   Lemma counter_started (sz top K: nat) (b: nat -> bits_t sz) (adv: nat -> bool) :
@@ -712,7 +693,6 @@ Section SchedulerSimulation.
     rewrite (Hrec k ltac:(lia) (Hle k ltac:(lia))).
     destruct (andb _ _); lia.
   Qed.
-
 
   Lemma valid_and_eval
     (e1 e2: @tf_expr (tfs_states sched) si_var o_var) (ss: sched_sys_state) (input: sched_input_t) :
@@ -1598,7 +1578,6 @@ Section SchedulerSimulation.
     intros Halign Hassoc. exact (buffer_slot_in act a_idx n m msz Halign (wla_in _ _ _ Hassoc)).
   Qed.
 
-
   (* A plain buffer RECOMPUTES, a sample LATCHES as its validity rises, and a
      stall COUNTS to [lat-1].  The three shapes are why the buffer lemmas below
      cannot treat a buffer as caching the value of its node. *)
@@ -1793,8 +1772,8 @@ Section SchedulerSimulation.
   Qed.
 
   (* What [compile_dfg_drives] assigns port [p]'s request register: {strobe,
-     payload}, both selecting on the PULSE, the register itself the base case --
-     so a payload is taken at its own cycle and HELD.  Replicates the map body. *)
+     payload}, both selecting on the PULSE, zero the base case -- so a payload is
+     on the port in its own cycle only.  Replicates the map body. *)
   Definition drive_value_expr
       (act: tfs_action sched)
       (a_idx : Vect.index (length (buffer_needs ctx cost_limit)))
@@ -1850,7 +1829,7 @@ Section SchedulerSimulation.
               end in
             tf_expr_if (tf_op2 tf_and en_val (tf_op2 tf_and vgate vfirst))
               e acc)
-         (tf_svar (tf_dfg_ov p)) (drive_nodes ctx dfg p)).
+         (tf_const 0) (drive_nodes ctx dfg p)).
 
   (* The gate a drive's request rides: its path condition, the validity of the
      node the stall waits on, and the first cycle of that wait. *)
@@ -2077,7 +2056,7 @@ Section SchedulerSimulation.
                             (length (graph (build_dfg ctx act))) a_idx (build_dfg ctx act) n
                             (nth (index_to_nat a_idx) (buffer_needs ctx cost_limit) [])))
                     acc)
-      (tf_svar (tf_dfg_ov p)) (drive_nodes ctx (build_dfg ctx act) p).
+      (tf_const 0) (drive_nodes ctx (build_dfg ctx act) p).
 
   Lemma drive_value_expr_split
         (act: tfs_action sched)
@@ -2139,22 +2118,6 @@ Section SchedulerSimulation.
       + reflexivity.
     - rewrite (Hpre a (or_introl eq_refl)), beq_dec_refl.
       apply IH. intros m Hm. exact (Hpre m (or_intror Hm)).
-  Qed.
-
-  (* With no drive pulsing, the payload half reads the payload already held. *)
-  Lemma drive_payload_expr_hold
-        (act: tfs_action sched)
-        (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) (p: p_var)
-        (ss: sched_sys_state) (input: sched_input_t) :
-    (forall n, In n (drive_nodes ctx (build_dfg ctx act) p) ->
-       eval1 (drive_pulse act a_idx n) ss input = Bits.zero) ->
-    tf_eval_expr ss_sz si_sz oo_sz (szB := ip_req_sz (tfs_spec_ip ctx p))
-      (drive_payload_expr act a_idx p) ss input
-    = drive_payload ss p.
-  Proof.
-    intro Hdown. unfold drive_payload_expr.
-    rewrite (eval_pulse_fold_hold act a_idx _ _ _ _ ss input Hdown).
-    symmetry. apply drive_payload_eval.
   Qed.
 
   (* The drive register's assignment is one of the always-ops. *)
@@ -2973,7 +2936,6 @@ Section SchedulerSimulation.
         rewrite (join_pendings_none s prevs s1 Er) in Hq.
         destruct Hq as [<- | []]. subst root. apply pleaf_here.
   Qed.
-
 
   Lemma emit_full op sz (s: wst) :
     winv s ->
@@ -4621,8 +4583,6 @@ Section SchedulerSimulation.
     apply samples_stalled_rev. exact H.
   Qed.
 
-
-
   (* A SAMPLE HAS A CALL.  The stall a sample reads is fed by that call's own
      drive, or by the ordering join in front of it, and that drive carries the
      sample's own guard.  [samples_stalled] stops at the stall. *)
@@ -5041,8 +5001,6 @@ Section SchedulerSimulation.
     cbn [snd] in H. cbn [graph].
     apply joins_sequence_rev. exact H.
   Qed.
-
-
 
   Lemma get_var_full v (s: wst) :
     winv s ->
@@ -6028,8 +5986,6 @@ Section SchedulerSimulation.
       destruct H as [_ [Pf [_ [Ff [Nf Sf]]]]]. exact (fg_vm s' fin Pf Ff Nf Sf).
   Qed.
 
-
-
   Definition gpos (s: wst) : Prop :=
     1 <= length (graph s)
     /\ (forall k id, In (k, id) (var_map s) -> 1 <= id)
@@ -6584,7 +6540,6 @@ Section SchedulerSimulation.
     rewrite <- Hpn.
     split; [ exact Hp | rewrite Hnth; exact Hsz ].
   Qed.
-
 
   (* ---- every drive is at its IP's request width, under one-bit literals ---- *)
 
@@ -7485,7 +7440,6 @@ Section SchedulerSimulation.
     - congruence.
   Qed.
 
-
   (* Every buffered nid is a REAL node of the forward graph: the arg-part holds
      args of graph nodes, the out-part var_map values (positive by
      build_dfg_args_pos, graph nids by var_map_snd_is_graph_nid). *)
@@ -7657,9 +7611,9 @@ Section SchedulerSimulation.
     ~ op_writes_out o op.
   Proof.
     unfold compile_dfg_drives.
-    destruct (index_of_nat _ a_idx) as [a' |]; [| intros []].
-    intro Hin. apply in_map_iff in Hin. destruct Hin as [o' [Hop _]].
-    subst op. intros [e He]; discriminate He.
+    destruct (index_of_nat _ a_idx) as [a' |];
+      intro Hin; apply in_map_iff in Hin; destruct Hin as [o' [Hop _]];
+      subst op; intros [e He]; discriminate He.
   Qed.
 
   Lemma compile_dfg_drives_no_svar
@@ -7671,9 +7625,9 @@ Section SchedulerSimulation.
     ~ op_assigns_st (tf_dfg_s sv) op.
   Proof.
     unfold compile_dfg_drives.
-    destruct (index_of_nat _ a_idx) as [a' |]; [| intros []].
-    intro Hin. apply in_map_iff in Hin. destruct Hin as [o' [Hop _]].
-    subst op. intros [e He]; inversion He.
+    destruct (index_of_nat _ a_idx) as [a' |];
+      intro Hin; apply in_map_iff in Hin; destruct Hin as [o' [Hop _]];
+      subst op; intros [e He]; inversion He.
   Qed.
 
   (* Every op emitted by compile_dfg_buffers is a tf_assign to a tf_dfg_b or
@@ -9675,27 +9629,6 @@ Section SchedulerSimulation.
     reflexivity.
   Qed.
 
-  (* THE PORT HOLDS: on a pre-done cycle with no drive on [p] pulsing, the
-     request payload on the wire is the one it already carried. *)
-  Lemma drive_payload_hold
-        (act: tfs_action sched)
-        (a_idx : Vect.index (length (buffer_needs ctx cost_limit))) (p: p_var)
-        (ss: sched_sys_state) (input: sched_input_t) :
-    act_idx_aligned act a_idx ->
-    ~ done_set (sched_step act ss input) ->
-    (forall n, In n (drive_nodes ctx (build_dfg ctx act) p) ->
-       eval1 (drive_pulse act a_idx n) ss input = Bits.zero) ->
-    drive_payload (sched_step act ss input) p = drive_payload ss p.
-  Proof.
-    intros Halign Hnd Hdown.
-    rewrite (drive_payload_slice p (sched_step act ss input)).
-    rewrite (drive_after_cycle act a_idx p ss input Halign Hnd).
-    rewrite drive_value_expr_split. cbn [tf_eval_expr].
-    rewrite slice_convert_eq by (cbn; lia).
-    rewrite slice_app_lo.
-    exact (drive_payload_expr_hold act a_idx p ss input Hdown).
-  Qed.
-
   (* The strobe half after a cycle: what the port carries is what the drives
      did. *)
   Lemma port_strobe_after
@@ -10427,7 +10360,6 @@ Section SchedulerSimulation.
         + left. apply list_assoc_filter_out. }
     intros k HkK n_idx Hlt. exact (main k k (Nat.le_refl k) HkK n_idx Hlt).
   Qed.
-
 
   (* SOUND semantic core (Phase 2): a done cycle exists in [1, S settle_bound], an
      earlier one or the combined validity firing once every buffer has settled.
@@ -11299,7 +11231,6 @@ Section SchedulerSimulation.
     pose proof (node_nid_at act p Hp) as Hnid. rewrite Hnth in Hnid.
     rewrite Hnid. split; [ exact Hp | exact Hnth ].
   Qed.
-
 
   Lemma cost_mono_fold : forall suf acc j,
     getn acc j <= getn (fold_left bc_aux suf acc) j.
@@ -12872,6 +12803,5 @@ Section SchedulerSimulation.
                     | intros p Hp; exact (list_assoc_None_notin me k Hmen p Hp) ].
           -- exact (Hrest n Hin).
   Qed.
-
 
 End SchedulerSimulation.

@@ -754,16 +754,32 @@ Section CircuitProof.
           exact (ready_point_next k0 sp act input Hrp Hc).
         * exists k0, sp. split; [ lia | split; [ exact Hrp |] ].
           right. exists act, input. split; [ exact Hc | lia ].
-      + (* an idle cycle *)
+      + (* an idle cycle: the request registers go quiet, nothing else moves *)
         exists (S k0), sp. split; [ lia | split; [| left; reflexivity ] ].
         pose proof (cmd_of_none _ _ _ _ _ _ _ Hc) as Hp.
         assert (Hid : forall x, match x with tf_out_ack _ | tf_ip_ack _ => False | _ => True end ->
+                   (forall p, x <> tf_reg (tfs_drive_reg tsched p)) ->
                    (circuit_run env (S k0)).[x] = (circuit_run env k0).[x])
-          by (intros x Hx;
-              exact (SynthesisProof.cycle_idle synth (circuit_run env k0) (env k0) x Hrdy Hp Hx)).
-        split; [ rewrite Hid by exact I; exact Hrdy | split ].
-        * exists ss. split; [| exact Hstart ].
-          split; intro x; rewrite Hid by exact I; [ apply (proj1 Hst) | apply (proj2 Hst) ].
+          by (intros x Hx Hd;
+              exact (SynthesisProof.cycle_idle synth (circuit_run env k0) (env k0) x Hrdy Hp Hx Hd)).
+        assert (Hnd : forall s: tfs_states tsched, match s with tf_dfg_ov _ => False | _ => True end ->
+                   forall p, (tf_reg s : reg_t) <> tf_reg (tfs_drive_reg tsched p)).
+        { intros s Hs p E. injection E as E. change (s = tf_dfg_ov p) in E. subst s. exact Hs. }
+        destruct Hst as [Hst_s Hst_o]. destruct Hstart as [Hso [Hmap Hz]].
+        split; [ rewrite Hid; [ exact Hrdy | exact I | intros p E; discriminate E ] | split ].
+        * exists (ContextEnv.(create) (fun x => (circuit_run env (S k0)).[tf_reg x]), snd ss).
+          split; [ split; intro x; cbn [fst snd] |].
+          -- rewrite getenv_create. reflexivity.
+          -- rewrite Hid; [ apply Hst_o | exact I | intros p E; discriminate E ].
+          -- split; [ exact Hso | split ].
+             ++ rewrite <- Hmap. apply equiv_eq. intro s. unfold States.maps_from. cbn [fst].
+                rewrite !getenv_create.
+                rewrite Hid; [ exact (Hst_s (tf_dfg_s s)) | exact I | exact (Hnd (tf_dfg_s s) I) ].
+             ++ intros x Hx. cbn [fst]. rewrite getenv_create.
+                assert (Hxo : match x with tf_dfg_ov _ => False | _ => True end)
+                  by (destruct x; cbn in Hx |- *; tauto).
+                rewrite Hid; [| exact I | exact (Hnd x Hxo) ].
+                rewrite (Hst_s x). exact (Hz x Hx).
         * exact (ideal_idle k0 sp e He Hidle Hc).
     - destruct (Nat.eq_dec (S k - k0) (N_of act input sp)) as [HN | HN].
       + exists (S k), (spec_run act sp input). split; [ lia | split; [| left; reflexivity ] ].
