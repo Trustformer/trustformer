@@ -46,6 +46,7 @@ test: all
 eval: theorems
 	@scripts/modes-report.sh
 	@scripts/loc-report.sh
+	@python3 scripts/time-report.py
 
 clean:
 	rm -rf build/*

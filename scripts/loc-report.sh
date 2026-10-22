@@ -5,22 +5,8 @@
 #
 # Writes build/report/loc.txt and prints it.
 set -euo pipefail
-shopt -s extglob
 cd "$(dirname "$0")/.."
-
-group() {
-  case $1 in
-    */Internal/*) echo "Proofs" ;;
-    coq/@(Syntax|Semantics|Contract|Utils).v) echo "Ingot Syntax and Semantics" ;;
-    coq/Theorems/*) echo "Correctness and IPR definition" ;;
-    external/ipr/*) echo "Vendored IPR" ;;
-    coq/@(DFG|Macros).v|coq/Backend/*|coq/Scheduler/*) echo "Synthesis" ;;
-    coq/Declassification/*) echo "Rule Library" ;;
-    coq/Examples/*) echo "Examples" ;;
-    coq/Regressions/*) echo "Regressions" ;;
-    *) echo "loc-report: no group for $1" >&2; exit 1 ;;
-  esac
-}
+. scripts/groups.sh
 
 declare -A loc
 for f in $(find coq external/ipr -name '*.v' | sort); do
