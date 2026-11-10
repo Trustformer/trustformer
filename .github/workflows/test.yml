@@ -2,7 +2,7 @@ name: Testing
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "sp27-submission"]
   pull_request:
     branches: ["main"]
 
