@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    koika.url = "github:Trustformer/koika";
+    koika.url = "path:./external/koika";
   };
 
   outputs = { self, nixpkgs, flake-utils, koika }:

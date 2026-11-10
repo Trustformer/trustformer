@@ -1,0 +1,12 @@
+(library
+ (name cuttlebone)
+ (public_name koika.cuttlebone)
+ (libraries common hashcons str)
+ ;; -w -3 removes deprecation warnings; it should be changed to -alert
+ ;; -deprecated when we drop support for OCaml 4.07.
+ (flags (:standard -w -39 -w -3)))
+
+(coq.extraction
+ (prelude Extraction)
+ (extracted_modules extr)
+ (theories Koika))

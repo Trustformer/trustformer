@@ -1,0 +1,22 @@
+/*! C++ implementation of external functions for the function_call example !*/
+
+#ifndef _EXTFUNS_HPP
+#define _EXTFUNS_HPP
+static constexpr bits<32> instructions[8] = {
+  32'11011000001011000000011111001101_b,
+  32'01101011101010101001010001010101_b,
+  32'10000010111000101110011001100010_b,
+  32'01111010000000100100001000000100_b,
+  32'11101000011110100001011000010011_b,
+  32'10000001001100110010100001110110_b,
+  32'01001000001001101000011001110011_b,
+  32'11000001011111000110001001111001_b
+};
+
+class extfuns {
+public:
+  bits<32> fetch_instr(const bits<3> idx) {
+    return instructions[idx.v];
+  }
+};
+#endif

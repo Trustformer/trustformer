@@ -1,0 +1,25 @@
+(library
+ (name registry)
+ (public_name koika.registry)
+ (modules registry)
+ (libraries cuttlebone str unix))
+
+(executable
+ (package koika)
+ (name cuttlec)
+ (public_name cuttlec)
+ (modules cuttlec)
+ (preprocess (pps ppx_jane))
+ (libraries str unix zarith dynlink core core_unix core_unix.command_unix core_unix.filename_unix cuttlebone frontends backends registry))
+
+(library
+ (name interop)
+ (public_name koika.interop)
+ (modules interop)
+ (libraries backends str unix))
+
+(library
+ (name koika)
+ (public_name koika)
+ (modules koika)
+ (libraries frontends backends cuttlebone interop registry str unix))

@@ -1,0 +1,81 @@
+;;; Simple uses of structs and enums
+
+(enum ternary
+  ::false   2'b00
+  ::true    2'b01
+  ::unknown 2'b11)
+
+(enum kind
+  ::add 8'b01010000
+  ::lsr 8'b01100000)
+
+(struct instr
+  :kind 'kind
+  :imm1 (bits 12)
+  :imm2 (bits 12))
+
+(enum has_x_1
+  ::x 5'b0)
+
+(enum has_x_2
+  ::x 5'b0)
+
+(extfun getinstr ((idx (bits 32))) (bits 32))
+
+(defun decode ((bs (bits 32)))
+  'instr
+  (unpack 'instr bs))
+
+(defun eval ((i 'instr))
+  (bits 12)
+  (switch (get :kind i)
+    (::add (+ (get :imm1 i) (get :imm2 i)))
+    (::lsr (>> (get :imm1 i) (get :imm2 i)))
+    (_     12'hfff)))
+
+(module datatypes
+  (register raddr 32'0)
+  (register rinstr 32'0)
+  (register routput 32'0)
+
+  (cpp-preamble "
+static constexpr bits<32> instructions[8] = {
+  32'11011000001011000000011111001101_b,
+  32'01101011101010101001010001010101_b,
+  32'10000010111000101110011001100010_b,
+  32'01111010000000100100001000000100_b,
+  32'11101000011110100001011000010011_b,
+  32'10000001001100110010100001110110_b,
+  32'01001000001001101000011001110011_b,
+  32'11000001011111000110001001111001_b
+};
+
+class extfuns {
+public:
+  bits<32> getinstr(const bits<32> idx) {
+    return instructions[idx.v % 8];
+  }
+};")
+
+  (rule readinstr
+    (write.0 raddr (+ (read.0 raddr) 32'1))
+    (write.0 rinstr (getinstr (read.0 raddr))))
+
+  (rule runinstr
+    (let ((x 5'b0)
+          (i (decode (read.1 rinstr)))
+          (i2 (init 'instr :kind ::add :imm1 12'0 :imm2 12'b111111111111)))
+      (setq x (+ x 5'b00010))
+      (write.0 routput
+        (zextl 32 (+ (eval i) (eval i2))))))
+
+  (register scratch 1'b0)
+
+  (rule test_name_resolution
+    (progn
+      (write.0 scratch (eq (unpack 'has_x_1 5'0) has_x_1::x))
+      (write.0 scratch (eq (unpack 'has_x_2 5'0) has_x_2::x))
+      (write.0 scratch (eq (unpack 'has_x_2 5'0) ::x))))
+
+  (scheduler main
+    (sequence test_name_resolution readinstr runinstr)))

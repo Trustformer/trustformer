@@ -42,18 +42,14 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1788953074,
-        "narHash": "sha256-1kuLvQnCCs8oOfxi9GCi1PN9HEMc1/kUUcfIAibwDNw=",
-        "owner": "Trustformer",
-        "repo": "koika",
-        "rev": "f59875d6c0db1f8903b46f29068703e19e6d3a9b",
-        "type": "github"
+        "path": "./external/koika",
+        "type": "path"
       },
       "original": {
-        "owner": "Trustformer",
-        "repo": "koika",
-        "type": "github"
-      }
+        "path": "./external/koika",
+        "type": "path"
+      },
+      "parent": []
     },
     "nixpkgs": {
       "locked": {

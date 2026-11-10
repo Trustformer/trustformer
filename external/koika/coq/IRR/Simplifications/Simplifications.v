@@ -1,0 +1,10 @@
+Require Export Koika.IRR.Simplifications.Collapse.
+Require Export Koika.IRR.Simplifications.Simplify.
+Require Export Koika.IRR.Simplifications.SimplifyCareful.
+Require Export Koika.IRR.Simplifications.SimplifyTargeted.
+Require Export Koika.IRR.Simplifications.SyntacticSimplifications.
+Require Export Koika.IRR.Simplifications.ReplaceReg.
+Require Export Koika.IRR.Simplifications.ReplaceVar.
+Require Export Koika.IRR.Simplifications.ReplaceSubact.
+Require Export Koika.IRR.Simplifications.ReplaceField.
+Require Export Koika.IRR.Simplifications.Prune.

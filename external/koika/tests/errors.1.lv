@@ -1,0 +1,106 @@
+;;; Syntax and typing errors in LV
+
+(enum bool
+  ::true  1'b1
+  ::false 1'b0)
+
+(struct x :x 'bb)
+(struct x :x bb)
+(struct)
+
+(enum bool2
+  ::false 2'b00 ;; This field isn't a duplicate, since it can be disambiguated using bool2::false
+  ::false 2'b00)
+
+(enum bool2
+  ::add 8'b10100000
+  ::lsr 8'b01100000)
+
+(struct instr
+  :kind 'kind
+  :kind 'kind
+  :imm1 bits)
+
+(struct instr)
+
+(extfun getinstr ((arg (bits 32))) (bits 32))
+(extfun getinstr ((arg (bits 32))) (bits 32))
+(extfun getinstr ((arg (bits 32))) (bits 32))
+(extfun pack ((arg (bits 32))) (bits 32))
+(extfun lsr ((arg (bits 32))) (bits 32))
+(extfun progn ((arg (bits 32))) (bits 32))
+
+(module syntax
+  (register r0 0)
+  (register r1 32'0)
+  (register r1 32'0)
+  (register_ r2 32'0)
+
+  (rule rl0
+    (switch (get :imm1 (init 'instr))
+      (::add (+sss (get :imm1 i) (get :imm2 i)))
+      (::lsr (>>> (get :imm1 i) (get :imm2 i)))
+      (_ 1)))
+  (rule rl1 (let ((false 1'b1)) (write.2)))
+  (rule rl2 (write.0 r1 (+ (read.1 r1) 31'0)))
+  (rule rl3 (getinstr (read.0 r1)))
+  (rule rl4 (write.0 r1 (getinstr (read.0 r1))))
+  (rule rl5
+    (let ((a 5'b0)
+          (b (unpack 'xyz (read.1 r0)))
+          (c (init 'instr))
+          (d (init (bits 16)))
+          (e (init 'bool2))
+          (f (init (array (bits 8) 4) 8'37 8'29)))
+      (setq x (+ x 5'b00010))
+      (write.0 r1
+        (zextl 1
+          (switch (get :kind i)
+            (xxx::add (+ (get :imm1 i) (get :imm2 i)))
+            (::lsr (>> (get :imm1 i) (get :imm2 i)))
+            (_ 1'b0))))))
+
+  (scheduler s1 (sequence rl1 rl))
+  (scheduler s2 (sequence rl2 rl2)))
+
+(module types
+  (register r0 0'0)
+  (register r1 0'0)
+
+  (rule rl1 (write.0 r1 32'0))
+  (rule rl2 (write.0 r1 (+ (read.1 r1) 31'0)))
+  (rule rl3 (getinstr_ (read.0 r1)))
+  (rule rl4 (write.0 r1 (getinstr (read.0 r1))))
+
+  (scheduler s1 (sequence rl1 rl))
+  (scheduler s2 (sequence rl2 rl2)))
+
+(struct instrb)
+
+(struct nested
+  :instr 'instrb
+  :a (bits 16))
+
+(struct nested
+  :instr 'instrb
+  :a (bits 16))
+
+(struct nested2
+  :instr 'nested
+  :instr 'nested
+  :nested (bits 3))
+
+(extfun f ((arg 'nested2)) 'nested)
+(extfun f ((arg 'nested2)) 'nested)
+
+(module test
+  (rule placeholder
+    (let ((n2 (init 'nested2 :instr (init 'nested :a 16'b0) :nested 3'b0)))
+      fail))
+  (scheduler s
+    (sequence placeholder)))
+
+(module test
+  (scheduler s (sequence)))
+
+(module

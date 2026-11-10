@@ -1,0 +1,22 @@
+;;; Computing terms of the Collatz sequence (Lispy Verilog version)
+
+(defun times_three ((v (bits 16))) (bits 16)
+  (+ (<< v 1'1) v))
+
+(module collatz
+  (register r0 16'19)
+
+  (rule divide
+    (let ((v (read.0 r0))
+          (odd (sel v 4'0)))
+      (when (not odd)
+        (write.0 r0 (lsr v 1'1)))))
+
+  (rule multiply
+    (let ((v (read.1 r0))
+          (odd (sel v 4'0)))
+      (when odd
+        (write.1 r0 (+ (times_three v) 16'1)))))
+
+  (scheduler main
+    (sequence divide multiply)))

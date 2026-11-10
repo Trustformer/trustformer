@@ -11,6 +11,7 @@ Nothing here is generated. `build/*.v` is generated; this is what it is wired to
 external/
   ipr/      vendored Coq definitions of IPR — anishathalye/ipr (MIT)
   sha256/   vendored upstream IP, unmodified — secworks/sha256 (BSD-2)
+  koika/    vendored Kôika fork the toolchain builds on (GPL-3)
   glue/     thin adapters between an IP's native interface and a module's
             Trusted port group.  This is TCB: secrets cross it.
 ```
@@ -23,6 +24,12 @@ files are copied: `Common.v`, `Tactics.v`, `Machine.v`, `Driver.v`, `Emulator.v`
 `Definition.v`. The one change is `From Stdlib Require` -> `From Coq Require`, for
 Coq 8.19; `diff` against upstream shows nothing else. `coq/Theorems/IPR.v` states
 Trustformer's guarantee against these definitions.
+
+## `koika/`
+
+A fork of [Kôika-SUSHI](https://gitlab.inria.fr/SUSHI-public/FMH/koika/) with the
+typechecking changes Trustformer needs, GPL-3. `flake.nix` builds it as its
+`koika` input.
 
 ## `sha256/`
 
